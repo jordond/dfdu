@@ -361,14 +361,19 @@ impl<B: Backend> Shared<B> {
 
     // ---- watchdog --------------------------------------------------------------------------
 
-    /// One watchdog round (§3 rule 6, §5.4, §5.7). Never blocks. Returns the number of workers
-    /// currently stuck in a filesystem call longer than the stall limit.
-    pub fn watchdog_round(&self, sink: &dyn Sink, now: u64) -> usize {
-        let mut stuck = 0;
+    /// One watchdog round (§3 rule 6, §5.4, §5.7). Never blocks.
+    pub fn watchdog_round(&self, sink: &dyn Sink, now: u64) -> WatchdogReport {
+        let mut rep = WatchdogReport::default();
         for slot in self.slots.read().iter() {
             let since = slot.syscall_since.load(SeqCst);
             let is_stuck = since != 0 && now.saturating_sub(since) > self.limits.stall_ns;
-            stuck += is_stuck as usize;
+            if is_stuck {
+                rep.stuck += 1;
+                let cur = slot.current.load(SeqCst);
+                if cur != NO_TASK && self.abandoned.lock().contains(&unpack(cur)) {
+                    rep.stuck_abandoned += 1;
+                }
+            }
             let Some(mut ob) = slot.outbox.try_lock() else {
                 continue;
             };
@@ -393,8 +398,25 @@ impl<B: Backend> Shared<B> {
         if out == ab && self.last_quiescent.swap(seq, SeqCst) != seq {
             sink.send_control(ScanMsg::Quiescent { submitted_seq: seq });
         }
-        stuck
+        rep
     }
+
+    /// How many workers beyond the pool's target may exist (§5.4): one per stuck worker, at
+    /// most `min(target, 16)` for stalls still being waited on, and at most 64 more for workers
+    /// stuck on tasks the applier abandoned. A thread stuck in a call cannot be stopped, so
+    /// without the second allowance a few abandoned stalls could leave no worker for the rest.
+    pub fn allowed_extra_workers(&self, target: usize, rep: &WatchdogReport) -> usize {
+        let live = rep.stuck - rep.stuck_abandoned;
+        live.min(target.min(16)) + rep.stuck_abandoned.min(64)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct WatchdogReport {
+    /// Workers inside one filesystem call for longer than the stall limit.
+    pub stuck: usize,
+    /// Of those, the ones whose task the applier has abandoned.
+    pub stuck_abandoned: usize,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

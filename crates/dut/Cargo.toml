@@ -14,5 +14,6 @@ workspace = true
 dut-tree.workspace = true
 dut-scan.workspace = true
 dut-engine.workspace = true
+dut-tui.workspace = true
 clap.workspace = true
 anyhow.workspace = true

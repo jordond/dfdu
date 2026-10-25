@@ -20,5 +20,6 @@ pub use proto::{
     SkipReason, SubdirRec,
 };
 pub use shared::{
-    Clock, JobOptions, Limits, Outbox, Shared, Sink, StepResult, Task, Worker, WorkerSlot,
+    Clock, JobOptions, Limits, Outbox, Shared, Sink, StepResult, Task, WatchdogReport, Worker,
+    WorkerSlot,
 };

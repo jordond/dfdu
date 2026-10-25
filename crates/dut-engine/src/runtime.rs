@@ -1,12 +1,14 @@
 //! The applier thread and the inbox it reads from.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
+use dut_clean::{DeleterMsg, Plan, spawn_deleter};
 use dut_scan::runtime::{Pool, RealClock};
 use dut_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
 use parking_lot::RwLock;
@@ -60,6 +62,40 @@ impl Sink for Inbox {
     }
 }
 
+/// The state directory's `crash` folder, next to the deletion journal's `ops` folder.
+pub fn default_crash_dir() -> Option<PathBuf> {
+    dut_clean::default_journal_dir().and_then(|d| d.parent().map(|p| p.join("crash")))
+}
+
+pub fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".into())
+}
+
+fn crash_report(msg: &str, m: &Model) -> String {
+    format!(
+        "dut {} crash report\n\npanic: {msg}\n\nbacktrace:\n{}\n\nstats: {:?}\nanomalies: {:?}\njobs: {:?}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::backtrace::Backtrace::force_capture(),
+        m.status.stats,
+        m.status.anomalies,
+        m.status.jobs,
+    )
+}
+
+/// Writes a crash report into `dir`; returns its path.
+pub fn write_crash_report(dir: &std::path::Path, report: &str) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let path = dir.join(format!("crash-{}-{}.txt", t.as_secs(), std::process::id()));
+    std::fs::write(&path, report).ok()?;
+    Some(path)
+}
+
 #[derive(Clone, Debug)]
 pub struct EngineOptions {
     pub workers: usize,
@@ -69,6 +105,12 @@ pub struct EngineOptions {
     pub auto_abandon: Option<Duration>,
     /// Check every invariant after every slice. Linear in tree size; for tests and debugging.
     pub check_invariants: bool,
+    /// Where the deletion journal goes. Without one, deletion is refused.
+    pub journal_dir: Option<PathBuf>,
+    /// Refuse all deletion.
+    pub read_only: bool,
+    /// Where crash reports go.
+    pub crash_dir: Option<PathBuf>,
 }
 
 impl Default for EngineOptions {
@@ -81,6 +123,9 @@ impl Default for EngineOptions {
             limits: Limits::default(),
             auto_abandon: None,
             check_invariants: std::env::var_os("DUT_CHECK").is_some(),
+            journal_dir: dut_clean::default_journal_dir(),
+            read_only: false,
+            crash_dir: default_crash_dir(),
         }
     }
 }
@@ -94,6 +139,8 @@ pub struct Engine<B: Backend> {
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
     pool: Option<Pool>,
+    delete_abort: Arc<AtomicBool>,
+    deleter: Option<JoinHandle<()>>,
 }
 
 /// Longest time the applier holds the write lock in one slice (§5.6).
@@ -110,10 +157,44 @@ impl<B: Backend> Engine<B> {
         let stop = Arc::new(AtomicBool::new(false));
 
         let pool = Pool::start(shared.clone(), inbox.clone(), opts.workers);
+        let (del_tx, del_rx) = unbounded::<DeleterMsg>();
+        let deleter = spawn_deleter(opts.journal_dir.clone(), del_tx);
+        let delete_abort = deleter.abort.clone();
+        let deleter_thread = deleter.thread;
         let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
+        let chans = Channels {
+            cmd_rx,
+            inbox_rx,
+            del_rx,
+            plans: deleter.plans,
+            wake_tx,
+        };
+        let wake = chans.wake_tx.clone();
         let applier = thread::Builder::new()
             .name("dut-applier".into())
-            .spawn(move || applier_loop(m, sh, cmd_rx, inbox_rx, budget, wake_tx, st, opts))
+            .spawn(move || {
+                let crash_dir = opts.crash_dir.clone();
+                let model = m.clone();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    applier_loop(m, sh, chans, budget, st, opts)
+                }));
+                if let Err(p) = r {
+                    // An applier panic is a bug. Record it where readers will see it, write a
+                    // crash report, and stop changing the model (§8).
+                    let msg = panic_message(&*p);
+                    let mut g = model.write();
+                    let report = crash_report(&msg, &g);
+                    let file = crash_dir
+                        .as_deref()
+                        .and_then(|d| write_crash_report(d, &report));
+                    g.status.fatal = Some(match file {
+                        Some(f) => format!("internal error: {msg} (report: {})", f.display()),
+                        None => format!("internal error: {msg}"),
+                    });
+                    drop(g);
+                    let _ = wake.try_send(());
+                }
+            })
             .expect("spawn applier");
         Engine {
             model,
@@ -124,10 +205,26 @@ impl<B: Backend> Engine<B> {
             stop,
             applier: Some(applier),
             pool: Some(pool),
+            delete_abort,
+            deleter: Some(deleter_thread),
         }
     }
 
     pub fn send(&self, cmd: Command) {
+        if matches!(cmd, Command::AbortDelete) {
+            self.delete_abort.store(true, SeqCst);
+        }
+        // Scan roots are made absolute and canonical here, on the caller's thread, so the
+        // applier never does I/O and deletion can require absolute paths inside the root.
+        let cmd = match cmd {
+            Command::Scan { path, opts } => {
+                let path = std::fs::canonicalize(&path)
+                    .or_else(|_| std::path::absolute(&path))
+                    .unwrap_or(path);
+                Command::Scan { path, opts }
+            }
+            other => other,
+        };
         self.commands_sent.fetch_add(1, SeqCst);
         let _ = self.cmd_tx.send(cmd);
     }
@@ -152,8 +249,17 @@ impl<B: Backend> Engine<B> {
         let deadline = timeout.map(|t| Instant::now() + t);
         loop {
             let sent = self.commands_sent.load(SeqCst);
-            if self.read(|m| m.status.commands_applied >= sent && !m.status.busy()) {
+            let (idle, fatal) = self.read(|m| {
+                (
+                    m.status.commands_applied >= sent && !m.status.busy(),
+                    m.status.fatal.is_some(),
+                )
+            });
+            if idle {
                 return true;
+            }
+            if fatal {
+                return false;
             }
             let wait = deadline.map_or(Duration::from_millis(100), |d| {
                 d.saturating_duration_since(Instant::now())
@@ -178,41 +284,73 @@ impl<B: Backend> Engine<B> {
         if let Some(p) = self.pool.take() {
             p.stop(wait);
         }
+        // The applier held the deleter's plan channel; with it gone the deleter finishes its
+        // current item, syncs and closes the journal, and exits. Wait for that, within `wait`.
+        self.delete_abort.store(true, SeqCst);
+        if let Some(d) = self.deleter.take() {
+            let deadline = Instant::now() + wait;
+            while !d.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
+            if d.is_finished() {
+                let _ = d.join();
+            }
+        }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+struct Channels {
+    cmd_rx: Receiver<Command>,
+    inbox_rx: Receiver<Batch>,
+    del_rx: Receiver<DeleterMsg>,
+    plans: Sender<Plan>,
+    wake_tx: Sender<()>,
+}
+
 fn applier_loop<B: Backend>(
     model: Arc<RwLock<Model>>,
     shared: Arc<Shared<B>>,
-    cmd_rx: Receiver<Command>,
-    inbox_rx: Receiver<Batch>,
+    ch: Channels,
     budget: Arc<Budget>,
-    wake_tx: Sender<()>,
     stop: Arc<AtomicBool>,
     opts: EngineOptions,
 ) {
+    let Channels {
+        cmd_rx,
+        inbox_rx,
+        del_rx,
+        plans,
+        wake_tx,
+    } = ch;
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
+    applier.read_only = opts.read_only;
+    let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
     let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
     let mut cmds: VecDeque<Command> = VecDeque::new();
     let auto_abandon = opts.auto_abandon.map(|d| d.as_nanos() as u64);
     while !stop.load(SeqCst) {
-        if !applier.has_work() && cur.is_none() && cmds.is_empty() {
+        if !applier.has_work() && cur.is_none() && cmds.is_empty() && dels.is_empty() {
             select! {
                 recv(cmd_rx) -> c => if let Ok(c) = c { cmds.push_back(c) },
+                recv(del_rx) -> d => if let Ok(d) = d { dels.push_back(d) },
                 recv(inbox_rx) -> b => if let Ok(b) = b { cur = Some((b.msgs.into(), b.bytes)) },
                 default(Duration::from_millis(50)) => {},
             }
         }
         let started = Instant::now();
         let mut g = model.write();
+        let before = g.fingerprint();
         let now = clock.now();
         while let Ok(c) = cmd_rx.try_recv() {
             cmds.push_back(c);
         }
         for c in cmds.drain(..) {
             applier.command(&mut g, c, now);
+        }
+        dels.extend(del_rx.try_iter());
+        for d in dels.drain(..) {
+            applier.apply_delete(&mut g, d);
         }
         loop {
             if applier.has_work() {
@@ -245,7 +383,14 @@ fn applier_loop<B: Backend>(
             g.status.incomplete = true;
             g.status.notices.push(format!("invariant violated: {e}"));
         }
+        let outgoing = applier.take_plans();
+        let changed = g.fingerprint() != before;
         drop(g);
-        let _ = wake_tx.try_send(());
+        for p in outgoing {
+            let _ = plans.send(p);
+        }
+        if changed {
+            let _ = wake_tx.try_send(());
+        }
     }
 }

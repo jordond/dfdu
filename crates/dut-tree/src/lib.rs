@@ -9,4 +9,4 @@ mod tree;
 
 pub use check::Violation;
 pub use meta::{ErrKind, Kind, Meta, Totals};
-pub use tree::{DirRec, DirState, FreedLink, Ix, NodeFlags, NodeRef, Tree};
+pub use tree::{DirRec, DirState, FreedLink, Ix, NodeFlags, NodeRef, SEP, Tree};

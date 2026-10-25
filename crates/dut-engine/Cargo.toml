@@ -13,5 +13,14 @@ workspace = true
 [dependencies]
 dut-tree.workspace = true
 dut-scan.workspace = true
+dut-clean.workspace = true
 crossbeam-channel.workspace = true
 parking_lot.workspace = true
+
+[features]
+# Test-only hooks (Command::InjectPanic).
+fault-injection = []
+
+[dev-dependencies]
+dut-engine = { path = ".", features = ["fault-injection"] }
+dut-clean.workspace = true

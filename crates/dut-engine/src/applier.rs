@@ -2,14 +2,15 @@
 //! stalls, quiescence and hard links (`docs/data-pipeline.md` §5-§7). No threads: the runtime
 //! and the simulation harness both drive it.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use dut_clean::{DeleteResult, DeleterMsg, Identity, Mode, Plan, PlanItem};
 use dut_scan::{
     Backend, Chunk, ChunkStatus, DirId, JobId, JobOptions, ListingStatus, ScanMsg, Shared,
 };
-use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeRef, Totals, Tree};
+use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Totals, Tree};
 
 use crate::links::{LinkTable, Scope, VISIBLE};
 
@@ -19,6 +20,32 @@ use crate::links::{LinkTable, Scope, VISIBLE};
 pub struct Model {
     pub tree: Tree,
     pub status: Status,
+}
+
+impl Model {
+    /// Changes whenever anything a reader can see may have changed. The applier wakes readers
+    /// only when it changes; readers can compare it to skip redraws.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let s = &self.status;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.tree.version().hash(&mut h);
+        s.stats.messages.hash(&mut h);
+        s.commands_applied.hash(&mut h);
+        s.notices.len().hash(&mut h);
+        s.stalled.len().hash(&mut h);
+        s.incomplete.hash(&mut h);
+        s.settling.hash(&mut h);
+        s.deleting
+            .as_ref()
+            .map(|d| (d.plan, d.done, d.queued_plans))
+            .hash(&mut h);
+        s.last_delete.as_ref().map(|d| d.plan).hash(&mut h);
+        for j in &s.jobs {
+            (j.id.0, j.phase as u8).hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -81,6 +108,32 @@ pub struct Status {
     pub commands_applied: u64,
     /// Details of protocol anomalies (corrupt, duplicate, lost), at most 50, for debugging.
     pub anomalies: Vec<String>,
+    /// The running delete plan, if any.
+    pub deleting: Option<DeleteProgress>,
+    /// Set when the applier thread failed; the model no longer changes. Readers should report it
+    /// and exit.
+    pub fatal: Option<String>,
+    /// Outcome of the most recent finished plan.
+    pub last_delete: Option<DeleteSummary>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DeleteProgress {
+    pub plan: u64,
+    pub total: usize,
+    pub done: usize,
+    pub queued_plans: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DeleteSummary {
+    pub plan: u64,
+    pub deleted: usize,
+    pub bytes: u64,
+    pub stale: usize,
+    pub refused: usize,
+    pub failed: usize,
+    pub aborted: usize,
 }
 
 impl Status {
@@ -92,7 +145,7 @@ impl Status {
     }
 
     pub fn busy(&self) -> bool {
-        self.running() > 0 || self.settling
+        self.running() > 0 || self.settling || self.deleting.is_some()
     }
 
     fn anomaly(&mut self, s: String) {
@@ -124,6 +177,16 @@ pub enum Command {
         job: JobId,
     },
     CancelAll,
+    /// Delete these visible nodes (§7.4). Plans run one at a time.
+    Delete {
+        items: Vec<NodeRef>,
+        mode: Mode,
+    },
+    /// Drop queued delete plans. The runtime also stops the running plan after its current item.
+    AbortDelete,
+    /// Panics inside the applier, to test crash handling.
+    #[cfg(feature = "fault-injection")]
+    InjectPanic,
     /// Give up on a stalled directory (§5.4).
     Abandon {
         node: NodeRef,
@@ -157,6 +220,12 @@ enum Slot {
 }
 
 impl Job {
+    /// A rescan that has not swapped in yet: it still counts for the overlap rules (§7.2),
+    /// including while it settles hard links after its scan finished.
+    fn swap_pending(&self) -> bool {
+        matches!(self.phase, JobPhase::Running | JobPhase::Finishing)
+    }
+
     fn slot(&self, d: DirId) -> Slot {
         self.map.get(d.0 as usize).copied().unwrap_or(Slot::Unknown)
     }
@@ -180,12 +249,32 @@ impl Job {
 
 enum Work {
     Free,
-    Reelect { key: (u64, u64), scope: Scope },
-    FinalPass { keys: Vec<(u64, u64)>, scope: Scope },
-    Merge { keys: Vec<(u64, u64)>, from: Scope },
-    CancelWalk { job: u32, stack: Vec<NodeRef> },
-    LostWalk { job: u32, stack: Vec<NodeRef> },
-    FinishJob { job: u32 },
+    Reelect {
+        key: (u64, u64),
+        scope: Scope,
+    },
+    FinalPass {
+        keys: Vec<(u64, u64)>,
+        scope: Scope,
+    },
+    /// A final pass over the visible scope, with its keys taken when it starts (after any
+    /// merges queued before it).
+    FinalPassVisible,
+    Merge {
+        keys: Vec<(u64, u64)>,
+        from: Scope,
+    },
+    CancelWalk {
+        job: u32,
+        stack: Vec<NodeRef>,
+    },
+    LostWalk {
+        job: u32,
+        stack: Vec<NodeRef>,
+    },
+    FinishJob {
+        job: u32,
+    },
 }
 
 pub struct Applier<B: Backend> {
@@ -195,6 +284,21 @@ pub struct Applier<B: Backend> {
     links: LinkTable,
     work: VecDeque<Work>,
     retry_abandon: Vec<(JobId, DirId)>,
+    queued_plans: VecDeque<Plan>,
+    active_plan: Option<ActivePlan>,
+    outgoing_plans: Vec<Plan>,
+    next_plan: u64,
+    /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
+    deferred_rescans: Vec<NodeRef>,
+    /// Refuse every delete request.
+    pub read_only: bool,
+}
+
+struct ActivePlan {
+    id: u64,
+    total: usize,
+    remaining: HashSet<NodeRef>,
+    summary: DeleteSummary,
 }
 
 /// Units of incremental work per step (nodes freed, nodes walked, inodes merged).
@@ -247,6 +351,12 @@ impl<B: Backend> Applier<B> {
             links: LinkTable::default(),
             work: VecDeque::new(),
             retry_abandon: Vec::new(),
+            queued_plans: VecDeque::new(),
+            active_plan: None,
+            outgoing_plans: Vec::new(),
+            next_plan: 1,
+            deferred_rescans: Vec::new(),
+            read_only: false,
         }
     }
 
@@ -313,6 +423,18 @@ impl<B: Backend> Applier<B> {
             Command::AbandonAllStalled => {
                 for s in m.status.stalled.clone() {
                     self.abandon(m, s.node);
+                }
+            }
+            Command::Delete { items, mode } => self.submit_plan(m, items, mode),
+            #[cfg(feature = "fault-injection")]
+            Command::InjectPanic => panic!("injected applier panic"),
+            Command::AbortDelete => {
+                for p in std::mem::take(&mut self.queued_plans) {
+                    for it in &p.items {
+                        if let Some(ix) = m.tree.resolve(it.node) {
+                            m.tree.set_deleting(ix, false);
+                        }
+                    }
                 }
             }
         }
@@ -382,11 +504,18 @@ impl<B: Backend> Applier<B> {
             Some(_) => {}
         }
         // Overlap rules (§7.2).
+        if self.plan_overlaps(&m.tree, ix) {
+            m.status.notice(
+                "rescan: a delete in this directory is in progress; rescan after it completes"
+                    .into(),
+            );
+            return;
+        }
         let mut cancel = Vec::new();
         for j in self
             .jobs
             .values()
-            .filter(|j| j.kind == JobKind::Rescan && j.phase == JobPhase::Running)
+            .filter(|j| j.kind == JobKind::Rescan && j.swap_pending())
         {
             let Some(t) = m.tree.resolve_visible(j.target) else {
                 continue;
@@ -478,11 +607,47 @@ impl<B: Backend> Applier<B> {
         }
     }
 
+    fn scanner_abandon(&mut self, job: JobId, dir: DirId) {
+        if !self.scan.abandon(job, dir) {
+            self.retry_abandon.push((job, dir));
+        }
+    }
+
+    fn under_cut(tree: &Tree, ix: Ix) -> bool {
+        let mut cur = Some(ix);
+        while let Some(c) = cur {
+            if tree.dir(c).is_some_and(|d| d.cut) {
+                return true;
+            }
+            cur = tree.parent(c);
+        }
+        false
+    }
+
     /// Periodic work: retry abandons that could not take an outbox lock, and abandon
     /// directories stalled longer than `auto_abandon_ns` (headless mode).
     pub fn tick(&mut self, m: &mut Model, now: u64, auto_abandon_ns: Option<u64>) {
         let scan = &self.scan;
         self.retry_abandon.retain(|(j, d)| !scan.abandon(*j, *d));
+        // Stalled directories that were cut or removed since they stalled are not wanted.
+        let mut unwanted = Vec::new();
+        for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
+            for &d in j.stalled.keys() {
+                let gone = j
+                    .get(DirId(d))
+                    .and_then(|r| m.tree.resolve(r))
+                    .is_none_or(|ix| Self::under_cut(&m.tree, ix));
+                if gone {
+                    unwanted.push((j.id, DirId(d)));
+                }
+            }
+        }
+        for (job, dir) in unwanted {
+            if let Some(j) = self.jobs.get_mut(&job.0) {
+                j.stalled.remove(&dir.0);
+            }
+            self.scanner_abandon(job, dir);
+        }
         if let Some(limit) = auto_abandon_ns {
             let mut due = Vec::new();
             for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
@@ -516,16 +681,21 @@ impl<B: Backend> Applier<B> {
             } => self.apply_close(m, job, dir, chunks, status),
             ScanMsg::Stalled { job, dir } => {
                 m.status.stats.stalled += 1;
-                if let Some(ix) = self.gate(m, job, dir, None) {
-                    let rec = m.tree.dir_mut(ix).expect("dir");
-                    if !rec.listing_closed {
-                        rec.stalled = true;
-                        if let Some(j) = self.jobs.get_mut(&job.0) {
-                            j.stalled.insert(dir.0, now);
+                match self.gate(m, job, dir, None) {
+                    Some(ix) => {
+                        let rec = m.tree.dir_mut(ix).expect("dir");
+                        if !rec.listing_closed {
+                            rec.stalled = true;
+                            if let Some(j) = self.jobs.get_mut(&job.0) {
+                                j.stalled.insert(dir.0, now);
+                            }
+                            m.tree.touch(ix);
+                            self.refresh_status(m);
                         }
-                        m.tree.touch(ix);
-                        self.refresh_status(m);
                     }
+                    // Nothing wants this directory any more (job ended, subtree cut or gone):
+                    // give the stuck task up so it stops counting as outstanding work.
+                    None => self.scanner_abandon(JobId(job.0), dir),
                 }
             }
             ScanMsg::Quiescent { submitted_seq } => {
@@ -864,6 +1034,13 @@ impl<B: Backend> Applier<B> {
                     self.work.push_front(Work::FinalPass { keys, scope });
                 }
             }
+            Work::FinalPassVisible => {
+                let keys = self.links.shared_keys(VISIBLE);
+                self.work.push_front(Work::FinalPass {
+                    keys,
+                    scope: VISIBLE,
+                });
+            }
             Work::Merge { mut keys, from } => {
                 for _ in 0..STEP_UNITS.min(keys.len()) {
                     let k = keys.pop().expect("non-empty");
@@ -967,7 +1144,11 @@ impl<B: Backend> Applier<B> {
         };
         j.map = Vec::new();
         j.held_close.clear();
-        j.stalled.clear();
+        let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
+        let job = j.id;
+        for d in stalled {
+            self.scanner_abandon(job, d);
+        }
         if kind == JobKind::Rescan {
             let shadow = m.tree.resolve(root);
             match (cancelled, shadow, m.tree.resolve_visible(target)) {
@@ -984,6 +1165,9 @@ impl<B: Backend> Applier<B> {
                 _ => {}
             }
         }
+        // Every job's end (done or cancelled) settles the visible charges to the lowest path, so
+        // per-directory totals never depend on scan order (P5, §5.5).
+        self.work.push_back(Work::FinalPassVisible);
         // Keep finished jobs out of the status list once nothing refers to them.
         if self.jobs.len() > 64 {
             let done: Vec<u32> = self
@@ -997,6 +1181,249 @@ impl<B: Backend> Applier<B> {
                 self.jobs.remove(&k);
             }
         }
+    }
+
+    // ---- deletion (§7.2, §7.4) --------------------------------------------------------------
+
+    /// Plans for the deleter thread, taken by the runtime after each slice.
+    pub fn take_plans(&mut self) -> Vec<Plan> {
+        std::mem::take(&mut self.outgoing_plans)
+    }
+
+    fn plan_nodes(&self) -> impl Iterator<Item = NodeRef> + '_ {
+        let active = self
+            .active_plan
+            .iter()
+            .flat_map(|p| p.remaining.iter().copied());
+        let queued = self
+            .queued_plans
+            .iter()
+            .flat_map(|p| p.items.iter().map(|i| i.node));
+        active.chain(queued)
+    }
+
+    /// Whether `ix`, an ancestor or a descendant is in the running or a queued plan.
+    fn plan_overlaps(&self, tree: &Tree, ix: Ix) -> bool {
+        self.plan_nodes()
+            .filter_map(|r| tree.resolve(r))
+            .any(|p| p == ix || Self::is_ancestor(tree, p, ix) || Self::is_ancestor(tree, ix, p))
+    }
+
+    fn submit_plan(&mut self, m: &mut Model, items: Vec<NodeRef>, mode: Mode) {
+        if self.read_only {
+            m.status.notice("delete: read-only mode".into());
+            return;
+        }
+        let mut out = Vec::new();
+        let mut seen: HashSet<Ix> = HashSet::new();
+        for r in items {
+            let Some(ix) = m.tree.resolve_visible(r) else {
+                continue;
+            };
+            if m.tree.flags(ix).has(NodeFlags::DELETING) || !seen.insert(ix) {
+                continue;
+            }
+            // Overlap with rescans (§7.2): a running rescan of the item, an ancestor or a
+            // descendant blocks it. Cancelling a descendant's rescan instead would leave that
+            // directory cut, with partial totals, if this delete then did not happen.
+            let blocked = self
+                .jobs
+                .values()
+                .filter(|j| j.kind == JobKind::Rescan && j.swap_pending())
+                .filter_map(|j| m.tree.resolve_visible(j.target))
+                .any(|t| {
+                    t == ix
+                        || Self::is_ancestor(&m.tree, t, ix)
+                        || Self::is_ancestor(&m.tree, ix, t)
+                });
+            if blocked {
+                m.status.notice(format!(
+                    "delete: {} or something in it is being rescanned; delete after it completes",
+                    String::from_utf8_lossy(m.tree.name(ix))
+                ));
+                continue;
+            }
+            if m.tree
+                .dir(ix)
+                .is_some_and(|d| d.state == DirState::Pending && !d.cut)
+            {
+                let (job, dir) = {
+                    let d = m.tree.dir(ix).expect("dir");
+                    (d.job, d.dir_id)
+                };
+                self.cut(m, ix, DirState::Deleting);
+                self.scan.stop_dirs(JobId(job), [DirId(dir)]);
+            }
+            m.tree.set_deleting(ix, true);
+            let (dev, ino) = m.tree.dev_ino(ix);
+            out.push(PlanItem {
+                node: m.tree.node_ref(ix),
+                path: bytes_to_path(&m.tree.path(ix)),
+                identity: Identity {
+                    dev,
+                    ino,
+                    kind: m.tree.kind(ix),
+                    apparent: m.tree.raw_size(ix).0,
+                    mtime: m.tree.mtime(ix),
+                },
+                bytes: m.tree.total(ix).alloc,
+            });
+        }
+        if out.is_empty() {
+            return;
+        }
+        let root = out
+            .first()
+            .and_then(|i| m.tree.resolve(i.node))
+            .map(|mut ix| {
+                while let Some(p) = m.tree.parent(ix) {
+                    ix = p;
+                }
+                bytes_to_path(&m.tree.path(ix))
+            })
+            .unwrap_or_default();
+        let id = self.next_plan;
+        self.next_plan += 1;
+        self.queued_plans.push_back(Plan {
+            id,
+            mode,
+            scan_root: root,
+            items: out,
+        });
+        self.start_next_plan(m);
+    }
+
+    fn start_next_plan(&mut self, m: &mut Model) {
+        if self.active_plan.is_some() {
+            if let Some(d) = m.status.deleting.as_mut() {
+                d.queued_plans = self.queued_plans.len();
+            }
+            return;
+        }
+        while let Some(mut plan) = self.queued_plans.pop_front() {
+            // Re-check items queued behind another plan: they may have gone meanwhile.
+            plan.items
+                .retain(|i| m.tree.resolve_visible(i.node).is_some());
+            if plan.items.is_empty() {
+                continue;
+            }
+            let remaining: HashSet<NodeRef> = plan.items.iter().map(|i| i.node).collect();
+            m.status.deleting = Some(DeleteProgress {
+                plan: plan.id,
+                total: remaining.len(),
+                done: 0,
+                queued_plans: self.queued_plans.len(),
+            });
+            self.active_plan = Some(ActivePlan {
+                id: plan.id,
+                total: remaining.len(),
+                remaining,
+                summary: DeleteSummary {
+                    plan: plan.id,
+                    ..Default::default()
+                },
+            });
+            self.outgoing_plans.push(plan);
+            return;
+        }
+        m.status.deleting = None;
+    }
+
+    fn retry_deferred_rescans(&mut self, m: &mut Model) {
+        for r in std::mem::take(&mut self.deferred_rescans) {
+            match m.tree.resolve_visible(r) {
+                None => {}
+                Some(ix) if self.plan_overlaps(&m.tree, ix) => self.deferred_rescans.push(r),
+                Some(_) => self.rescan(m, r),
+            }
+        }
+    }
+
+    /// Applies a result from the deleter (§7.4 steps 3-5).
+    pub fn apply_delete(&mut self, m: &mut Model, msg: DeleterMsg) {
+        match msg {
+            DeleterMsg::Item {
+                plan,
+                node,
+                bytes,
+                result,
+            } => {
+                let Some(active) = self.active_plan.as_mut().filter(|a| a.id == plan) else {
+                    return;
+                };
+                active.remaining.remove(&node);
+                let s = &mut active.summary;
+                let ix = m.tree.resolve(node);
+                let mut rescan = false;
+                match &result {
+                    DeleteResult::Deleted => {
+                        s.deleted += 1;
+                        s.bytes += bytes;
+                        if let Some(ix) = ix {
+                            m.tree.detach(ix);
+                            self.work.push_back(Work::Free);
+                        }
+                    }
+                    other => {
+                        match other {
+                            DeleteResult::Stale(_) => s.stale += 1,
+                            DeleteResult::Refused(_) => s.refused += 1,
+                            DeleteResult::Aborted => s.aborted += 1,
+                            _ => s.failed += 1,
+                        }
+                        if let Some(ix) = ix {
+                            m.tree.set_deleting(ix, false);
+                            let was_cut = m
+                                .tree
+                                .dir(ix)
+                                .is_some_and(|d| d.cut && d.state == DirState::Deleting);
+                            let partial =
+                                matches!(other, DeleteResult::Failed { partial: true, .. });
+                            // A directory on another filesystem shows none of its contents, so
+                            // a part-way delete inside it leaves nothing stale.
+                            let skipped =
+                                m.tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped);
+                            rescan = (was_cut || partial) && !skipped;
+                            if rescan {
+                                // Its totals are no longer known. Marking it cut keeps it shown
+                                // as incomplete if the rescan below is cancelled or never runs.
+                                if let Some(d) = m.tree.dir_mut(ix) {
+                                    d.cut = true;
+                                }
+                                m.tree.touch(ix);
+                            }
+                        }
+                        let name = ix
+                            .map(|ix| String::from_utf8_lossy(m.tree.name(ix)).into_owned())
+                            .unwrap_or_default();
+                        m.status.notice(format!("delete {name}: {other:?}"));
+                    }
+                }
+                let done = active.total - active.remaining.len();
+                if let Some(d) = m.status.deleting.as_mut() {
+                    d.done = done;
+                }
+                if rescan {
+                    // Its totals are no longer known: the scan was stopped or part of it is gone.
+                    self.deferred_rescans.push(node);
+                }
+                self.retry_deferred_rescans(m);
+            }
+            DeleterMsg::Done { plan } => {
+                if self.active_plan.as_ref().is_some_and(|a| a.id == plan) {
+                    let a = self.active_plan.take().expect("active");
+                    for r in a.remaining {
+                        if let Some(ix) = m.tree.resolve(r) {
+                            m.tree.set_deleting(ix, false);
+                        }
+                    }
+                    m.status.last_delete = Some(a.summary);
+                }
+                self.retry_deferred_rescans(m);
+                self.start_next_plan(m);
+            }
+        }
+        self.refresh_status(m);
     }
 
     // ---- invariants ------------------------------------------------------------------------

@@ -1,0 +1,19 @@
+[package]
+name = "dut-clean"
+description = "Deletion: plans, verification against the scan, trash and permanent delete, journal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dut-tree.workspace = true
+trash = "5.2.9"
+crossbeam-channel.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

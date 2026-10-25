@@ -34,6 +34,10 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dut_sim::SimRepor
                 t.dirs += r.dirs;
                 t.abandoned += r.abandoned;
                 t.rescans += r.rescans;
+                t.deletes += r.deletes;
+                t.deleted_items += r.deleted_items;
+                t.cancels += r.cancels;
+                t.recoveries += r.recoveries;
                 t.stalled_msgs += r.stalled_msgs;
                 t.late += r.late;
                 t.discarded_cut += r.discarded_cut;
@@ -63,6 +67,12 @@ fn coverage_of_risky_paths() {
         "stalls not exercised"
     );
     assert!(t.late > 0, "no late message after an abandon");
+    assert!(
+        t.deletes > 100 && t.deleted_items > 100,
+        "deletes {} deleted {}",
+        t.deletes,
+        t.deleted_items
+    );
 }
 
 #[test]

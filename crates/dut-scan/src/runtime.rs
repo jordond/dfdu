@@ -34,7 +34,8 @@ struct PoolState {
     stop: AtomicBool,
     target: usize,
     active: AtomicUsize,
-    stuck_replaced: AtomicUsize,
+    /// Workers allowed beyond `target`, from the last watchdog round.
+    allowed_extra: AtomicUsize,
     idle_threads: Mutex<Vec<Thread>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -43,11 +44,6 @@ struct PoolState {
 pub struct Pool {
     state: Arc<PoolState>,
     watchdog: Option<JoinHandle<()>>,
-}
-
-/// Most stuck workers replaced at once (`data-pipeline.md` §5.4).
-fn stuck_cap(workers: usize) -> usize {
-    workers.min(16)
 }
 
 impl Pool {
@@ -61,7 +57,7 @@ impl Pool {
             stop: AtomicBool::new(false),
             target: workers,
             active: AtomicUsize::new(0),
-            stuck_replaced: AtomicUsize::new(0),
+            allowed_extra: AtomicUsize::new(0),
             idle_threads: Mutex::new(Vec::new()),
             handles: Mutex::new(Vec::new()),
         });
@@ -80,13 +76,11 @@ impl Pool {
             .name("dut-watchdog".into())
             .spawn(move || {
                 while !st.stop.load(SeqCst) {
-                    let stuck = sh.watchdog_round(&*sk, ck.now());
-                    let replaced = st.stuck_replaced.load(SeqCst);
-                    if stuck > replaced && replaced < stuck_cap(st.target) {
-                        st.stuck_replaced.fetch_add(1, SeqCst);
+                    let rep = sh.watchdog_round(&*sk, ck.now());
+                    let allowed = sh.allowed_extra_workers(st.target, &rep);
+                    st.allowed_extra.store(allowed, SeqCst);
+                    if st.active.load(SeqCst) < st.target + allowed {
                         spawn_worker(&st, &sh, &sk, &ck);
-                    } else if stuck < replaced {
-                        st.stuck_replaced.store(stuck, SeqCst);
                     }
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -132,16 +126,20 @@ fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
         .name("dut-worker".into())
         .spawn(move || {
             let mut w = Worker::new(&sh, true);
+            let mut retired = false;
             loop {
                 if st.stop.load(SeqCst) {
                     break;
                 }
-                // A replacement worker made the pool larger than its target: the first worker
-                // to find itself without a task leaves.
-                if !w.is_running()
-                    && st.active.load(SeqCst) > st.target + st.stuck_replaced.load(SeqCst)
-                {
-                    break;
+                // A replacement worker made the pool larger than allowed: a worker without a
+                // task leaves. The compare-and-swap lets only as many leave as are surplus.
+                if !w.is_running() {
+                    let limit = st.target + st.allowed_extra.load(SeqCst);
+                    let a = st.active.load(SeqCst);
+                    if a > limit && st.active.compare_exchange(a, a - 1, SeqCst, SeqCst).is_ok() {
+                        retired = true;
+                        break;
+                    }
                 }
                 match w.step(&sh, &*sk, &*ck) {
                     StepResult::Progress => {}
@@ -158,7 +156,9 @@ fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
             }
             w.flush(&sh, &*sk);
             sh.remove_slot(&w.slot);
-            st.active.fetch_sub(1, SeqCst);
+            if !retired {
+                st.active.fetch_sub(1, SeqCst);
+            }
         })
         .expect("spawn worker");
     state.handles.lock().push(h);

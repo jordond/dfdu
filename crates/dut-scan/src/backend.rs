@@ -125,9 +125,24 @@ pub fn meta_from_std(m: &fs::Metadata) -> Meta {
             nlink: m.nlink() as u32,
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // Allocation size, volume id, file id and link count need the Windows backend (M2).
+        // Allocation size, volume id, file id and link count need the Windows backend (M2);
+        // std exposes the file id only on nightly. The creation time (100 ns units) stands in
+        // for the inode number, so a file or directory replaced since the scan is told apart.
+        use std::os::windows::fs::MetadataExt;
+        Meta {
+            kind,
+            apparent: m.len(),
+            alloc: m.len(),
+            mtime,
+            dev: 0,
+            ino: m.creation_time(),
+            nlink: 1,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         Meta {
             kind,
             apparent: m.len(),

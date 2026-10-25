@@ -2,6 +2,10 @@ use crate::{ErrKind, Kind, Meta, Totals};
 
 const NONE: u32 = u32::MAX;
 
+/// Separator used when joining node names into paths. On Windows it must be `\`: canonical
+/// paths there carry the `\\?\` prefix, under which `/` is not a separator.
+pub const SEP: u8 = std::path::MAIN_SEPARATOR as u8;
+
 /// Index of a slot. Valid only while the caller holds the lock it was obtained under; use
 /// [`NodeRef`] to refer to a node beyond that.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -27,6 +31,8 @@ impl NodeFlags {
     pub const FREE: u8 = 8;
     /// Root of the visible tree.
     pub const VISIBLE_ROOT: u8 = 16;
+    /// In a delete plan that has not finished.
+    pub const DELETING: u8 = 32;
 
     pub fn has(self, f: u8) -> bool {
         self.0 & f != 0
@@ -313,7 +319,7 @@ impl Tree {
         }
     }
 
-    /// Path from the topmost ancestor, components joined with `/`.
+    /// Path from the topmost ancestor, components joined with [`SEP`].
     pub fn path(&self, ix: Ix) -> Vec<u8> {
         let mut parts = vec![ix];
         let mut cur = ix;
@@ -324,8 +330,8 @@ impl Tree {
         let mut out = Vec::new();
         for (i, p) in parts.iter().rev().enumerate() {
             let name = self.name(*p);
-            if i > 0 && !out.ends_with(b"/") {
-                out.push(b'/');
+            if i > 0 && out.last() != Some(&SEP) {
+                out.push(SEP);
             }
             out.extend_from_slice(name);
         }
@@ -538,6 +544,11 @@ impl Tree {
             self.propagate_add(t, &new);
             self.propagate_sub(t, &old);
         }
+    }
+
+    pub fn set_deleting(&mut self, ix: Ix, on: bool) {
+        self.nodes[ix.0 as usize].flags.set(NodeFlags::DELETING, on);
+        self.bump();
     }
 
     pub fn set_category(&mut self, ix: Ix, category: u16) {
