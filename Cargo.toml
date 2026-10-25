@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+dut-tree = { path = "crates/dut-tree" }
+dut-scan = { path = "crates/dut-scan" }
+dut-engine = { path = "crates/dut-engine" }
+crossbeam-channel = "0.5.17"
+crossbeam-deque = "0.8.8"
+parking_lot = "0.13.0"
+proptest = "1.12.0"
+clap = { version = "4.6.7", features = ["derive"] }
+anyhow = "1.0.104"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+[profile.release]
+panic = "unwind"
+lto = "thin"
+codegen-units = 1

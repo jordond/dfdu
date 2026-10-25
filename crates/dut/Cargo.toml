@@ -1,0 +1,18 @@
+[package]
+name = "dut"
+description = "Disk usage browser for the terminal (working name)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dut-tree.workspace = true
+dut-scan.workspace = true
+dut-engine.workspace = true
+clap.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,178 @@
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::time::{Duration, Instant};
+
+use clap::{Parser, Subcommand};
+use dut_engine::{Command, Engine, EngineOptions, Model};
+use dut_scan::{JobOptions, PortableBackend};
+use dut_tree::{Ix, Tree};
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Scan a directory and print a summary.
+    Scan {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Levels of directories to print below the root.
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
+        /// Entries to print per directory, largest first.
+        #[arg(long, default_value_t = 10)]
+        top: usize,
+        /// Show apparent sizes instead of disk usage.
+        #[arg(long)]
+        apparent: bool,
+        /// Worker threads.
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Descend into other filesystems.
+        #[arg(long)]
+        cross_mounts: bool,
+        /// Print only the root total in bytes (for scripts and tests).
+        #[arg(long)]
+        bytes: bool,
+        /// Abandon directories stalled this many seconds.
+        #[arg(long, default_value_t = 30)]
+        stall_abandon: u64,
+    },
+}
+
+/// Exit codes from `docs/research/safety-persistence-ops.md` §4.3.
+const EXIT_PARTIAL: u8 = 3;
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match cli.cmd {
+        Some(Cmd::Scan {
+            path,
+            depth,
+            top,
+            apparent,
+            threads,
+            cross_mounts,
+            bytes,
+            stall_abandon,
+        }) => {
+            let mut opts = EngineOptions {
+                auto_abandon: Some(Duration::from_secs(stall_abandon)),
+                ..Default::default()
+            };
+            if let Some(t) = threads {
+                opts.workers = t;
+            }
+            let engine = Engine::start(PortableBackend, opts);
+            let t0 = Instant::now();
+            engine.send(Command::Scan {
+                path,
+                opts: JobOptions { cross_mounts },
+            });
+            engine.wait_idle(None);
+            let elapsed = t0.elapsed();
+            let code = engine.read(|m| {
+                let Some(root) = m.tree.roots().next() else {
+                    return ExitCode::from(1);
+                };
+                let errors = m.tree.total(root).errors;
+                if bytes {
+                    let t = m.tree.total(root);
+                    println!("{}", if apparent { t.apparent } else { t.alloc });
+                } else {
+                    print_tree(&m.tree, root, depth, top, apparent);
+                    print_footer(m, root, elapsed);
+                }
+                if errors > 0 || m.status.incomplete {
+                    ExitCode::from(EXIT_PARTIAL)
+                } else {
+                    ExitCode::SUCCESS
+                }
+            });
+            engine.shutdown(Duration::from_millis(500));
+            code
+        }
+        None => {
+            eprintln!("the interactive browser is not built yet; use `dut scan PATH`");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn human(n: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
+}
+
+fn size(tree: &Tree, ix: Ix, apparent: bool) -> u64 {
+    let t = tree.total(ix);
+    if apparent { t.apparent } else { t.alloc }
+}
+
+fn print_tree(tree: &Tree, root: Ix, depth: usize, top: usize, apparent: bool) {
+    println!(
+        "{:>10}  {}",
+        human(size(tree, root, apparent)),
+        String::from_utf8_lossy(tree.name(root))
+    );
+    let mut stack = vec![(root, 0usize)];
+    while let Some((ix, d)) = stack.pop() {
+        if d >= depth {
+            continue;
+        }
+        let mut kids: Vec<Ix> = tree.children(ix).collect();
+        kids.sort_by_key(|&c| std::cmp::Reverse(size(tree, c, apparent)));
+        let shown: Vec<Ix> = kids.into_iter().take(top).collect();
+        for &c in shown.iter().rev() {
+            stack.push((c, d + 1));
+        }
+        for &c in &shown {
+            let slash = if tree.dir(c).is_some() { "/" } else { "" };
+            println!(
+                "{:>10}  {}{}{}",
+                human(size(tree, c, apparent)),
+                "  ".repeat(d + 1),
+                String::from_utf8_lossy(tree.name(c)),
+                slash
+            );
+            let _ = c;
+        }
+        break;
+    }
+}
+
+fn print_footer(m: &Model, root: Ix, elapsed: Duration) {
+    let t = m.tree.total(root);
+    let s = &m.status.stats;
+    eprintln!(
+        "{} items, {} errors, {:.2}s{}",
+        t.items,
+        t.errors,
+        elapsed.as_secs_f64(),
+        if m.status.incomplete {
+            ", incomplete"
+        } else {
+            ""
+        }
+    );
+    if s.corrupt + s.lost + s.duplicate > 0 {
+        eprintln!(
+            "pipeline: corrupt {} lost {} duplicate {}",
+            s.corrupt, s.lost, s.duplicate
+        );
+    }
+}

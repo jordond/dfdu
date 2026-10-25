@@ -1,0 +1,17 @@
+[package]
+name = "dut-engine"
+description = "The applier: single writer of the tree, jobs, gate, accounting, hard links"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dut-tree.workspace = true
+dut-scan.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
