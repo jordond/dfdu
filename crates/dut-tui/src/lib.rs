@@ -1,8 +1,11 @@
 //! The interactive browser (`docs/research/tui-design.md`). The run loop reads the engine model
 //! under the read lock only to copy a [`snapshot::Snapshot`], then draws from the copy.
 //!
-//! Redraws: at once on input, at most 10 times a second when the engine reports changes, every
-//! 100 ms while a spinner is visible, at the automatic re-sort deadline, and never when idle.
+//! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
+//! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
+//! the automatic re-sort deadline, and never when idle. Input is drawn from the snapshot held
+//! unless it changed the directory or size mode; the model is read again when scan data is
+//! due, at most 10 times a second and less often when reading takes long (large directories).
 
 mod app;
 mod order;
@@ -54,11 +57,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     // engine, so for those threads the terminal must be left alone.
     let restore = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let caught_by_engine = matches!(
-            std::thread::current().name(),
-            Some("dut-worker" | "dut-applier")
-        );
-        if !caught_by_engine {
+        if !dut_engine::panic_is_caught_by_engine(std::thread::current().name()) {
             // ratatui's hook leaves raw mode and the alternate screen but does not show the
             // cursor; the terminal's Drop would, but only if unwinding gets that far.
             let _ = ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show);
@@ -106,8 +105,9 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
 }
 
 /// The browser's loop: terminal events from `input`, frames to `terminal`. Returns when the user
-/// quits or `input` closes.
-fn event_loop<T, B>(
+/// quits or `input` closes. Public for `tests/latency.rs`, which passes a recording backend and
+/// a channel it writes keys to.
+pub fn event_loop<T, B>(
     terminal: &mut Terminal<T>,
     engine: &Engine<B>,
     input: Receiver<Event>,
@@ -124,47 +124,76 @@ where
     let mut focus = None;
     let mut seen_version = None;
     let mut last_draw: Option<Instant> = None;
+    // When the snapshot was last read, how long the read held the lock, and its size mode.
+    let mut last_read: Option<Instant> = None;
+    let mut read_cost = Duration::ZERO;
+    let mut read_mode = app.size_mode;
     let (mut input_dirty, mut data_dirty) = (true, true);
+    // The first frame is drawn before the scan has read anything. Until a frame has shown
+    // entries, data is drawn as soon as it arrives instead of waiting for `DATA_FRAME`.
+    let mut shown_entries = false;
     loop {
         let now = Instant::now();
-        let data_ready =
-            data_dirty && last_draw.is_none_or(|t| now.duration_since(t) >= DATA_FRAME);
+        // A read copies the current directory under the read lock, about 100 ms for one of a
+        // million entries. Scan data is read at most every `DATA_FRAME`, and at most every
+        // nine times the cost of the last read, so the lock is held at most a tenth of the
+        // time and the scan keeps going.
+        let data_interval = DATA_FRAME.max(read_cost * 9);
+        let data_ready = data_dirty
+            && (!shown_entries || last_read.is_none_or(|t| now.duration_since(t) >= data_interval));
+        // Keys are drawn from the snapshot already held, except when they opened another
+        // directory or changed the size mode.
+        let stale = app.target.path != app.snap.dir_path || app.size_mode != read_mode;
+        let read = data_ready || stale;
         let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
         let animating =
             spinners_visible(&app) && last_draw.is_none_or(|t| now.duration_since(t) >= DATA_FRAME);
-        if input_dirty || data_ready || sort_due || animating {
-            let (snap, target) = {
+        if input_dirty || read || sort_due || animating {
+            if read {
                 let mut target = app.target.clone();
                 let mode = app.size_mode;
-                let snap = engine.read(|m| snapshot::build(m, &mut target, mode));
-                (snap, target)
-            };
-            if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-                // The engine stopped; showing stale data as if it were live would mislead.
-                return Err(io::Error::other(msg));
-            }
-            seen_version = Some(snap.version);
-            if snap.focus != focus {
-                if let Some((job, dir)) = snap.focus {
-                    engine.scanner().set_focus(JobId(job), DirId(dir));
+                let (snap, cost) = engine.read(|m| {
+                    let t = Instant::now();
+                    (snapshot::build(m, &mut target, mode), t.elapsed())
+                });
+                if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
+                    // The engine stopped; showing stale data as if it were live would mislead.
+                    return Err(io::Error::other(msg));
                 }
-                focus = snap.focus;
+                (last_read, read_cost, read_mode) = (Some(now), cost, mode);
+                seen_version = Some(snap.version);
+                if snap.focus != focus {
+                    if let Some((job, dir)) = snap.focus {
+                        engine.scanner().set_focus(JobId(job), DirId(dir));
+                    }
+                    focus = snap.focus;
+                }
+                app.target = target;
+                app.refresh(snap, now);
+                data_dirty = false;
+            } else {
+                app.reorder(now);
             }
-            app.target = target;
-            app.refresh(snap, now);
             terminal.draw(|f| view::draw(f, &mut app, now))?;
             last_draw = Some(now);
+            shown_entries |= !app.snap.entries.is_empty();
             input_dirty = false;
-            data_dirty = false;
         }
         if app.quit {
             return Ok(());
         }
 
         let mut wake = IDLE;
-        let since = last_draw.map_or(Duration::ZERO, |t| now.duration_since(t));
-        if data_dirty || spinners_visible(&app) {
-            wake = wake.min(DATA_FRAME.saturating_sub(since));
+        let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| now.duration_since(t));
+        if data_dirty {
+            wake = wake.min(
+                DATA_FRAME
+                    .max(read_cost * 9)
+                    .saturating_sub(since(last_read)),
+            );
+        }
+        if spinners_visible(&app) {
+            wake = wake.min(DATA_FRAME.saturating_sub(since(last_draw)));
         }
         if let Some(t) = app.next_sort_at() {
             wake = wake.min(t.saturating_duration_since(now));

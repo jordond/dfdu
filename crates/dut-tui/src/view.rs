@@ -214,13 +214,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, frame: u64) {
         };
         lines.push(Line::styled(msg, t.dim));
     }
-    let max = app
-        .rows
-        .iter()
-        .map(|&i| app.snap.entries[i].size)
-        .max()
-        .unwrap_or(0)
-        .max(1);
+    let max = app.rows_largest.max(1);
     let total = app.size_mode.of(&app.snap.dir_total).max(1);
     let bw = bar_width(area.width);
     let sel = app.selected_index();

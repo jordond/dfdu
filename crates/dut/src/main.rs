@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+mod inject;
+
 use clap::{Args, Parser, Subcommand};
 use dut_engine::{Command, Engine, EngineOptions, Model, Timing};
 use dut_scan::{Backend, JobOptions, PortableBackend, native_backend};
@@ -128,10 +130,15 @@ const EXIT_PARTIAL: u8 = 3;
 
 /// Writes a crash report for a panic on any thread, with the engine's counters and last
 /// messages, then runs the previous hook. In the browser, `dut_tui::run` wraps this hook in one
-/// that restores the terminal first.
+/// that restores the terminal first. Panics the engine catches (a scan worker's, which becomes a
+/// `Panicked` directory and an error in the scan's result, and the applier's, for which the
+/// engine writes its own report) are left to the engine: no file, no message.
 fn install_crash_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        if dut_engine::panic_is_caught_by_engine(std::thread::current().name()) {
+            return;
+        }
         if let Some(dir) = dut_engine::default_crash_dir() {
             let thread = std::thread::current();
             let report = format!(
@@ -260,6 +267,13 @@ fn scan(args: ScanArgs) -> ExitCode {
         eprintln!("storage: {storage:?}, {} workers", opts.workers);
     }
     match args.backend {
+        BackendArg::Native if inject::requested() => scan_with(
+            Engine::start(
+                inject::PanicOnSecondOpen::new(native_backend(storage)),
+                opts,
+            ),
+            args,
+        ),
         BackendArg::Native => scan_with(Engine::start(native_backend(storage), opts), args),
         BackendArg::Portable => scan_with(Engine::start(PortableBackend::default(), opts), args),
     }

@@ -19,6 +19,6 @@ pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
 pub use recent::{Event, RECENT, Recent};
 pub use runtime::{
-    Engine, EngineOptions, Inbox, crash_details, crash_state, default_crash_dir, workers_for,
-    write_crash_report,
+    Engine, EngineOptions, Inbox, crash_details, crash_state, default_crash_dir,
+    panic_is_caught_by_engine, workers_for, write_crash_report,
 };

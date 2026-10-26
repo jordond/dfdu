@@ -2,6 +2,7 @@
 //! changes of [`App`] plus effects for the run loop to carry out; [`App::refresh`] folds a new
 //! [`Snapshot`] into the state and applies the row-stability rules.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -64,7 +65,7 @@ impl Selection {
     fn of(e: &EntryData) -> Self {
         Selection {
             node: Some(e.node),
-            name: e.name.clone(),
+            name: e.name.to_vec(),
             dev_ino: e.dev_ino,
         }
     }
@@ -91,6 +92,8 @@ pub struct App {
     /// Entries that arrived since the last sort, shown as one summary row.
     pub new_count: usize,
     pub new_largest: u64,
+    /// Largest size among `rows`, for the bars.
+    pub rows_largest: u64,
     pub scroll: usize,
     pub list_height: usize,
     pub overlay: Overlay,
@@ -106,6 +109,8 @@ pub struct App {
     /// row instead of returning to the top.
     moved: bool,
     cursors: HashMap<PathBuf, Cursor>,
+    /// Row where [`App::selected_index`] last found the selection.
+    sel_hint: Cell<usize>,
 }
 
 /// One line describing a finished delete plan.
@@ -142,6 +147,7 @@ impl App {
             rows: Vec::new(),
             new_count: 0,
             new_largest: 0,
+            rows_largest: 0,
             scroll: 0,
             list_height: 1,
             overlay: Overlay::None,
@@ -156,14 +162,21 @@ impl App {
             changed_since_sort: false,
             moved: false,
             cursors: HashMap::new(),
+            sel_hint: Cell::new(0),
         }
     }
 
     pub fn selected_index(&self) -> Option<usize> {
         let node = self.selected.as_ref()?.node?;
-        self.rows
-            .iter()
-            .position(|&i| self.snap.entries[i].node == node)
+        let is_sel = |&i: &usize| self.snap.entries[i].node == node;
+        // Usually the row found last time; a directory can have a million rows.
+        let hint = self.sel_hint.get();
+        if self.rows.get(hint).is_some_and(is_sel) {
+            return Some(hint);
+        }
+        let found = self.rows.iter().position(is_sel)?;
+        self.sel_hint.set(found);
+        Some(found)
     }
 
     pub fn selected_entry(&self) -> Option<&EntryData> {
@@ -200,9 +213,21 @@ impl App {
             self.status = Some(delete_summary(d));
         }
         let dir_changed = snap.dir_path != self.snap.dir_path;
-        if !dir_changed {
-            self.carry_over_swapped(&snap);
-        }
+        // While a scan runs, entries are only added: the old entries are a prefix of the new
+        // ones and indices into them stay valid, so nothing needs to be looked up by node.
+        let appended = !dir_changed
+            && snap.entries.len() >= self.snap.entries.len()
+            && self
+                .snap
+                .entries
+                .iter()
+                .zip(&snap.entries)
+                .all(|(a, b)| a.node == b.node);
+        let swapped = if dir_changed || appended {
+            HashMap::new()
+        } else {
+            self.carry_over_swapped(&snap)
+        };
         if snap.version != self.snap.version {
             self.changed_since_sort = true;
         }
@@ -218,53 +243,80 @@ impl App {
             self.done_at = None;
         }
         let old_index = self.selected_index();
-        self.snap = snap;
-        let visible: Vec<EntryData> = self
-            .snap
-            .entries
-            .iter()
-            .filter(|e| !(self.hide_hidden && e.hidden()))
-            .cloned()
-            .collect();
+        let old = std::mem::replace(&mut self.snap, snap);
+        if !dir_changed && !appended {
+            let pos: HashMap<NodeRef, usize> = self
+                .snap
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.node, i))
+                .collect();
+            self.order.remap(|i| {
+                let node = old.entries[i].node;
+                pos.get(swapped.get(&node).unwrap_or(&node)).copied()
+            });
+        }
+        drop(old);
+        self.update_order(true, dir_changed, finished, old_index, now);
+    }
+
+    /// Applies sort requests and the automatic sort to the snapshot already held, for a frame
+    /// drawn without reading the engine again.
+    pub fn reorder(&mut self, now: Instant) {
+        let old_index = self.selected_index();
+        self.update_order(false, false, false, old_index, now);
+    }
+
+    /// Sorts or updates the row order, then puts the selection and scroll position back.
+    /// `fresh`: a new snapshot was just folded in.
+    fn update_order(
+        &mut self,
+        fresh: bool,
+        dir_changed: bool,
+        finished: bool,
+        old_index: Option<usize>,
+        now: Instant,
+    ) {
+        let hide = self.hide_hidden;
+        let visible = |e: &EntryData| !(hide && e.hidden());
+        let entries = &self.snap.entries;
         let requested = std::mem::take(&mut self.sort_requested);
         let resorted = if dir_changed || requested {
             self.order = Order::default();
-            self.order.sort_exact(&visible, self.sort);
+            self.order.sort_exact(entries, visible, self.sort);
             true
         } else if self.auto_sort_due(now)
             || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
         {
-            self.order.sort_auto(&visible, self.sort);
+            self.order.sort_auto(entries, visible, self.sort);
             true
-        } else {
-            self.order.sync(&visible, self.sort);
+        } else if fresh {
+            self.order.sync(entries, visible, self.sort);
             false
+        } else {
+            // The entries and the order are those of the last frame: nothing below changes.
+            return;
         };
         if resorted {
             self.last_sort = now;
             self.changed_since_sort = false;
         }
 
-        let pos: HashMap<NodeRef, usize> = self
-            .snap
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (e.node, i))
-            .collect();
-        self.rows = self
-            .order
-            .rows()
-            .iter()
-            .filter_map(|r| pos.get(r).copied())
-            .collect();
+        self.rows.clear();
+        self.rows.extend_from_slice(self.order.rows());
         self.new_count = self.order.new_entries().len();
         self.new_largest = self
             .order
             .new_entries()
             .iter()
-            .filter_map(|r| pos.get(r))
-            .map(|&i| self.snap.entries[i].size)
+            .map(|&i| entries[i].size)
+            .max()
+            .unwrap_or(0);
+        self.rows_largest = self
+            .rows
+            .iter()
+            .map(|&i| entries[i].size)
             .max()
             .unwrap_or(0);
 
@@ -286,17 +338,19 @@ impl App {
 
     /// A rescan replaces nodes. Rows whose node disappeared take over the new node with the same
     /// name and identity, so they keep their position instead of turning into "new" entries.
-    fn carry_over_swapped(&mut self, snap: &Snapshot) {
+    /// Returns the replaced nodes, old to new.
+    fn carry_over_swapped(&mut self, snap: &Snapshot) -> HashMap<NodeRef, NodeRef> {
+        let mut swapped = HashMap::new();
         let present: HashSet<NodeRef> = snap.entries.iter().map(|e| e.node).collect();
         let before: HashSet<NodeRef> = self.snap.entries.iter().map(|e| e.node).collect();
         let fresh: HashMap<(&[u8], (u64, u64)), NodeRef> = snap
             .entries
             .iter()
             .filter(|e| !before.contains(&e.node))
-            .map(|e| ((e.name.as_slice(), e.dev_ino), e.node))
+            .map(|e| ((&e.name[..], e.dev_ino), e.node))
             .collect();
         if fresh.is_empty() {
-            return;
+            return swapped;
         }
         for old in self
             .snap
@@ -304,13 +358,14 @@ impl App {
             .iter()
             .filter(|e| !present.contains(&e.node))
         {
-            if let Some(&new) = fresh.get(&(old.name.as_slice(), old.dev_ino)) {
-                self.order.replace(old.node, new);
+            if let Some(&new) = fresh.get(&(&old.name[..], old.dev_ino)) {
+                swapped.insert(old.node, new);
                 if let Some(sel) = self.selected.as_mut().filter(|s| s.node == Some(old.node)) {
                     sel.node = Some(new);
                 }
             }
         }
+        swapped
     }
 
     /// Re-finds the selection after a refresh: by reference, then by name and identity (rescan
@@ -322,7 +377,7 @@ impl App {
         if let Some(sel) = &self.selected {
             let found = self.rows.iter().find(|&&i| {
                 let e = &self.snap.entries[i];
-                e.name == sel.name && (sel.dev_ino == (0, 0) || e.dev_ino == sel.dev_ino)
+                e.name[..] == sel.name[..] && (sel.dev_ino == (0, 0) || e.dev_ino == sel.dev_ino)
             });
             if let Some(&i) = found {
                 self.selected = Some(Selection::of(&self.snap.entries[i]));
@@ -340,6 +395,7 @@ impl App {
     fn select(&mut self, index: usize) {
         if let Some(&i) = self.rows.get(index) {
             self.selected = Some(Selection::of(&self.snap.entries[i]));
+            self.sel_hint.set(index);
         }
     }
 
@@ -713,7 +769,7 @@ mod tests {
         assert_eq!(app.snap.entries[app.rows[0]].name, b"b");
         // The cursor was never moved, so it goes to the top with the new order.
         assert_eq!(
-            app.selected_entry().map(|e| e.name.clone()),
+            app.selected_entry().map(|e| e.name.to_vec()),
             Some(b"b".to_vec())
         );
     }
@@ -754,10 +810,34 @@ mod tests {
         app.refresh(snap(es, 2), t0 + Duration::from_secs(3));
         assert_eq!(app.selected_index(), Some(0));
         assert_eq!(
-            app.selected_entry().map(|e| e.name.clone()),
+            app.selected_entry().map(|e| e.name.to_vec()),
             Some(b"b".to_vec())
         );
         assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn sort_keys_apply_without_a_new_snapshot() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let es = vec![
+            test_entry(0, "b", 30),
+            test_entry(1, "c", 20),
+            test_entry(2, "a", 10),
+        ];
+        app.refresh(snap(es, 1), t0);
+        app.key(key(KeyCode::Down), t0);
+        let picked = app.selected.as_ref().and_then(|s| s.node);
+        app.key(key(KeyCode::Char('n')), t0);
+        app.reorder(t0);
+        let names: Vec<&[u8]> = app
+            .rows
+            .iter()
+            .map(|&i| &app.snap.entries[i].name[..])
+            .collect();
+        assert_eq!(names, [b"a", b"b", b"c"]);
+        assert_eq!(app.selected.as_ref().and_then(|s| s.node), picked);
+        assert_eq!(app.selected_index(), Some(2));
     }
 
     #[test]

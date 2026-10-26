@@ -12,7 +12,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 use dut_clean::{DeleterMsg, Plan, spawn_deleter};
 use dut_scan::runtime::{Pool, RealClock};
 use dut_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockWriteGuard};
 
 use crate::applier::{Applier, Command, Model, Timing};
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
@@ -105,6 +105,14 @@ pub fn crash_state() -> Option<String> {
         Some(g) => crash_details(&g),
         None => "engine state: not read, the model stayed locked for 500 ms\n".to_string(),
     })
+}
+
+/// Whether a panic on the thread with this name is caught and recorded by the engine: a scan
+/// worker's (recorded as a `Panicked` directory) or the applier's (recorded as the engine's fatal
+/// error, with its own crash report). A panic hook that writes a crash report or restores the
+/// terminal must leave these alone.
+pub fn panic_is_caught_by_engine(thread_name: Option<&str>) -> bool {
+    matches!(thread_name, Some("dut-worker" | "dut-applier"))
 }
 
 /// Writes a crash report into `dir`; returns its path.
@@ -475,7 +483,11 @@ fn applier_loop<B: Backend>(
         t.locked_ns += held.as_nanos() as u64;
         t.hold[Timing::bucket(held)] += 1;
         t.wait[Timing::bucket(started - asked)] += 1;
-        drop(g);
+        // A plain unlock lets this thread take the lock again for the next slice before a
+        // waiting reader wakes up; with work queued back to back (the end of a scan) the UI
+        // then waited 40-55 ms for one frame. A fair unlock hands the lock to the waiting
+        // reader.
+        RwLockWriteGuard::unlock_fair(g);
         for p in outgoing {
             let _ = plans.send(p);
         }

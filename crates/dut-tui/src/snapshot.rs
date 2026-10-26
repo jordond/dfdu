@@ -65,10 +65,65 @@ pub enum Mark {
     Incomplete,
 }
 
+/// An entry name. Short names (most of them) are stored inline, so that copying a directory
+/// of a million entries into a snapshot, and dropping the previous one, does not allocate and
+/// free a million times.
+#[derive(Clone)]
+pub enum Name {
+    Inline(u8, [u8; Name::INLINE]),
+    Heap(Box<[u8]>),
+}
+
+impl Name {
+    const INLINE: usize = 22;
+}
+
+impl From<&[u8]> for Name {
+    fn from(b: &[u8]) -> Self {
+        if b.len() <= Name::INLINE {
+            let mut buf = [0; Name::INLINE];
+            buf[..b.len()].copy_from_slice(b);
+            Name::Inline(b.len() as u8, buf)
+        } else {
+            Name::Heap(b.into())
+        }
+    }
+}
+
+impl std::ops::Deref for Name {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Name::Inline(n, buf) => &buf[..*n as usize],
+            Name::Heap(b) => b,
+        }
+    }
+}
+
+impl std::fmt::Debug for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        String::from_utf8_lossy(self).fmt(f)
+    }
+}
+
+impl PartialEq for Name {
+    fn eq(&self, other: &Name) -> bool {
+        self[..] == other[..]
+    }
+}
+
+impl Eq for Name {}
+
+impl<const N: usize> PartialEq<&[u8; N]> for Name {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self[..] == other[..]
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EntryData {
     pub node: NodeRef,
-    pub name: Vec<u8>,
+    pub name: Name,
     pub kind: Kind,
     pub is_dir: bool,
     /// Size in the current mode (disk usage or apparent).
@@ -252,7 +307,7 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
     if tree.flags(ix).has(dut_tree::NodeFlags::NETWORK) {
         return Mark::Network;
     }
-    if rescanning.contains(&tree.node_ref(ix)) {
+    if !rescanning.is_empty() && rescanning.contains(&tree.node_ref(ix)) {
         return Mark::Rescanning;
     }
     match tree.dir(ix) {
@@ -326,13 +381,17 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     snap.at_root = dir == root;
     snap.dir_total = tree.total(dir);
     snap.dir_mark = Some(mark_of(tree, dir, &rescanning));
+    // This runs under the read lock for every entry of the directory, which can have a
+    // million: each lookup is done once, and the error and subvolume lookups only when the
+    // entry has an error or the scan has subvolumes.
     snap.entries = tree
         .children(dir)
         .map(|c| {
             let t = tree.total(c);
+            let error = tree.error(c);
             EntryData {
                 node: tree.node_ref(c),
-                name: tree.name(c).to_vec(),
+                name: tree.name(c).into(),
                 kind: tree.kind(c),
                 is_dir: tree.dir(c).is_some(),
                 size: size(&t),
@@ -340,10 +399,14 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
                 mtime: tree.mtime(c),
                 dev_ino: tree.dev_ino(c),
                 mark: mark_of(tree, c, &rescanning),
-                error: tree.error(c),
-                problem: crate::problem(tree, c),
-                errors_inside: crate::errors_below(tree, c),
-                label: subvol_label(m, c),
+                error,
+                problem: error.and_then(|_| crate::problem(tree, c)),
+                errors_inside: t.errors - error.is_some() as u64,
+                label: if m.subvols.is_empty() {
+                    None
+                } else {
+                    subvol_label(m, c)
+                },
                 shared_out: t.shared_out,
                 compressed: tree.flags(c).has(dut_tree::NodeFlags::COMPRESSED),
                 pseudo: false,
@@ -355,7 +418,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     if mode == SizeMode::Disk && home > 0 {
         snap.entries.push(EntryData {
             node: tree.node_ref(dir),
-            name: b"(shared between entries)".to_vec(),
+            name: b"(shared between entries)"[..].into(),
             kind: Kind::Other,
             is_dir: false,
             size: home,
@@ -401,7 +464,7 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
     }
     EntryData {
         node: t.node_ref(last),
-        name: name.as_bytes().to_vec(),
+        name: name.as_bytes().into(),
         kind: Kind::File,
         is_dir: false,
         size,

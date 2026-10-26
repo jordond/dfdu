@@ -169,7 +169,7 @@ fn completed_scan_view() {
     );
     // The cursor starts on the first row.
     assert_eq!(
-        app.selected_entry().map(|e| e.name.clone()),
+        app.selected_entry().map(|e| e.name.to_vec()),
         Some(b"big".to_vec())
     );
 }
@@ -366,7 +366,12 @@ fn errors_are_listed_and_lead_to_the_entry() {
 
     let mut target = Target::root();
     let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
-    let entry = |name: &[u8]| snap.entries.iter().find(|e| e.name == name).unwrap();
+    let entry = |name: &[u8]| {
+        snap.entries
+            .iter()
+            .find(|e| e.name[..] == name[..])
+            .unwrap()
+    };
     assert_eq!(entry(b"a").mark, Mark::ErrorsInside);
     assert_eq!(entry(b"a").errors_inside, 1);
     assert_eq!(

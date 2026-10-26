@@ -8,19 +8,24 @@
 //! lock, which a loop that drew under the lock would do. The first two must take about the same
 //! time; the control must not finish before its block ends, which shows the test can see a UI
 //! that stops the applier.
+//!
+//! In the blocked-in-draw run the backend holds one directory's open until the UI has blocked,
+//! so the scan is running when the UI blocks whatever the machine's load, and it finishes while
+//! the UI is still blocked.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::unbounded;
 use dut_engine::{Command, Engine, EngineOptions};
-use dut_scan::JobOptions;
-use dut_tree::Totals;
+use dut_scan::{Backend, FsClass, JobOptions, NativeBackend};
+use dut_tree::{Meta, Subvol, Totals};
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::Event;
 use ratatui::layout::Rect;
@@ -68,6 +73,74 @@ impl Write for GatedWriter {
     }
 }
 
+/// Holds the scan until released.
+#[derive(Default)]
+struct Hold {
+    released: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl Hold {
+    /// Waits for `release`; gives up after a minute so a test that never releases fails instead
+    /// of hanging.
+    fn wait(&self) {
+        let guard = self.released.lock().unwrap();
+        let _ = self
+            .cv
+            .wait_timeout_while(guard, Duration::from_secs(60), |r| !*r)
+            .unwrap();
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+/// The native backend, except that opening the second directory (the first below the root) waits
+/// for `hold`. The other workers go on with the rest of the tree; the job cannot end until that
+/// directory has been read.
+struct Held {
+    inner: NativeBackend,
+    hold: Option<Arc<Hold>>,
+    opens: AtomicUsize,
+}
+
+impl Backend for Held {
+    type Loc = <NativeBackend as Backend>::Loc;
+    type Stream = <NativeBackend as Backend>::Stream;
+
+    fn loc_from_path(&self, path: &Path) -> Self::Loc {
+        self.inner.loc_from_path(path)
+    }
+    fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
+        self.inner.stat_root(loc)
+    }
+    fn open(&self, loc: &Self::Loc) -> io::Result<Self::Stream> {
+        if self.opens.fetch_add(1, SeqCst) == 1
+            && let Some(h) = &self.hold
+        {
+            h.wait();
+        }
+        self.inner.open(loc)
+    }
+    fn subvolume(&self, loc: &Self::Loc) -> io::Result<Option<Subvol>> {
+        self.inner.subvolume(loc)
+    }
+    fn shares_extents(&self, loc: &Self::Loc) -> bool {
+        self.inner.shares_extents(loc)
+    }
+    fn data_profile(&self, loc: &Self::Loc) -> Option<(&'static str, f64)> {
+        self.inner.data_profile(loc)
+    }
+    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
+        self.inner.duplicate_mounts(scope)
+    }
+    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        self.inner.mount_class(mount, dev)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Ui {
     /// The real loop, drawing at its usual rate.
@@ -82,6 +155,8 @@ enum Ui {
 struct Outcome {
     totals: Totals,
     took: Duration,
+    /// How long the scan was held waiting for the UI to block; zero when it was not held.
+    held: Duration,
     peak: usize,
     capacity: usize,
     frames: u64,
@@ -108,8 +183,13 @@ fn make_tree(root: &Path, dirs: usize, files: usize) {
 
 fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
     let storage = dut_sys::storage(root);
+    let hold = (ui == Ui::BlockedInDraw).then(|| Arc::new(Hold::default()));
     let engine = Arc::new(Engine::start(
-        dut_scan::native_backend(storage),
+        Held {
+            inner: dut_scan::native_backend(storage),
+            hold: hold.clone(),
+            opens: AtomicUsize::new(0),
+        },
         EngineOptions {
             workers: dut_engine::workers_for(storage),
             ..Default::default()
@@ -138,6 +218,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
+    let mut held = Duration::ZERO;
     let release = (ui != Ui::Drawing).then(|| {
         // Block as soon as the job has started (the applier starts it under the write lock).
         while engine.read(|m| m.status.commands_applied) == 0 {
@@ -159,10 +240,13 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
             thread::yield_now();
         }
         if ui == Ui::BlockedInDraw {
+            // The held directory keeps the job from ending, so this holds by construction.
             assert!(
                 engine.read(|m| m.status.busy()),
-                "the scan ended before the UI blocked; use a larger tree"
+                "the scan ended before the UI blocked"
             );
+            held = t0.elapsed();
+            hold.as_ref().unwrap().release();
         }
         let g = gate.clone();
         thread::spawn(move || {
@@ -187,6 +271,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
     let out = Outcome {
         totals,
         took,
+        held,
         peak: engine.budget().peak(),
         capacity: engine.budget().capacity(),
         frames: gate.flushes.load(SeqCst),
@@ -216,8 +301,9 @@ fn check(dirs: usize, files: usize, block: Duration) {
         ("blocked holding the read lock", &control),
     ] {
         eprintln!(
-            "{name}: scan {:?}, {} flushes, in transit at most {:.1} MiB of {} MiB",
+            "{name}: scan {:?} (held {:?}), {} flushes, in transit at most {:.1} MiB of {} MiB",
             o.took,
+            o.held,
             o.frames,
             o.peak as f64 / (1 << 20) as f64,
             o.capacity >> 20
@@ -227,7 +313,8 @@ fn check(dirs: usize, files: usize, block: Duration) {
     }
     assert_eq!(blocked.totals, drawing.totals);
     assert!(drawing.frames > 0);
-    let allowed = drawing.took.mul_f64(1.5) + Duration::from_millis(100);
+    // The blocked run waited `held` for its UI to block before the held directory could be read.
+    let allowed = drawing.took.mul_f64(1.5) + Duration::from_millis(100) + blocked.held;
     assert!(
         blocked.took <= allowed,
         "blocked UI: scan {:?}, drawing UI: {:?}",
