@@ -69,20 +69,37 @@ impl<L> Block<L> {
     }
 }
 
+/// Entries read from a directory and not yet stat'ed. The worker reading the directory stats
+/// them itself, or hands them to a chunk task another worker runs (`docs/data-pipeline.md`
+/// §4.2), so a wide directory is stat'ed by several workers at once.
+pub trait RawBlock<L>: Send {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Stats every entry into `out`, in any order. Entries that cannot be stat'ed are recorded
+    /// with their error. `ErrorKind::WouldBlock` means "not ready, call again later" (simulated
+    /// backends only); the next call continues where this one stopped.
+    fn stat(&mut self, out: &mut Block<L>) -> io::Result<()>;
+}
+
+pub type Raw<L> = Box<dyn RawBlock<L>>;
+
 pub trait DirStream: Send {
     type Loc;
 
-    /// Appends entries to `out` until `max_entries` entries or `max_name_bytes` of names are in
-    /// it, or the directory ends. Returns `Ok(true)` if more entries may follow and `Ok(false)`
-    /// at the end. An error after a partial read is returned on the next call, so the entries
-    /// already read are kept. `ErrorKind::WouldBlock` means "not ready, call again later"; only
-    /// simulated backends return it.
-    fn next_block(
+    /// Reads entries, without stat'ing them, until `max_entries` entries or `max_name_bytes`
+    /// of names, or the directory ends. The flag is `true` if more entries may follow and
+    /// `false` at the end. An error after a partial read is returned on the next call, so the
+    /// entries already read are kept. `ErrorKind::WouldBlock` means "not ready, call again
+    /// later"; only simulated backends return it.
+    fn next_raw(
         &mut self,
-        out: &mut Block<Self::Loc>,
         max_entries: usize,
         max_name_bytes: usize,
-    ) -> io::Result<bool>;
+    ) -> io::Result<(Raw<Self::Loc>, bool)>;
 }
 
 pub trait Backend: Send + Sync + 'static {
@@ -155,57 +172,68 @@ pub struct PortableStream {
     done: bool,
 }
 
+/// `std::fs` entries; each one stats itself relative to the directory it was read from.
+struct PortableRaw(Vec<fs::DirEntry>);
+
+impl RawBlock<PathBuf> for PortableRaw {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn stat(&mut self, out: &mut Block<PathBuf>) -> io::Result<()> {
+        for entry in self.0.drain(..) {
+            let name = entry.file_name();
+            let mut meta = entry.metadata().map(|m| Meta::from_metadata(&m));
+            let child = match &mut meta {
+                Ok(m) if m.kind == Kind::Dir => {
+                    let path = entry.path();
+                    m.mount = mount_of(&path);
+                    Some(path)
+                }
+                _ => None,
+            };
+            out.push(
+                &dut_tree::name_bytes(&name),
+                meta.map_err(|e| ErrKind::from(&e)),
+                child,
+            );
+        }
+        Ok(())
+    }
+}
+
 impl DirStream for PortableStream {
     type Loc = PathBuf;
 
-    fn next_block(
+    fn next_raw(
         &mut self,
-        out: &mut Block<PathBuf>,
         max_entries: usize,
         max_name_bytes: usize,
-    ) -> io::Result<bool> {
+    ) -> io::Result<(Raw<PathBuf>, bool)> {
         if let Some(e) = self.pending_err.take() {
             self.done = true;
             return Err(e);
         }
-        if self.done {
-            return Ok(false);
-        }
-        let start = out.entries.len();
-        while out.entries.len() - start < max_entries && out.names.len() < max_name_bytes {
+        let mut raw = Vec::new();
+        let mut name_bytes = 0;
+        while !self.done && raw.len() < max_entries && name_bytes < max_name_bytes {
             match self.iter.next() {
-                None => {
-                    self.done = true;
-                    return Ok(false);
-                }
+                None => self.done = true,
                 Some(Err(e)) => {
-                    if out.entries.len() == start {
+                    if raw.is_empty() {
                         self.done = true;
                         return Err(e);
                     }
                     self.pending_err = Some(e);
-                    return Ok(true);
+                    break;
                 }
                 Some(Ok(entry)) => {
-                    let name = entry.file_name();
-                    let mut meta = entry.metadata().map(|m| Meta::from_metadata(&m));
-                    let child = match &mut meta {
-                        Ok(m) if m.kind == Kind::Dir => {
-                            let path = entry.path();
-                            m.mount = mount_of(&path);
-                            Some(path)
-                        }
-                        _ => None,
-                    };
-                    out.push(
-                        &dut_tree::name_bytes(&name),
-                        meta.map_err(|e| ErrKind::from(&e)),
-                        child,
-                    );
+                    name_bytes += entry.file_name().len();
+                    raw.push(entry);
                 }
             }
         }
-        Ok(true)
+        Ok((Box::new(PortableRaw(raw)), !self.done))
     }
 }
 

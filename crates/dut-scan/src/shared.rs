@@ -14,7 +14,7 @@ use dut_tree::{ErrKind, Kind};
 use parking_lot::{Mutex, RwLock};
 
 use crate::FsClass;
-use crate::backend::{Backend, Block, DirStream};
+use crate::backend::{Backend, Block, DirStream, Raw};
 use crate::proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
     SkipReason, SubdirRec,
@@ -43,6 +43,9 @@ pub struct Limits {
     pub outbox_msgs: usize,
     pub flush_age_ns: u64,
     pub stall_ns: u64,
+    /// Chunk tasks a directory may have outstanding (§4.3); 0 never hands a block to a chunk
+    /// task. The engine sets it to `max(2, workers)` when it is 0.
+    pub chunk_credit: usize,
 }
 
 impl Default for Limits {
@@ -54,6 +57,7 @@ impl Default for Limits {
             outbox_msgs: 256,
             flush_age_ns: 20_000_000,
             stall_ns: 10_000_000_000,
+            chunk_credit: 0,
         }
     }
 }
@@ -69,7 +73,6 @@ pub struct JobOptions {
     pub scope: Option<PathBuf>,
 }
 
-#[derive(Debug)]
 pub struct Task<L> {
     pub job: JobId,
     pub dir: DirId,
@@ -81,7 +84,94 @@ pub struct Task<L> {
     mount: u64,
     /// Ask the backend for a subvolume record when opening (`dev` changed from the parent).
     probe_subvol: bool,
+    /// Set for a chunk task: one block of the directory to stat (§4.2). Otherwise this is the
+    /// directory's listing task.
+    chunk: Option<Box<ChunkWork<L>>>,
 }
+
+impl<L: std::fmt::Debug> std::fmt::Debug for Task<L> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Task")
+            .field("job", &self.job)
+            .field("dir", &self.dir)
+            .field("loc", &self.loc)
+            .field("chunk", &self.chunk.as_ref().map(|c| c.seq))
+            .finish()
+    }
+}
+
+/// A block handed from a directory's listing task to a chunk task.
+pub struct ChunkWork<L> {
+    raw: Raw<L>,
+    seq: u32,
+    parts: Arc<DirParts>,
+}
+
+/// The parts of a directory read by more than one task: its listing task and the chunk tasks
+/// it handed blocks to. Whoever finishes the last part sends the directory's one `Close`
+/// (§4.2), with every part's outcome in its status.
+#[derive(Default)]
+pub struct DirParts {
+    /// The listing task (until it finishes) plus chunk tasks not finished.
+    unfinished: AtomicU32,
+    /// Chunk messages of the directory, all parts; set by the listing task when it finishes.
+    chunks: AtomicU32,
+    panicked: AtomicU32,
+    cancelled: AtomicU32,
+    /// The listing task's own outcome, set when it finishes.
+    listing: Mutex<Option<ListingStatus>>,
+}
+
+impl DirParts {
+    fn new() -> Self {
+        DirParts {
+            unfinished: AtomicU32::new(1),
+            ..Default::default()
+        }
+    }
+
+    /// Chunk tasks handed out and not finished.
+    fn in_flight(&self) -> usize {
+        self.unfinished.load(SeqCst).saturating_sub(1) as usize
+    }
+
+    /// The directory's status once every part has finished.
+    fn status(&self) -> ListingStatus {
+        let (mut panicked, mut cancelled, mut read_error) = (
+            self.panicked.load(SeqCst),
+            self.cancelled.load(SeqCst),
+            None,
+        );
+        match self.listing.lock().clone() {
+            Some(ListingStatus::Partial {
+                panicked: p,
+                cancelled: c,
+                read_error: e,
+            }) => {
+                panicked += p;
+                cancelled += c;
+                read_error = e;
+            }
+            // Parts exist only once entries were read, so the listing did not fail or end
+            // before its first entry.
+            Some(ListingStatus::Cancelled) => cancelled += 1,
+            Some(ListingStatus::Failed(e)) => read_error = Some(e),
+            Some(ListingStatus::Complete) | None => {}
+        }
+        if panicked == 0 && cancelled == 0 && read_error.is_none() {
+            ListingStatus::Complete
+        } else {
+            ListingStatus::Partial {
+                panicked,
+                cancelled,
+                read_error,
+            }
+        }
+    }
+}
+
+/// Part number of a directory's listing task; chunk task `seq` is part `seq + 1`.
+const LISTING_PART: u32 = 0;
 
 struct JobState {
     ended: AtomicBool,
@@ -113,8 +203,11 @@ pub struct Outbox<L> {
     msgs: Vec<ScanMsg>,
     bytes: usize,
     oldest: u64,
-    closes: Vec<(JobId, DirId)>,
+    /// Parts (tasks) finished since the last flush: `(job, dir, part)`.
+    done: Vec<(JobId, DirId, u32)>,
     tasks: Vec<Task<L>>,
+    /// A chunk task is among `tasks`: publish it soon, others may be idle.
+    has_chunk_task: bool,
 }
 
 impl<L> Default for Outbox<L> {
@@ -123,8 +216,9 @@ impl<L> Default for Outbox<L> {
             msgs: Vec::new(),
             bytes: 0,
             oldest: 0,
-            closes: Vec::new(),
+            done: Vec::new(),
             tasks: Vec::new(),
+            has_chunk_task: false,
         }
     }
 }
@@ -137,8 +231,9 @@ impl<L> Outbox<L> {
         }
         self.msgs.push(msg);
     }
+    /// Nothing to send, publish or report done.
     pub fn is_empty(&self) -> bool {
-        self.msgs.is_empty() && self.tasks.is_empty()
+        self.msgs.is_empty() && self.tasks.is_empty() && self.done.is_empty()
     }
 }
 
@@ -157,8 +252,10 @@ pub struct WorkerSlot<L> {
     pub outbox: Mutex<Outbox<L>>,
     /// Time the worker entered its current filesystem call, or 0.
     syscall_since: AtomicU64,
-    /// Task being run, packed `(job, dir)`, or `NO_TASK`. Changed only under the outbox lock.
+    /// Task being run, packed `(job, dir)`, or `NO_TASK`, and which part of the directory it
+    /// is. Changed only under the outbox lock.
     current: AtomicU64,
+    part: AtomicU32,
     stall_reported: AtomicBool,
     pub waiting_budget: AtomicBool,
 }
@@ -169,6 +266,7 @@ impl<L> WorkerSlot<L> {
             outbox: Mutex::new(Outbox::default()),
             syscall_since: AtomicU64::new(0),
             current: AtomicU64::new(NO_TASK),
+            part: AtomicU32::new(LISTING_PART),
             stall_reported: AtomicBool::new(false),
             waiting_budget: AtomicBool::new(false),
         }
@@ -195,7 +293,10 @@ pub struct Shared<B: Backend> {
     submitted_seq: AtomicU64,
     last_quiescent: AtomicU64,
     jobs: RwLock<HashMap<u32, Arc<JobState>>>,
-    abandoned: Mutex<HashSet<(JobId, DirId)>>,
+    /// Parts `(job, dir, part)` the applier abandoned while a worker was running them.
+    abandoned: Mutex<HashSet<(JobId, DirId, u32)>>,
+    /// Blocks handed to chunk tasks, all jobs.
+    pub chunk_tasks: AtomicU64,
     focus: AtomicU64,
     focus_epoch: AtomicU32,
     pub idle: AtomicUsize,
@@ -216,6 +317,7 @@ impl<B: Backend> Shared<B> {
             last_quiescent: AtomicU64::new(u64::MAX),
             jobs: RwLock::new(HashMap::new()),
             abandoned: Mutex::new(HashSet::new()),
+            chunk_tasks: AtomicU64::new(0),
             focus: AtomicU64::new(NO_TASK),
             focus_epoch: AtomicU32::new(1),
             idle: AtomicUsize::new(0),
@@ -280,6 +382,7 @@ impl<B: Backend> Shared<B> {
             dev: 0,
             mount: 0,
             probe_subvol: true,
+            chunk: None,
         });
         self.wake();
         seq
@@ -301,32 +404,63 @@ impl<B: Backend> Shared<B> {
         }
     }
 
-    /// Records that the applier abandoned `(job, dir)`. Returns `false` if it could not take a
-    /// worker's outbox lock without blocking; the applier retries on its next slice. If no
-    /// worker is still running the task, its `Close` is already on the way and nothing is
-    /// recorded.
+    /// Records that the applier abandoned `(job, dir)`: every part of it a worker is running
+    /// stops counting toward quiescence. Returns `false` if it could not take the outbox lock
+    /// of a worker running a part without blocking; the applier retries on its next slice, and
+    /// parts already recorded are not counted twice. Parts no worker is running are either
+    /// finished (their completion is on the way) or queued (they will see the stop bit and
+    /// finish at once).
     pub fn abandon(&self, job: JobId, dir: DirId) -> bool {
         self.stop_dirs(job, [dir]);
         let target = pack(job, dir);
+        let mut complete = true;
         for slot in self.slots.read().iter() {
             let Some(_ob) = slot.outbox.try_lock() else {
                 if slot.current.load(SeqCst) == target {
-                    return false;
+                    complete = false;
                 }
                 continue;
             };
-            if slot.current.load(SeqCst) == target {
-                self.abandoned.lock().insert((job, dir));
+            if slot.current.load(SeqCst) == target
+                && self
+                    .abandoned
+                    .lock()
+                    .insert((job, dir, slot.part.load(SeqCst)))
+            {
                 self.outstanding_abandoned.fetch_add(1, SeqCst);
-                return true;
             }
         }
-        true
+        complete
     }
 
     pub fn set_focus(&self, job: JobId, dir: DirId) {
         self.focus.store(pack(job, dir), SeqCst);
         self.focus_epoch.fetch_add(1, SeqCst);
+    }
+
+    /// What every worker slot is doing and which parts are abandoned, for diagnosing a run
+    /// that does not reach quiescence.
+    pub fn debug_parts(&self) -> String {
+        let mut out = format!(
+            "abandoned {:?}; injector {} priority {}\n",
+            self.abandoned.lock(),
+            self.injector.len(),
+            self.priority.len()
+        );
+        for (i, slot) in self.slots.read().iter().enumerate() {
+            let cur = slot.current.load(SeqCst);
+            let ob = slot.outbox.lock();
+            out += &format!(
+                "slot {i}: current {:?} part {} since {} tasks {:?} done {:?} msgs {}\n",
+                (cur != NO_TASK).then(|| unpack(cur)),
+                slot.part.load(SeqCst),
+                slot.syscall_since.load(SeqCst),
+                ob.tasks,
+                ob.done,
+                ob.msgs.len()
+            );
+        }
+        out
     }
 
     pub fn outstanding(&self) -> (u64, u64) {
@@ -363,9 +497,10 @@ impl<B: Backend> Shared<B> {
                 self.injector.push(t);
             }
         }
-        if !ob.closes.is_empty() {
+        ob.has_chunk_task = false;
+        if !ob.done.is_empty() {
             let mut ab = self.abandoned.lock();
-            for c in ob.closes.drain(..) {
+            for c in ob.done.drain(..) {
                 if ab.remove(&c) {
                     self.outstanding_abandoned.fetch_sub(1, SeqCst);
                 }
@@ -389,7 +524,13 @@ impl<B: Backend> Shared<B> {
             if is_stuck {
                 rep.stuck += 1;
                 let cur = slot.current.load(SeqCst);
-                if cur != NO_TASK && self.abandoned.lock().contains(&unpack(cur)) {
+                let (job, dir) = unpack(cur);
+                if cur != NO_TASK
+                    && self
+                        .abandoned
+                        .lock()
+                        .contains(&(job, dir, slot.part.load(SeqCst)))
+                {
                     rep.stuck_abandoned += 1;
                 }
             }
@@ -408,7 +549,7 @@ impl<B: Backend> Shared<B> {
             }
             let old =
                 !ob.msgs.is_empty() && now.saturating_sub(ob.oldest) > self.limits.flush_age_ns;
-            if force || old || (ob.msgs.is_empty() && !ob.tasks.is_empty()) {
+            if force || old || (ob.msgs.is_empty() && !ob.is_empty()) {
                 self.flush_locked(&mut ob, sink, false);
             }
         }
@@ -454,11 +595,17 @@ struct Running<B: Backend> {
     task: Task<B::Loc>,
     job: Arc<JobState>,
     stream: Option<B::Stream>,
+    /// A block this listing task is stat'ing itself: its seq and whether more blocks follow.
+    /// Kept across "not ready" returns, and set while stat'ing so a panic there costs only
+    /// this block.
+    inline: Option<(Raw<B::Loc>, u32, bool)>,
     seq: u32,
     /// Entries read so far; a read error before any entry means the directory failed.
     entries: usize,
     panicked: u32,
     read_error: Option<ErrKind>,
+    /// Set once the listing hands a block to a chunk task.
+    parts: Option<Arc<DirParts>>,
 }
 
 /// One worker's private state. `blocking` selects real-thread behaviour (flushes wait for
@@ -484,8 +631,8 @@ impl<B: Backend> Worker<B> {
         self.running.is_some()
     }
 
-    /// Runs one step: take a task, open a directory, or read one block. Panics are caught and
-    /// recorded against the directory being read (§4.2).
+    /// Runs one step: take a task, open a directory, read one block, or stat one. Panics are
+    /// caught and recorded against the directory (§4.2).
     pub fn step(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
         if self.must_flush(sh) && !self.flush(sh, sink) {
             return StepResult::WaitingBudget;
@@ -495,20 +642,7 @@ impl<B: Backend> Worker<B> {
             Ok(r) => r,
             Err(payload) => {
                 self.slot.syscall_since.store(0, SeqCst);
-                let msg = panic_message(&*payload);
-                self.block.clear();
-                if let Some(r) = self.running.take() {
-                    let chunk = empty_chunk(&r, ChunkStatus::Panicked(msg));
-                    let chunks = r.seq + 1;
-                    let mut ob = self.slot.outbox.lock();
-                    ob.push(ScanMsg::Chunk(chunk), clock.now());
-                    let status = ListingStatus::Partial {
-                        panicked: r.panicked + 1,
-                        cancelled: 0,
-                        read_error: r.read_error,
-                    };
-                    self.close_locked(&mut ob, &r.task, chunks, status, clock.now());
-                }
+                self.on_panic(panic_message(&*payload), clock);
                 StepResult::Progress
             }
         };
@@ -518,11 +652,60 @@ impl<B: Backend> Worker<B> {
         result
     }
 
+    /// Records a caught panic: the block being stat'ed is lost (the listing goes on), or the
+    /// listing ends there.
+    fn on_panic(&mut self, msg: String, clock: &dyn Clock) {
+        self.block.clear();
+        let Some(mut r) = self.running.take() else {
+            return;
+        };
+        let now = clock.now();
+        if let Some(work) = r.task.chunk.take() {
+            let chunk = empty_chunk(&r.task, work.seq, ChunkStatus::Panicked(msg));
+            work.parts.panicked.fetch_add(1, SeqCst);
+            let mut ob = self.slot.outbox.lock();
+            ob.push(ScanMsg::Chunk(chunk), now);
+            self.finish_part(&mut ob, &r.task, &work.parts, work.seq + 1, now);
+            return;
+        }
+        if let Some((_, seq, more)) = r.inline.take() {
+            let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(msg));
+            r.panicked += 1;
+            self.slot.outbox.lock().push(ScanMsg::Chunk(chunk), now);
+            let status = Self::ended_status(&r);
+            self.running = Some(r);
+            if !more {
+                self.finish_listing(status, clock);
+            }
+            return;
+        }
+        // Opening or reading failed: the listing ends with what was read.
+        let chunk = empty_chunk(&r.task, r.seq, ChunkStatus::Panicked(msg));
+        r.seq += 1;
+        r.panicked += 1;
+        self.slot.outbox.lock().push(ScanMsg::Chunk(chunk), now);
+        let status = Self::ended_status(&r);
+        self.running = Some(r);
+        self.finish_listing(status, clock);
+    }
+
+    /// The listing's status when it ends after reading what it could.
+    fn ended_status(r: &Running<B>) -> ListingStatus {
+        match (r.panicked, r.read_error) {
+            (0, None) => ListingStatus::Complete,
+            (p, e) => ListingStatus::Partial {
+                panicked: p,
+                cancelled: 0,
+                read_error: e,
+            },
+        }
+    }
+
     fn must_flush(&self, sh: &Shared<B>) -> bool {
         let ob = self.slot.outbox.lock();
         ob.bytes >= sh.limits.outbox_bytes
             || ob.msgs.len() >= sh.limits.outbox_msgs
-            || (sh.idle.load(SeqCst) > 0 && ob.tasks.len() > 1)
+            || (sh.idle.load(SeqCst) > 0 && (ob.tasks.len() > 1 || ob.has_chunk_task))
     }
 
     /// Flushes the outbox. In blocking mode, waits for budget.
@@ -537,45 +720,83 @@ impl<B: Backend> Worker<B> {
         ok
     }
 
-    fn close_locked(
+    /// Ends the current part: it no longer counts as running, and the next flush reports it
+    /// done.
+    fn end_part(&self, ob: &mut Outbox<B::Loc>, task: &Task<B::Loc>, part: u32) {
+        ob.done.push((task.job, task.dir, part));
+        self.slot.current.store(NO_TASK, SeqCst);
+        self.slot.stall_reported.store(false, SeqCst);
+        // A part can end while its last call reported "not ready" (stopped after a stall); the
+        // next task must not inherit that call's start time and look stalled.
+        self.slot.syscall_since.store(0, SeqCst);
+    }
+
+    /// Ends one part of a directory that has several; the last part sends the `Close`.
+    fn finish_part(
         &self,
         ob: &mut Outbox<B::Loc>,
         task: &Task<B::Loc>,
-        chunks: u32,
-        status: ListingStatus,
+        parts: &DirParts,
+        part: u32,
         now: u64,
     ) {
-        ob.push(
-            ScanMsg::Close {
-                job: task.job,
-                dir: task.dir,
-                chunks,
-                status,
-            },
-            now,
-        );
-        ob.closes.push((task.job, task.dir));
-        self.slot.current.store(NO_TASK, SeqCst);
-        self.slot.stall_reported.store(false, SeqCst);
+        if parts.unfinished.fetch_sub(1, SeqCst) == 1 {
+            ob.push(
+                ScanMsg::Close {
+                    job: task.job,
+                    dir: task.dir,
+                    chunks: parts.chunks.load(SeqCst),
+                    status: parts.status(),
+                },
+                now,
+            );
+        }
+        self.end_part(ob, task, part);
     }
 
-    fn finish(&mut self, chunks: u32, status: ListingStatus, clock: &dyn Clock) {
+    /// Ends the listing task with `status`: sends the `Close`, or leaves it to the last chunk
+    /// task still running.
+    fn finish_listing(&mut self, status: ListingStatus, clock: &dyn Clock) {
         let r = self.running.take().expect("running task");
         let mut ob = self.slot.outbox.lock();
-        self.close_locked(&mut ob, &r.task, chunks, status, clock.now());
+        let now = clock.now();
+        match &r.parts {
+            None => {
+                ob.push(
+                    ScanMsg::Close {
+                        job: r.task.job,
+                        dir: r.task.dir,
+                        chunks: r.seq,
+                        status,
+                    },
+                    now,
+                );
+                self.end_part(&mut ob, &r.task, LISTING_PART);
+            }
+            Some(parts) => {
+                *parts.listing.lock() = Some(status);
+                parts.chunks.store(r.seq, SeqCst);
+                self.finish_part(&mut ob, &r.task, parts, LISTING_PART, now);
+            }
+        }
     }
 
     fn take_task(&self, sh: &Shared<B>) -> Option<Task<B::Loc>> {
+        let set = |t: &Task<B::Loc>| {
+            self.slot.current.store(pack(t.job, t.dir), SeqCst);
+            let part = t.chunk.as_ref().map_or(LISTING_PART, |c| c.seq + 1);
+            self.slot.part.store(part, SeqCst);
+        };
         {
             let mut ob = self.slot.outbox.lock();
             if let Some(t) = ob.tasks.pop() {
-                self.slot.current.store(pack(t.job, t.dir), SeqCst);
+                set(&t);
                 return Some(t);
             }
         }
         let t = steal(&sh.priority).or_else(|| steal(&sh.injector))?;
         let _ob = self.slot.outbox.lock();
-        self.slot.current.store(pack(t.job, t.dir), SeqCst);
+        set(&t);
         Some(t)
     }
 
@@ -588,25 +809,56 @@ impl<B: Backend> Worker<B> {
                 }
                 return StepResult::Idle;
             };
-            match sh.job(task.job) {
-                Some(job) if !job.ended.load(SeqCst) && !job.stopped(task.dir) => {
+            let job = sh.job(task.job);
+            let live = job
+                .as_ref()
+                .is_some_and(|j| !j.ended.load(SeqCst) && !j.stopped(task.dir));
+            match (job, live) {
+                (Some(job), true) => {
                     self.running = Some(Running {
                         task,
                         job,
                         stream: None,
+                        inline: None,
                         seq: 0,
                         entries: 0,
                         panicked: 0,
                         read_error: None,
+                        parts: None,
                     });
                 }
                 _ => {
                     let mut ob = self.slot.outbox.lock();
-                    self.close_locked(&mut ob, &task, 0, ListingStatus::Cancelled, clock.now());
+                    let now = clock.now();
+                    match &task.chunk {
+                        // Still one chunk message, so the directory's count is right.
+                        Some(work) => {
+                            let chunk = empty_chunk(&task, work.seq, ChunkStatus::Cancelled);
+                            ob.push(ScanMsg::Chunk(chunk), now);
+                            work.parts.cancelled.fetch_add(1, SeqCst);
+                            self.finish_part(&mut ob, &task, &work.parts, work.seq + 1, now);
+                        }
+                        None => {
+                            ob.push(
+                                ScanMsg::Close {
+                                    job: task.job,
+                                    dir: task.dir,
+                                    chunks: 0,
+                                    status: ListingStatus::Cancelled,
+                                },
+                                now,
+                            );
+                            self.end_part(&mut ob, &task, LISTING_PART);
+                        }
+                    }
                 }
             }
             return StepResult::Progress;
         };
+
+        if r.task.chunk.is_some() {
+            return self.chunk_step(sh, clock);
+        }
 
         if r.stream.is_none() {
             self.slot.begin_syscall(clock.now());
@@ -639,7 +891,7 @@ impl<B: Backend> Worker<B> {
                     r.stream = Some(stream);
                     if root_meta.is_some() || probe.is_some() {
                         // The root's own stat and the probe travel in the first chunk.
-                        let mut c = empty_chunk(r, ChunkStatus::Ok);
+                        let mut c = empty_chunk(&r.task, r.seq, ChunkStatus::Ok);
                         c.root_meta = root_meta;
                         c.probe = probe.map(Box::new);
                         r.seq += 1;
@@ -650,12 +902,14 @@ impl<B: Backend> Worker<B> {
                     self.slot.begin_syscall(clock.now());
                     return StepResult::Blocked;
                 }
-                Err(e) => {
-                    let chunks = r.seq;
-                    self.finish(chunks, ListingStatus::Failed(ErrKind::from(&e)), clock);
-                }
+                Err(e) => self.finish_listing(ListingStatus::Failed(ErrKind::from(&e)), clock),
             }
             return StepResult::Progress;
+        }
+
+        // A block being stat'ed is finished first, like a blocking call that has begun.
+        if r.inline.is_some() {
+            return self.inline_step(sh, clock);
         }
 
         if r.job.ended.load(SeqCst) || r.job.stopped(r.task.dir) {
@@ -668,63 +922,149 @@ impl<B: Backend> Worker<B> {
                     read_error: None,
                 }
             };
-            let chunks = r.seq;
             self.block.clear();
-            self.finish(chunks, status, clock);
+            self.finish_listing(status, clock);
             return StepResult::Progress;
         }
 
         let limits = &sh.limits;
         self.slot.begin_syscall(clock.now());
-        let res = r.stream.as_mut().expect("open stream").next_block(
-            &mut self.block,
-            limits.block_entries,
-            limits.block_name_bytes,
-        );
+        let res = r
+            .stream
+            .as_mut()
+            .expect("open stream")
+            .next_raw(limits.block_entries, limits.block_name_bytes);
         if !matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
             self.slot.syscall_since.store(0, SeqCst);
         }
-        let more = match res {
-            Ok(more) => more,
+        let (raw, more) = match res {
+            Ok(x) => x,
             // The call is still in progress as far as the watchdog is concerned.
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return StepResult::Blocked,
             Err(e) => {
                 let err = ErrKind::from(&e);
-                if r.entries == 0 && self.block.entries.is_empty() {
-                    let chunks = r.seq;
-                    self.finish(chunks, ListingStatus::Failed(err), clock);
+                if r.entries == 0 {
+                    self.finish_listing(ListingStatus::Failed(err), clock);
                     return StepResult::Progress;
                 }
                 r.read_error = Some(err);
-                false
+                let status = Self::ended_status(r);
+                self.finish_listing(status, clock);
+                return StepResult::Progress;
             }
         };
-        let full = self.block.entries.len() >= limits.block_entries
-            || self.block.names.len() >= limits.block_name_bytes;
-        if full || !more {
-            if !self.block.entries.is_empty() {
-                self.emit_block(sh, clock);
-            }
+        r.entries += raw.len();
+        if raw.is_empty() {
             if !more {
-                let r = self.running.as_ref().expect("running");
-                let status = match (r.panicked, r.read_error) {
-                    (0, None) => ListingStatus::Complete,
-                    (p, e) => ListingStatus::Partial {
-                        panicked: p,
-                        cancelled: 0,
-                        read_error: e,
-                    },
-                };
-                let chunks = r.seq;
-                self.finish(chunks, status, clock);
+                let status = Self::ended_status(r);
+                self.finish_listing(status, clock);
             }
+            return StepResult::Progress;
+        }
+        let seq = r.seq;
+        r.seq += 1;
+        let credit = limits.chunk_credit;
+        let free = r
+            .parts
+            .as_ref()
+            .map_or(credit, |p| credit - p.in_flight().min(credit));
+        if more && free > 0 {
+            // More blocks follow: another worker can stat this one (§4.2).
+            let parts = r
+                .parts
+                .get_or_insert_with(|| Arc::new(DirParts::new()))
+                .clone();
+            parts.unfinished.fetch_add(1, SeqCst);
+            let task = Task {
+                job: r.task.job,
+                dir: r.task.dir,
+                loc: r.task.loc.clone(),
+                focus_epoch: r.task.focus_epoch,
+                is_root: false,
+                dev: r.task.dev,
+                mount: r.task.mount,
+                probe_subvol: false,
+                chunk: Some(Box::new(ChunkWork { raw, seq, parts })),
+            };
+            let mut ob = self.slot.outbox.lock();
+            sh.outstanding.fetch_add(1, SeqCst);
+            sh.submitted_seq.fetch_add(1, SeqCst);
+            sh.chunk_tasks.fetch_add(1, SeqCst);
+            ob.tasks.push(task);
+            ob.has_chunk_task = true;
+            return StepResult::Progress;
+        }
+        r.inline = Some((raw, seq, more));
+        self.inline_step(sh, clock)
+    }
+
+    /// The listing task stats a block itself.
+    fn inline_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
+        let r = self.running.as_mut().expect("running");
+        let (raw, _, _) = r.inline.as_mut().expect("inline block");
+        self.slot.begin_syscall(clock.now());
+        let res = raw.stat(&mut self.block);
+        if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
+            return StepResult::Blocked;
+        }
+        self.slot.syscall_since.store(0, SeqCst);
+        let (_, seq, more) = r.inline.take().expect("inline block");
+        if let Err(e) = res {
+            // Only "not ready" is expected; anything else loses the block, as a panic would.
+            let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(e.to_string()));
+            r.panicked += 1;
+            self.block.clear();
+            self.slot
+                .outbox
+                .lock()
+                .push(ScanMsg::Chunk(chunk), clock.now());
+        } else {
+            self.emit_block(sh, seq, clock);
+        }
+        if !more {
+            let status = Self::ended_status(self.running.as_ref().expect("running"));
+            self.finish_listing(status, clock);
         }
         StepResult::Progress
     }
 
-    /// Turns the current block into a `Chunk`, creating tasks for subdirectories. Tasks go on
-    /// the outbox's private stack; they become stealable when the outbox is flushed.
-    fn emit_block(&mut self, sh: &Shared<B>, clock: &dyn Clock) {
+    /// A chunk task: stat its block and send it as one chunk.
+    fn chunk_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
+        let r = self.running.as_mut().expect("running");
+        // Stopped chunk tasks were turned away when taken; once stat'ing has begun it runs to
+        // the end, like a blocking call.
+        let work = r.task.chunk.as_mut().expect("chunk task");
+        self.slot.begin_syscall(clock.now());
+        let res = work.raw.stat(&mut self.block);
+        if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
+            return StepResult::Blocked;
+        }
+        self.slot.syscall_since.store(0, SeqCst);
+        let seq = work.seq;
+        match res {
+            Ok(()) => self.emit_block(sh, seq, clock),
+            Err(e) => {
+                self.block.clear();
+                let r = self.running.as_mut().expect("running");
+                let work = r.task.chunk.as_ref().expect("chunk task");
+                work.parts.panicked.fetch_add(1, SeqCst);
+                let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(e.to_string()));
+                self.slot
+                    .outbox
+                    .lock()
+                    .push(ScanMsg::Chunk(chunk), clock.now());
+            }
+        }
+        let mut r = self.running.take().expect("running");
+        let work = r.task.chunk.take().expect("chunk task");
+        let mut ob = self.slot.outbox.lock();
+        self.finish_part(&mut ob, &r.task, &work.parts, seq + 1, clock.now());
+        StepResult::Progress
+    }
+
+    /// Turns the stat'ed block into chunk `seq`, creating tasks for subdirectories. Tasks go
+    /// on the outbox's private stack; they become stealable when the outbox is flushed.
+    fn emit_block(&mut self, sh: &Shared<B>, seq: u32, clock: &dyn Clock) {
         let r = self.running.as_mut().expect("running");
         let block = std::mem::take(&mut self.block);
         let (cross, network) = (r.job.opts.cross_mounts, r.job.opts.network);
@@ -798,7 +1138,6 @@ impl<B: Backend> Worker<B> {
                 }),
             }
         }
-        r.entries += files.len() + subdirs.len() + errors.len();
         let first = r.job.next_dir.fetch_add(subdirs.len() as u32, SeqCst);
         let mut tasks = Vec::new();
         for (i, loc) in child_locs.into_iter().enumerate() {
@@ -812,13 +1151,14 @@ impl<B: Backend> Worker<B> {
                     dev,
                     mount,
                     probe_subvol,
+                    chunk: None,
                 });
             }
         }
         let chunk = Chunk {
             job: r.task.job,
             dir: r.task.dir,
-            seq: r.seq,
+            seq,
             root_meta: None,
             probe: None,
             names: block.names,
@@ -828,7 +1168,6 @@ impl<B: Backend> Worker<B> {
             errors,
             status: ChunkStatus::Ok,
         };
-        r.seq += 1;
         let mut ob = self.slot.outbox.lock();
         // Counted only once nothing fallible remains, so a panic above cannot leave tasks
         // counted as outstanding that will never close.
@@ -840,11 +1179,11 @@ impl<B: Backend> Worker<B> {
     }
 }
 
-fn empty_chunk<B: Backend>(r: &Running<B>, status: ChunkStatus) -> Chunk {
+fn empty_chunk<L>(task: &Task<L>, seq: u32, status: ChunkStatus) -> Chunk {
     Chunk {
-        job: r.task.job,
-        dir: r.task.dir,
-        seq: r.seq,
+        job: task.job,
+        dir: task.dir,
+        seq,
         root_meta: None,
         probe: None,
         names: Vec::new(),

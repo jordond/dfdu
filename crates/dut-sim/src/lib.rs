@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use dut_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
 use dut_engine::{Applier, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model};
 use dut_scan::{
-    Backend, Batch, Block, Budget, Clock, DirStream, FsClass, JobOptions, Limits, ScanMsg, Shared,
-    Sink, StepResult, Worker,
+    Backend, Batch, Block, Budget, Clock, DirStream, FsClass, JobOptions, Limits, Raw, RawBlock,
+    ScanMsg, Shared, Sink, StepResult, Worker,
 };
 use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
 use parking_lot::Mutex;
@@ -56,6 +56,14 @@ pub enum Fault {
     PanicOnOpen,
     /// Reading blocks when it reaches `block`, for `dur_ns` of virtual time, or forever.
     Stall {
+        block: usize,
+        dur_ns: Option<u64>,
+    },
+    /// Stat'ing block `.0` panics, wherever it is stat'ed (by the listing task or a chunk
+    /// task); the other blocks are read.
+    StatPanic(usize),
+    /// Stat'ing `block` blocks for `dur_ns`, or forever, wherever it is stat'ed.
+    StatStall {
         block: usize,
         dur_ns: Option<u64>,
     },
@@ -357,6 +365,17 @@ impl Spec {
                         block: rng.below(last_block as u64 + 1) as usize,
                         dur_ns: None,
                     },
+                    170..190 if len > 0 => {
+                        Fault::StatPanic(rng.below(last_block as u64 + 1) as usize)
+                    }
+                    190..215 if len > 0 => Fault::StatStall {
+                        block: rng.below(last_block as u64 + 1) as usize,
+                        dur_ns: Some(20_000_000 + rng.below(200_000_000)),
+                    },
+                    215..230 if len > 0 => Fault::StatStall {
+                        block: rng.below(last_block as u64 + 1) as usize,
+                        dur_ns: None,
+                    },
                     _ => Fault::None,
                 };
             }
@@ -652,12 +671,7 @@ pub struct SimStream {
 impl DirStream for SimStream {
     type Loc = u32;
 
-    fn next_block(
-        &mut self,
-        out: &mut Block<u32>,
-        max_entries: usize,
-        _max_bytes: usize,
-    ) -> io::Result<bool> {
+    fn next_raw(&mut self, max_entries: usize, _max_bytes: usize) -> io::Result<(Raw<u32>, bool)> {
         let n = &self.spec.nodes[self.node as usize];
         let block_idx = self.pos / max_entries;
         if self.eio_pending {
@@ -686,7 +700,56 @@ impl DirStream for SimStream {
             return Err(io::Error::from_raw_os_error(5));
         }
         let end = (self.pos + max_entries).min(limit);
-        for &c in &self.children[self.pos..end] {
+        let raw = SimRaw {
+            spec: self.spec.clone(),
+            clock: self.clock.clone(),
+            node: self.node,
+            entries: self.children[self.pos..end].to_vec(),
+            block: block_idx,
+            stall_start: 0,
+            stall_done: false,
+        };
+        self.pos = end;
+        if self.pos >= limit && limit < len {
+            self.eio_pending = true;
+            return Ok((Box::new(raw), true));
+        }
+        Ok((Box::new(raw), self.pos < len))
+    }
+}
+
+/// A block of a simulated directory, with the directory's stat-phase faults.
+pub struct SimRaw {
+    spec: Arc<Spec>,
+    clock: Arc<SimClock>,
+    node: u32,
+    entries: Vec<u32>,
+    block: usize,
+    stall_start: u64,
+    stall_done: bool,
+}
+
+impl RawBlock<u32> for SimRaw {
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn stat(&mut self, out: &mut Block<u32>) -> io::Result<()> {
+        match self.spec.nodes[self.node as usize].fault {
+            Fault::StatStall { block, dur_ns } if block == self.block && !self.stall_done => {
+                let now = self.clock.now();
+                if self.stall_start == 0 {
+                    self.stall_start = now;
+                }
+                match dur_ns {
+                    Some(d) if now >= self.stall_start + d => self.stall_done = true,
+                    _ => return Err(io::ErrorKind::WouldBlock.into()),
+                }
+            }
+            Fault::StatPanic(b) if b == self.block => panic!("injected panic"),
+            _ => {}
+        }
+        for &c in &self.entries {
             let cn = &self.spec.nodes[c as usize];
             let meta = if cn.vanished {
                 Err(ErrKind::NotFound)
@@ -696,12 +759,8 @@ impl DirStream for SimStream {
             let child = (cn.meta.kind == Kind::Dir).then_some(c);
             out.push(&cn.name, meta, child);
         }
-        self.pos = end;
-        if self.pos >= limit && limit < len {
-            self.eio_pending = true;
-            return Ok(true);
-        }
-        Ok(self.pos < len)
+        self.entries.clear();
+        Ok(())
     }
 }
 
@@ -888,6 +947,7 @@ impl Default for SimConfig {
                 outbox_msgs: 5,
                 flush_age_ns: 2_000_000,
                 stall_ns: 10_000_000,
+                chunk_credit: 2,
             },
             auto_abandon_ns: 400_000_000,
             rescans: 3,
@@ -928,6 +988,8 @@ pub struct SimReport {
     /// Measurements answered, and bytes counted once instead of per file in the final tree.
     pub measured: u64,
     pub shared_bytes: u64,
+    /// Blocks stat'ed by chunk tasks rather than by their directory's listing task.
+    pub chunk_tasks: u64,
 }
 
 pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
@@ -988,6 +1050,7 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         report.ticks += 1;
         if report.ticks > cfg.max_ticks {
             let (out, ab) = shared.outstanding();
+            eprintln!("{}", shared.debug_parts());
             return fail(
                 format!(
                     "did not finish: running jobs {}, outstanding {out}, abandoned {ab}, queued batches {}",
@@ -1192,6 +1255,7 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         }
     }
 
+    report.chunk_tasks = shared.chunk_tasks.load(SeqCst);
     report.subvols = model.subvols.len() as u64;
     report.ro_subvols = model.subvols.values().filter(|s| s.read_only).count() as u64;
     report.cross_runs = cross_mounts as u64;
@@ -1516,8 +1580,10 @@ fn check_subvol(spec: &Spec, model: &Model, d: u32, ix: Ix, path: &[u8]) -> Resu
     Ok(())
 }
 
-fn allowed(fault: &Fault, len: usize, state: DirState) -> bool {
+fn allowed(fault: &Fault, len: usize, block: usize, state: DirState) -> bool {
     use DirState::*;
+    // A stat-phase fault in a block past the end is never reached.
+    let exists = |b: usize| b * block < len;
     match fault {
         Fault::None => state == Complete,
         // An error after the last entry is never reached.
@@ -1530,19 +1596,68 @@ fn allowed(fault: &Fault, len: usize, state: DirState) -> bool {
         Fault::Stall {
             dur_ns: Some(_), ..
         } => matches!(state, Complete | Abandoned),
+        Fault::StatPanic(b) if exists(*b) => state == Partial,
+        Fault::StatStall {
+            block: b,
+            dur_ns: None,
+        } if exists(*b) => state == Abandoned,
+        Fault::StatStall { block: b, .. } if exists(*b) => matches!(state, Complete | Abandoned),
+        Fault::StatPanic(_) | Fault::StatStall { .. } => state == Complete,
     }
 }
 
-/// Entries of a directory the scan can have seen, given its fault and final state. `len` is the
-/// number of live children (faulted directories never lose children, see `Spec::deletable`).
-fn prefix(n: &SpecNode, len: usize, state: DirState, block: usize) -> usize {
-    match (state, &n.fault) {
-        (DirState::Complete, _) => len,
-        (DirState::Partial, Fault::EioAfter(k)) => (*k).min(len),
-        (DirState::Partial, Fault::PanicAtBlock(b)) => (b * block).min(len),
-        (DirState::Abandoned, Fault::Stall { block: b, .. }) => (b * block).min(len),
-        _ => 0,
-    }
+/// Entries of a directory the scan can have seen (indexes into its live children), given its
+/// fault and final state. `len` is the number of live children (faulted directories never
+/// lose children, see `Spec::deletable`). An abandoned directory keeps the blocks that arrived
+/// before it was abandoned, which depends on timing: those are read from the tree (`present`),
+/// and each must be whole and before the stuck one.
+fn seen_children(
+    n: &SpecNode,
+    len: usize,
+    state: DirState,
+    block: usize,
+    present: impl Fn(usize) -> bool,
+) -> Result<Vec<usize>, String> {
+    let all = 0..len;
+    Ok(match (state, &n.fault) {
+        (DirState::Complete, _) => all.collect(),
+        (DirState::Partial, Fault::EioAfter(k)) => (0..(*k).min(len)).collect(),
+        (DirState::Partial, Fault::PanicAtBlock(b)) => (0..(b * block).min(len)).collect(),
+        (DirState::Partial, Fault::StatPanic(b)) => all.filter(|i| i / block != *b).collect(),
+        (DirState::Abandoned, f) => {
+            // With a stall that never ends, blocks from the stuck one on (reading) or the stuck
+            // one (stat'ing) cannot have arrived. After a stall that ends, any block can have:
+            // the directory stays marked stalled until its Close, and is abandoned on time.
+            let barred = |k: usize| match f {
+                Fault::Stall {
+                    block: b,
+                    dur_ns: None,
+                } => k >= *b,
+                Fault::StatStall {
+                    block: b,
+                    dur_ns: None,
+                } => k == *b,
+                _ => false,
+            };
+            let mut out = vec![];
+            for k in 0..len.div_ceil(block) {
+                let idx: Vec<usize> = (k * block..((k + 1) * block).min(len)).collect();
+                let here = idx.iter().filter(|&&i| present(i)).count();
+                if here == 0 {
+                    continue;
+                }
+                if here != idx.len() || barred(k) {
+                    return Err(format!(
+                        "abandoned with {here} of {} entries of block {k} ({f:?})",
+                        idx.len()
+                    ));
+                }
+                out.extend(idx);
+            }
+            out
+        }
+        _ => vec![],
+    })
 }
 
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
@@ -1663,7 +1778,7 @@ fn compare(
         let state =
             state_of(&path).ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
         let fault = if d == ROOT { &Fault::None } else { &n.fault };
-        if !allowed(fault, n.children.len(), state) {
+        if !allowed(fault, n.children.len(), block, state) {
             return Err(format!(
                 "{}: state {state:?} not allowed for {fault:?}",
                 String::from_utf8_lossy(&path)
@@ -1671,11 +1786,18 @@ fn compare(
         }
         abandoned += (state == DirState::Abandoned) as u64;
         let live: Vec<u32> = spec.live_children(d).collect();
-        for &c in &live[..prefix(n, live.len(), state, block)] {
+        let child_path = |c: u32| {
             let mut p = path.clone();
             p.push(SEP);
             p.extend_from_slice(&spec.nodes[c as usize].name);
-            stack.push((c, p));
+            p
+        };
+        let picked = seen_children(n, live.len(), state, block, |i| {
+            by_path.contains_key(&child_path(live[i]))
+        })
+        .map_err(|e| format!("{}: {e}", String::from_utf8_lossy(&path)))?;
+        for i in picked {
+            stack.push((live[i], child_path(live[i])));
         }
     }
 

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use dut_engine::{Command, Engine, EngineOptions, Mode};
-use dut_scan::{JobOptions, PortableBackend};
+use dut_scan::{JobOptions, NativeBackend};
 use dut_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
 /// Tests run one at a time: they add and remove `work-*` directories in the shared fixture,
@@ -40,9 +40,9 @@ fn workdir(f: &Path, tag: &str) -> PathBuf {
     d
 }
 
-fn engine(journal: &Path) -> Engine<PortableBackend> {
+fn engine(journal: &Path) -> Engine<NativeBackend> {
     Engine::start(
-        PortableBackend::default(),
+        NativeBackend::default(),
         EngineOptions {
             journal_dir: Some(journal.to_path_buf()),
             check_invariants: true,
@@ -52,7 +52,7 @@ fn engine(journal: &Path) -> Engine<PortableBackend> {
     )
 }
 
-fn scan(e: &Engine<PortableBackend>, root: &Path, cross_mounts: bool) {
+fn scan(e: &Engine<NativeBackend>, root: &Path, cross_mounts: bool) {
     e.send(Command::Scan {
         path: root.to_path_buf(),
         opts: JobOptions {
@@ -69,7 +69,7 @@ fn child(tree: &Tree, ix: Ix, name: &str) -> Ix {
         .unwrap_or_else(|| panic!("{name} missing"))
 }
 
-fn node(e: &Engine<PortableBackend>, rel: &str) -> NodeRef {
+fn node(e: &Engine<NativeBackend>, rel: &str) -> NodeRef {
     e.read(|m| {
         let mut ix = m.tree.roots().next().unwrap();
         for part in rel.split('/') {
@@ -79,12 +79,12 @@ fn node(e: &Engine<PortableBackend>, rel: &str) -> NodeRef {
     })
 }
 
-fn delete(e: &Engine<PortableBackend>, items: Vec<NodeRef>, mode: Mode) {
+fn delete(e: &Engine<NativeBackend>, items: Vec<NodeRef>, mode: Mode) {
     e.send(Command::Delete { items, mode });
     assert!(e.wait_idle(Some(Duration::from_secs(30))));
 }
 
-fn notices(e: &Engine<PortableBackend>) -> Vec<String> {
+fn notices(e: &Engine<NativeBackend>) -> Vec<String> {
     e.read(|m| m.status.notices.clone())
 }
 

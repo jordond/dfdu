@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use fixedbitset::FixedBitSet;
 
+use crate::pages::{NameArena, Pages};
 use crate::{ErrKind, Kind, Meta, Totals, name_os};
 
 const NONE: u32 = u32::MAX;
@@ -101,7 +102,8 @@ pub struct DirRec {
     pub cut: bool,
     pub stalled: bool,
     pub chunks_seen: u32,
-    pub close_chunks: Option<u32>,
+    /// Chunk sequence numbers applied, for dropping duplicates; freed when the listing closes
+    /// ([`DirRec::close`]), after which no chunk is applied.
     pub seen_seq: FixedBitSet,
     pub changed_at: u64,
 }
@@ -121,7 +123,6 @@ impl DirRec {
             cut: false,
             stalled: false,
             chunks_seen: 0,
-            close_chunks: None,
             seen_seq: FixedBitSet::new(),
             changed_at: 0,
         }
@@ -133,32 +134,105 @@ impl DirRec {
         self.seen_seq.grow(i + 1);
         !self.seen_seq.put(i)
     }
+
+    /// Room for `n` more children. A directory's first chunk reserves exactly: most
+    /// directories arrive in one chunk, and doubling would leave a quarter of the list unused
+    /// on average. Later chunks grow it as a `Vec` does, so wide directories are not copied
+    /// once per chunk.
+    pub fn reserve_children(&mut self, n: usize) {
+        if self.children.is_empty() {
+            self.children.reserve_exact(n);
+        } else {
+            self.children.reserve(n);
+        }
+    }
+
+    /// Closes the listing. No more chunks are applied, so the duplicate filter is freed and
+    /// the slack a directory of several chunks left in its child list is returned.
+    pub fn close(&mut self, outcome: DirState) {
+        self.listing_closed = true;
+        self.outcome = outcome;
+        self.seen_seq = FixedBitSet::new();
+        self.children.shrink_to_fit();
+    }
 }
 
+/// One slot, kept to 56 bytes: memory per entry decides how large a tree fits (ROADMAP M2,
+/// under 100 MB for 1M entries). Fields most entries do not need live in side tables.
 #[derive(Clone, Debug)]
 struct Node {
+    /// Handle of the name in [`Tree::names`].
+    name: u64,
+    apparent: u64,
+    mtime: i64,
+    ino: u64,
+    /// Allocation in 512-byte blocks, packed by [`pack_alloc`]; `ALLOC_BIG` when it is in
+    /// [`Tree::big_allocs`].
+    blocks: u32,
     generation: u32,
     parent: u32,
-    name_off: u64,
-    name_len: u32,
-    kind: Kind,
+    dir: u32,
+    /// Index into [`Tree::devs`].
+    dev: u32,
     flags: NodeFlags,
-    apparent: u64,
-    alloc: u64,
+    /// The node's own error, packed by [`pack_err`]; 0 for none.
+    error: u8,
+    kind: Kind,
+}
+
+const _: () = assert!(std::mem::size_of::<Node>() <= 56);
+
+/// [`Node::blocks`] of an allocation that is not a whole number of 512-byte blocks below
+/// 2 TiB. Every backend reports whole blocks; files of 2 TiB or more are rare.
+const ALLOC_BIG: u32 = u32::MAX;
+
+/// Packs an allocation into a node's block count; `None` when it needs [`Tree::big_allocs`].
+fn pack_alloc(alloc: u64) -> Option<u32> {
+    if !alloc.is_multiple_of(512) {
+        return None;
+    }
+    u32::try_from(alloc / 512).ok().filter(|&b| b != ALLOC_BIG)
+}
+
+/// Shared-extent bytes of a node (`docs/btrfs.md` §3.4); zero except on filesystems that share
+/// extents.
+#[derive(Copy, Clone, Debug, Default)]
+struct Extents {
     /// Unshared bytes of a `MEASURED` file.
     excl: u64,
     /// Shared bytes counted at this node: data whose references in the scan are all below it
-    /// and not all below one child (`docs/btrfs.md` §3.4).
+    /// and not all below one child.
     home: u64,
     /// The part of `home` that no other file in the scan references: something outside the
     /// scan does, so deleting this node does not free it.
     home_out: u64,
-    mtime: i64,
-    dev: u64,
-    ino: u64,
-    error: Option<ErrKind>,
-    dir: u32,
-    category: u16,
+}
+
+/// Error codes in [`Node::error`]. OS error numbers are stored above `ERR_OS`; those that do
+/// not fit (above 249, which Linux and macOS never use) go to [`Tree::big_errors`] under
+/// `ERR_BIG`.
+const ERR_PERMISSION: u8 = 1;
+const ERR_NOT_FOUND: u8 = 2;
+const ERR_STALLED: u8 = 3;
+const ERR_OTHER: u8 = 4;
+const ERR_OS: u8 = 5;
+const ERR_BIG: u8 = u8::MAX;
+
+/// Packs an error into a node's code; `None` when it needs [`Tree::big_errors`].
+fn pack_err(e: ErrKind) -> Option<u8> {
+    Some(match e {
+        ErrKind::PermissionDenied => ERR_PERMISSION,
+        ErrKind::NotFound => ERR_NOT_FOUND,
+        ErrKind::Stalled => ERR_STALLED,
+        ErrKind::Other => ERR_OTHER,
+        ErrKind::Os(code) => {
+            let c = u8::try_from(code).ok()?.checked_add(ERR_OS)?;
+            if c == ERR_BIG {
+                return None;
+            }
+            c
+        }
+    })
 }
 
 /// A hard-link or measured file reported while freeing a detached subtree, so the caller can
@@ -182,11 +256,24 @@ enum FreeWork {
 /// The node store. See the crate docs for who may mutate it.
 #[derive(Default)]
 pub struct Tree {
-    nodes: Vec<Node>,
+    nodes: Pages<Node>,
+    /// Parallel to `nodes` once any node has shared-extent bytes; empty until then.
+    extents: Pages<Extents>,
+    /// Parallel to `nodes` once any node has a category (M5); empty until then.
+    categories: Pages<u16>,
+    /// Device numbers the nodes' `dev` indexes, and the reverse map.
+    devs: Vec<u64>,
+    dev_index: std::collections::HashMap<u64, u32>,
+    /// The last device looked up: nearly every entry is on the same device as the one before.
+    last_dev: Option<(u64, u32)>,
+    /// OS error numbers too large for a node's error code, by slot.
+    big_errors: std::collections::HashMap<u32, i32>,
+    /// Allocations a node's block count cannot hold, by slot.
+    big_allocs: std::collections::HashMap<u32, u64>,
     dirs: Vec<DirRec>,
     free_nodes: Vec<u32>,
     free_dirs: Vec<u32>,
-    names: Vec<u8>,
+    names: NameArena,
     names_garbage: u64,
     roots: Vec<u32>,
     version: u64,
@@ -210,7 +297,7 @@ impl Tree {
     }
 
     pub fn name_bytes(&self) -> (u64, u64) {
-        (self.names.len() as u64, self.names_garbage)
+        (self.names.bytes(), self.names_garbage)
     }
 
     pub fn roots(&self) -> impl Iterator<Item = Ix> + '_ {
@@ -273,8 +360,7 @@ impl Tree {
     }
 
     pub fn name(&self, ix: Ix) -> &[u8] {
-        let n = &self.nodes[ix.0 as usize];
-        &self.names[n.name_off as usize..n.name_off as usize + n.name_len as usize]
+        self.names.get(self.nodes[ix.0 as usize].name)
     }
 
     pub fn kind(&self, ix: Ix) -> Kind {
@@ -288,7 +374,29 @@ impl Tree {
     /// Size fields as scanned: `(apparent, alloc)`, before hard-link charging.
     pub fn raw_size(&self, ix: Ix) -> (u64, u64) {
         let n = &self.nodes[ix.0 as usize];
-        (n.apparent, n.alloc)
+        (n.apparent, self.alloc_of(ix.0, n))
+    }
+
+    fn alloc_of(&self, i: u32, n: &Node) -> u64 {
+        match n.blocks {
+            ALLOC_BIG => self.big_allocs[&i],
+            b => b as u64 * 512,
+        }
+    }
+
+    fn set_alloc(&mut self, i: u32, alloc: u64) {
+        self.nodes[i as usize].blocks = match pack_alloc(alloc) {
+            Some(b) => {
+                if !self.big_allocs.is_empty() {
+                    self.big_allocs.remove(&i);
+                }
+                b
+            }
+            None => {
+                self.big_allocs.insert(i, alloc);
+                ALLOC_BIG
+            }
+        };
     }
 
     pub fn mtime(&self, ix: Ix) -> i64 {
@@ -297,15 +405,66 @@ impl Tree {
 
     pub fn dev_ino(&self, ix: Ix) -> (u64, u64) {
         let n = &self.nodes[ix.0 as usize];
-        (n.dev, n.ino)
+        (self.devs[n.dev as usize], n.ino)
     }
 
     pub fn error(&self, ix: Ix) -> Option<ErrKind> {
-        self.nodes[ix.0 as usize].error
+        Some(match self.nodes[ix.0 as usize].error {
+            0 => return None,
+            ERR_PERMISSION => ErrKind::PermissionDenied,
+            ERR_NOT_FOUND => ErrKind::NotFound,
+            ERR_STALLED => ErrKind::Stalled,
+            ERR_OTHER => ErrKind::Other,
+            ERR_BIG => ErrKind::Os(self.big_errors[&ix.0]),
+            c => ErrKind::Os((c - ERR_OS) as i32),
+        })
+    }
+
+    fn set_error_code(&mut self, i: u32, err: Option<ErrKind>) {
+        self.big_errors.remove(&i);
+        self.nodes[i as usize].error = match err {
+            None => 0,
+            Some(e) => pack_err(e).unwrap_or_else(|| {
+                let ErrKind::Os(code) = e else {
+                    unreachable!("only OS error numbers are too large")
+                };
+                self.big_errors.insert(i, code);
+                ERR_BIG
+            }),
+        };
+    }
+
+    fn ext(&self, i: u32) -> Extents {
+        self.extents.get(i as usize).copied().unwrap_or_default()
+    }
+
+    /// The node's shared-extent bytes, creating the side table on first use.
+    fn ext_mut(&mut self, i: u32) -> &mut Extents {
+        self.extents.grow_to(self.nodes.len(), Extents::default());
+        &mut self.extents[i as usize]
+    }
+
+    fn dev_index(&mut self, dev: u64) -> u32 {
+        if let Some((last, d)) = self.last_dev
+            && last == dev
+        {
+            return d;
+        }
+        let d = match self.dev_index.get(&dev) {
+            Some(&d) => d,
+            None => {
+                let d = self.devs.len() as u32;
+                self.devs.push(dev);
+                self.dev_index.insert(dev, d);
+                d
+            }
+        };
+        self.last_dev = Some((dev, d));
+        d
     }
 
     pub fn category(&self, ix: Ix) -> u16 {
-        self.nodes[ix.0 as usize].category
+        self.categories.get(ix.0 as usize).copied().unwrap_or(0)
     }
 
     pub fn dir(&self, ix: Ix) -> Option<&DirRec> {
@@ -329,19 +488,21 @@ impl Tree {
     /// is an uncharged hard link).
     pub fn own(&self, ix: Ix) -> Totals {
         let n = &self.nodes[ix.0 as usize];
+        let x = self.ext(ix.0);
         let counted = !n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::CHARGED);
+        let alloc = self.alloc_of(ix.0, n);
         let base = if n.flags.has(NodeFlags::MEASURED) {
-            n.excl
+            x.excl
         } else {
-            n.alloc
+            alloc
         };
         Totals {
             apparent: if counted { n.apparent } else { 0 },
-            alloc: if counted { base } else { 0 } + n.home,
-            referenced: if counted { n.alloc } else { 0 },
-            shared_out: n.home_out,
+            alloc: if counted { base } else { 0 } + x.home,
+            referenced: if counted { alloc } else { 0 },
+            shared_out: x.home_out,
             items: 1,
-            errors: n.error.is_some() as u64,
+            errors: (n.error != 0) as u64,
             mounts: n.flags.has(NodeFlags::MOUNT_ROOT) as u64,
             ro_subvols: n.flags.has(NodeFlags::RO_SUBVOL) as u64,
         }
@@ -395,10 +556,9 @@ impl Tree {
 
     fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: u16) -> u32 {
         // Names are never truncated: a cut name would not convert back (`name_os`). Entry names
-        // are at most a few hundred bytes; root paths can be longer, hence u32.
-        let name_len = u32::try_from(name.len()).expect("name shorter than 4 GiB");
-        let name_off = self.names.len() as u64;
-        self.names.extend_from_slice(name);
+        // are at most a few hundred bytes; root paths can be longer, up to 16 MiB.
+        let name = self.names.push(name);
+        let dev = self.dev_index(meta.dev);
         let mut f = NodeFlags::default();
         f.set(flags, true);
         if meta.is_hardlink() {
@@ -409,35 +569,40 @@ impl Tree {
             None => 0,
         };
         let node = Node {
+            name,
+            apparent: meta.apparent,
+            mtime: meta.mtime,
+            ino: meta.ino,
+            blocks: 0,
             generation,
             parent,
-            name_off,
-            name_len,
-            kind: meta.kind,
-            flags: f,
-            apparent: meta.apparent,
-            alloc: meta.alloc,
-            excl: 0,
-            home: 0,
-            home_out: 0,
-            mtime: meta.mtime,
-            dev: meta.dev,
-            ino: meta.ino,
-            error: None,
             dir: NONE,
-            category: 0,
+            dev,
+            flags: f,
+            error: 0,
+            kind: meta.kind,
         };
         self.live += 1;
-        match self.free_nodes.pop() {
+        let i = match self.free_nodes.pop() {
             Some(i) => {
                 self.nodes[i as usize] = node;
+                self.big_errors.remove(&i);
                 i
             }
             None => {
                 self.nodes.push(node);
                 (self.nodes.len() - 1) as u32
             }
+        };
+        self.set_alloc(i, meta.alloc);
+        if !self.extents.is_empty() {
+            *self.ext_mut(i) = Extents::default();
         }
+        if !self.categories.is_empty() {
+            self.categories.grow_to(self.nodes.len(), 0);
+            self.categories[i as usize] = 0;
+        }
+        i
     }
 
     fn alloc_dir(&mut self, node: u32) {
@@ -499,7 +664,9 @@ impl Tree {
             0
         };
         let i = self.alloc_node(parent.0, name, meta, extra);
-        self.nodes[i as usize].error = error;
+        if error.is_some() {
+            self.set_error_code(i, error);
+        }
         self.push_child(parent, i);
         Ix(i)
     }
@@ -546,7 +713,8 @@ impl Tree {
     /// Records an error on the node itself (a directory that could not be read, or an entry
     /// that could not be stat'ed) and counts it in the ancestors.
     pub fn set_error(&mut self, ix: Ix, err: ErrKind) {
-        let had = self.nodes[ix.0 as usize].error.replace(err).is_some();
+        let had = self.nodes[ix.0 as usize].error != 0;
+        self.set_error_code(ix.0, Some(err));
         if !had {
             let one = Totals {
                 errors: 1,
@@ -569,17 +737,23 @@ impl Tree {
         if !n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::CHARGED) == charged {
             return;
         }
-        self.restate(ix, |n| n.flags.set(NodeFlags::CHARGED, charged));
+        self.restate(ix, |t| {
+            t.nodes[ix.0 as usize]
+                .flags
+                .set(NodeFlags::CHARGED, charged)
+        });
     }
 
     /// Replaces the node's own stat (a job root's stat arrives in its first chunk) and adjusts
     /// the totals of the node and its ancestors.
     pub fn update_meta(&mut self, ix: Ix, meta: &Meta) {
-        self.restate(ix, |n| {
+        let dev = self.dev_index(meta.dev);
+        self.restate(ix, |t| {
+            t.set_alloc(ix.0, meta.alloc);
+            let n = &mut t.nodes[ix.0 as usize];
             n.apparent = meta.apparent;
-            n.alloc = meta.alloc;
             n.mtime = meta.mtime;
-            n.dev = meta.dev;
+            n.dev = dev;
             n.ino = meta.ino;
         });
     }
@@ -587,13 +761,14 @@ impl Tree {
     /// Sets or clears a flag. For flags counted in [`Totals`] (`MOUNT_ROOT`, `RO_SUBVOL`) the
     /// node's and its ancestors' totals follow.
     pub fn set_flag(&mut self, ix: Ix, flag: u16, on: bool) {
-        self.restate(ix, |n| n.flags.set(flag, on));
+        self.restate(ix, |t| t.nodes[ix.0 as usize].flags.set(flag, on));
     }
 
     /// Records a file's measured unshared bytes ([`NodeFlags::MEASURED`]).
     pub fn set_measured(&mut self, ix: Ix, excl: u64, compressed: bool) {
-        self.restate(ix, |n| {
-            n.excl = excl;
+        self.restate(ix, |t| {
+            t.ext_mut(ix.0).excl = excl;
+            let n = &mut t.nodes[ix.0 as usize];
             n.flags.set(NodeFlags::MEASURED, true);
             n.flags.set(NodeFlags::COMPRESSED, compressed);
         });
@@ -601,42 +776,44 @@ impl Tree {
 
     /// Unshared bytes of a measured file.
     pub fn excl(&self, ix: Ix) -> u64 {
-        self.nodes[ix.0 as usize].excl
+        self.ext(ix.0).excl
     }
 
     /// Shared bytes counted at this node.
     pub fn home(&self, ix: Ix) -> u64 {
-        self.nodes[ix.0 as usize].home
+        self.ext(ix.0).home
     }
 
     /// Adds shared bytes counted at this node; `out` when nothing else in the scan
     /// references them.
     pub fn add_home(&mut self, ix: Ix, bytes: u64, out: bool) {
-        self.restate(ix, |n| {
-            n.home += bytes;
+        self.restate(ix, |t| {
+            let x = t.ext_mut(ix.0);
+            x.home += bytes;
             if out {
-                n.home_out += bytes;
+                x.home_out += bytes;
             }
         });
     }
 
     pub fn sub_home(&mut self, ix: Ix, bytes: u64, out: bool) {
-        self.restate(ix, |n| {
+        self.restate(ix, |t| {
+            let x = t.ext_mut(ix.0);
             debug_assert!(
-                n.home >= bytes && (!out || n.home_out >= bytes),
+                x.home >= bytes && (!out || x.home_out >= bytes),
                 "home underflow"
             );
-            n.home = n.home.saturating_sub(bytes);
+            x.home = x.home.saturating_sub(bytes);
             if out {
-                n.home_out = n.home_out.saturating_sub(bytes);
+                x.home_out = x.home_out.saturating_sub(bytes);
             }
         });
     }
 
     /// Changes a node and moves the difference in its own totals into its ancestors' totals.
-    fn restate(&mut self, ix: Ix, f: impl FnOnce(&mut Node)) {
+    fn restate(&mut self, ix: Ix, f: impl FnOnce(&mut Self)) {
         let old = self.own(ix);
-        f(&mut self.nodes[ix.0 as usize]);
+        f(self);
         let new = self.own(ix);
         if old != new {
             let target = if self.dir(ix).is_some() {
@@ -659,7 +836,10 @@ impl Tree {
     }
 
     pub fn set_category(&mut self, ix: Ix, category: u16) {
-        self.nodes[ix.0 as usize].category = category;
+        if category != 0 || !self.categories.is_empty() {
+            self.categories.grow_to(self.nodes.len(), 0);
+            self.categories[ix.0 as usize] = category;
+        }
         self.bump();
     }
 
@@ -788,7 +968,7 @@ impl Tree {
         let n = &self.nodes[i as usize];
         if n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::MEASURED) {
             on_link(FreedLink {
-                dev: n.dev,
+                dev: self.devs[n.dev as usize],
                 ino: n.ino,
                 node: NodeRef {
                     index: i,
@@ -800,7 +980,7 @@ impl Tree {
             });
         }
         let n = &mut self.nodes[i as usize];
-        self.names_garbage += n.name_len as u64;
+        self.names_garbage += NameArena::len_of(n.name);
         n.generation = n.generation.wrapping_add(1);
         n.flags = NodeFlags(NodeFlags::FREE);
         n.parent = NONE;
@@ -956,6 +1136,70 @@ mod tests {
         t.replace(a, shadow);
         assert_eq!(t.total(root).apparent, 10 + 10 + 30);
         assert!(t.is_visible(shadow));
+        t.check(&[]).unwrap();
+    }
+
+    #[test]
+    fn errors_and_shared_bytes_survive_packing_and_slot_reuse() {
+        let mut t = Tree::new();
+        let root = t.new_root(b"/r", &dir_meta(), true);
+        let errs = [
+            ErrKind::PermissionDenied,
+            ErrKind::NotFound,
+            ErrKind::Stalled,
+            ErrKind::Other,
+            ErrKind::Os(0),
+            ErrKind::Os(5),
+            ErrKind::Os(249),
+            ErrKind::Os(250),
+            ErrKind::Os(65531),
+            ErrKind::Os(1 << 20),
+            ErrKind::Os(-3),
+        ];
+        let files: Vec<Ix> = errs
+            .iter()
+            .enumerate()
+            .map(|(i, &e)| {
+                let m = file_meta(1, 100 + i as u64, 1);
+                let f = t.add_file(root, format!("e{i}").as_bytes(), &m, false, Some(e));
+                let own = t.own(f);
+                t.propagate_add(root, &own);
+                f
+            })
+            .collect();
+        for (&f, &e) in files.iter().zip(&errs) {
+            assert_eq!(t.error(f), Some(e));
+        }
+        assert_eq!(t.dev_ino(files[3]), (1, 103));
+        // Allocations a block count cannot hold: not whole blocks, 2 TiB and more.
+        let allocs = [0, 512, 4096, 100, (1u64 << 41) - 1024, 1 << 41, 1 << 50];
+        for (&f, &a) in files.iter().zip(&allocs) {
+            t.update_meta(
+                f,
+                &Meta {
+                    alloc: a,
+                    ..file_meta(1, 1, 1)
+                },
+            );
+            assert_eq!(t.raw_size(f), (1, a));
+        }
+        t.add_home(files[0], 70, true);
+        t.set_measured(files[1], 9, false);
+        assert_eq!((t.home(files[0]), t.excl(files[1])), (70, 9));
+        assert_eq!(t.own(files[0]).shared_out, 70);
+        // Reused slots start clean.
+        for &f in &files {
+            t.detach(f);
+        }
+        t.free_step(usize::MAX, |_| {});
+        let g = add_file(&mut t, root, "g", 1);
+        assert_eq!((t.error(g), t.home(g), t.excl(g)), (None, 0, 0));
+        let h = add_file(&mut t, root, "h", 1);
+        assert_eq!(
+            t.raw_size(h),
+            (1, 1),
+            "a reused slot drops its big allocation"
+        );
         t.check(&[]).unwrap();
     }
 

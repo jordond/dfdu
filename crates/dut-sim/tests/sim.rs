@@ -49,6 +49,7 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dut_sim::SimRepor
                 t.kernel_skipped += r.kernel_skipped;
                 t.measured += r.measured;
                 t.shared_bytes += r.shared_bytes;
+                t.chunk_tasks += r.chunk_tasks;
                 t.max_budget_used = t.max_budget_used.max(r.max_budget_used);
             }
             Err(e) => failures.push(e),
@@ -87,6 +88,7 @@ fn coverage_of_risky_paths() {
         t.measured > 1000 && t.shared_bytes > 0,
         "shared extents not exercised: {t:?}"
     );
+    assert!(t.chunk_tasks > 1000, "chunk tasks {}", t.chunk_tasks);
     assert!(
         t.deletes > 100 && t.deleted_items > 100,
         "deletes {} deleted {}",
@@ -162,4 +164,13 @@ fn wide_directories() {
         ..Default::default()
     };
     run_all("wide_directories", &cfg, 100);
+}
+
+/// Every block stat'ed by its listing task: the path without chunk tasks.
+#[test]
+fn no_chunk_tasks() {
+    let mut cfg = SimConfig::default();
+    cfg.limits.chunk_credit = 0;
+    let t = run_all("no_chunk_tasks", &cfg, 100);
+    assert_eq!(t.chunk_tasks, 0);
 }

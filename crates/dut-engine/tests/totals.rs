@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dut_engine::{Command, Engine, EngineOptions};
-use dut_scan::{JobOptions, PortableBackend};
+use dut_scan::{Backend, JobOptions, PortableBackend};
 use dut_tree::{Ix, Totals, Tree};
 use tempfile::TempDir;
 
@@ -62,7 +62,7 @@ fn fixture() -> (TempDir, TempDir) {
     // A path longer than 4096 bytes, built one level at a time relative to the current
     // directory (this test binary has a single test, so changing it is safe). The portable
     // backend opens directories by full path and reports the levels past PATH_MAX as errors;
-    // the openat-based Linux backend (M2) will read them.
+    // the Linux backend opens long paths in pieces and reads them.
     fs::create_dir(root.join("deep")).unwrap();
     let cwd = std::env::current_dir().unwrap();
     std::env::set_current_dir(root.join("deep")).unwrap();
@@ -154,12 +154,9 @@ fn walk(tree: &Tree, ix: Ix, out: &mut HashMap<Vec<u8>, Totals>) {
     }
 }
 
-#[test]
-fn totals_match_reference_and_du() {
-    let (tmp, _outside) = fixture();
-    let root = tmp.path().to_path_buf();
+fn scan<B: Backend>(backend: B, root: &Path) -> HashMap<Vec<u8>, Totals> {
     let e = Engine::start(
-        PortableBackend::default(),
+        backend,
         EngineOptions {
             check_invariants: true,
             workers: 4,
@@ -167,7 +164,7 @@ fn totals_match_reference_and_du() {
         },
     );
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))));
@@ -176,44 +173,100 @@ fn totals_match_reference_and_du() {
         walk(&m.tree, m.tree.roots().next().unwrap(), &mut out);
         out
     });
-    let want = reference(&root);
-    let mut diffs = vec![];
-    for (p, t) in &want {
+    e.shutdown(Duration::from_secs(1));
+    ours
+}
+
+/// `du -s -B1 -x` of `root`, with extra arguments; `None` without GNU du.
+fn du(root: &Path, extra: &[&str]) -> Option<u64> {
+    let out = std::process::Command::new("du")
+        .args(["-s", "-B1", "-x"])
+        .args(extra)
+        .arg(root)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Entries of `ours` and `want` that differ, leaving out `skip` and everything below it.
+fn diffs(
+    ours: &HashMap<Vec<u8>, Totals>,
+    want: &HashMap<Vec<u8>, Totals>,
+    skip: &[u8],
+) -> Vec<String> {
+    let below = |p: &[u8]| p.starts_with(skip) && (p.len() == skip.len() || p[skip.len()] == b'/');
+    let mut out = vec![];
+    for (p, t) in want.iter().filter(|(p, _)| !below(p)) {
         match ours.get(p) {
             Some(o) if o == t => {}
-            other => diffs.push(format!(
+            other => out.push(format!(
                 "{}: ours {other:?} want {t:?}",
                 String::from_utf8_lossy(p)
             )),
         }
     }
-    assert!(
-        ours.len() == want.len() && diffs.is_empty(),
-        "{} entries vs {}; {diffs:#?}",
-        ours.len(),
-        want.len()
-    );
+    let extra = ours.keys().filter(|p| !below(p) && !want.contains_key(*p));
+    out.extend(extra.map(|p| format!("{}: not in the reference", String::from_utf8_lossy(p))));
+    out
+}
 
+#[test]
+fn totals_match_reference_and_du() {
+    use std::os::unix::ffi::OsStrExt;
+    let (tmp, _outside) = fixture();
+    let root = tmp.path().to_path_buf();
+    let want = reference(&root);
+    let key = |p: &Path| p.as_os_str().as_bytes().to_vec();
+    let deep = key(&root.join("deep"));
+
+    let ours = scan(PortableBackend::default(), &root);
+    let d = diffs(&ours, &want, b"");
+    assert!(d.is_empty(), "portable backend: {d:#?}");
     // GNU du, without the subtree past PATH_MAX (du reads it with openat; the portable backend
-    // cannot yet, see the fixture).
-    if let Ok(out) = std::process::Command::new("du")
-        .args(["-s", "-B1", "-x", "--exclude=deep"])
-        .arg(&root)
-        .output()
-        && !out.stdout.is_empty()
-    {
-        let du: u64 = String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .parse()
-            .unwrap();
-        use std::os::unix::ffi::OsStrExt;
-        let ours_root = ours[root.as_os_str().as_bytes()].alloc
-            - ours[root.join("deep").as_os_str().as_bytes()].alloc;
+    // cannot, see the fixture).
+    if let Some(du) = du(&root, &["--exclude=deep"]) {
+        let ours_root = ours[&key(&root)].alloc - ours[&deep].alloc;
         assert_eq!(ours_root, du, "disk usage outside deep/ differs from du");
     }
-    e.shutdown(Duration::from_secs(1));
+
+    // The Linux backend reads the whole tree: the reference everywhere it can read, and du
+    // for the total.
+    #[cfg(target_os = "linux")]
+    {
+        let native = scan(dut_scan::LinuxBackend::default(), &root);
+        let mut d = diffs(&native, &want, &deep);
+        d.retain(|l| !l.starts_with(&format!("{}:", root.display())));
+        assert!(d.is_empty(), "Linux backend: {d:#?}");
+        let n_deep = &native[&deep];
+        assert_eq!(
+            (n_deep.items, n_deep.errors),
+            (27, 0),
+            "deep/: 25 levels and a file below it, all read"
+        );
+        let (n_root, w_root) = (&native[&key(&root)], &want[&key(&root)]);
+        assert_eq!(
+            n_root.items,
+            w_root.items - want[&deep].items + n_deep.items
+        );
+        assert_eq!(n_root.errors, w_root.errors - want[&deep].errors);
+        if let Some(du) = du(&root, &[]) {
+            assert_eq!(
+                n_root.alloc, du,
+                "Linux backend: disk usage differs from du"
+            );
+        }
+        // Stat'ing in inode order (spinning disks) changes the order, not the result.
+        let hdd = scan(
+            dut_scan::LinuxBackend::for_storage(dut_sys::Storage::Rotational),
+            &root,
+        );
+        assert!(hdd == native, "inode order changed the totals");
+    }
+
     // So the temporary directory can be removed.
     let mut perm = fs::metadata(root.join("locked")).unwrap().permissions();
     use std::os::unix::fs::PermissionsExt;

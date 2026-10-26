@@ -1,0 +1,16 @@
+[package]
+name = "dut-bench"
+description = "Benchmark support: seeded synthetic trees for timing scans against other tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+rand.workspace = true

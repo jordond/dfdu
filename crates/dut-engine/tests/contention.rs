@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use dut_engine::{Command, Engine, EngineOptions};
+use dut_engine::{Command, Engine, EngineOptions, Timing};
 use dut_scan::{JobOptions, PortableBackend};
 use tempfile::TempDir;
 
@@ -60,7 +60,18 @@ fn scan(root: &std::path::Path, contend: bool) -> (dut_tree::Totals, Duration) {
     if let Some(r) = reader {
         r.join().unwrap();
     }
-    let t = e.read(|m| m.tree.total(m.tree.roots().next().unwrap()));
+    let (t, timing) = e.read(|m| {
+        (
+            m.tree.total(m.tree.roots().next().unwrap()),
+            m.status.timing.clone(),
+        )
+    });
+    eprintln!(
+        "contend {contend}: {} slices, lock wait p99 < {:?}, hold p99 < {:?}",
+        timing.slices,
+        Timing::percentile(&timing.wait, 0.99),
+        Timing::percentile(&timing.hold, 0.99)
+    );
     match Arc::try_unwrap(e) {
         Ok(e) => e.shutdown(Duration::from_secs(1)),
         Err(_) => unreachable!("reader joined"),

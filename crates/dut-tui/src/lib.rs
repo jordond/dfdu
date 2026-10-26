@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{select, unbounded};
 use dut_engine::{Command, Engine, EngineOptions};
-use dut_scan::{DirId, JobId, JobOptions, PortableBackend};
+use dut_scan::{DirId, JobId, JobOptions, NativeBackend};
 use ratatui::crossterm::event::{self, Event};
 
 pub use app::{App, Effect, Overlay};
@@ -75,7 +75,12 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             }
         },
     };
-    let engine = Engine::start(PortableBackend::default(), opts.engine);
+    let storage = dut_sys::storage(&path);
+    let engine_opts = EngineOptions {
+        workers: dut_engine::workers_for(storage),
+        ..opts.engine
+    };
+    let engine = Engine::start(dut_scan::native_backend(storage), engine_opts);
     engine.send(Command::Scan {
         path,
         opts: opts.job,
@@ -88,7 +93,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
 
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
-    engine: &Engine<PortableBackend>,
+    engine: &Engine<NativeBackend>,
 ) -> io::Result<()> {
     let (tx, input) = unbounded();
     thread::Builder::new()

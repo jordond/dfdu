@@ -4,8 +4,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
-use dut_engine::{Command, Engine, EngineOptions, Model};
-use dut_scan::{JobOptions, PortableBackend};
+use dut_engine::{Command, Engine, EngineOptions, Model, Timing};
+use dut_scan::{Backend, JobOptions, PortableBackend, native_backend};
 use dut_tree::{DirState, Ix, NodeFlags, Tree};
 use dut_tui::SizeMode;
 
@@ -95,6 +95,19 @@ struct ScanArgs {
     /// Abandon directories stalled this many seconds.
     #[arg(long, default_value_t = 30)]
     stall_abandon: u64,
+    /// Print pipeline counters and applier timing (lock hold and wait) after the scan.
+    #[arg(long, hide = true)]
+    debug_stats: bool,
+    /// Filesystem access: `native` (the fastest for this system) or `portable` (std::fs, the
+    /// reference the native backends are tested against).
+    #[arg(long, value_enum, default_value_t = BackendArg::Native, hide = true)]
+    backend: BackendArg,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum BackendArg {
+    Native,
+    Portable,
 }
 
 /// `println!` that ends the process quietly when stdout is closed (`dut scan | head`), instead
@@ -156,6 +169,8 @@ fn main() -> ExitCode {
                     bytes: false,
                     errors: false,
                     stall_abandon: 30,
+                    debug_stats: false,
+                    backend: BackendArg::Native,
                 });
             }
             let opts = dut_tui::RunOptions {
@@ -228,30 +243,39 @@ fn disks() -> ExitCode {
 }
 
 fn scan(args: ScanArgs) -> ExitCode {
+    let mut opts = EngineOptions {
+        auto_abandon: Some(Duration::from_secs(args.stall_abandon)),
+        ..Default::default()
+    };
+    let storage = dut_sys::storage(&args.path);
+    opts.workers = args
+        .threads
+        .unwrap_or_else(|| dut_engine::workers_for(storage));
+    if let Some(n) = args.measure_workers {
+        opts.measure_workers = n;
+    }
+    if args.debug_stats {
+        eprintln!("storage: {storage:?}, {} workers", opts.workers);
+    }
+    match args.backend {
+        BackendArg::Native => scan_with(Engine::start(native_backend(storage), opts), args),
+        BackendArg::Portable => scan_with(Engine::start(PortableBackend::default(), opts), args),
+    }
+}
+
+fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
     let ScanArgs {
         path,
         depth,
         top,
         apparent,
         like_du,
-        threads,
-        measure_workers,
         mounts,
         bytes,
         errors: list_errors,
-        stall_abandon,
+        debug_stats,
+        ..
     } = args;
-    let mut opts = EngineOptions {
-        auto_abandon: Some(Duration::from_secs(stall_abandon)),
-        ..Default::default()
-    };
-    if let Some(t) = threads {
-        opts.workers = t;
-    }
-    if let Some(n) = measure_workers {
-        opts.measure_workers = n;
-    }
-    let engine = Engine::start(PortableBackend::default(), opts);
     let t0 = Instant::now();
     engine.send(Command::Scan {
         path,
@@ -284,6 +308,9 @@ fn scan(args: ScanArgs) -> ExitCode {
                 print_errors(m, root);
             }
             print_footer(m, root, elapsed, list_errors);
+        }
+        if debug_stats {
+            print_debug_stats(m);
         }
         if errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)
@@ -463,4 +490,49 @@ fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
             s.corrupt, s.lost, s.duplicate
         );
     }
+}
+
+/// `--debug-stats`: what went through the pipeline and how the applier spent its time (D1:
+/// entries applied per second of lock time, hold and wait times per slice).
+fn print_debug_stats(m: &Model) {
+    let s = &m.status.stats;
+    let t = &m.status.timing;
+    eprintln!(
+        "pipeline: {} messages, {} chunks, {} closes, {} entries; discarded {} (job) {} (cut); \
+         late {}, stalled {}",
+        s.messages,
+        s.chunks,
+        s.closes,
+        s.entries,
+        s.discarded_job,
+        s.discarded_cut,
+        s.late,
+        s.stalled
+    );
+    let (names, garbage) = m.tree.name_bytes();
+    eprintln!(
+        "tree: {} nodes, {:.1} MiB of names ({:.1} MiB freed)",
+        m.tree.live_nodes(),
+        names as f64 / 1048576.0,
+        garbage as f64 / 1048576.0
+    );
+    let locked = Duration::from_nanos(t.locked_ns);
+    let rate = s.entries as f64 / locked.as_secs_f64().max(1e-9);
+    let max = |h: &[u64; Timing::BUCKETS]| {
+        h.iter()
+            .rposition(|&n| n > 0)
+            .map_or(Duration::ZERO, |k| Duration::from_micros(1 << k))
+    };
+    eprintln!(
+        "applier: {:.0} ms holding the write lock in {} slices, {:.2}M entries/s; hold p50 < {:?}, \
+         p99 < {:?}, max < {:?}; wait for the lock p99 < {:?}, max < {:?}",
+        locked.as_secs_f64() * 1000.0,
+        t.slices,
+        rate / 1e6,
+        Timing::percentile(&t.hold, 0.5),
+        Timing::percentile(&t.hold, 0.99),
+        max(&t.hold),
+        Timing::percentile(&t.wait, 0.99),
+        max(&t.wait),
+    );
 }

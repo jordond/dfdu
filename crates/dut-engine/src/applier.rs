@@ -74,6 +74,44 @@ pub struct Stats {
     pub quiescent: u64,
 }
 
+/// How the applier thread spends its time, filled in by the runtime (D1, ROADMAP M2): how
+/// long it holds the write lock per slice, how long it waits to get it, and in total. Not part
+/// of [`Model::fingerprint`], so it never wakes readers by itself.
+#[derive(Clone, Debug, Default)]
+pub struct Timing {
+    pub slices: u64,
+    /// Time holding the write lock, all slices together.
+    pub locked_ns: u64,
+    /// Write-lock hold time per slice, in [`Timing::BUCKETS`] buckets: bucket `k` counts
+    /// slices that took less than `2^k` microseconds (bucket 0: under 1 µs).
+    pub hold: [u64; Timing::BUCKETS],
+    /// Time waiting for the write lock per slice, same buckets.
+    pub wait: [u64; Timing::BUCKETS],
+}
+
+impl Timing {
+    pub const BUCKETS: usize = 32;
+
+    pub fn bucket(d: std::time::Duration) -> usize {
+        let us = d.as_micros() as u64;
+        ((u64::BITS - us.leading_zeros()) as usize).min(Self::BUCKETS - 1)
+    }
+
+    /// Upper bound of the `p`-th percentile (0 to 1) of a histogram.
+    pub fn percentile(hist: &[u64; Self::BUCKETS], p: f64) -> std::time::Duration {
+        let total: u64 = hist.iter().sum();
+        let want = (total as f64 * p).ceil() as u64;
+        let mut seen = 0;
+        for (k, &n) in hist.iter().enumerate() {
+            seen += n;
+            if seen >= want.max(1) {
+                return std::time::Duration::from_micros(1 << k);
+            }
+        }
+        std::time::Duration::ZERO
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum JobKind {
     Initial,
@@ -108,6 +146,7 @@ pub struct Status {
     pub jobs: Vec<JobInfo>,
     pub stalled: Vec<StalledInfo>,
     pub stats: Stats,
+    pub timing: Timing,
     /// Some directory ended `Lost`, or an invariant check failed: totals may be incomplete.
     pub incomplete: bool,
     /// Incremental work (freeing, hard-link re-election) is pending.
@@ -346,8 +385,13 @@ struct ActivePlan {
     summary: DeleteSummary,
 }
 
-/// Units of incremental work per step (nodes freed, nodes walked, inodes merged).
+/// Units of incremental work per step (nodes freed, nodes walked).
 const STEP_UNITS: usize = 4096;
+
+/// Hard-linked inodes re-elected or merged per step. Each one compares the paths of all its
+/// links, about 1.5 µs per inode in a 1M-entry tree: 4096 per step held the write lock for 6 ms
+/// at the end of a scan, against a slice of 1 ms (§5.6).
+const LINK_KEYS_PER_STEP: usize = 256;
 
 pub fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
@@ -861,7 +905,18 @@ impl<B: Backend> Applier<B> {
         };
         let rec = m.tree.dir_mut(ix).expect("dir");
         if rec.listing_closed {
+            // From a part that returned after the directory was abandoned. Its subdirectories
+            // were never added, but tasks for them exist: stop them, and drop what they send
+            // (as under a cut, §5.1).
             m.status.stats.late += 1;
+            let ids: Vec<DirId> = (0..c.subdirs.len() as u32)
+                .map(|i| DirId(c.first_subdir.0 + i))
+                .collect();
+            let j = self.jobs.get_mut(&c.job.0).expect("gated job");
+            for &d in &ids {
+                j.put(d, Slot::Dead);
+            }
+            self.scan.stop_dirs(c.job, ids);
             return;
         }
         if !rec.mark_seq(c.seq) {
@@ -884,6 +939,10 @@ impl<B: Backend> Applier<B> {
                 m.subvols.insert(m.tree.node_ref(ix), sv);
             }
         }
+        m.tree
+            .dir_mut(ix)
+            .expect("dir")
+            .reserve_children(c.files.len() + c.errors.len() + c.subdirs.len());
         let j = self.jobs.get_mut(&c.job.0).expect("gated job");
         let scope = j.scope;
         let mut delta = Totals::default();
@@ -938,8 +997,7 @@ impl<B: Backend> Applier<B> {
             crec.dir_id = id.0;
             if s.skip.is_some() {
                 crec.state = DirState::Skipped;
-                crec.outcome = DirState::Skipped;
-                crec.listing_closed = true;
+                crec.close(DirState::Skipped);
                 crec.pending = 0;
                 crec.reported = true;
             } else {
@@ -1034,8 +1092,7 @@ impl<B: Backend> Applier<B> {
     fn close_listing(&mut self, m: &mut Model, job: u32, ix: Ix, outcome: DirState) {
         let rec = m.tree.dir_mut(ix).expect("dir");
         debug_assert!(!rec.listing_closed);
-        rec.listing_closed = true;
-        rec.outcome = outcome;
+        rec.close(outcome);
         let dir = rec.dir_id;
         if rec.stalled {
             rec.stalled = false;
@@ -1133,7 +1190,7 @@ impl<B: Backend> Applier<B> {
                 self.sync_extents(m, key, moved);
             }
             Work::FinalPass { mut keys, scope } => {
-                for _ in 0..STEP_UNITS.min(keys.len()) {
+                for _ in 0..LINK_KEYS_PER_STEP.min(keys.len()) {
                     let k = keys.pop().expect("non-empty");
                     let moved = self.links.reelect(&mut m.tree, k, scope);
                     self.sync_extents(m, k, moved);
@@ -1152,7 +1209,7 @@ impl<B: Backend> Applier<B> {
                 });
             }
             Work::Merge { mut keys, from } => {
-                for _ in 0..STEP_UNITS.min(keys.len()) {
+                for _ in 0..LINK_KEYS_PER_STEP.min(keys.len()) {
                     let k = keys.pop().expect("non-empty");
                     let reelect = self.links.merge_key(&mut m.tree, k, from, VISIBLE);
                     self.sync_extents(m, k, true);
@@ -1182,8 +1239,7 @@ impl<B: Backend> Applier<B> {
                     }
                     if rec.state == DirState::Pending {
                         rec.state = DirState::Cancelled;
-                        rec.outcome = DirState::Cancelled;
-                        rec.listing_closed = true;
+                        rec.close(DirState::Cancelled);
                         rec.pending = 0;
                         rec.reported = true;
                         rec.stalled = false;

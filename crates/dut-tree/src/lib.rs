@@ -6,6 +6,7 @@
 mod check;
 mod meta;
 mod names;
+mod pages;
 mod tree;
 
 pub use check::Violation;

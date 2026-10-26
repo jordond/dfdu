@@ -17,3 +17,9 @@ crossbeam-deque.workspace = true
 parking_lot.workspace = true
 fixedbitset.workspace = true
 dut-sys.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

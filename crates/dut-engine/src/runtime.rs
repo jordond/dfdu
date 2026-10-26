@@ -14,7 +14,7 @@ use dut_scan::runtime::{Pool, RealClock};
 use dut_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
 use parking_lot::RwLock;
 
-use crate::applier::{Applier, Command, Model};
+use crate::applier::{Applier, Command, Model, Timing};
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 
 /// The applier's inbox: one channel, so control messages keep their order relative to data,
@@ -111,12 +111,21 @@ pub struct EngineOptions {
     pub measure_workers: usize,
 }
 
+/// Worker threads for data on `storage` (ROADMAP M2 thread policy): two on a spinning disk,
+/// where more threads only add seeks; otherwise one per core, 2 to 16.
+pub fn workers_for(storage: dut_sys::Storage) -> usize {
+    match storage {
+        dut_sys::Storage::Rotational => 2,
+        _ => thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .clamp(2, 16),
+    }
+}
+
 impl Default for EngineOptions {
     fn default() -> Self {
         EngineOptions {
-            workers: thread::available_parallelism()
-                .map_or(4, |n| n.get())
-                .clamp(2, 16),
+            workers: workers_for(dut_sys::Storage::Unknown),
             budget_bytes: 64 * 1024 * 1024,
             limits: Limits::default(),
             auto_abandon: None,
@@ -154,7 +163,11 @@ const SLICE: Duration = Duration::from_millis(1);
 
 impl<B: Backend> Engine<B> {
     pub fn start(backend: B, opts: EngineOptions) -> Self {
-        let shared = Arc::new(Shared::new(backend, opts.limits.clone()));
+        let mut limits = opts.limits.clone();
+        if limits.chunk_credit == 0 {
+            limits.chunk_credit = opts.workers.max(2);
+        }
+        let shared = Arc::new(Shared::new(backend, limits));
         let (inbox, inbox_rx, budget) = Inbox::new(opts.budget_bytes);
         let inbox = Arc::new(inbox);
         let model = Arc::new(RwLock::new(Model::default()));
@@ -364,8 +377,9 @@ fn applier_loop<B: Backend>(
                 default(Duration::from_millis(50)) => {},
             }
         }
-        let started = Instant::now();
+        let asked = Instant::now();
         let mut g = model.write();
+        let started = Instant::now();
         let before = g.fingerprint();
         let now = clock.now();
         while let Ok(c) = cmd_rx.try_recv() {
@@ -419,6 +433,12 @@ fn applier_loop<B: Backend>(
         let outgoing = applier.take_plans();
         let requests = applier.take_measure_requests();
         let changed = g.fingerprint() != before;
+        let held = started.elapsed();
+        let t = &mut g.status.timing;
+        t.slices += 1;
+        t.locked_ns += held.as_nanos() as u64;
+        t.hold[Timing::bucket(held)] += 1;
+        t.wait[Timing::bucket(started - asked)] += 1;
         drop(g);
         for p in outgoing {
             let _ = plans.send(p);

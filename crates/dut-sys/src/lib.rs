@@ -5,7 +5,9 @@
 //! On other systems the functions report "not available" (`Ok(None)` or `Unsupported`).
 
 mod disks;
+mod storage;
 pub use disks::{Disk, Space, disks};
+pub use storage::{Storage, storage, storage_in};
 
 #[cfg(target_os = "linux")]
 mod linux;
