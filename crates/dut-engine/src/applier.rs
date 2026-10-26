@@ -16,6 +16,7 @@ use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Subvol, To
 use crate::extents::{ExtentTable, Inode};
 use crate::links::{LinkTable, Scope, VISIBLE};
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
+use crate::recent::{Event, Recent};
 
 /// What readers see under the read lock: the tree and the engine status, always consistent with
 /// each other.
@@ -26,6 +27,8 @@ pub struct Model {
     /// btrfs subvolume roots (nodes flagged `SUBVOL`). Entries of freed nodes stop resolving
     /// and are pruned after each job.
     pub subvols: HashMap<NodeRef, Subvol>,
+    /// The last messages and commands applied, for crash reports.
+    pub recent: Recent,
 }
 
 impl Model {
@@ -315,6 +318,10 @@ impl Job {
 
 enum Work {
     Free,
+    /// Drop freed links from these inodes' lists ([`LinkTable::prune`]).
+    Prune {
+        keys: Vec<(u64, u64)>,
+    },
     Reelect {
         key: (u64, u64),
         scope: Scope,
@@ -388,10 +395,11 @@ struct ActivePlan {
 /// Units of incremental work per step (nodes freed, nodes walked).
 const STEP_UNITS: usize = 4096;
 
-/// Hard-linked inodes re-elected or merged per step. Each one compares the paths of all its
-/// links, about 1.5 µs per inode in a 1M-entry tree: 4096 per step held the write lock for 6 ms
-/// at the end of a scan, against a slice of 1 ms (§5.6).
-const LINK_KEYS_PER_STEP: usize = 256;
+/// Hard links examined per step of re-election or merging: whole inodes are taken until this
+/// many of their links have been looked at. Re-electing compares the paths of all of an inode's
+/// links. Counting inodes instead (256 per step) held the write lock for up to 65-130 ms on
+/// a tree of 2,000 inodes with 500 links each, against a slice of 1 ms (§5.6).
+const LINKS_PER_STEP: usize = 2048;
 
 pub fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
@@ -493,6 +501,7 @@ impl<B: Backend> Applier<B> {
     // ---- commands --------------------------------------------------------------------------
 
     pub fn command(&mut self, m: &mut Model, cmd: Command, now: u64) {
+        m.recent.push(Event::of_command(&cmd));
         match cmd {
             Command::Scan { path, opts } => {
                 let id = self.next_job;
@@ -789,6 +798,7 @@ impl<B: Backend> Applier<B> {
     /// Applies one scanner message.
     pub fn apply(&mut self, m: &mut Model, msg: ScanMsg, now: u64) {
         m.status.stats.messages += 1;
+        m.recent.push(Event::of_msg(&msg));
         match msg {
             ScanMsg::Chunk(c) => self.apply_chunk(m, c),
             ScanMsg::Close {
@@ -1170,11 +1180,16 @@ impl<B: Backend> Applier<B> {
             Work::Free => {
                 let mut freed = Vec::new();
                 let done = m.tree.free_step(STEP_UNITS, |f| freed.push(f));
+                let mut prune = Vec::new();
                 for f in freed {
                     let key = (f.dev, f.ino);
                     if f.hardlink {
-                        if let Some(scope) = self.links.remove(key, f.node) {
+                        let (reelect, prune_due) = self.links.remove(key, f.node);
+                        if let Some(scope) = reelect {
                             self.work.push_front(Work::Reelect { key, scope });
+                        }
+                        if prune_due {
+                            prune.push(key);
                         }
                         self.sync_extents(m, key, false);
                     } else if f.measured && self.extents.pos(key) == Some(f.node) {
@@ -1184,15 +1199,33 @@ impl<B: Backend> Applier<B> {
                 if !done {
                     self.work.push_back(Work::Free);
                 }
+                if !prune.is_empty() {
+                    self.work.push_front(Work::Prune { keys: prune });
+                }
+            }
+            Work::Prune { mut keys } => {
+                let mut n = 0;
+                while n < LINKS_PER_STEP
+                    && let Some(k) = keys.pop()
+                {
+                    n += self.links.prune(&m.tree, k).max(1);
+                    self.sync_extents(m, k, false);
+                }
+                if !keys.is_empty() {
+                    self.work.push_front(Work::Prune { keys });
+                }
             }
             Work::Reelect { key, scope } => {
-                let moved = self.links.reelect(&mut m.tree, key, scope);
+                let (moved, _) = self.links.reelect(&mut m.tree, key, scope);
                 self.sync_extents(m, key, moved);
             }
             Work::FinalPass { mut keys, scope } => {
-                for _ in 0..LINK_KEYS_PER_STEP.min(keys.len()) {
-                    let k = keys.pop().expect("non-empty");
-                    let moved = self.links.reelect(&mut m.tree, k, scope);
+                let mut n = 0;
+                while n < LINKS_PER_STEP
+                    && let Some(k) = keys.pop()
+                {
+                    let (moved, links) = self.links.reelect(&mut m.tree, k, scope);
+                    n += links.max(1);
                     self.sync_extents(m, k, moved);
                 }
                 if !keys.is_empty() {
@@ -1209,9 +1242,12 @@ impl<B: Backend> Applier<B> {
                 });
             }
             Work::Merge { mut keys, from } => {
-                for _ in 0..LINK_KEYS_PER_STEP.min(keys.len()) {
-                    let k = keys.pop().expect("non-empty");
-                    let reelect = self.links.merge_key(&mut m.tree, k, from, VISIBLE);
+                let mut n = 0;
+                while n < LINKS_PER_STEP
+                    && let Some(k) = keys.pop()
+                {
+                    let (reelect, links) = self.links.merge_key(&mut m.tree, k, from, VISIBLE);
+                    n += links.max(1);
                     self.sync_extents(m, k, true);
                     if reelect {
                         self.work.push_back(Work::Reelect {

@@ -17,3 +17,6 @@ dut-engine.workspace = true
 dut-clean.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
+
+[dev-dependencies]
+dut-tui.workspace = true

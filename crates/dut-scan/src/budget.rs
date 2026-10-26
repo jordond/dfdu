@@ -1,9 +1,13 @@
-use parking_lot::{Condvar, Mutex};
+use std::sync::atomic::Ordering::Relaxed;
+
+use crate::sync::{AtomicUsize, Condvar, Mutex};
 
 /// Counting semaphore on bytes in transit to the applier (`docs/data-pipeline.md` §4.3).
 pub struct Budget {
     capacity: usize,
     used: Mutex<usize>,
+    /// Most bytes in transit at once so far.
+    peak: AtomicUsize,
     freed: Condvar,
 }
 
@@ -12,6 +16,7 @@ impl Budget {
         Budget {
             capacity,
             used: Mutex::new(0),
+            peak: AtomicUsize::new(0),
             freed: Condvar::new(),
         }
     }
@@ -22,6 +27,11 @@ impl Budget {
 
     pub fn used(&self) -> usize {
         *self.used.lock()
+    }
+
+    /// The most bytes in transit at once so far.
+    pub fn peak(&self) -> usize {
+        self.peak.load(Relaxed)
     }
 
     /// A request larger than the capacity is clamped to it, so it can still proceed once the
@@ -37,6 +47,7 @@ impl Budget {
             self.freed.wait(&mut used);
         }
         *used += n;
+        self.peak.fetch_max(*used, Relaxed);
         n
     }
 
@@ -47,6 +58,7 @@ impl Budget {
             return None;
         }
         *used += n;
+        self.peak.fetch_max(*used, Relaxed);
         Some(n)
     }
 

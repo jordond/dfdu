@@ -21,5 +21,8 @@ dut-sys.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
 
+[target.'cfg(loom)'.dependencies]
+loom.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

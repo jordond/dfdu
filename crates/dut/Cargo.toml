@@ -18,3 +18,9 @@ dut-tui.workspace = true
 dut-sys.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["pty", "termios"] }

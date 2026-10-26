@@ -130,6 +130,11 @@ impl Target {
             ident: Some(ident(tree, ix)),
         }
     }
+
+    /// See [`resolve`].
+    pub fn resolve(&self, tree: &Tree) -> Option<Ix> {
+        resolve(tree, self)
+    }
 }
 
 pub fn ident(tree: &Tree, ix: Ix) -> Ident {

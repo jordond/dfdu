@@ -15,6 +15,7 @@ mod mounts;
 mod proto;
 pub mod runtime;
 mod shared;
+pub mod sync;
 
 pub use backend::{Backend, Block, BlockEntry, DirStream, PortableBackend, Raw, RawBlock};
 pub use budget::Budget;

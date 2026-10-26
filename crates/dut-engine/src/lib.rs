@@ -5,6 +5,7 @@ mod applier;
 mod extents;
 mod links;
 mod measure;
+mod recent;
 mod runtime;
 
 pub use applier::{
@@ -16,6 +17,8 @@ pub use extents::{ExtentTable, Inode, Measurement};
 pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 #[cfg(target_os = "linux")]
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
+pub use recent::{Event, RECENT, Recent};
 pub use runtime::{
-    Engine, EngineOptions, Inbox, default_crash_dir, workers_for, write_crash_report,
+    Engine, EngineOptions, Inbox, crash_details, crash_state, default_crash_dir, workers_for,
+    write_crash_report,
 };

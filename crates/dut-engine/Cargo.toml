@@ -26,6 +26,9 @@ rustix.workspace = true
 # Test-only hooks (Command::InjectPanic).
 fault-injection = []
 
+[target.'cfg(loom)'.dev-dependencies]
+loom.workspace = true
+
 [dev-dependencies]
 dut-engine = { path = ".", features = ["fault-injection"] }
 dut-clean.workspace = true

@@ -126,18 +126,20 @@ macro_rules! outln {
 /// Exit codes from `docs/research/safety-persistence-ops.md` §4.3.
 const EXIT_PARTIAL: u8 = 3;
 
-/// Writes a crash report for a panic on any thread, then runs the previous hook (which, in
-/// the browser, restores the terminal first).
+/// Writes a crash report for a panic on any thread, with the engine's counters and last
+/// messages, then runs the previous hook. In the browser, `dut_tui::run` wraps this hook in one
+/// that restores the terminal first.
 fn install_crash_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if let Some(dir) = dut_engine::default_crash_dir() {
             let thread = std::thread::current();
             let report = format!(
-                "dut {} crash report\n\nthread: {}\npanic: {info}\n\nbacktrace:\n{}\n",
+                "dut {} crash report\n\nthread: {}\npanic: {info}\n\nbacktrace:\n{}\n\n{}",
                 env!("CARGO_PKG_VERSION"),
                 thread.name().unwrap_or("?"),
-                std::backtrace::Backtrace::force_capture()
+                std::backtrace::Backtrace::force_capture(),
+                dut_engine::crash_state().unwrap_or_default(),
             );
             if let Some(p) = dut_engine::write_crash_report(&dir, &report) {
                 eprintln!("dut: crash report written to {}", p.display());

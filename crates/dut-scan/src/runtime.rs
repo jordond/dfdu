@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
-use std::thread::{self, JoinHandle, Thread};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::backend::Backend;
 use crate::shared::{Clock, Shared, Sink, StepResult, Worker};
+use crate::sync::Sleepers;
 
 pub struct RealClock(Instant);
 
@@ -36,7 +37,7 @@ struct PoolState {
     active: AtomicUsize,
     /// Workers allowed beyond `target`, from the last watchdog round.
     allowed_extra: AtomicUsize,
-    idle_threads: Mutex<Vec<Thread>>,
+    idle_threads: Sleepers,
     handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -58,15 +59,11 @@ impl Pool {
             target: workers,
             active: AtomicUsize::new(0),
             allowed_extra: AtomicUsize::new(0),
-            idle_threads: Mutex::new(Vec::new()),
+            idle_threads: Sleepers::default(),
             handles: Mutex::new(Vec::new()),
         });
         let st = state.clone();
-        shared.set_waker(Box::new(move || {
-            for t in st.idle_threads.lock().drain(..) {
-                t.unpark();
-            }
-        }));
+        shared.set_waker(Box::new(move || st.idle_threads.wake_all()));
         let clock = Arc::new(RealClock::new());
         for _ in 0..workers {
             spawn_worker(&state, &shared, &sink, &clock);
@@ -95,9 +92,7 @@ impl Pool {
     /// Stops all threads. Threads stuck in a filesystem call are not waited for.
     pub fn stop(mut self, wait: Duration) {
         self.state.stop.store(true, SeqCst);
-        for t in self.state.idle_threads.lock().drain(..) {
-            t.unpark();
-        }
+        self.state.idle_threads.wake_all();
         if let Some(w) = self.watchdog.take() {
             let _ = w.join();
         }
@@ -144,9 +139,13 @@ fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
                 match w.step(&sh, &*sk, &*ck) {
                     StepResult::Progress => {}
                     StepResult::Idle => {
+                        // Tasks published after `step` found none would otherwise wait for the
+                        // timeout: `sleep` looks at the queues again once registered.
                         sh.idle.fetch_add(1, SeqCst);
-                        st.idle_threads.lock().push(thread::current());
-                        thread::park_timeout(Duration::from_millis(5));
+                        st.idle_threads.sleep(
+                            || st.stop.load(SeqCst) || sh.has_queued(),
+                            Duration::from_millis(5),
+                        );
                         sh.idle.fetch_sub(1, SeqCst);
                     }
                     StepResult::Blocked | StepResult::WaitingBudget => {

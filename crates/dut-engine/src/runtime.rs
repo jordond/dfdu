@@ -3,8 +3,8 @@
 use dut_scan::panic_message;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
+use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -71,13 +71,40 @@ pub fn default_crash_dir() -> Option<PathBuf> {
 
 fn crash_report(msg: &str, m: &Model) -> String {
     format!(
-        "dut {} crash report\n\npanic: {msg}\n\nbacktrace:\n{}\n\nstats: {:?}\nanomalies: {:?}\njobs: {:?}\n",
+        "dut {} crash report\n\nthread: dut-applier\npanic: {msg}\n\nbacktrace:\n{}\n\n{}",
         env!("CARGO_PKG_VERSION"),
         std::backtrace::Backtrace::force_capture(),
+        crash_details(m),
+    )
+}
+
+/// The engine's part of a crash report: counters, anomalies, jobs and the last messages and
+/// commands applied (§8).
+pub fn crash_details(m: &Model) -> String {
+    format!(
+        "stats: {:?}\nanomalies: {:?}\njobs: {:?}\n\n{}",
         m.status.stats,
         m.status.anomalies,
         m.status.jobs,
+        m.recent.report(),
     )
+}
+
+/// The model of the engine started last, for a panic hook on another thread.
+static CRASH_MODEL: parking_lot::Mutex<Option<Weak<RwLock<Model>>>> = parking_lot::Mutex::new(None);
+
+/// [`crash_details`] of the engine started last, for a panic on a thread other than the
+/// applier (the UI); `None` if no engine is running. Waits at most 500 ms for the read lock: a
+/// thread that panics while holding it would wait behind the applier's pending write forever.
+pub fn crash_state() -> Option<String> {
+    let model = CRASH_MODEL
+        .try_lock_for(Duration::from_millis(100))?
+        .as_ref()?
+        .upgrade()?;
+    Some(match model.try_read_for(Duration::from_millis(500)) {
+        Some(g) => crash_details(&g),
+        None => "engine state: not read, the model stayed locked for 500 ms\n".to_string(),
+    })
 }
 
 /// Writes a crash report into `dir`; returns its path.
@@ -156,6 +183,7 @@ pub struct Engine<B: Backend> {
     pool: Option<Pool>,
     delete_abort: Arc<AtomicBool>,
     deleter: Option<JoinHandle<()>>,
+    budget: Arc<Budget>,
 }
 
 /// Longest time the applier holds the write lock in one slice (§5.6).
@@ -169,8 +197,10 @@ impl<B: Backend> Engine<B> {
         }
         let shared = Arc::new(Shared::new(backend, limits));
         let (inbox, inbox_rx, budget) = Inbox::new(opts.budget_bytes);
+        let transit = budget.clone();
         let inbox = Arc::new(inbox);
         let model = Arc::new(RwLock::new(Model::default()));
+        *CRASH_MODEL.lock() = Some(Arc::downgrade(&model));
         let (cmd_tx, cmd_rx) = unbounded::<Command>();
         let (wake_tx, wake_rx) = bounded::<()>(1);
         let stop = Arc::new(AtomicBool::new(false));
@@ -231,6 +261,7 @@ impl<B: Backend> Engine<B> {
             pool: Some(pool),
             delete_abort,
             deleter: Some(deleter_thread),
+            budget: transit,
         }
     }
 
@@ -267,6 +298,11 @@ impl<B: Backend> Engine<B> {
 
     pub fn scanner(&self) -> &Shared<B> {
         &self.shared
+    }
+
+    /// The byte budget on scanner data in transit to the applier (§4.3).
+    pub fn budget(&self) -> &Budget {
+        &self.budget
     }
 
     /// Blocks until every command sent so far has been applied, no job is running and no

@@ -36,9 +36,12 @@ rustix = { version = "1.1.5", features = ["fs", "process"] }
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 rand = { version = "0.10.3", default-features = false, features = ["chacha"] }
 ratatui = "0.30.2"
+loom = "0.7.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `--cfg loom` builds the scanner's synchronisation on `loom` (crates/dut-scan/src/sync.rs).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

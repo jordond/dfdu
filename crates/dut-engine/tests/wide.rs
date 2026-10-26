@@ -2,13 +2,68 @@
 //! (`docs/data-pipeline.md` §4.2), with each backend: totals, items and subdirectories match a
 //! plain walk.
 
+use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
 use dut_engine::{Command, Engine, EngineOptions};
-use dut_scan::{Backend, JobOptions, Limits, PortableBackend};
-use dut_tree::Totals;
+use dut_scan::{Backend, DirStream, FsClass, JobOptions, Limits, PortableBackend, Raw};
+use dut_tree::{Meta, Subvol, Totals};
+
+/// Each block read takes 2 ms longer, so chunk tasks finish (and return the directory's credit)
+/// while the listing still reads, on any OS. At full speed the listing can read the whole
+/// directory before a woken worker finishes its first block: on Windows the portable backend's
+/// stats cost nothing (`FindNextFileW` returns the metadata with the name), so the listing worker
+/// stats its blocks in about the time a woken thread takes to start, and the directory gets only
+/// the chunk tasks of its initial credit (4).
+struct SlowReads<B>(B);
+
+struct SlowStream<S>(S);
+
+impl<S: DirStream> DirStream for SlowStream<S> {
+    type Loc = S::Loc;
+
+    fn next_raw(
+        &mut self,
+        max_entries: usize,
+        max_name_bytes: usize,
+    ) -> io::Result<(Raw<S::Loc>, bool)> {
+        std::thread::sleep(Duration::from_millis(2));
+        self.0.next_raw(max_entries, max_name_bytes)
+    }
+}
+
+impl<B: Backend> Backend for SlowReads<B> {
+    type Loc = B::Loc;
+    type Stream = SlowStream<B::Stream>;
+
+    fn loc_from_path(&self, path: &Path) -> B::Loc {
+        self.0.loc_from_path(path)
+    }
+    fn stat_root(&self, loc: &B::Loc) -> io::Result<Meta> {
+        self.0.stat_root(loc)
+    }
+    fn open(&self, loc: &B::Loc) -> io::Result<Self::Stream> {
+        self.0.open(loc).map(SlowStream)
+    }
+    fn subvolume(&self, loc: &B::Loc) -> io::Result<Option<Subvol>> {
+        self.0.subvolume(loc)
+    }
+    fn shares_extents(&self, loc: &B::Loc) -> bool {
+        self.0.shares_extents(loc)
+    }
+    fn data_profile(&self, loc: &B::Loc) -> Option<(&'static str, f64)> {
+        self.0.data_profile(loc)
+    }
+    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
+        self.0.duplicate_mounts(scope)
+    }
+    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        self.0.mount_class(mount, dev)
+    }
+}
 
 /// A directory of 3,000 files and 40 subdirectories (each with a file), plus a hard link pair.
 fn fixture(root: &Path) {
@@ -27,7 +82,7 @@ fn fixture(root: &Path) {
 
 /// Apparent bytes and item count of everything below `root`, hard links once.
 fn walk(root: &Path) -> (u64, u64) {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let (mut bytes, mut items) = (fs::metadata(root).unwrap().len(), 1);
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -101,17 +156,25 @@ fn wide_directory_in_chunk_tasks() {
     fixture(tmp.path());
     let (bytes, items) = walk(tmp.path());
 
-    let (t, chunk_tasks) = scan(PortableBackend::default(), tmp.path());
+    // At full speed, how many blocks go to chunk tasks depends on timing (on Linux the portable
+    // backend gave 11 or fewer in 5 of 150 runs); the totals must match whatever the split.
+    // With slowed reads nearly every block goes to a chunk task.
+    let (t, _) = scan(PortableBackend::default(), tmp.path());
     assert_eq!((t.apparent, t.items, t.errors), (bytes, items, 0));
+    let (n, chunk_tasks) = scan(SlowReads(PortableBackend::default()), tmp.path());
+    assert_eq!(n, t, "portable backend, slowed reads");
     assert!(chunk_tasks > 10, "{chunk_tasks} chunk tasks");
 
     #[cfg(target_os = "linux")]
     for storage in [dut_sys::Storage::Solid, dut_sys::Storage::Rotational] {
-        let (n, chunk_tasks) = scan(dut_scan::LinuxBackend::for_storage(storage), tmp.path());
+        let linux = || dut_scan::LinuxBackend::for_storage(storage);
+        let (n, _) = scan(linux(), tmp.path());
         assert_eq!(
             n, t,
             "Linux backend ({storage:?}) and portable backend differ"
         );
+        let (n, chunk_tasks) = scan(SlowReads(linux()), tmp.path());
+        assert_eq!(n, t, "Linux backend ({storage:?}), slowed reads");
         assert!(chunk_tasks > 10, "{chunk_tasks} chunk tasks");
     }
 }

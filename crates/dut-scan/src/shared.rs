@@ -7,11 +7,9 @@ use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst};
+use std::sync::atomic::Ordering::SeqCst;
 
-use crossbeam_deque::{Injector, Steal};
 use dut_tree::{ErrKind, Kind};
-use parking_lot::{Mutex, RwLock};
 
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, Raw};
@@ -19,6 +17,7 @@ use crate::proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
     SkipReason, SubdirRec,
 };
+use crate::sync::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Injector, Mutex, RwLock, Steal};
 
 /// Monotonic time in nanoseconds; never returns 0 (0 means "not set" in the slot fields).
 pub trait Clock: Sync {
@@ -231,6 +230,16 @@ impl<L> Outbox<L> {
         }
         self.msgs.push(msg);
     }
+    /// Messages not yet sent.
+    pub fn messages(&self) -> &[ScanMsg] {
+        &self.msgs
+    }
+
+    /// Tasks not yet published.
+    pub fn unpublished(&self) -> usize {
+        self.tasks.len()
+    }
+
     /// Nothing to send, publish or report done.
     pub fn is_empty(&self) -> bool {
         self.msgs.is_empty() && self.tasks.is_empty() && self.done.is_empty()
@@ -274,6 +283,16 @@ impl<L> WorkerSlot<L> {
 
     pub fn in_syscall_since(&self) -> u64 {
         self.syscall_since.load(SeqCst)
+    }
+
+    /// The part being run: `(job, dir, part)`, part 0 being the listing task and part
+    /// `seq + 1` the chunk task for block `seq`.
+    pub fn current(&self) -> Option<(JobId, DirId, u32)> {
+        let cur = self.current.load(SeqCst);
+        (cur != NO_TASK).then(|| {
+            let (job, dir) = unpack(cur);
+            (job, dir, self.part.load(SeqCst))
+        })
     }
 
     /// Marks the start of a filesystem call. A call retried after "not ready" keeps its
@@ -433,6 +452,8 @@ impl<B: Backend> Shared<B> {
         complete
     }
 
+    /// Makes `(job, dir)` the focus (§4.3). The focus is stored before the epoch changes;
+    /// readers load the epoch first (`Worker::emit_block`).
     pub fn set_focus(&self, job: JobId, dir: DirId) {
         self.focus.store(pack(job, dir), SeqCst);
         self.focus_epoch.fetch_add(1, SeqCst);
@@ -461,6 +482,16 @@ impl<B: Backend> Shared<B> {
             );
         }
         out
+    }
+
+    /// Published tasks not yet taken: `(priority, normal)`.
+    pub fn queued(&self) -> (usize, usize) {
+        (self.priority.len(), self.injector.len())
+    }
+
+    /// Whether a published task is waiting to be taken.
+    pub fn has_queued(&self) -> bool {
+        !self.priority.is_empty() || !self.injector.is_empty()
     }
 
     pub fn outstanding(&self) -> (u64, u64) {
@@ -538,6 +569,12 @@ impl<B: Backend> Shared<B> {
                 continue;
             };
             let mut force = false;
+            // Looked at again under the lock: the call seen above may have returned and the
+            // worker moved on to another part, which must not be reported as stalled. A part
+            // ends (clearing the start time) and the next one is taken under this lock, so a
+            // start time read here belongs to the part in `current`.
+            let since = slot.syscall_since.load(SeqCst);
+            let is_stuck = since != 0 && now.saturating_sub(since) > self.limits.stall_ns;
             if is_stuck && !slot.stall_reported.load(SeqCst) {
                 let cur = slot.current.load(SeqCst);
                 if cur != NO_TASK {
@@ -1069,7 +1106,11 @@ impl<B: Backend> Worker<B> {
         let block = std::mem::take(&mut self.block);
         let (cross, network) = (r.job.opts.cross_mounts, r.job.opts.network);
         let (dir_dev, dir_mount) = (r.task.dev, r.task.mount);
-        let (focus, epoch) = (sh.focus.load(SeqCst), sh.focus_epoch.load(SeqCst));
+        // Epoch first: `set_focus` stores the focus before it bumps the epoch, so a new epoch
+        // read here comes with the new focus. The other order could pair the old focus with
+        // the new epoch and keep the old focus's children prioritised after a change.
+        let epoch = sh.focus_epoch.load(SeqCst);
+        let focus = sh.focus.load(SeqCst);
         let child_epoch = if focus == pack(r.task.job, r.task.dir) || r.task.focus_epoch == epoch {
             epoch
         } else {

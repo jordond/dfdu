@@ -116,6 +116,12 @@ impl Spec {
         self.deleted[i as usize].load(SeqCst)
     }
 
+    /// Makes a removed entry exist again (a scenario replacing a file by another of the same
+    /// name removes one and restores the other).
+    pub fn restore(&self, i: u32) {
+        self.deleted[i as usize].store(false, SeqCst);
+    }
+
     pub fn delete_subtree(&self, i: u32) {
         let mut stack = vec![i];
         while let Some(n) = stack.pop() {
@@ -144,6 +150,7 @@ impl Spec {
 pub const ROOT: u32 = 0;
 pub const ROOT_NAME: &str = "/sim";
 
+#[derive(Clone)]
 pub struct SpecConfig {
     pub max_depth: u32,
     pub max_dirs: u64,
@@ -425,6 +432,121 @@ impl Spec {
         Spec {
             dev_fs,
             nodes,
+            parent,
+            deleted,
+        }
+    }
+}
+
+/// Builds a spec by hand for scenario tests: one device, mount ids, no shared extents.
+/// Directories and files get unique inode numbers; [`SpecBuilder::link`] adds hard links.
+pub struct SpecBuilder {
+    nodes: Vec<SpecNode>,
+    ino: u64,
+    absent: Vec<u32>,
+}
+
+impl Default for SpecBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpecBuilder {
+    pub fn new() -> Self {
+        let mut b = SpecBuilder {
+            nodes: vec![],
+            ino: 1000,
+            absent: vec![],
+        };
+        b.push(ROOT_NAME, Kind::Dir, 4096);
+        b
+    }
+
+    fn push(&mut self, name: &str, kind: Kind, size: u64) -> u32 {
+        self.ino += 1;
+        self.nodes.push(SpecNode {
+            name: name.as_bytes().to_vec(),
+            meta: Meta {
+                kind,
+                apparent: size,
+                alloc: size.div_ceil(4096) * 4096,
+                mtime: 1,
+                dev: 1,
+                ino: self.ino,
+                nlink: if kind == Kind::Dir { 2 } else { 1 },
+                mount: 1,
+            },
+            children: vec![],
+            fault: Fault::None,
+            vanished: false,
+            subvol: None,
+            dup_mount: false,
+            fs_class: None,
+            pieces: vec![],
+            unmeasurable: false,
+        });
+        (self.nodes.len() - 1) as u32
+    }
+
+    fn add(&mut self, parent: u32, name: &str, kind: Kind, size: u64) -> u32 {
+        let i = self.push(name, kind, size);
+        self.nodes[parent as usize].children.push(i);
+        i
+    }
+
+    pub fn dir(&mut self, parent: u32, name: &str) -> u32 {
+        self.add(parent, name, Kind::Dir, 4096)
+    }
+
+    pub fn file(&mut self, parent: u32, name: &str, size: u64) -> u32 {
+        self.add(parent, name, Kind::File, size)
+    }
+
+    /// `n` files named `{prefix}{i}`, of sizes 1000, 1001, ...
+    pub fn files(&mut self, parent: u32, prefix: &str, n: usize) -> Vec<u32> {
+        (0..n)
+            .map(|i| self.file(parent, &format!("{prefix}{i}"), 1000 + i as u64))
+            .collect()
+    }
+
+    /// A hard link to file `target` named `name` in `parent`.
+    pub fn link(&mut self, parent: u32, name: &str, target: u32) -> u32 {
+        let meta = self.nodes[target as usize].meta;
+        let i = self.add(parent, name, Kind::File, meta.apparent);
+        self.nodes[i as usize].meta = meta;
+        i
+    }
+
+    pub fn fault(&mut self, dir: u32, fault: Fault) {
+        self.nodes[dir as usize].fault = fault;
+    }
+
+    /// The entry starts out removed; [`Spec::restore`] creates it.
+    pub fn absent(&mut self, i: u32) {
+        self.absent.push(i);
+    }
+
+    pub fn build(mut self) -> Spec {
+        let mut links: HashMap<u64, u32> = HashMap::new();
+        for n in self.nodes.iter().filter(|n| n.meta.kind == Kind::File) {
+            *links.entry(n.meta.ino).or_default() += 1;
+        }
+        for n in self.nodes.iter_mut().filter(|n| n.meta.kind == Kind::File) {
+            n.meta.nlink = links[&n.meta.ino];
+        }
+        let mut parent = vec![ROOT; self.nodes.len()];
+        for (i, n) in self.nodes.iter().enumerate() {
+            for &c in &n.children {
+                parent[c as usize] = i as u32;
+            }
+        }
+        let deleted = (0..self.nodes.len())
+            .map(|i| AtomicBool::new(self.absent.contains(&(i as u32))))
+            .collect();
+        Spec {
+            nodes: self.nodes,
+            dev_fs: HashMap::from([(1, (0, false))]),
             parent,
             deleted,
         }
@@ -775,10 +897,14 @@ impl Backend for SimBackend {
         let mut cur = ROOT;
         for part in rest.split(['/', '\\']).filter(|p| !p.is_empty()) {
             let n = &self.spec.nodes[cur as usize];
+            // A name can be both a removed entry and the one that replaced it (scenario 14).
+            let named = |&&c: &&u32| self.spec.nodes[c as usize].name == part.as_bytes();
             cur = *n
                 .children
                 .iter()
-                .find(|&&c| self.spec.nodes[c as usize].name == part.as_bytes())
+                .filter(named)
+                .find(|&&c| !self.spec.is_deleted(c))
+                .or_else(|| n.children.iter().find(named))
                 .expect("path in spec");
         }
         cur
@@ -917,6 +1043,7 @@ impl Sink for SimSink {
 
 // ---- driver ----------------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct SimConfig {
     pub workers: usize,
     pub budget: usize,
@@ -992,347 +1119,552 @@ pub struct SimReport {
     pub chunk_tasks: u64,
 }
 
+/// A simulation in progress. [`run`] drives one in random order from start to end; scenario
+/// tests (`docs/data-pipeline.md` §10.2) build their own spec, force the sequence they are
+/// about with the step methods, then call [`Sim::run_to_end`], which finishes in random order
+/// and applies every final check.
+pub struct Sim {
+    pub seed: u64,
+    pub rng: Rng,
+    cfg: SimConfig,
+    pub spec: Arc<Spec>,
+    pub clock: Arc<SimClock>,
+    pub shared: Arc<Shared<SimBackend>>,
+    pub sink: Arc<SimSink>,
+    pub workers: Vec<Worker<SimBackend>>,
+    pub applier: Applier<SimBackend>,
+    pub model: Model,
+    /// The batch being applied, with its budget bytes.
+    cur: Option<(VecDeque<ScanMsg>, usize)>,
+    rescans_left: u32,
+    deletes_left: u32,
+    cancels_left: u32,
+    recoveries: u32,
+    plans: VecDeque<(Plan, usize)>,
+    del_q: VecDeque<DeleterMsg>,
+    meas_q: Vec<MeasureReq>,
+    pub cross_mounts: bool,
+    pub network: bool,
+    pub report: SimReport,
+    /// Every scan message applied, in order, when [`Sim::record`] is set (scenario tests).
+    pub log: Vec<ScanMsg>,
+    pub record: bool,
+}
+
+/// Runs one seed in random order from start to end.
 pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
-    let mut rng = Rng::new(seed);
-    let spec = Arc::new(Spec::generate(
-        &mut rng,
-        &cfg.spec,
-        cfg.limits.block_entries,
-    ));
-    let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
-    let network = cfg.network.unwrap_or_else(|| rng.chance(300));
-    let clock = Arc::new(SimClock(AtomicU64::new(1)));
-    let backend = SimBackend {
-        spec: spec.clone(),
-        clock: clock.clone(),
-    };
-    let shared = Arc::new(Shared::new(backend, cfg.limits.clone()));
-    let sink = Arc::new(SimSink {
-        q: Mutex::new(VecDeque::new()),
-        budget: Budget::new(cfg.budget),
-        max_used: AtomicU64::new(0),
-    });
-    let mut workers: Vec<Worker<SimBackend>> = (0..cfg.workers)
-        .map(|_| Worker::new(&shared, false))
-        .collect();
-    let mut applier = Applier::new(shared.clone());
-    let mut model = Model::default();
-    let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
-    let mut rescans_left = cfg.rescans;
-    let mut deletes_left = cfg.deletes;
-    let mut cancels_left = cfg.cancels;
-    let mut recoveries = 0;
-    let mut plans: VecDeque<(Plan, usize)> = VecDeque::new();
-    let mut del_q: VecDeque<DeleterMsg> = VecDeque::new();
-    let mut meas_q: Vec<MeasureReq> = Vec::new();
-    let mut report = SimReport::default();
+    Sim::new(seed, cfg).run_to_end()
+}
 
-    applier.command(
-        &mut model,
-        Command::Scan {
-            path: PathBuf::from(ROOT_NAME),
-            opts: JobOptions {
-                cross_mounts,
-                network,
-                ..JobOptions::default()
+impl Sim {
+    /// A simulation of a spec generated from the seed, with the initial scan issued.
+    pub fn new(seed: u64, cfg: &SimConfig) -> Sim {
+        let mut rng = Rng::new(seed);
+        let spec = Spec::generate(&mut rng, &cfg.spec, cfg.limits.block_entries);
+        Sim::start(seed, rng, cfg, spec)
+    }
+
+    /// A simulation of a spec built by the caller, with the initial scan issued.
+    pub fn with_spec(seed: u64, cfg: &SimConfig, spec: Spec) -> Sim {
+        Sim::start(seed, Rng::new(seed), cfg, spec)
+    }
+
+    fn start(seed: u64, mut rng: Rng, cfg: &SimConfig, spec: Spec) -> Sim {
+        let spec = Arc::new(spec);
+        let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
+        let network = cfg.network.unwrap_or_else(|| rng.chance(300));
+        let clock = Arc::new(SimClock(AtomicU64::new(1)));
+        let backend = SimBackend {
+            spec: spec.clone(),
+            clock: clock.clone(),
+        };
+        let shared = Arc::new(Shared::new(backend, cfg.limits.clone()));
+        let sink = Arc::new(SimSink {
+            q: Mutex::new(VecDeque::new()),
+            budget: Budget::new(cfg.budget),
+            max_used: AtomicU64::new(0),
+        });
+        let workers = (0..cfg.workers)
+            .map(|_| Worker::new(&shared, false))
+            .collect();
+        let applier = Applier::new(shared.clone());
+        let mut sim = Sim {
+            seed,
+            rng,
+            cfg: cfg.clone(),
+            spec,
+            clock,
+            shared,
+            sink,
+            workers,
+            applier,
+            model: Model::default(),
+            cur: None,
+            rescans_left: cfg.rescans,
+            deletes_left: cfg.deletes,
+            cancels_left: cfg.cancels,
+            recoveries: 0,
+            plans: VecDeque::new(),
+            del_q: VecDeque::new(),
+            meas_q: Vec::new(),
+            cross_mounts,
+            network,
+            report: SimReport::default(),
+            log: Vec::new(),
+            record: false,
+        };
+        let now = sim.clock.now();
+        sim.applier.command(
+            &mut sim.model,
+            Command::Scan {
+                path: PathBuf::from(ROOT_NAME),
+                opts: JobOptions {
+                    cross_mounts,
+                    network,
+                    ..JobOptions::default()
+                },
             },
-        },
-        clock.now(),
-    );
-    let fail = |what: String, report: &SimReport| {
-        Err(format!(
-            "seed {seed}: {what} (after {} ticks)",
-            report.ticks
-        ))
-    };
+            now,
+        );
+        sim
+    }
 
-    loop {
-        report.ticks += 1;
-        if report.ticks > cfg.max_ticks {
-            let (out, ab) = shared.outstanding();
-            eprintln!("{}", shared.debug_parts());
-            return fail(
-                format!(
-                    "did not finish: running jobs {}, outstanding {out}, abandoned {ab}, queued batches {}",
-                    model.status.running(),
-                    sink.q.lock().len()
-                ),
-                &report,
-            );
+    fn fail(&self, what: impl std::fmt::Display) -> String {
+        format!(
+            "seed {}: {what} (after {} ticks)",
+            self.seed, self.report.ticks
+        )
+    }
+
+    fn check(&self, after: &str) -> Result<(), String> {
+        self.applier
+            .check(&self.model)
+            .map_err(|e| self.fail(format!("invariant{after}: {e}")))
+    }
+
+    // ---- steps for scripted scenarios ------------------------------------------------------
+
+    /// One step of worker `i`.
+    pub fn step_worker(&mut self, i: usize) -> StepResult {
+        self.workers[i].step(&self.shared, &*self.sink, &*self.clock)
+    }
+
+    /// Flushes worker `i`'s outbox: its messages become deliverable, its tasks stealable.
+    pub fn flush_worker(&mut self, i: usize) -> bool {
+        self.workers[i].flush(&self.shared, &*self.sink)
+    }
+
+    /// One watchdog round, then 1 ms of virtual time. Adds a worker when the runtime would
+    /// replace stuck ones.
+    pub fn watchdog(&mut self) {
+        let rep = self.shared.watchdog_round(&*self.sink, self.clock.now());
+        let target = self.cfg.workers;
+        if self.workers.len() < target + self.shared.allowed_extra_workers(target, &rep) {
+            self.workers.push(Worker::new(&self.shared, false));
         }
+        self.report.max_workers = self.report.max_workers.max(self.workers.len());
+        self.clock.advance(1_000_000);
+    }
+
+    pub fn advance(&self, ns: u64) {
+        self.clock.advance(ns);
+    }
+
+    pub fn clock_now(&self) -> u64 {
+        self.clock.now()
+    }
+
+    /// The applier's periodic tick, with the configured automatic abandon.
+    pub fn tick(&mut self) {
+        let now = self.clock.now();
+        self.applier
+            .tick(&mut self.model, now, Some(self.cfg.auto_abandon_ns));
+    }
+
+    pub fn command(&mut self, cmd: Command) -> Result<(), String> {
+        let now = self.clock.now();
+        self.applier.command(&mut self.model, cmd, now);
+        self.plans
+            .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
+        self.check(" after a command")
+    }
+
+    /// Paths of the items of the delete plan the deleter is running, if any.
+    pub fn running_plan(&self) -> Option<Vec<PathBuf>> {
+        self.plans
+            .front()
+            .map(|(p, _)| p.items.iter().map(|i| i.path.clone()).collect())
+    }
+
+    /// The deleter's result for the next item of the running plan, applied at once (a
+    /// `Deleted` item is removed from the spec first). When no item is left, the plan's `Done`.
+    /// Returns false if no plan is running.
+    pub fn delete_next(&mut self, result: DeleteResult) -> Result<bool, String> {
+        use dut_scan::Backend as _;
+        let Some((plan, i)) = self.plans.front_mut() else {
+            return Ok(false);
+        };
+        let msg = if *i < plan.items.len() {
+            let item = plan.items[*i].clone();
+            *i += 1;
+            if result == DeleteResult::Deleted {
+                let n = self.shared.backend.loc_from_path(&item.path);
+                self.spec.delete_subtree(n);
+                self.report.deleted_items += 1;
+            }
+            DeleterMsg::Item {
+                plan: plan.id,
+                node: item.node,
+                bytes: item.bytes,
+                result,
+            }
+        } else {
+            let id = plan.id;
+            self.plans.pop_front();
+            DeleterMsg::Done {
+                plan: id,
+                btrfs: false,
+            }
+        };
+        self.applier.apply_delete(&mut self.model, msg);
+        self.applier.refresh_status(&mut self.model);
+        self.plans
+            .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
+        self.check(" after a delete result")?;
+        Ok(true)
+    }
+
+    /// Messages delivered and not yet applied, in the order they will be applied.
+    pub fn queued(&self) -> Vec<ScanMsg> {
+        let mut out: Vec<ScanMsg> = self
+            .cur
+            .iter()
+            .flat_map(|(m, _)| m.iter().cloned())
+            .collect();
+        for b in self.sink.q.lock().iter() {
+            out.extend(b.msgs.iter().cloned());
+        }
+        out
+    }
+
+    /// Applies the next delivered message. Returns it, or `None` when nothing is queued.
+    pub fn apply_next(&mut self) -> Result<Option<ScanMsg>, String> {
+        loop {
+            if self.cur.is_none() {
+                match self.sink.q.lock().pop_front() {
+                    Some(b) => self.cur = Some((b.msgs.into(), b.bytes)),
+                    None => return Ok(None),
+                }
+            }
+            let (msgs, bytes) = self.cur.as_mut().expect("batch");
+            match msgs.pop_front() {
+                Some(m) => {
+                    let now = self.clock.now();
+                    if self.record {
+                        self.log.push(m.clone());
+                    }
+                    self.applier.apply(&mut self.model, m.clone(), now);
+                    self.applier.refresh_status(&mut self.model);
+                    self.check("")?;
+                    return Ok(Some(m));
+                }
+                None => {
+                    self.sink.budget.release(*bytes);
+                    self.cur = None;
+                }
+            }
+        }
+    }
+
+    /// Applies every delivered message.
+    pub fn apply_all(&mut self) -> Result<(), String> {
+        while self.apply_next()?.is_some() {}
+        Ok(())
+    }
+
+    /// Runs the applier's own work (freeing, hard-link and extent passes) until none is left.
+    pub fn applier_work(&mut self) -> Result<(), String> {
+        while self.applier.has_work() {
+            self.applier.work_step(&mut self.model);
+            self.applier.refresh_status(&mut self.model);
+            self.check("")?;
+        }
+        Ok(())
+    }
+
+    // ---- random driver ---------------------------------------------------------------------
+
+    /// One random step.
+    pub fn random_step(&mut self) -> Result<(), String> {
+        self.report.ticks += 1;
         // One request per file, so answers can arrive in any order.
-        for r in applier.take_measure_requests() {
+        for r in self.applier.take_measure_requests() {
             for f in r.files {
-                meas_q.push(MeasureReq {
+                self.meas_q.push(MeasureReq {
                     round: r.round,
                     dir: r.dir.clone(),
                     files: vec![f],
                 });
             }
         }
-        let r = rng.below(100);
+        let r = self.rng.below(100);
         match r {
             0..55 => {
-                let i = rng.below(workers.len() as u64) as usize;
-                let _: StepResult = workers[i].step(&shared, &*sink, &*clock);
+                let i = self.rng.below(self.workers.len() as u64) as usize;
+                let _: StepResult = self.step_worker(i);
             }
             55..60 => {
                 // Answers in any order, interleaved with everything else.
-                for _ in 0..=rng.below(8) {
-                    if meas_q.is_empty() {
+                for _ in 0..=self.rng.below(8) {
+                    if self.meas_q.is_empty() {
                         break;
                     }
-                    let req = meas_q.swap_remove(rng.below(meas_q.len() as u64) as usize);
-                    let msg = shared.backend.measure(&req);
-                    report.measured += matches!(msg.result, MeasureResult::Measured(_)) as u64;
-                    applier.apply_measure(&mut model, msg, clock.now());
-                    if let Err(e) = applier.check(&model) {
-                        return fail(format!("invariant after measurement: {e}"), &report);
-                    }
+                    let i = self.rng.below(self.meas_q.len() as u64) as usize;
+                    let req = self.meas_q.swap_remove(i);
+                    let msg = self.shared.backend.measure(&req);
+                    self.report.measured += matches!(msg.result, MeasureResult::Measured(_)) as u64;
+                    let now = self.clock.now();
+                    self.applier.apply_measure(&mut self.model, msg, now);
+                    self.check(" after measurement")?;
                 }
             }
             60..80 => {
-                for _ in 0..=rng.below(20) {
-                    if let Some(d) = del_q.pop_front() {
+                for _ in 0..=self.rng.below(20) {
+                    if let Some(d) = self.del_q.pop_front() {
                         if let (Some(tr), DeleterMsg::Item { node, result, .. }) = (trace(), &d) {
-                            match model.tree.resolve(*node) {
+                            match self.model.tree.resolve(*node) {
                                 Some(ix) => {
-                                    let p =
-                                        String::from_utf8_lossy(&model.tree.path(ix)).into_owned();
+                                    let p = String::from_utf8_lossy(&self.model.tree.path(ix))
+                                        .into_owned();
                                     if tr.starts_with(&p) || p.starts_with(&tr) {
-                                        eprintln!("[{}] result {p}: {result:?}", report.ticks);
+                                        eprintln!("[{}] result {p}: {result:?}", self.report.ticks);
                                     }
                                 }
                                 None => eprintln!(
                                     "[{}] result for unresolvable node: {result:?}",
-                                    report.ticks
+                                    self.report.ticks
                                 ),
                             }
                         }
-                        applier.apply_delete(&mut model, d);
-                    } else if applier.has_work() {
-                        applier.work_step(&mut model);
-                    } else {
-                        if cur.is_none() {
-                            match sink.q.lock().pop_front() {
-                                Some(b) => cur = Some((b.msgs.into(), b.bytes)),
-                                None => break,
-                            }
-                        }
-                        let (msgs, bytes) = cur.as_mut().expect("batch");
-                        match msgs.pop_front() {
-                            Some(m) => applier.apply(&mut model, m, clock.now()),
-                            None => {
-                                sink.budget.release(*bytes);
-                                cur = None;
-                            }
-                        }
-                    }
-                    applier.refresh_status(&mut model);
-                    if let Err(e) = applier.check(&model) {
-                        return fail(format!("invariant: {e}"), &report);
+                        self.applier.apply_delete(&mut self.model, d);
+                        self.applier.refresh_status(&mut self.model);
+                        self.check("")?;
+                    } else if self.applier.has_work() {
+                        self.applier.work_step(&mut self.model);
+                        self.applier.refresh_status(&mut self.model);
+                        self.check("")?;
+                    } else if self.apply_next()?.is_none() {
+                        break;
                     }
                 }
-                plans.extend(applier.take_plans().into_iter().map(|p| (p, 0)));
+                self.plans
+                    .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
             }
-            80..90 => {
-                let rep = shared.watchdog_round(&*sink, clock.now());
-                // Same replacement policy as the real runtime. Simulated workers never exit, so
-                // the pool only grows here; that is the worst case for the bound.
-                if workers.len() < cfg.workers + shared.allowed_extra_workers(cfg.workers, &rep) {
-                    workers.push(Worker::new(&shared, false));
-                }
-                report.max_workers = report.max_workers.max(workers.len());
-                clock.advance(1_000_000);
-            }
-            90..93 => applier.tick(&mut model, clock.now(), Some(cfg.auto_abandon_ns)),
+            80..90 => self.watchdog(),
+            90..93 => self.tick(),
             93..96 => {
-                if let Some(msg) = deleter_step(&spec, &shared, &mut plans, &mut rng, &mut report) {
-                    del_q.push_back(msg);
+                if let Some(msg) = deleter_step(
+                    &self.spec,
+                    &self.shared,
+                    &mut self.plans,
+                    &mut self.rng,
+                    &mut self.report,
+                ) {
+                    self.del_q.push_back(msg);
                 }
             }
-            _ => {
-                clock.advance(rng.below(3) * 1_000_000);
-                if cancels_left > 0 && rng.chance(8) {
-                    let running: Vec<_> = model
-                        .status
-                        .jobs
-                        .iter()
-                        .filter(|j| j.phase == dut_engine::JobPhase::Running)
-                        .map(|j| j.id)
-                        .collect();
-                    if !running.is_empty() {
-                        let job = running[rng.below(running.len() as u64) as usize];
-                        cancels_left -= 1;
-                        report.cancels += 1;
-                        applier.command(&mut model, Command::Cancel { job }, clock.now());
-                        if let Err(e) = applier.check(&model) {
-                            return fail(format!("invariant after cancel: {e}"), &report);
-                        }
-                    }
-                }
-                if deletes_left > 0 && rng.chance(15) {
-                    let items = pick_deletable(&model.tree, &spec, &shared, &mut rng);
-                    if !items.is_empty() {
-                        deletes_left -= 1;
-                        report.deletes += 1;
-                        if let Some(tr) = trace() {
-                            for r in &items {
-                                if let Some(ix) = model.tree.resolve(*r) {
-                                    let p =
-                                        String::from_utf8_lossy(&model.tree.path(ix)).into_owned();
-                                    if tr.starts_with(&p) || p.starts_with(&tr) {
-                                        eprintln!("[{}] delete submitted {p}", report.ticks);
-                                    }
-                                }
-                            }
-                        }
-                        applier.command(
-                            &mut model,
-                            Command::Delete {
-                                items,
-                                mode: Mode::Permanent,
-                            },
-                            clock.now(),
-                        );
-                        plans.extend(applier.take_plans().into_iter().map(|p| (p, 0)));
-                        if let Err(e) = applier.check(&model) {
-                            return fail(format!("invariant after delete: {e}"), &report);
-                        }
-                    }
-                }
-                if rescans_left > 0
-                    && rng.chance(20)
-                    && let Some(node) = random_dir(&model.tree, &mut rng)
-                {
-                    rescans_left -= 1;
-                    report.rescans += 1;
-                    let r = model.tree.node_ref(node);
-                    if let Some(tr) = trace() {
-                        let p = String::from_utf8_lossy(&model.tree.path(node)).into_owned();
-                        if tr.starts_with(&p) {
-                            eprintln!("[{}] rescan requested {p}", report.ticks);
-                        }
-                    }
-                    applier.command(&mut model, Command::Rescan { node: r }, clock.now());
-                    if let Err(e) = applier.check(&model) {
-                        return fail(format!("invariant after rescan: {e}"), &report);
-                    }
-                }
-            }
+            _ => self.random_command()?,
         }
-        let (out, ab) = shared.outstanding();
-        if out == ab
-            && model.status.running() == 0
-            && !applier.has_work()
-            && cur.is_none()
-            && sink.q.lock().is_empty()
-            && model.status.commands_applied > 0
-            && plans.is_empty()
-            && del_q.is_empty()
-            && model.status.deleting.is_none()
-            && meas_q.is_empty()
-            && model.status.measuring.is_none()
-        {
-            // A cancelled job leaves directories incomplete (Cancelled, or Superseded when a
-            // cancelled rescan had cut them). Rescan the topmost one, as a user would, until
-            // none remain; then the tree must match the filesystem again.
-            match topmost_incomplete(&model.tree) {
-                Some(ix) if recoveries < 100 => {
-                    recoveries += 1;
-                    report.recoveries += 1;
-                    let r = model.tree.node_ref(ix);
-                    applier.command(&mut model, Command::Rescan { node: r }, clock.now());
-                }
-                Some(_) => {
-                    return fail(
-                        "incomplete directories remain after 100 rescans".into(),
-                        &report,
-                    );
-                }
-                None => break,
-            }
-        }
+        Ok(())
     }
 
-    report.chunk_tasks = shared.chunk_tasks.load(SeqCst);
-    report.subvols = model.subvols.len() as u64;
-    report.ro_subvols = model.subvols.values().filter(|s| s.read_only).count() as u64;
-    report.cross_runs = cross_mounts as u64;
-    if let Some(root) = model.tree.roots().next() {
-        let t = model.tree.total(root);
-        report.shared_bytes = t.referenced.saturating_sub(t.alloc);
-    }
-    if let Some(root) = model.tree.roots().next() {
-        let mut stack = vec![root];
-        while let Some(ix) = stack.pop() {
-            let f = model.tree.flags(ix);
-            report.dup_mounts += f.has(NodeFlags::DUP_MOUNT) as u64;
-            report.network_skipped += f.has(NodeFlags::NETWORK) as u64;
-            report.kernel_skipped += f.has(NodeFlags::KERNEL) as u64;
-            stack.extend(model.tree.children(ix));
+    /// Time passes, and maybe a cancel, a delete or a rescan is issued.
+    fn random_command(&mut self) -> Result<(), String> {
+        self.clock.advance(self.rng.below(3) * 1_000_000);
+        if self.cancels_left > 0 && self.rng.chance(8) {
+            let running: Vec<_> = self
+                .model
+                .status
+                .jobs
+                .iter()
+                .filter(|j| j.phase == dut_engine::JobPhase::Running)
+                .map(|j| j.id)
+                .collect();
+            if !running.is_empty() {
+                let job = running[self.rng.below(running.len() as u64) as usize];
+                self.cancels_left -= 1;
+                self.report.cancels += 1;
+                self.command(Command::Cancel { job })?;
+            }
         }
+        if self.deletes_left > 0 && self.rng.chance(15) {
+            let items = pick_deletable(&self.model.tree, &self.spec, &self.shared, &mut self.rng);
+            if !items.is_empty() {
+                self.deletes_left -= 1;
+                self.report.deletes += 1;
+                if let Some(tr) = trace() {
+                    for r in &items {
+                        if let Some(ix) = self.model.tree.resolve(*r) {
+                            let p = String::from_utf8_lossy(&self.model.tree.path(ix)).into_owned();
+                            if tr.starts_with(&p) || p.starts_with(&tr) {
+                                eprintln!("[{}] delete submitted {p}", self.report.ticks);
+                            }
+                        }
+                    }
+                }
+                self.command(Command::Delete {
+                    items,
+                    mode: Mode::Permanent,
+                })?;
+            }
+        }
+        if self.rescans_left > 0
+            && self.rng.chance(20)
+            && let Some(node) = random_dir(&self.model.tree, &mut self.rng)
+        {
+            self.rescans_left -= 1;
+            self.report.rescans += 1;
+            let r = self.model.tree.node_ref(node);
+            if let Some(tr) = trace() {
+                let p = String::from_utf8_lossy(&self.model.tree.path(node)).into_owned();
+                if tr.starts_with(&p) {
+                    eprintln!("[{}] rescan requested {p}", self.report.ticks);
+                }
+            }
+            self.command(Command::Rescan { node: r })?;
+        }
+        Ok(())
     }
-    let st = &model.status.stats;
-    report.max_budget_used = sink.max_used.load(SeqCst);
-    report.stalled_msgs = st.stalled;
-    report.late = st.late;
-    report.discarded_cut = st.discarded_cut;
-    if st.corrupt + st.lost + st.duplicate > 0 {
-        return fail(
-            format!(
+
+    /// Nothing is running, queued or in flight anywhere.
+    pub fn settled(&self) -> bool {
+        let (out, ab) = self.shared.outstanding();
+        out == ab
+            && self.model.status.running() == 0
+            && !self.applier.has_work()
+            && self.cur.is_none()
+            && self.sink.q.lock().is_empty()
+            && self.model.status.commands_applied > 0
+            && self.plans.is_empty()
+            && self.del_q.is_empty()
+            && self.model.status.deleting.is_none()
+            && self.meas_q.is_empty()
+            && self.model.status.measuring.is_none()
+    }
+
+    /// Steps in random order until everything has settled and no directory is left
+    /// incomplete, then checks the final tree against the spec.
+    pub fn run_to_end(mut self) -> Result<SimReport, String> {
+        loop {
+            if self.report.ticks >= self.cfg.max_ticks {
+                let (out, ab) = self.shared.outstanding();
+                eprintln!("{}", self.shared.debug_parts());
+                return Err(self.fail(format!(
+                    "did not finish: running jobs {}, outstanding {out}, abandoned {ab}, queued batches {}",
+                    self.model.status.running(),
+                    self.sink.q.lock().len()
+                )));
+            }
+            self.random_step()?;
+            if self.settled() {
+                // A cancelled job leaves directories incomplete (Cancelled, or Superseded when
+                // a cancelled rescan had cut them). Rescan the topmost one, as a user would,
+                // until none remain; then the tree must match the filesystem again.
+                match topmost_incomplete(&self.model.tree) {
+                    Some(ix) if self.recoveries < 100 => {
+                        self.recoveries += 1;
+                        self.report.recoveries += 1;
+                        let r = self.model.tree.node_ref(ix);
+                        let now = self.clock.now();
+                        self.applier
+                            .command(&mut self.model, Command::Rescan { node: r }, now);
+                    }
+                    Some(_) => {
+                        return Err(self.fail("incomplete directories remain after 100 rescans"));
+                    }
+                    None => break,
+                }
+            }
+        }
+        self.finish()
+    }
+
+    fn finish(mut self) -> Result<SimReport, String> {
+        let (spec, model) = (&self.spec, &self.model);
+        let report = &mut self.report;
+        report.chunk_tasks = self.shared.chunk_tasks.load(SeqCst);
+        report.subvols = model.subvols.len() as u64;
+        report.ro_subvols = model.subvols.values().filter(|s| s.read_only).count() as u64;
+        report.cross_runs = self.cross_mounts as u64;
+        if let Some(root) = model.tree.roots().next() {
+            let t = model.tree.total(root);
+            report.shared_bytes = t.referenced.saturating_sub(t.alloc);
+            let mut stack = vec![root];
+            while let Some(ix) = stack.pop() {
+                let f = model.tree.flags(ix);
+                report.dup_mounts += f.has(NodeFlags::DUP_MOUNT) as u64;
+                report.network_skipped += f.has(NodeFlags::NETWORK) as u64;
+                report.kernel_skipped += f.has(NodeFlags::KERNEL) as u64;
+                stack.extend(model.tree.children(ix));
+            }
+        }
+        let st = &model.status.stats;
+        report.max_budget_used = self.sink.max_used.load(SeqCst);
+        report.stalled_msgs = st.stalled;
+        report.late = st.late;
+        report.discarded_cut = st.discarded_cut;
+        if st.corrupt + st.lost + st.duplicate > 0 {
+            return Err(self.fail(format!(
                 "corrupt {} lost {} duplicate {}: {:?}",
                 st.corrupt,
                 st.lost,
                 st.duplicate,
                 &model.status.anomalies[..model.status.anomalies.len().min(5)]
-            ),
-            &report,
-        );
-    }
-    if report.max_budget_used > cfg.budget as u64 {
-        return fail(
-            format!("budget exceeded: {}", report.max_budget_used),
-            &report,
-        );
-    }
-    applier
-        .check(&model)
-        .map_err(|e| format!("seed {seed}: final invariant: {e}"))?;
-    applier
-        .check_settled(&model)
-        .map_err(|e| format!("seed {seed}: settled: {e}"))?;
-    if let Ok(v) = std::env::var("DUT_SIM_INODE") {
-        let mut it = v
-            .split(',')
-            .map(|x| x.parse::<u64>().expect("DUT_SIM_INODE=dev,ino"));
-        let key = (it.next().expect("dev"), it.next().expect("ino"));
-        eprintln!("{}", applier.describe_extents(&model, key));
-        for n in spec
-            .nodes
-            .iter()
-            .filter(|n| (n.meta.dev, n.meta.ino) == key)
-        {
-            eprintln!("  spec pieces {:?}", n.pieces);
+            )));
         }
-    }
-    let (dirs, abandoned) = compare(
-        &spec,
-        &model,
-        cfg.limits.block_entries,
-        cross_mounts,
-        network,
-    )
-    .map_err(|e| {
-        let n = &model.status.notices;
-        format!(
-            "seed {seed}: {e}; last notices: {:?}",
-            &n[n.len().saturating_sub(6)..]
+        let used = report.max_budget_used;
+        if used > self.cfg.budget as u64 {
+            return Err(self.fail(format!("budget exceeded: {used}")));
+        }
+        let seed = self.seed;
+        self.applier
+            .check(model)
+            .map_err(|e| format!("seed {seed}: final invariant: {e}"))?;
+        self.applier
+            .check_settled(model)
+            .map_err(|e| format!("seed {seed}: settled: {e}"))?;
+        if let Ok(v) = std::env::var("DUT_SIM_INODE") {
+            let mut it = v
+                .split(',')
+                .map(|x| x.parse::<u64>().expect("DUT_SIM_INODE=dev,ino"));
+            let key = (it.next().expect("dev"), it.next().expect("ino"));
+            eprintln!("{}", self.applier.describe_extents(model, key));
+            for n in spec
+                .nodes
+                .iter()
+                .filter(|n| (n.meta.dev, n.meta.ino) == key)
+            {
+                eprintln!("  spec pieces {:?}", n.pieces);
+            }
+        }
+        let (dirs, abandoned) = compare(
+            spec,
+            model,
+            self.cfg.limits.block_entries,
+            self.cross_mounts,
+            self.network,
         )
-    })?;
-    report.dirs = dirs;
-    report.abandoned = abandoned;
-    Ok(report)
+        .map_err(|e| {
+            let n = &model.status.notices;
+            format!(
+                "seed {seed}: {e}; last notices: {:?}",
+                &n[n.len().saturating_sub(6)..]
+            )
+        })?;
+        self.report.dirs = dirs;
+        self.report.abandoned = abandoned;
+        Ok(self.report)
+    }
 }
 
 fn trace() -> Option<String> {

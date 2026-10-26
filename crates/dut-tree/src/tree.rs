@@ -320,6 +320,14 @@ impl Tree {
         self.top(Ix(r.index)).map(|_| Ix(r.index))
     }
 
+    /// Whether `r` names a node that has been freed (its slot may hold another node by now).
+    /// A node in a detached subtree that is not freed yet does not resolve, but is not freed.
+    pub fn is_freed(&self, r: NodeRef) -> bool {
+        self.nodes
+            .get(r.index as usize)
+            .is_none_or(|n| n.generation != r.generation || n.flags.has(NodeFlags::FREE))
+    }
+
     /// Resolves a reference to a node reachable from a visible root.
     pub fn resolve_visible(&self, r: NodeRef) -> Option<Ix> {
         let ix = self.resolve(r)?;
@@ -550,6 +558,53 @@ impl Tree {
             out.extend_from_slice(name);
         }
         out
+    }
+
+    /// The node and its ancestors into `out`, topmost first: the components of [`Tree::path`].
+    pub fn ancestors(&self, ix: Ix, out: &mut Vec<Ix>) {
+        out.clear();
+        out.push(ix);
+        let mut cur = ix;
+        while let Some(p) = self.parent(cur) {
+            out.push(p);
+            cur = p;
+        }
+        out.reverse();
+    }
+
+    /// Compares two nodes' paths as `self.path(a).cmp(&self.path(b))` would, from their
+    /// [`Tree::ancestors`], without building the paths. Ancestors the two share are skipped:
+    /// they contribute the same bytes to both, so the order is decided by what follows them.
+    pub fn cmp_paths(&self, a: &[Ix], b: &[Ix]) -> std::cmp::Ordering {
+        let k = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+        // The last byte written before component `k`, which decides whether a separator
+        // precedes it; the same for both.
+        let last = match k {
+            0 => None,
+            _ => self.name(a[k - 1]).last().copied().or(Some(SEP)),
+        };
+        self.path_bytes(&a[k..], k == 0, last)
+            .cmp(self.path_bytes(&b[k..], k == 0, last))
+    }
+
+    /// The bytes [`Tree::path`] writes for `parts`, given the last byte written before them and
+    /// whether `parts[0]` is the topmost component.
+    fn path_bytes<'a>(
+        &'a self,
+        parts: &'a [Ix],
+        top: bool,
+        mut last: Option<u8>,
+    ) -> impl Iterator<Item = u8> + 'a {
+        parts.iter().enumerate().flat_map(move |(i, &p)| {
+            let name = self.name(p);
+            let sep = (i > 0 || !top) && last != Some(SEP);
+            last = match name.last() {
+                Some(&c) => Some(c),
+                None if sep => Some(SEP),
+                None => last,
+            };
+            sep.then_some(SEP).into_iter().chain(name.iter().copied())
+        })
     }
 
     // ---- building --------------------------------------------------------------------------
@@ -1050,6 +1105,39 @@ mod tests {
         let own = t.own(d);
         t.propagate_add(p, &own);
         d
+    }
+
+    #[test]
+    fn cmp_paths_orders_like_path() {
+        let mut t = Tree::new();
+        let mut nodes = Vec::new();
+        for root in ["/", "/r", "/r/", "/r-x"] {
+            let r = t.new_root(root.as_bytes(), &dir_meta(), true);
+            nodes.push(r);
+            for a in ["a", "a-b", "a.b", "b", "ab"] {
+                let d = add_dir(&mut t, r, a);
+                nodes.push(d);
+                for f in ["a", "a-b", "", "z"] {
+                    nodes.push(add_file(&mut t, d, f, 1));
+                }
+                let e = add_dir(&mut t, d, "");
+                nodes.push(add_file(&mut t, e, "a", 1));
+            }
+        }
+        let (mut ca, mut cb) = (Vec::new(), Vec::new());
+        for &a in &nodes {
+            t.ancestors(a, &mut ca);
+            for &b in &nodes {
+                t.ancestors(b, &mut cb);
+                assert_eq!(
+                    t.cmp_paths(&ca, &cb),
+                    t.path(a).cmp(&t.path(b)),
+                    "{:?} {:?}",
+                    String::from_utf8_lossy(&t.path(a)),
+                    String::from_utf8_lossy(&t.path(b))
+                );
+            }
+        }
     }
 
     #[test]

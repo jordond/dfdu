@@ -17,9 +17,10 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{select, unbounded};
+use crossbeam_channel::{Receiver, select, unbounded};
 use dut_engine::{Command, Engine, EngineOptions};
-use dut_scan::{DirId, JobId, JobOptions, NativeBackend};
+use dut_scan::{DirId, JobId, JobOptions};
+use ratatui::Terminal;
 use ratatui::crossterm::event::{self, Event};
 
 pub use app::{App, Effect, Overlay};
@@ -58,6 +59,9 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             Some("dut-worker" | "dut-applier")
         );
         if !caught_by_engine {
+            // ratatui's hook leaves raw mode and the alternate screen but does not show the
+            // cursor; the terminal's Drop would, but only if unwinding gets that far.
+            let _ = ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show);
             restore(info);
         }
     }));
@@ -85,16 +89,6 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         path,
         opts: opts.job,
     });
-    let result = event_loop(&mut terminal, &engine);
-    ratatui::restore();
-    engine.shutdown(Duration::from_millis(200));
-    result
-}
-
-fn event_loop(
-    terminal: &mut ratatui::DefaultTerminal,
-    engine: &Engine<NativeBackend>,
-) -> io::Result<()> {
     let (tx, input) = unbounded();
     thread::Builder::new()
         .name("dut-input".into())
@@ -105,7 +99,26 @@ fn event_loop(
                 }
             }
         })?;
+    let result = event_loop(&mut terminal, &engine, input);
+    ratatui::restore();
+    engine.shutdown(Duration::from_millis(200));
+    result
+}
 
+/// The browser's loop: terminal events from `input`, frames to `terminal`. Returns when the user
+/// quits or `input` closes.
+fn event_loop<T, B>(
+    terminal: &mut Terminal<T>,
+    engine: &Engine<B>,
+    input: Receiver<Event>,
+) -> io::Result<()>
+where
+    T: ratatui::backend::Backend<Error = io::Error>,
+    B: dut_scan::Backend,
+{
+    // Hidden, for `crates/dut/tests/ui_panic.rs`: panic on the first key press, to test that a
+    // panic on the UI thread restores the terminal and writes a crash report.
+    let inject_panic = std::env::var_os("DUT_TEST_UI_PANIC").is_some();
     let start = Instant::now();
     let mut app = App::new(Theme::from_env(), start);
     let mut focus = None;
@@ -159,6 +172,9 @@ fn event_loop(
         select! {
             recv(input) -> ev => match ev {
                 Ok(Event::Key(k)) => {
+                    if inject_panic {
+                        panic!("injected UI panic");
+                    }
                     for fx in app.key(k, Instant::now()) {
                         match fx {
                             Effect::Send(cmd) => engine.send(cmd),
@@ -196,5 +212,7 @@ fn spinners_visible(app: &App) -> bool {
     app.snap.busy
 }
 
+#[cfg(test)]
+mod blocked;
 #[cfg(test)]
 mod tests;

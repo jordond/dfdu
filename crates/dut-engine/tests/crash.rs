@@ -31,5 +31,15 @@ fn applier_panic_is_fatal_and_reported() {
     assert_eq!(reports.len(), 1);
     let text = std::fs::read_to_string(reports[0].as_ref().unwrap().path()).unwrap();
     assert!(text.contains("injected applier panic") && text.contains("backtrace"));
+    // The last messages and commands, ending with the one that panicked.
+    assert!(
+        text.contains("messages and commands, oldest first:"),
+        "{text}"
+    );
+    assert!(text.contains("Command(\"Scan\")"), "{text}");
+    assert!(
+        text.trim_end().ends_with("Command(\"InjectPanic\")"),
+        "{text}"
+    );
     e.shutdown(Duration::from_millis(500));
 }
