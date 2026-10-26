@@ -1,0 +1,29 @@
+[package]
+name = "dfdu"
+description = "Disk usage browser for the terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-tree.workspace = true
+dfdu-scan.workspace = true
+dfdu-engine.workspace = true
+dfdu-tui.workspace = true
+dfdu-sys.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["pty", "termios"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+dfdu-hangfs.workspace = true

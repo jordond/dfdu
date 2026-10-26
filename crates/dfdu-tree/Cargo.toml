@@ -1,0 +1,18 @@
+[package]
+name = "dfdu-tree"
+description = "Tree of scanned nodes: slots, generational references, sizes and aggregation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+os_str_bytes.workspace = true
+fixedbitset.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

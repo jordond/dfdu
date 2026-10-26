@@ -1,0 +1,18 @@
+[package]
+name = "dfdu-hangfs"
+description = "Test FUSE filesystem whose selected directories and files never answer (Linux)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser.workspace = true
+rustix = { workspace = true, features = ["mount"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile.workspace = true

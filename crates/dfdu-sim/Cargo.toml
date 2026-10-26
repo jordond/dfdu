@@ -1,0 +1,22 @@
+[package]
+name = "dfdu-sim"
+description = "Deterministic simulation of the scanner and applier with fault injection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-tree.workspace = true
+dfdu-scan.workspace = true
+dfdu-engine.workspace = true
+dfdu-clean.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+dfdu-tui.workspace = true

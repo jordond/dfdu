@@ -1,0 +1,39 @@
+[package]
+name = "dfdu-engine"
+description = "The applier: single writer of the tree, jobs, gate, accounting, hard links"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-tree.workspace = true
+dfdu-scan.workspace = true
+dfdu-clean.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+dunce.workspace = true
+dfdu-sys.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
+[features]
+# Test-only hooks (Command::InjectPanic).
+fault-injection = []
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+dfdu-hangfs.workspace = true
+
+[target.'cfg(loom)'.dev-dependencies]
+loom.workspace = true
+
+[dev-dependencies]
+dfdu-engine = { path = ".", features = ["fault-injection"] }
+dfdu-bench.workspace = true
+dfdu-clean.workspace = true
+tempfile.workspace = true

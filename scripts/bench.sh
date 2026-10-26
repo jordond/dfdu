@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Times dut against the other disk usage tools found on PATH, on a dut-bench tree (ROADMAP M2).
+# Times dfdu against the other disk usage tools found on PATH, on a dfdu-bench tree (ROADMAP M2).
 # Wall time and peak memory come from hyperfine (2.0 or later reports memory).
 #
 # Usage: scripts/bench.sh [options] WORKDIR
@@ -27,18 +27,18 @@ work=${1:?usage: bench.sh [options] WORKDIR}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
 command -v hyperfine >/dev/null || { echo "hyperfine not found" >&2; exit 1; }
-cargo build --release --manifest-path "$here/Cargo.toml" -p dut -p dut-bench
-dut=$here/target/release/dut
+cargo build --release --manifest-path "$here/Cargo.toml" -p dfdu -p dfdu-bench
+dfdu=$here/target/release/dfdu
 
 tree=$work/tree-$entries-w$wide-s$seed
 if [[ ! -d $tree ]]; then
     mkdir -p "$work"
-    "$here/target/release/dut-bench" gen "$tree" --entries "$entries" --wide "$wide" --seed "$seed"
+    "$here/target/release/dfdu-bench" gen "$tree" --entries "$entries" --wide "$wide" --seed "$seed"
 fi
 
 # Each tool with the flags that make it scan and print a summary without a UI.
-cmds=("$dut scan --bytes $tree")
-names=("dut")
+cmds=("$dfdu scan --bytes $tree")
+names=("dfdu")
 add() {
     if command -v "$1" >/dev/null; then
         names+=("$1")
@@ -72,7 +72,7 @@ hyperfine "${args[@]}" --export-markdown "$out"
     echo "$(nproc) CPUs ($(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs)), $mode cache, tree: $entries entries, $wide in one directory, seed $seed."
     for n in "${names[@]}"; do
         case $n in
-            dut) v="dut $(git -C "$here" rev-parse --short HEAD)" ;;
+            dfdu) v="dfdu $(git -C "$here" rev-parse --short HEAD)" ;;
             du) v=$(du --version | head -1) ;;
             ncdu) v=$(ncdu -v) ;;
             *) v=$("$n" --version 2>&1 | head -1) ;;

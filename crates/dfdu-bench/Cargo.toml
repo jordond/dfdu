@@ -1,0 +1,18 @@
+[package]
+name = "dfdu-bench"
+description = "Benchmark support: seeded synthetic trees for timing scans against other tools, and a backend serving them from memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-scan.workspace = true
+dfdu-tree.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+rand.workspace = true

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs the dut browser in a pseudo-terminal and times it from outside (ROADMAP M1).
+"""Runs the dfdu browser in a pseudo-terminal and times it from outside (ROADMAP M1).
 
 Measures, per run:
 - start to the first frame with entries: from just before the process is started to the first
@@ -9,9 +9,9 @@ Measures, per run:
 
 Keys alternate between `n` and `s`; the next key is written 10-40 ms after the previous one was
 shown, until the header says "done" or 5 s pass. This is a cross-check of
-crates/dut-tui/tests/latency.rs, which drives the same loop in process with more kinds of keys.
+crates/dfdu-tui/tests/latency.rs, which drives the same loop in process with more kinds of keys.
 
-Usage: scripts/pty-latency.py DUT TREE [RUNS]
+Usage: scripts/pty-latency.py DFDU TREE [RUNS]
 """
 
 import fcntl
@@ -56,12 +56,12 @@ def drain(fd, buf):
         buf.extend(data)
 
 
-def run(dut, tree, rng):
+def run(dfdu, tree, rng):
     t0 = time.monotonic()
     pid, fd = pty.fork()
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-        os.execv(dut, [dut, tree])
+        os.execv(dfdu, [dfdu, tree])
     buf = bytearray()
     if read_until(fd, buf, 0, b"%", t0 + 30) < 0:
         raise SystemExit("no data frame")
@@ -93,13 +93,13 @@ def pct(v, p):
 
 
 def main():
-    dut, tree = sys.argv[1], sys.argv[2]
+    dfdu, tree = sys.argv[1], sys.argv[2]
     runs = int(sys.argv[3]) if len(sys.argv) > 3 else 10
     rng = random.Random(1)
-    run(dut, tree, rng)  # warms the cache
+    run(dfdu, tree, rng)  # warms the cache
     firsts, lats = [], []
     for _ in range(runs):
-        first, lat = run(dut, tree, rng)
+        first, lat = run(dfdu, tree, rng)
         firsts.append(first)
         lats.extend(lat)
     ms = lambda d: f"{d * 1000:6.1f} ms"

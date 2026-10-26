@@ -1,8 +1,0 @@
- dut  choose a disk to scan
- mounted on               type           size       used       free
- /                        btrfs     500.0 GiB  400.0 GiB   90.0 GiB  ████████████████       80%  also at /home
- /mnt/nas                 nfs4      not responding  network
- /mnt/usb                 exfat      64.0 GiB        0 B   64.0 GiB                          0%
-
-
- ↑↓ move  Enter scan  q quit

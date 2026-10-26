@@ -532,6 +532,143 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfdu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dfdu-engine",
+ "dfdu-hangfs",
+ "dfdu-scan",
+ "dfdu-sys",
+ "dfdu-tree",
+ "dfdu-tui",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
+name = "dfdu-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dfdu-scan",
+ "dfdu-tree",
+ "rand 0.10.3",
+]
+
+[[package]]
+name = "dfdu-clean"
+version = "0.1.0"
+dependencies = [
+ "crc32c",
+ "crossbeam-channel",
+ "dfdu-sys",
+ "dfdu-tree",
+ "etcetera",
+ "hex",
+ "proptest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "trash",
+]
+
+[[package]]
+name = "dfdu-engine"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "dfdu-bench",
+ "dfdu-clean",
+ "dfdu-engine",
+ "dfdu-hangfs",
+ "dfdu-scan",
+ "dfdu-sys",
+ "dfdu-tree",
+ "dunce",
+ "loom",
+ "parking_lot 0.13.0",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
+name = "dfdu-hangfs"
+version = "0.1.0"
+dependencies = [
+ "fuser",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
+name = "dfdu-scan"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "dfdu-sys",
+ "dfdu-tree",
+ "fixedbitset 0.5.7",
+ "loom",
+ "parking_lot 0.13.0",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
+name = "dfdu-sim"
+version = "0.1.0"
+dependencies = [
+ "dfdu-clean",
+ "dfdu-engine",
+ "dfdu-scan",
+ "dfdu-tree",
+ "dfdu-tui",
+ "parking_lot 0.13.0",
+ "rand 0.10.3",
+]
+
+[[package]]
+name = "dfdu-sys"
+version = "0.1.0"
+dependencies = [
+ "dfdu-tree",
+ "libc",
+ "rustix",
+ "sysinfo",
+ "tempfile",
+ "windows-sys",
+]
+
+[[package]]
+name = "dfdu-tree"
+version = "0.1.0"
+dependencies = [
+ "fixedbitset 0.5.7",
+ "os_str_bytes",
+ "proptest",
+]
+
+[[package]]
+name = "dfdu-tui"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "dfdu-engine",
+ "dfdu-scan",
+ "dfdu-sys",
+ "dfdu-tree",
+ "dunce",
+ "humansize",
+ "ratatui",
+ "tempfile",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,143 +692,6 @@ name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
-
-[[package]]
-name = "dut"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dut-engine",
- "dut-hangfs",
- "dut-scan",
- "dut-sys",
- "dut-tree",
- "dut-tui",
- "rustix",
- "tempfile",
-]
-
-[[package]]
-name = "dut-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dut-scan",
- "dut-tree",
- "rand 0.10.3",
-]
-
-[[package]]
-name = "dut-clean"
-version = "0.1.0"
-dependencies = [
- "crc32c",
- "crossbeam-channel",
- "dut-sys",
- "dut-tree",
- "etcetera",
- "hex",
- "proptest",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "trash",
-]
-
-[[package]]
-name = "dut-engine"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "dunce",
- "dut-bench",
- "dut-clean",
- "dut-engine",
- "dut-hangfs",
- "dut-scan",
- "dut-sys",
- "dut-tree",
- "loom",
- "parking_lot 0.13.0",
- "rustix",
- "tempfile",
-]
-
-[[package]]
-name = "dut-hangfs"
-version = "0.1.0"
-dependencies = [
- "fuser",
- "rustix",
- "tempfile",
-]
-
-[[package]]
-name = "dut-scan"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-deque",
- "dut-sys",
- "dut-tree",
- "fixedbitset 0.5.7",
- "loom",
- "parking_lot 0.13.0",
- "rustix",
- "tempfile",
-]
-
-[[package]]
-name = "dut-sim"
-version = "0.1.0"
-dependencies = [
- "dut-clean",
- "dut-engine",
- "dut-scan",
- "dut-tree",
- "dut-tui",
- "parking_lot 0.13.0",
- "rand 0.10.3",
-]
-
-[[package]]
-name = "dut-sys"
-version = "0.1.0"
-dependencies = [
- "dut-tree",
- "libc",
- "rustix",
- "sysinfo",
- "tempfile",
- "windows-sys",
-]
-
-[[package]]
-name = "dut-tree"
-version = "0.1.0"
-dependencies = [
- "fixedbitset 0.5.7",
- "os_str_bytes",
- "proptest",
-]
-
-[[package]]
-name = "dut-tui"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "dunce",
- "dut-engine",
- "dut-scan",
- "dut-sys",
- "dut-tree",
- "humansize",
- "ratatui",
- "tempfile",
-]
 
 [[package]]
 name = "either"
@@ -1447,21 +1447,20 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.9.4"
+version = "2.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd47a460a9cbc3b3429c7e22bf0d76653e779319bae45a499ca010c9a990bb23"
+checksum = "a8db75153506001cb36ed924f08cadc862eb3f8c4d0d534139f29074769d7660"
 dependencies = [
  "memchr",
- "psm",
- "stacker",
+ "pest_stack_guard",
  "ucd-trie",
 ]
 
 [[package]]
 name = "pest_derive"
-version = "2.9.4"
+version = "2.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "203e46697708f7519ab1608393cf89239cafb46b8e6d08a8ffe359359b11ef44"
+checksum = "20aa17e11fb35664b67d5214a0afac57a360d231b6ec53d6eba0700b27d933b4"
 dependencies = [
  "pest",
  "pest_generator",
@@ -1469,9 +1468,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.9.4"
+version = "2.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e84ae6340a458d3d6cfc73cf328cf3cfe90b2484cd0de25eb66aa954615ed4d5"
+checksum = "626ec5afccf44ccbfeb2b232316510bb55b4bf34d891afcb0fb07d2b17d7fe9d"
 dependencies = [
  "pest",
  "pest_meta",
@@ -1482,11 +1481,21 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.9.4"
+version = "2.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b57f92f32b3dbce6598fd8f5cdf1f06a6072570b8103fa21728fa9036923e710"
+checksum = "b3f45b6caa65c1b08186832745159c2529994146340a7bf44168095469720f5d"
 dependencies = [
  "pest",
+]
+
+[[package]]
+name = "pest_stack_guard"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97e6cd2217057fa86b6eaa512917e58089d875b957a31e35e7ab729977e0a5f2"
+dependencies = [
+ "psm",
+ "stacker",
 ]
 
 [[package]]
