@@ -41,6 +41,12 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dut_sim::SimRepor
                 t.stalled_msgs += r.stalled_msgs;
                 t.late += r.late;
                 t.discarded_cut += r.discarded_cut;
+                t.subvols += r.subvols;
+                t.ro_subvols += r.ro_subvols;
+                t.dup_mounts += r.dup_mounts;
+                t.cross_runs += r.cross_runs;
+                t.measured += r.measured;
+                t.shared_bytes += r.shared_bytes;
                 t.max_budget_used = t.max_budget_used.max(r.max_budget_used);
             }
             Err(e) => failures.push(e),
@@ -68,6 +74,14 @@ fn coverage_of_risky_paths() {
     );
     assert!(t.late > 0, "no late message after an abandon");
     assert!(
+        t.subvols > 100 && t.ro_subvols > 20 && t.dup_mounts > 5 && t.cross_runs > 50,
+        "mounts and subvolumes not exercised: {t:?}"
+    );
+    assert!(
+        t.measured > 1000 && t.shared_bytes > 0,
+        "shared extents not exercised: {t:?}"
+    );
+    assert!(
         t.deletes > 100 && t.deleted_items > 100,
         "deletes {} deleted {}",
         t.deletes,
@@ -90,6 +104,22 @@ fn no_faults_is_complete() {
         ..Default::default()
     };
     run_all("no_faults", &cfg, 200);
+}
+
+/// Without mount ids (Linux before 5.8, other systems) `dev` decides: subvolumes are skipped as
+/// other filesystems, the pre-statx behaviour.
+#[test]
+fn without_mount_ids() {
+    let cfg = SimConfig {
+        spec: SpecConfig {
+            mount_ids: false,
+            ..Default::default()
+        },
+        cross_mounts: Some(false),
+        ..Default::default()
+    };
+    let t = run_all("without_mount_ids", &cfg, 100);
+    assert_eq!(t.subvols, 0, "subvolumes are not opened without mount ids");
 }
 
 #[test]

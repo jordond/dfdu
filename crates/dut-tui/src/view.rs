@@ -20,10 +20,6 @@ fn mmss(d: std::time::Duration) -> String {
     format!("{:02}:{:02}", s / 60, s % 60)
 }
 
-fn lossy(b: &[u8]) -> String {
-    String::from_utf8_lossy(b).into_owned()
-}
-
 /// Draws the whole screen and updates the list height and scroll offset in `app`.
 pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let area = f.area();
@@ -61,7 +57,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Paragraph::new(Line::styled(format!(" {msg}"), app.theme.dim)),
         status,
     );
-    let hints = "↑↓ move  → open  ← up  s n C M sort  a apparent  r rescan  d trash  D delete  ? help  q quit";
+    let hints = "↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit";
     f.render_widget(
         Paragraph::new(Line::styled(format!(" {hints}"), app.theme.dim)),
         footer,
@@ -73,12 +69,15 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::ConfirmDelete {
             name,
             size,
+            shared_out,
             is_dir,
             mode,
             typed,
             scanning,
             ..
-        } => draw_confirm(f, app, area, &name, size, is_dir, mode, &typed, scanning),
+        } => draw_confirm(
+            f, app, area, &name, size, shared_out, is_dir, mode, &typed, scanning,
+        ),
     }
 }
 
@@ -93,7 +92,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, now: Instant, frame: u64) {
             mmss(now.duration_since(app.started))
         ),
     };
-    let path = lossy(&s.dir_path);
+    let path = s.dir_path.display().to_string();
     let left = vec![
         Span::styled(" dut ", t.title),
         Span::raw(" "),
@@ -103,11 +102,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, now: Instant, frame: u64) {
     let line1 = spread(left, right, area.width);
 
     let root = s.root_total;
-    let size = if app.apparent {
-        root.apparent
-    } else {
-        root.alloc
-    };
+    let size = app.size_mode.of(&root);
     let mut info = vec![Span::raw(format!(
         " {} items · {}",
         count(root.items),
@@ -123,6 +118,33 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, now: Instant, frame: u64) {
     if s.incomplete {
         info.push(Span::styled(" · incomplete", t.warn));
     }
+    if let Some((done, requested)) = s.measuring {
+        let pct = (done * 100).checked_div(requested).unwrap_or(0);
+        info.push(Span::styled(
+            format!(" · measuring shared data {pct}%"),
+            t.dim,
+        ));
+    }
+    if s.unmeasured > 0 {
+        info.push(Span::styled(
+            format!(" · {} files not measured", count(s.unmeasured)),
+            t.warn,
+        ));
+    }
+    if let Some((name, ratio)) = s.profile
+        && ratio != 1.0
+    {
+        info.push(Span::styled(
+            format!(" · data stored {ratio:.1}× ({name})"),
+            t.dim,
+        ));
+    }
+    if s.compressed_upper_bound {
+        info.push(Span::styled(
+            " · compressed sizes are upper bounds (exact as root)",
+            t.dim,
+        ));
+    }
     let key = match app.sort.key {
         SortKey::Size => "size",
         SortKey::Name => "name",
@@ -130,11 +152,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, now: Instant, frame: u64) {
         SortKey::Mtime => "mtime",
     };
     let arrow = if app.sort.desc { "↓" } else { "↑" };
-    let mode = if app.apparent {
-        "apparent size"
-    } else {
-        "disk usage"
-    };
+    let mode = app.size_mode.label();
     let right2 = vec![Span::styled(format!("sort: {key} {arrow}  {mode} "), t.dim)];
     let line2 = spread(info, right2, area.width);
     f.render_widget(Paragraph::new(vec![line1, line2]), area);
@@ -194,12 +212,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, frame: u64) {
         .max()
         .unwrap_or(0)
         .max(1);
-    let total = if app.apparent {
-        app.snap.dir_total.apparent
-    } else {
-        app.snap.dir_total.alloc
-    }
-    .max(1);
+    let total = app.size_mode.of(&app.snap.dir_total).max(1);
     let bw = bar_width(area.width);
     let sel = app.selected_index();
     for (row, &i) in app
@@ -243,6 +256,7 @@ fn entry_line<'a>(
         Mark::Stalled => ('~', t.warn),
         Mark::Error => ('!', t.error),
         Mark::OtherFs => ('>', t.dim),
+        Mark::DupMount => ('=', t.dim),
         Mark::Deleting => ('x', t.warn),
         Mark::Incomplete => ('?', t.warn),
         Mark::None => (' ', Style::new()),
@@ -270,27 +284,29 @@ fn entry_line<'a>(
         Mark::Stalled => Some(("  not responding", t.warn)),
         Mark::Rescanning => Some(("  rescanning", t.dim)),
         Mark::OtherFs => Some(("  other filesystem", t.dim)),
+        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.dim)),
         Mark::Error if e.is_dir => Some(("  incomplete", t.error)),
         Mark::Incomplete => Some(("  incomplete: r to rescan", t.warn)),
         Mark::Deleting => Some(("  deleting", t.warn)),
         Mark::Error => Some(("  unreadable", t.error)),
         _ => None,
     };
+    if let Some(l) = &e.label {
+        spans.push(Span::styled(format!("  [{l}]"), t.dim));
+    }
+    if e.compressed {
+        spans.push(Span::styled("  compressed: at most this", t.dim));
+    }
+    if e.shared_out > 0 {
+        spans.push(Span::styled(
+            format!("  {} also used outside the scan", human(e.shared_out)),
+            t.dim,
+        ));
+    }
     if let Some((s, st)) = note {
         spans.push(Span::styled(s, st));
     }
     Line::from(spans)
-}
-
-fn centered(area: Rect, w: u16, h: u16) -> Rect {
-    let w = w.min(area.width);
-    let h = h.min(area.height);
-    Rect {
-        x: area.x + (area.width - w) / 2,
-        y: area.y + (area.height - h) / 2,
-        width: w,
-        height: h,
-    }
 }
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
@@ -305,6 +321,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ),
         ("S", "re-sort now"),
         ("a", "toggle apparent size / disk usage"),
+        ("u", "toggle disk usage like du (shared data once per file)"),
         ("e", "hide or show hidden files"),
         ("r", "rescan the selected directory"),
         ("x", "skip directories that are not responding"),
@@ -330,7 +347,10 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         " 1.5 s after your last key, or when you press S.",
         app.theme.dim,
     ));
-    let r = centered(area, 72, lines.len() as u16 + 2);
+    let r = area.centered(
+        Constraint::Length(72),
+        Constraint::Length(lines.len() as u16 + 2),
+    );
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(" Keys ")),
@@ -345,6 +365,7 @@ fn draw_confirm(
     area: Rect,
     name: &str,
     size: u64,
+    shared_out: u64,
     is_dir: bool,
     mode: Mode,
     typed: &str,
@@ -368,6 +389,15 @@ fn draw_confirm(
         ],
     };
     lines.push(Line::styled(size_line, app.theme.dim));
+    if shared_out > 0 {
+        lines.push(Line::styled(
+            format!(
+                " May free less: {} of it is also used outside the scan.",
+                human(shared_out)
+            ),
+            app.theme.warn,
+        ));
+    }
     lines.push(Line::raw(""));
     lines.push(match mode {
         Mode::Trash => Line::from(vec![
@@ -386,7 +416,10 @@ fn draw_confirm(
             Span::raw(" cancel"),
         ]),
     });
-    let r = centered(area, 60, lines.len() as u16 + 2);
+    let r = area.centered(
+        Constraint::Length(60),
+        Constraint::Length(lines.len() as u16 + 2),
+    );
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(" Delete ")),

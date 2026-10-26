@@ -9,17 +9,19 @@
 
 mod backend;
 mod budget;
+mod mounts;
 mod proto;
 pub mod runtime;
 mod shared;
 
 pub use backend::{Backend, Block, BlockEntry, DirStream, PortableBackend};
 pub use budget::Budget;
+pub use mounts::duplicate_mounts;
 pub use proto::{
-    Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, NameSpan, ScanMsg,
-    SkipReason, SubdirRec,
+    Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, NameSpan, Probe,
+    ScanMsg, SkipReason, SubdirRec,
 };
 pub use shared::{
     Clock, JobOptions, Limits, Outbox, Shared, Sink, StepResult, Task, WatchdogReport, Worker,
-    WorkerSlot,
+    WorkerSlot, panic_message,
 };

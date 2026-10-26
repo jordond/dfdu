@@ -5,8 +5,10 @@
 
 mod check;
 mod meta;
+mod names;
 mod tree;
 
 pub use check::Violation;
-pub use meta::{ErrKind, Kind, Meta, Totals};
+pub use meta::{ErrKind, Kind, Meta, Subvol, Totals};
+pub use names::{name_bytes, name_os};
 pub use tree::{DirRec, DirState, FreedLink, Ix, NodeFlags, NodeRef, SEP, Tree};

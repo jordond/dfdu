@@ -2,6 +2,7 @@
 //! backgrounds; `NO_COLOR` keeps the modifiers (bold, reverse) and drops every colour. Theme
 //! files and truecolor palettes come in M3.
 
+use humansize::{BINARY, format_size};
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Debug)]
@@ -52,19 +53,14 @@ impl Theme {
     }
 }
 
-/// Human-readable size with binary units.
+/// Human-readable size with binary units, one decimal place above bytes ("1.5 KiB", "2.0 MiB",
+/// "512 B"), so the size column keeps its width.
 pub fn human(n: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    let mut v = n as f64;
-    let mut u = 0;
-    while v >= 1024.0 && u < UNITS.len() - 1 {
-        v /= 1024.0;
-        u += 1;
-    }
-    if u == 0 {
+    if n < 1024 {
+        // humansize would print "512.0 B".
         format!("{n} B")
     } else {
-        format!("{v:.1} {}", UNITS[u])
+        format_size(n, BINARY.decimal_places(1).decimal_zeroes(1))
     }
 }
 
@@ -118,7 +114,10 @@ mod tests {
     #[test]
     fn formats() {
         assert_eq!(human(512), "512 B");
+        assert_eq!(human(0), "0 B");
         assert_eq!(human(1536), "1.5 KiB");
+        assert_eq!(human(2048), "2.0 KiB");
+        assert_eq!(human(5 << 30), "5.0 GiB");
         assert_eq!(count(812), "812");
         assert_eq!(count(1_200), "1.2k");
     }

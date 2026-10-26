@@ -8,8 +8,8 @@ use dut_scan::{JobOptions, PortableBackend};
 
 #[test]
 fn applier_panic_is_fatal_and_reported() {
-    let dir = std::env::temp_dir().join(format!("dut-crash-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("crash");
     let e = Engine::start(
         PortableBackend,
         EngineOptions {
@@ -19,7 +19,7 @@ fn applier_panic_is_fatal_and_reported() {
         },
     );
     e.send(Command::Scan {
-        path: std::env::temp_dir(),
+        path: tmp.path().to_path_buf(),
         opts: JobOptions::default(),
     });
     e.send(Command::InjectPanic);
@@ -32,5 +32,4 @@ fn applier_panic_is_fatal_and_reported() {
     let text = std::fs::read_to_string(reports[0].as_ref().unwrap().path()).unwrap();
     assert!(text.contains("injected applier panic") && text.contains("backtrace"));
     e.shutdown(Duration::from_millis(500));
-    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1,4 +1,8 @@
-use crate::{ErrKind, Kind, Meta, Totals};
+use std::path::PathBuf;
+
+use fixedbitset::FixedBitSet;
+
+use crate::{ErrKind, Kind, Meta, Totals, name_os};
 
 const NONE: u32 = u32::MAX;
 
@@ -20,24 +24,37 @@ pub struct NodeRef {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct NodeFlags(u8);
+pub struct NodeFlags(u16);
 
 impl NodeFlags {
-    pub const HARDLINK: u8 = 1;
+    pub const HARDLINK: u16 = 1;
     /// Hard link whose bytes are counted (exactly one per inode and scope).
-    pub const CHARGED: u8 = 2;
+    pub const CHARGED: u16 = 2;
     /// Root of a detached subtree.
-    pub const DETACHED: u8 = 4;
-    pub const FREE: u8 = 8;
+    pub const DETACHED: u16 = 4;
+    pub const FREE: u16 = 8;
     /// Root of the visible tree.
-    pub const VISIBLE_ROOT: u8 = 16;
+    pub const VISIBLE_ROOT: u16 = 16;
     /// In a delete plan that has not finished.
-    pub const DELETING: u8 = 32;
+    pub const DELETING: u16 = 32;
+    /// Directory whose mount differs from its parent's (counted in `Totals::mounts`).
+    pub const MOUNT_ROOT: u16 = 64;
+    /// btrfs subvolume root; its record is in the model's subvolume table.
+    pub const SUBVOL: u16 = 128;
+    /// Read-only btrfs subvolume root (counted in `Totals::ro_subvols`).
+    pub const RO_SUBVOL: u16 = 256;
+    /// Mount of something already scanned elsewhere in the job; not descended into.
+    pub const DUP_MOUNT: u16 = 512;
+    /// File whose extents were measured: its own disk usage is its unshared bytes
+    /// (`docs/btrfs.md` §3.4) instead of its allocation.
+    pub const MEASURED: u16 = 1024;
+    /// Measured file with compressed extents whose on-disk size is not known (an upper bound).
+    pub const COMPRESSED: u16 = 2048;
 
-    pub fn has(self, f: u8) -> bool {
+    pub fn has(self, f: u16) -> bool {
         self.0 & f != 0
     }
-    fn set(&mut self, f: u8, on: bool) {
+    fn set(&mut self, f: u16, on: bool) {
         if on { self.0 |= f } else { self.0 &= !f }
     }
 }
@@ -81,7 +98,7 @@ pub struct DirRec {
     pub stalled: bool,
     pub chunks_seen: u32,
     pub close_chunks: Option<u32>,
-    pub seen_seq: Vec<u64>,
+    pub seen_seq: FixedBitSet,
     pub changed_at: u64,
 }
 
@@ -101,20 +118,16 @@ impl DirRec {
             stalled: false,
             chunks_seen: 0,
             close_chunks: None,
-            seen_seq: Vec::new(),
+            seen_seq: FixedBitSet::new(),
             changed_at: 0,
         }
     }
 
     /// Records chunk `seq` as seen. Returns false if it was already seen.
     pub fn mark_seq(&mut self, seq: u32) -> bool {
-        let (w, b) = ((seq / 64) as usize, seq % 64);
-        if self.seen_seq.len() <= w {
-            self.seen_seq.resize(w + 1, 0);
-        }
-        let had = self.seen_seq[w] & (1 << b) != 0;
-        self.seen_seq[w] |= 1 << b;
-        !had
+        let i = seq as usize;
+        self.seen_seq.grow(i + 1);
+        !self.seen_seq.put(i)
     }
 }
 
@@ -123,11 +136,19 @@ struct Node {
     generation: u32,
     parent: u32,
     name_off: u64,
-    name_len: u16,
+    name_len: u32,
     kind: Kind,
     flags: NodeFlags,
     apparent: u64,
     alloc: u64,
+    /// Unshared bytes of a `MEASURED` file.
+    excl: u64,
+    /// Shared bytes counted at this node: data whose references in the scan are all below it
+    /// and not all below one child (`docs/btrfs.md` §3.4).
+    home: u64,
+    /// The part of `home` that no other file in the scan references: something outside the
+    /// scan does, so deleting this node does not free it.
+    home_out: u64,
     mtime: i64,
     dev: u64,
     ino: u64,
@@ -136,14 +157,16 @@ struct Node {
     category: u16,
 }
 
-/// A hard-link file reported while freeing a detached subtree, so the caller can update its
-/// link table.
+/// A hard-link or measured file reported while freeing a detached subtree, so the caller can
+/// update its link and extent tables.
 #[derive(Copy, Clone, Debug)]
 pub struct FreedLink {
     pub dev: u64,
     pub ino: u64,
     pub node: NodeRef,
     pub charged: bool,
+    pub hardlink: bool,
+    pub measured: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -303,11 +326,20 @@ impl Tree {
     pub fn own(&self, ix: Ix) -> Totals {
         let n = &self.nodes[ix.0 as usize];
         let counted = !n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::CHARGED);
+        let base = if n.flags.has(NodeFlags::MEASURED) {
+            n.excl
+        } else {
+            n.alloc
+        };
         Totals {
             apparent: if counted { n.apparent } else { 0 },
-            alloc: if counted { n.alloc } else { 0 },
+            alloc: if counted { base } else { 0 } + n.home,
+            referenced: if counted { n.alloc } else { 0 },
+            shared_out: n.home_out,
             items: 1,
             errors: n.error.is_some() as u64,
+            mounts: n.flags.has(NodeFlags::MOUNT_ROOT) as u64,
+            ro_subvols: n.flags.has(NodeFlags::RO_SUBVOL) as u64,
         }
     }
 
@@ -319,7 +351,24 @@ impl Tree {
         }
     }
 
-    /// Path from the topmost ancestor, components joined with [`SEP`].
+    /// Filesystem path of the node: the root's path joined with each name below it. Use this for
+    /// anything handed to the OS; [`Tree::path`] is a byte key for ordering and lookups.
+    pub fn path_buf(&self, ix: Ix) -> PathBuf {
+        let mut parts = vec![ix];
+        let mut cur = ix;
+        while let Some(p) = self.parent(cur) {
+            parts.push(p);
+            cur = p;
+        }
+        let mut out = PathBuf::new();
+        for p in parts.iter().rev() {
+            out.push(&*name_os(self.name(*p)));
+        }
+        out
+    }
+
+    /// Path from the topmost ancestor as bytes, components joined with [`SEP`]: a key for
+    /// ordering (hard-link charging) and lookups, not for passing to the OS.
     pub fn path(&self, ix: Ix) -> Vec<u8> {
         let mut parts = vec![ix];
         let mut cur = ix;
@@ -340,9 +389,10 @@ impl Tree {
 
     // ---- building --------------------------------------------------------------------------
 
-    fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: u8) -> u32 {
-        let name_len = u16::try_from(name.len()).unwrap_or(u16::MAX);
-        let name = &name[..name_len as usize];
+    fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: u16) -> u32 {
+        // Names are never truncated: a cut name would not convert back (`name_os`). Entry names
+        // are at most a few hundred bytes; root paths can be longer, hence u32.
+        let name_len = u32::try_from(name.len()).expect("name shorter than 4 GiB");
         let name_off = self.names.len() as u64;
         self.names.extend_from_slice(name);
         let mut f = NodeFlags::default();
@@ -363,6 +413,9 @@ impl Tree {
             flags: f,
             apparent: meta.apparent,
             alloc: meta.alloc,
+            excl: 0,
+            home: 0,
+            home_out: 0,
             mtime: meta.mtime,
             dev: meta.dev,
             ino: meta.ino,
@@ -414,7 +467,13 @@ impl Tree {
     /// Adds a directory placeholder under `parent`. The caller propagates the new child's
     /// totals with [`Tree::propagate_add`] before releasing the write lock.
     pub fn add_dir(&mut self, parent: Ix, name: &[u8], meta: &Meta) -> Ix {
-        let i = self.alloc_node(parent.0, name, meta, 0);
+        self.add_dir_flagged(parent, name, meta, 0)
+    }
+
+    /// [`Tree::add_dir`] with flags set from the start (`MOUNT_ROOT`, `DUP_MOUNT`), so they
+    /// are part of the directory's own totals.
+    pub fn add_dir_flagged(&mut self, parent: Ix, name: &[u8], meta: &Meta, flags: u16) -> Ix {
+        let i = self.alloc_node(parent.0, name, meta, flags);
         self.alloc_dir(i);
         self.push_child(parent, i);
         Ix(i)
@@ -506,43 +565,87 @@ impl Tree {
         if !n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::CHARGED) == charged {
             return;
         }
-        let delta = Totals {
-            apparent: n.apparent,
-            alloc: n.alloc,
-            items: 0,
-            errors: 0,
-        };
-        self.nodes[ix.0 as usize]
-            .flags
-            .set(NodeFlags::CHARGED, charged);
-        if let Some(p) = self.parent(ix) {
-            if charged {
-                self.propagate_add(p, &delta)
-            } else {
-                self.propagate_sub(p, &delta)
-            }
-        }
+        self.restate(ix, |n| n.flags.set(NodeFlags::CHARGED, charged));
     }
 
     /// Replaces the node's own stat (a job root's stat arrives in its first chunk) and adjusts
     /// the totals of the node and its ancestors.
     pub fn update_meta(&mut self, ix: Ix, meta: &Meta) {
+        self.restate(ix, |n| {
+            n.apparent = meta.apparent;
+            n.alloc = meta.alloc;
+            n.mtime = meta.mtime;
+            n.dev = meta.dev;
+            n.ino = meta.ino;
+        });
+    }
+
+    /// Sets or clears a flag. For flags counted in [`Totals`] (`MOUNT_ROOT`, `RO_SUBVOL`) the
+    /// node's and its ancestors' totals follow.
+    pub fn set_flag(&mut self, ix: Ix, flag: u16, on: bool) {
+        self.restate(ix, |n| n.flags.set(flag, on));
+    }
+
+    /// Records a file's measured unshared bytes ([`NodeFlags::MEASURED`]).
+    pub fn set_measured(&mut self, ix: Ix, excl: u64, compressed: bool) {
+        self.restate(ix, |n| {
+            n.excl = excl;
+            n.flags.set(NodeFlags::MEASURED, true);
+            n.flags.set(NodeFlags::COMPRESSED, compressed);
+        });
+    }
+
+    /// Unshared bytes of a measured file.
+    pub fn excl(&self, ix: Ix) -> u64 {
+        self.nodes[ix.0 as usize].excl
+    }
+
+    /// Shared bytes counted at this node.
+    pub fn home(&self, ix: Ix) -> u64 {
+        self.nodes[ix.0 as usize].home
+    }
+
+    /// Adds shared bytes counted at this node; `out` when nothing else in the scan
+    /// references them.
+    pub fn add_home(&mut self, ix: Ix, bytes: u64, out: bool) {
+        self.restate(ix, |n| {
+            n.home += bytes;
+            if out {
+                n.home_out += bytes;
+            }
+        });
+    }
+
+    pub fn sub_home(&mut self, ix: Ix, bytes: u64, out: bool) {
+        self.restate(ix, |n| {
+            debug_assert!(
+                n.home >= bytes && (!out || n.home_out >= bytes),
+                "home underflow"
+            );
+            n.home = n.home.saturating_sub(bytes);
+            if out {
+                n.home_out = n.home_out.saturating_sub(bytes);
+            }
+        });
+    }
+
+    /// Changes a node and moves the difference in its own totals into its ancestors' totals.
+    fn restate(&mut self, ix: Ix, f: impl FnOnce(&mut Node)) {
         let old = self.own(ix);
-        let n = &mut self.nodes[ix.0 as usize];
-        n.apparent = meta.apparent;
-        n.alloc = meta.alloc;
-        n.mtime = meta.mtime;
-        n.dev = meta.dev;
-        n.ino = meta.ino;
+        f(&mut self.nodes[ix.0 as usize]);
         let new = self.own(ix);
-        let target = if self.dir(ix).is_some() {
-            Some(ix)
+        if old != new {
+            let target = if self.dir(ix).is_some() {
+                Some(ix)
+            } else {
+                self.parent(ix)
+            };
+            if let Some(t) = target {
+                self.propagate_add(t, &new);
+                self.propagate_sub(t, &old);
+            }
         } else {
-            self.parent(ix)
-        };
-        if let Some(t) = target {
-            self.propagate_add(t, &new);
-            self.propagate_sub(t, &old);
+            self.bump();
         }
     }
 
@@ -679,7 +782,7 @@ impl Tree {
 
     fn free_slot(&mut self, i: u32, on_link: &mut impl FnMut(FreedLink)) {
         let n = &self.nodes[i as usize];
-        if n.flags.has(NodeFlags::HARDLINK) {
+        if n.flags.has(NodeFlags::HARDLINK) || n.flags.has(NodeFlags::MEASURED) {
             on_link(FreedLink {
                 dev: n.dev,
                 ino: n.ino,
@@ -688,6 +791,8 @@ impl Tree {
                     generation: n.generation,
                 },
                 charged: n.flags.has(NodeFlags::CHARGED),
+                hardlink: n.flags.has(NodeFlags::HARDLINK),
+                measured: n.flags.has(NodeFlags::MEASURED),
             });
         }
         let n = &mut self.nodes[i as usize];
@@ -733,6 +838,7 @@ mod tests {
             dev: 1,
             ino: 1,
             nlink: 2,
+            mount: 0,
         }
     }
     fn file_meta(size: u64, ino: u64, nlink: u32) -> Meta {
@@ -744,6 +850,7 @@ mod tests {
             dev: 1,
             ino,
             nlink,
+            mount: 0,
         }
     }
 

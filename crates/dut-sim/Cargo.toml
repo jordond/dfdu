@@ -16,3 +16,4 @@ dut-scan.workspace = true
 dut-engine.workspace = true
 dut-clean.workspace = true
 parking_lot.workspace = true
+rand.workspace = true

@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path};
 
-use dut_tree::{ErrKind, Kind};
+use dut_tree::{ErrKind, Kind, Meta};
 
 use crate::{DeleteResult, Mode, PlanItem, Refusal};
 
@@ -34,62 +34,43 @@ pub fn is_protected(path: &Path) -> bool {
     false
 }
 
-#[cfg(unix)]
-fn identity_of(m: &fs::Metadata) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (m.dev(), m.ino())
-}
-
-#[cfg(windows)]
-fn identity_of(m: &fs::Metadata) -> (u64, u64) {
-    // Matches the portable backend: creation time in place of a file id (see meta_from_std).
-    use std::os::windows::fs::MetadataExt;
-    (0, m.creation_time())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn identity_of(_m: &fs::Metadata) -> (u64, u64) {
-    (0, 0)
-}
-
-fn kind_of(m: &fs::Metadata) -> Kind {
-    let ft = m.file_type();
-    if ft.is_dir() {
-        Kind::Dir
-    } else if ft.is_symlink() {
-        Kind::Symlink
-    } else if ft.is_file() {
-        Kind::File
-    } else {
-        Kind::Other
-    }
-}
-
-fn mtime_of(m: &fs::Metadata) -> i64 {
-    m.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// Linux: the freedesktop home trash is on the filesystem of `$XDG_DATA_HOME`. The `trash`
 /// crate copies items from other filesystems into it, which can fill the home filesystem and
 /// takes as long as a copy, so such items are refused for trash mode.
+/// On btrfs a different `st_dev` on the same mount is another subvolume.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn trash_crosses_filesystems(item_dev: u64) -> bool {
+fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
+    use etcetera::BaseStrategy;
     use std::os::unix::fs::MetadataExt;
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".local/share")));
-    match data.and_then(|d| fs::metadata(d).ok()) {
-        Some(m) => m.dev() != item_dev,
-        None => true,
+    let data = etcetera::base_strategy::Xdg::new()
+        .ok()
+        .map(|x| x.data_dir());
+    let Some((dir, m)) = data.and_then(|d| fs::metadata(&d).ok().map(|m| (d, m))) else {
+        return Some(Refusal::TrashCrossesFilesystems);
+    };
+    if m.dev() == item_dev {
+        return None;
+    }
+    if same_mount(path, &dir) == Some(true) {
+        Some(Refusal::TrashOtherSubvolume)
+    } else {
+        Some(Refusal::TrashCrossesFilesystems)
     }
 }
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]
-fn trash_crosses_filesystems(_item_dev: u64) -> bool {
-    false
+fn trash_refusal(_path: &Path, _item_dev: u64) -> Option<Refusal> {
+    None
+}
+
+/// Whether two paths are on the same mount, when the system can tell (Linux mount ids).
+fn same_mount(a: &Path, b: &Path) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    if let (Ok(Some(x)), Ok(Some(y))) = (dut_sys::mount_id(a), dut_sys::mount_id(b)) {
+        return Some(x == y);
+    }
+    let _ = (a, b);
+    None
 }
 
 /// Checks an item before deletion (§7.4 step 2). `Ok` means it may be deleted now.
@@ -122,25 +103,36 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         }
     };
     let id = &item.identity;
-    let (dev, ino) = identity_of(&m);
-    let kind = kind_of(&m);
+    // The same conversion the scanner used, so the fields compare like for like.
+    let now = Meta::from_metadata(&m);
+    let kind = now.kind;
     let same = kind == id.kind
-        && dev == id.dev
-        && ino == id.ino
-        && mtime_of(&m) == id.mtime
-        && (kind == Kind::Dir || m.len() == id.apparent);
+        && now.dev == id.dev
+        && now.ino == id.ino
+        && now.mtime == id.mtime
+        && (kind == Kind::Dir || now.apparent == id.apparent);
     if !same {
         return Err(DeleteResult::Stale("changed since the scan".into()));
     }
+    // A mount point, judged by mount id where the system has one: btrfs subvolume roots have
+    // their own `st_dev` but are on their parent's mount, and may be deleted.
     if kind == Kind::Dir
-        && let Some(parent) = path.parent().and_then(|p| fs::symlink_metadata(p).ok())
         && cfg!(unix)
-        && identity_of(&parent).0 != dev
+        && let Some(parent) = path.parent()
+        && let Ok(pm) = fs::symlink_metadata(parent)
     {
-        return Err(DeleteResult::Refused(Refusal::MountPoint));
+        let mount_point = match same_mount(path, parent) {
+            Some(same) => !same,
+            None => Meta::from_metadata(&pm).dev != now.dev,
+        };
+        if mount_point {
+            return Err(DeleteResult::Refused(Refusal::MountPoint));
+        }
     }
-    if mode == Mode::Trash && cfg!(unix) && trash_crosses_filesystems(dev) {
-        return Err(DeleteResult::Refused(Refusal::TrashCrossesFilesystems));
+    if mode == Mode::Trash
+        && let Some(r) = trash_refusal(path, now.dev)
+    {
+        return Err(DeleteResult::Refused(r));
     }
     Ok(())
 }

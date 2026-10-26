@@ -34,6 +34,7 @@ pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> D
                 if journal.is_none() {
                     journal = journal_dir.as_deref().and_then(|d| Journal::create(d).ok());
                 }
+                let mut btrfs = false;
                 for item in &plan.items {
                     let result = if ab.load(SeqCst) {
                         DeleteResult::Aborted
@@ -43,6 +44,7 @@ pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> D
                             Some(j) => run_item(j, &plan, item),
                         }
                     };
+                    btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path);
                     let _ = out.send(DeleterMsg::Item {
                         plan: plan.id,
                         node: item.node,
@@ -53,7 +55,10 @@ pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> D
                 if let Some(j) = journal.as_mut() {
                     let _ = j.sync();
                 }
-                let _ = out.send(DeleterMsg::Done { plan: plan.id });
+                let _ = out.send(DeleterMsg::Done {
+                    plan: plan.id,
+                    btrfs,
+                });
             }
         })
         .expect("spawn deleter");
@@ -62,6 +67,16 @@ pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> D
         abort,
         thread,
     }
+}
+
+/// Whether the deleted item's directory is on btrfs.
+fn on_btrfs(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    if let Some(p) = path.parent() {
+        return dut_sys::is_btrfs(p).unwrap_or(false);
+    }
+    let _ = path;
+    false
 }
 
 fn run_item(journal: &mut Journal, plan: &Plan, item: &PlanItem) -> DeleteResult {
@@ -84,12 +99,10 @@ fn run_item(journal: &mut Journal, plan: &Plan, item: &PlanItem) -> DeleteResult
 fn execute(path: &Path, kind: Kind, mode: Mode) -> DeleteResult {
     let r = match mode {
         Mode::Trash => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
-        // std's remove_dir_all does not follow symlinks and is safe against them being swapped
-        // in during the walk.
-        Mode::Permanent if kind == Kind::Dir => {
-            fs::remove_dir_all(path).map_err(|e| (ErrKind::from(&e), e.to_string()))
+        // Never crosses into another mount; destroys btrfs subvolumes where allowed.
+        Mode::Permanent => {
+            crate::remove(path, kind).map_err(|e| (ErrKind::from(&e), e.to_string()))
         }
-        Mode::Permanent => fs::remove_file(path).map_err(|e| (ErrKind::from(&e), e.to_string())),
     };
     match r {
         Ok(()) => DeleteResult::Deleted,

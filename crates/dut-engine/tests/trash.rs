@@ -19,16 +19,15 @@ fn trash_moves_item_into_trash() {
     if std::env::var_os(INNER).is_some() {
         return;
     }
-    let base = std::env::temp_dir().join(format!("dut-trash-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&base);
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path();
     fs::create_dir_all(base.join("data")).unwrap();
     let out = Proc::new(std::env::current_exe().unwrap())
         .args(["inner_trash", "--exact", "--nocapture"])
-        .env(INNER, &base)
+        .env(INNER, base)
         .env("XDG_DATA_HOME", base.join("data"))
         .output()
         .unwrap();
-    let _ = fs::remove_dir_all(&base);
     assert!(
         out.status.success(),
         "{}\n{}",

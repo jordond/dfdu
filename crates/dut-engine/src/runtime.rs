@@ -1,5 +1,6 @@
 //! The applier thread and the inbox it reads from.
 
+use dut_scan::panic_message;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use dut_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
 use parking_lot::RwLock;
 
 use crate::applier::{Applier, Command, Model};
+use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 
 /// The applier's inbox: one channel, so control messages keep their order relative to data,
 /// plus the byte budget that bounds data in transit (§4.3).
@@ -67,13 +69,6 @@ pub fn default_crash_dir() -> Option<PathBuf> {
     dut_clean::default_journal_dir().and_then(|d| d.parent().map(|p| p.join("crash")))
 }
 
-pub fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
-    p.downcast_ref::<&str>()
-        .map(|s| s.to_string())
-        .or_else(|| p.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "panic".into())
-}
-
 fn crash_report(msg: &str, m: &Model) -> String {
     format!(
         "dut {} crash report\n\npanic: {msg}\n\nbacktrace:\n{}\n\nstats: {:?}\nanomalies: {:?}\njobs: {:?}\n",
@@ -111,6 +106,9 @@ pub struct EngineOptions {
     pub read_only: bool,
     /// Where crash reports go.
     pub crash_dir: Option<PathBuf>,
+    /// Threads measuring extents on filesystems that share them (`docs/btrfs.md` §3.4); 0
+    /// turns measurement off and sizes are what `du` reports.
+    pub measure_workers: usize,
 }
 
 impl Default for EngineOptions {
@@ -126,6 +124,14 @@ impl Default for EngineOptions {
             journal_dir: dut_clean::default_journal_dir(),
             read_only: false,
             crash_dir: default_crash_dir(),
+            // The kernel's extent lookups are the cost, and they scale with threads.
+            measure_workers: if cfg!(target_os = "linux") {
+                thread::available_parallelism()
+                    .map_or(2, |n| n.get())
+                    .clamp(2, 8)
+            } else {
+                0
+            },
         }
     }
 }
@@ -159,6 +165,9 @@ impl<B: Backend> Engine<B> {
         let pool = Pool::start(shared.clone(), inbox.clone(), opts.workers);
         let (del_tx, del_rx) = unbounded::<DeleterMsg>();
         let deleter = spawn_deleter(opts.journal_dir.clone(), del_tx);
+        let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
+        let measurers =
+            (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, meas_tx));
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
         let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
@@ -167,6 +176,8 @@ impl<B: Backend> Engine<B> {
             inbox_rx,
             del_rx,
             plans: deleter.plans,
+            meas_rx,
+            measure: measurers,
             wake_tx,
         };
         let wake = chans.wake_tx.clone();
@@ -218,7 +229,9 @@ impl<B: Backend> Engine<B> {
         // applier never does I/O and deletion can require absolute paths inside the root.
         let cmd = match cmd {
             Command::Scan { path, opts } => {
-                let path = std::fs::canonicalize(&path)
+                // dunce: on Windows, the plain C:\ form where it is equivalent, instead of the
+                // \\?\ verbatim form std returns.
+                let path = dunce::canonicalize(&path)
                     .or_else(|_| std::path::absolute(&path))
                     .unwrap_or(path);
                 Command::Scan { path, opts }
@@ -304,6 +317,9 @@ struct Channels {
     inbox_rx: Receiver<Batch>,
     del_rx: Receiver<DeleterMsg>,
     plans: Sender<Plan>,
+    meas_rx: Receiver<Vec<MeasureMsg>>,
+    /// `None` when measurement is off. Dropping it ends the measurer threads.
+    measure: Option<Sender<MeasureReq>>,
     wake_tx: Sender<()>,
 }
 
@@ -320,20 +336,30 @@ fn applier_loop<B: Backend>(
         inbox_rx,
         del_rx,
         plans,
+        meas_rx,
+        measure,
         wake_tx,
     } = ch;
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
     applier.read_only = opts.read_only;
+    applier.measure = measure.is_some();
     let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
+    let mut meas: VecDeque<MeasureMsg> = VecDeque::new();
     let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
     let mut cmds: VecDeque<Command> = VecDeque::new();
     let auto_abandon = opts.auto_abandon.map(|d| d.as_nanos() as u64);
     while !stop.load(SeqCst) {
-        if !applier.has_work() && cur.is_none() && cmds.is_empty() && dels.is_empty() {
+        if !applier.has_work()
+            && cur.is_none()
+            && cmds.is_empty()
+            && dels.is_empty()
+            && meas.is_empty()
+        {
             select! {
                 recv(cmd_rx) -> c => if let Ok(c) = c { cmds.push_back(c) },
                 recv(del_rx) -> d => if let Ok(d) = d { dels.push_back(d) },
+                recv(meas_rx) -> r => if let Ok(r) = r { meas.extend(r) },
                 recv(inbox_rx) -> b => if let Ok(b) = b { cur = Some((b.msgs.into(), b.bytes)) },
                 default(Duration::from_millis(50)) => {},
             }
@@ -351,6 +377,13 @@ fn applier_loop<B: Backend>(
         dels.extend(del_rx.try_iter());
         for d in dels.drain(..) {
             applier.apply_delete(&mut g, d);
+        }
+        meas.extend(meas_rx.try_iter().flatten());
+        while let Some(r) = meas.pop_front() {
+            applier.apply_measure(&mut g, r, now);
+            if started.elapsed() >= SLICE {
+                break;
+            }
         }
         loop {
             if applier.has_work() {
@@ -384,10 +417,16 @@ fn applier_loop<B: Backend>(
             g.status.notices.push(format!("invariant violated: {e}"));
         }
         let outgoing = applier.take_plans();
+        let requests = applier.take_measure_requests();
         let changed = g.fingerprint() != before;
         drop(g);
         for p in outgoing {
             let _ = plans.send(p);
+        }
+        if let Some(tx) = &measure {
+            for r in requests {
+                let _ = tx.send(r);
+            }
         }
         if changed {
             let _ = wake_tx.try_send(());

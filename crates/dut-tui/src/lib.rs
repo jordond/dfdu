@@ -21,8 +21,8 @@ use dut_scan::{DirId, JobId, JobOptions, PortableBackend};
 use ratatui::crossterm::event::{self, Event};
 
 pub use app::{App, Effect, Overlay};
-pub use snapshot::{Snapshot, Target};
-pub use theme::Theme;
+pub use snapshot::{SizeMode, Snapshot, Target, subvol_label};
+pub use theme::{Theme, human};
 
 /// Fastest redraw rate for scan data (ncdu's default refresh is 10 per second).
 const DATA_FRAME: Duration = Duration::from_millis(100);
@@ -42,6 +42,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         path: opts.path,
         opts: JobOptions {
             cross_mounts: opts.cross_mounts,
+            ..Default::default()
         },
     });
     // Sets a panic hook that restores the terminal before the panic message is printed.
@@ -96,8 +97,8 @@ fn event_loop(
         if input_dirty || data_ready || sort_due || animating {
             let (snap, target) = {
                 let mut target = app.target.clone();
-                let apparent = app.apparent;
-                let snap = engine.read(|m| snapshot::build(m, &mut target, apparent));
+                let mode = app.size_mode;
+                let snap = engine.read(|m| snapshot::build(m, &mut target, mode));
                 (snap, target)
             };
             if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {

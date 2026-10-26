@@ -9,4 +9,4 @@
 
  1 directory is not responding: wait, or press x to skip it
 
- ↑↓ move  → open  ← up  s n C M sort  a apparent  r rescan  d trash  D delete  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit

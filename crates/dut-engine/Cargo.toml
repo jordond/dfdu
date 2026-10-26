@@ -16,6 +16,11 @@ dut-scan.workspace = true
 dut-clean.workspace = true
 crossbeam-channel.workspace = true
 parking_lot.workspace = true
+dunce.workspace = true
+dut-sys.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
 
 [features]
 # Test-only hooks (Command::InjectPanic).
@@ -24,3 +29,4 @@ fault-injection = []
 [dev-dependencies]
 dut-engine = { path = ".", features = ["fault-injection"] }
 dut-clean.workspace = true
+tempfile.workspace = true

@@ -5,43 +5,40 @@
 //! applier step the invariants are checked; at the end every directory's totals are compared
 //! with a reference computed directly from the filesystem spec.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 
 use dut_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
-use dut_engine::{Applier, Command, Model};
+use dut_engine::{Applier, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model};
 use dut_scan::{
     Backend, Batch, Block, Budget, Clock, DirStream, JobOptions, Limits, ScanMsg, Shared, Sink,
     StepResult, Worker,
 };
-use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Totals, Tree};
+use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
 use parking_lot::Mutex;
+use rand::rngs::ChaCha8Rng;
+use rand::{RngExt, SeedableRng};
 
 // ---- randomness ------------------------------------------------------------------------------
 
-/// SplitMix64: small, fast, and identical on every platform.
-pub struct Rng(u64);
+/// Seeded ChaCha8: the stream for a seed is fixed by the algorithm, so a failing seed replays
+/// the same run on every platform.
+pub struct Rng(ChaCha8Rng);
 
 impl Rng {
     pub fn new(seed: u64) -> Self {
-        Rng(seed ^ 0x9E37_79B9_7F4A_7C15)
+        Rng(ChaCha8Rng::seed_from_u64(seed))
     }
-    pub fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
+    /// Uniform in `0..n`; 0 when `n` is 0.
     pub fn below(&mut self, n: u64) -> u64 {
-        if n == 0 { 0 } else { self.next_u64() % n }
+        if n == 0 { 0 } else { self.0.random_range(0..n) }
     }
     /// True with probability `per_mille / 1000`.
-    pub fn chance(&mut self, per_mille: u64) -> bool {
-        self.below(1000) < per_mille
+    pub fn chance(&mut self, per_mille: u32) -> bool {
+        self.0.random_ratio(per_mille, 1000)
     }
 }
 
@@ -72,10 +69,33 @@ pub struct SpecNode {
     pub fault: Fault,
     /// The entry disappears between listing and stat (files only).
     pub vanished: bool,
+    /// The directory is a btrfs subvolume root.
+    pub subvol: Option<Subvol>,
+    /// A second mount of another directory in the spec (the backend reports it as such).
+    pub dup_mount: bool,
+    /// Extent map of a file on a filesystem that shares extents.
+    pub pieces: Vec<SimPiece>,
+    /// Measuring the file fails (it cannot be opened).
+    pub unmeasurable: bool,
+}
+
+/// One extent of a simulated file (`docs/btrfs.md` §3.4). Compressed extents are identified by
+/// their physical start; `len` is uncompressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimPiece {
+    pub phys: u64,
+    pub len: u64,
+    pub encoded: bool,
+    /// What FIEMAP reports: another file references the data, inside the spec or (randomly)
+    /// outside it.
+    pub shared: bool,
 }
 
 pub struct Spec {
     pub nodes: Vec<SpecNode>,
+    /// Filesystem of each device (subvolumes share their parent's), and whether it shares
+    /// extents.
+    pub dev_fs: HashMap<u64, (u32, bool)>,
     pub parent: Vec<u32>,
     /// Set when the simulated deleter removes the entry.
     pub deleted: Vec<AtomicBool>,
@@ -120,7 +140,17 @@ pub struct SpecConfig {
     pub max_files: u64,
     pub faults: bool,
     pub hardlinks: bool,
+    /// Directories on other mounts (new `dev` and mount id).
     pub other_fs: bool,
+    /// btrfs subvolume roots (new `dev`, same mount id, inode 256).
+    pub subvols: bool,
+    /// The backend reports mount ids; without them `dev` decides, and subvolumes look like
+    /// other filesystems (Linux before 5.8, other systems).
+    pub mount_ids: bool,
+    /// Second mounts (copies) of some mounts, next to them.
+    pub dup_mounts: bool,
+    /// Extent maps, reflinked copies and snapshots that share data.
+    pub extents: bool,
 }
 
 impl Default for SpecConfig {
@@ -132,13 +162,24 @@ impl Default for SpecConfig {
             faults: true,
             hardlinks: true,
             other_fs: true,
+            subvols: true,
+            mount_ids: true,
+            dup_mounts: true,
+            extents: true,
         }
     }
 }
 
 impl Spec {
     pub fn generate(rng: &mut Rng, cfg: &SpecConfig, block: usize) -> Spec {
-        let mut ino = 1u64;
+        // Above the subvolume root inode number (256), so it is unique within a device.
+        let mut ino = 1000u64;
+        let (mut next_dev, mut next_mount) = (1u64, 1u64);
+        let mut mount_dirs = vec![];
+        let mut subvol_dirs = vec![];
+        // The root filesystem shares extents in most runs; other mounts in some.
+        let mut dev_fs: HashMap<u64, (u32, bool)> =
+            HashMap::from([(1, (0, cfg.extents && rng.chance(800)))]);
         let mut nodes = vec![SpecNode {
             name: ROOT_NAME.as_bytes().to_vec(),
             meta: Meta {
@@ -149,10 +190,15 @@ impl Spec {
                 dev: 1,
                 ino,
                 nlink: 2,
+                mount: if cfg.mount_ids { 1 } else { 0 },
             },
             children: vec![],
             fault: Fault::None,
             vanished: false,
+            subvol: None,
+            dup_mount: false,
+            pieces: vec![],
+            unmeasurable: false,
         }];
         let mut queue = VecDeque::from([(ROOT, 0u32)]);
         while let Some((d, depth)) = queue.pop_front() {
@@ -164,9 +210,34 @@ impl Spec {
             };
             let nfiles = rng.below(cfg.max_files + 1);
             let mut kids = vec![];
+            let mount = nodes[d as usize].meta.mount;
             for i in 0..ndirs {
                 ino += 1;
-                let other = cfg.other_fs && depth > 0 && rng.chance(30);
+                let roll = rng.below(1000);
+                let (cdev, cmount, cino, subvol) = if cfg.other_fs && depth > 0 && roll < 30 {
+                    next_dev += 1;
+                    next_mount += 1;
+                    mount_dirs.push(nodes.len() as u32);
+                    let fs = dev_fs.len() as u32;
+                    dev_fs.insert(next_dev, (fs, cfg.extents && rng.chance(500)));
+                    let m = if cfg.mount_ids { next_mount } else { 0 };
+                    (next_dev, m, ino, None)
+                } else if cfg.subvols && roll < 70 {
+                    next_dev += 1;
+                    dev_fs.insert(next_dev, dev_fs[&dev]);
+                    subvol_dirs.push(nodes.len() as u32);
+                    let sv = Subvol {
+                        id: 256 + next_dev,
+                        uuid: [next_dev as u8; 16],
+                        parent_uuid: rng.chance(500).then_some([1; 16]),
+                        read_only: rng.chance(333),
+                        otime: 1,
+                        qgroup: None,
+                    };
+                    (next_dev, mount, 256, Some(sv))
+                } else {
+                    (dev, mount, ino, None)
+                };
                 kids.push(nodes.len() as u32);
                 nodes.push(SpecNode {
                     name: format!("d{i}").into_bytes(),
@@ -175,13 +246,18 @@ impl Spec {
                         apparent: 4096,
                         alloc: 4096,
                         mtime: 1,
-                        dev: if other { dev + 1 } else { dev },
-                        ino,
+                        dev: cdev,
+                        ino: cino,
                         nlink: 2,
+                        mount: cmount,
                     },
                     children: vec![],
                     fault: Fault::None,
                     vanished: false,
+                    subvol,
+                    dup_mount: false,
+                    pieces: vec![],
+                    unmeasurable: false,
                 });
                 queue.push_back((*kids.last().expect("pushed"), depth + 1));
             }
@@ -204,10 +280,15 @@ impl Spec {
                         dev,
                         ino,
                         nlink: 1,
+                        mount: 0,
                     },
                     children: vec![],
                     fault: Fault::None,
                     vanished: cfg.faults && rng.chance(30),
+                    subvol: None,
+                    dup_mount: false,
+                    pieces: vec![],
+                    unmeasurable: cfg.faults && rng.chance(30),
                 });
             }
             nodes[d as usize].children = kids;
@@ -269,19 +350,259 @@ impl Spec {
                 };
             }
         }
+        // Whether a file can be measured belongs to the inode: hard links are one file.
+        let mut unmeasurable: HashMap<(u64, u64), bool> = HashMap::new();
+        for n in nodes.iter_mut().filter(|n| n.meta.kind == Kind::File) {
+            n.unmeasurable = *unmeasurable
+                .entry((n.meta.dev, n.meta.ino))
+                .or_insert(n.unmeasurable);
+        }
+        if cfg.extents {
+            gen_extents(rng, &mut nodes, &dev_fs, &subvol_dirs);
+        }
+        // A second mount of some mounts: a copy of the subtree with the same inodes, next to it.
+        if cfg.dup_mounts {
+            for &d in &mount_dirs {
+                if !rng.chance(500) {
+                    continue;
+                }
+                // Mounts replaced by a snapshot copy are no longer in the tree.
+                let Some(parent) = (0..nodes.len()).find(|&p| nodes[p].children.contains(&d))
+                else {
+                    continue;
+                };
+                let copy = copy_subtree(&mut nodes, d);
+                let c = &mut nodes[copy as usize];
+                c.name.extend_from_slice(b"-again");
+                c.dup_mount = true;
+                if cfg.mount_ids {
+                    next_mount += 1;
+                    c.meta.mount = next_mount;
+                }
+                nodes[parent].children.push(copy);
+            }
+        }
         let mut parent = vec![ROOT; nodes.len()];
         for (i, n) in nodes.iter().enumerate() {
             for &c in &n.children {
                 parent[c as usize] = i as u32;
             }
         }
+        if cfg.extents {
+            mark_shared(rng, &mut nodes);
+        }
         let deleted = (0..nodes.len()).map(|_| AtomicBool::new(false)).collect();
         Spec {
+            dev_fs,
             nodes,
             parent,
             deleted,
         }
     }
+}
+
+/// Extent maps: fresh extents per inode (hard links share them), then reflinked copies of part
+/// of another file's data, then snapshots: some subvolumes get a copy of another directory's
+/// contents with the same inodes and extents.
+fn gen_extents(
+    rng: &mut Rng,
+    nodes: &mut Vec<SpecNode>,
+    dev_fs: &HashMap<u64, (u32, bool)>,
+    subvol_dirs: &[u32],
+) {
+    let mut next_phys: HashMap<u32, u64> = HashMap::new();
+    let mut by_inode: HashMap<(u64, u64), Vec<SimPiece>> = HashMap::new();
+    let files: Vec<usize> = (0..nodes.len())
+        .filter(|&i| {
+            let m = &nodes[i].meta;
+            m.kind == Kind::File && m.alloc > 0 && dev_fs.get(&m.dev).is_some_and(|d| d.1)
+        })
+        .collect();
+    for &i in &files {
+        let m = nodes[i].meta;
+        if let Some(p) = by_inode.get(&(m.dev, m.ino)) {
+            nodes[i].pieces = p.clone();
+            continue;
+        }
+        let fs = dev_fs[&m.dev].0;
+        let encoded = rng.chance(100);
+        let blocks = m.alloc / 4096;
+        let parts = 1 + rng.below(blocks.min(3));
+        let mut left = blocks;
+        let mut pieces = vec![];
+        for k in 0..parts {
+            let b = if k + 1 == parts {
+                left
+            } else {
+                1 + rng.below(left - (parts - k - 1))
+            };
+            left -= b;
+            let at = next_phys.entry(fs).or_insert(4096);
+            // Compressed extents take less room than their uncompressed length.
+            let room = if encoded { 4096 } else { b * 4096 };
+            pieces.push(SimPiece {
+                phys: *at,
+                len: b * 4096,
+                encoded,
+                shared: false,
+            });
+            *at += room + 4096 * rng.below(2);
+        }
+        by_inode.insert((m.dev, m.ino), pieces.clone());
+        nodes[i].pieces = pieces;
+    }
+    // Reflinks: a file whose data is (partly) another file's on the same filesystem.
+    for &i in &files {
+        if !rng.chance(150) || nodes[i].meta.nlink > 1 {
+            continue;
+        }
+        let j = files[rng.below(files.len() as u64) as usize];
+        let (fi, fj) = (dev_fs[&nodes[i].meta.dev].0, dev_fs[&nodes[j].meta.dev].0);
+        if i == j || fi != fj || nodes[j].pieces.is_empty() {
+            continue;
+        }
+        let src = nodes[j].pieces[rng.below(nodes[j].pieces.len() as u64) as usize];
+        let piece = if src.encoded {
+            src
+        } else {
+            let blocks = src.len / 4096;
+            let skip = rng.below(blocks);
+            let take = 1 + rng.below(blocks - skip);
+            SimPiece {
+                phys: src.phys + skip * 4096,
+                len: take * 4096,
+                ..src
+            }
+        };
+        let k = rng.below(nodes[i].pieces.len() as u64) as usize;
+        nodes[i].pieces[k] = piece;
+    }
+    // Snapshots: a subvolume holding a copy of another directory on the same filesystem, with
+    // the same inode numbers (on the subvolume's own device) and extents.
+    for &sv in subvol_dirs {
+        if !rng.chance(400) {
+            continue;
+        }
+        let dirs: Vec<u32> = (0..nodes.len() as u32)
+            .filter(|&d| {
+                nodes[d as usize].meta.kind == Kind::Dir
+                    && d != sv
+                    && dev_fs.get(&nodes[d as usize].meta.dev).map(|x| x.0)
+                        == dev_fs.get(&nodes[sv as usize].meta.dev).map(|x| x.0)
+                    && single_device(nodes, d)
+                    && !contains(nodes, d, sv)
+                    && !contains(nodes, sv, d)
+            })
+            .collect();
+        if dirs.is_empty() {
+            continue;
+        }
+        let src = dirs[rng.below(dirs.len() as u64) as usize];
+        let dev = nodes[sv as usize].meta.dev;
+        let kids: Vec<u32> = nodes[src as usize].children.clone();
+        let copies: Vec<u32> = kids
+            .into_iter()
+            .map(|c| {
+                let n = copy_subtree(nodes, c);
+                set_dev(nodes, n, dev);
+                n
+            })
+            .collect();
+        nodes[sv as usize].children = copies;
+        // Its fault was placed for the listing it had before.
+        nodes[sv as usize].fault = Fault::None;
+        if let Some(s) = nodes[sv as usize].subvol.as_mut() {
+            s.parent_uuid = Some([0xfe; 16]);
+        }
+    }
+}
+
+/// Every node below `d` is on `d`'s device (no mounts or subvolumes inside).
+fn single_device(nodes: &[SpecNode], d: u32) -> bool {
+    let dev = nodes[d as usize].meta.dev;
+    let mut stack = vec![d];
+    while let Some(n) = stack.pop() {
+        if nodes[n as usize].meta.dev != dev {
+            return false;
+        }
+        stack.extend(&nodes[n as usize].children);
+    }
+    true
+}
+
+fn contains(nodes: &[SpecNode], a: u32, b: u32) -> bool {
+    let mut stack = vec![a];
+    while let Some(n) = stack.pop() {
+        if n == b {
+            return true;
+        }
+        stack.extend(&nodes[n as usize].children);
+    }
+    false
+}
+
+fn set_dev(nodes: &mut [SpecNode], n: u32, dev: u64) {
+    let mut stack = vec![n];
+    while let Some(x) = stack.pop() {
+        nodes[x as usize].meta.dev = dev;
+        stack.extend(nodes[x as usize].children.clone());
+    }
+}
+
+/// FIEMAP's `SHARED` flag: another inode references overlapping data (the same start, for
+/// compressed extents), or, for a few extents, something outside the spec does.
+fn mark_shared(rng: &mut Rng, nodes: &mut [SpecNode]) {
+    // Reachable files only: orphaned nodes (replaced by snapshot copies) do not exist.
+    let mut reach = vec![false; nodes.len()];
+    let mut stack = vec![ROOT];
+    while let Some(n) = stack.pop() {
+        reach[n as usize] = true;
+        stack.extend(&nodes[n as usize].children);
+    }
+    let mut refs: Vec<((u64, u64), SimPiece)> = vec![];
+    for (i, n) in nodes.iter().enumerate() {
+        if reach[i] {
+            for &p in &n.pieces {
+                refs.push(((n.meta.dev, n.meta.ino), p));
+            }
+        }
+    }
+    // Per inode: hard links are one file and report the same flags.
+    let mut flags: HashMap<(u64, u64), Vec<bool>> = HashMap::new();
+    for n in nodes.iter_mut() {
+        let me = (n.meta.dev, n.meta.ino);
+        let f = flags.entry(me).or_insert_with(|| {
+            n.pieces
+                .iter()
+                .map(|p| {
+                    let other = refs.iter().any(|(k, q)| {
+                        *k != me
+                            && q.encoded == p.encoded
+                            && if p.encoded {
+                                q.phys == p.phys
+                            } else {
+                                q.phys < p.phys + p.len && p.phys < q.phys + q.len
+                            }
+                    });
+                    other || rng.chance(30)
+                })
+                .collect()
+        });
+        for (p, &sh) in n.pieces.iter_mut().zip(f.iter()) {
+            p.shared = sh;
+        }
+    }
+}
+
+fn copy_subtree(nodes: &mut Vec<SpecNode>, n: u32) -> u32 {
+    let mut node = nodes[n as usize].clone();
+    node.children = node
+        .children
+        .iter()
+        .map(|&c| copy_subtree(nodes, c))
+        .collect();
+    nodes.push(node);
+    (nodes.len() - 1) as u32
 }
 
 // ---- backend, clock, sink --------------------------------------------------------------------
@@ -397,6 +718,29 @@ impl Backend for SimBackend {
         Ok(self.spec.nodes[*loc as usize].meta)
     }
 
+    fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
+        let mut dups = HashSet::new();
+        for n in &self.spec.nodes {
+            if n.dup_mount {
+                if n.meta.mount == 0 {
+                    // No mount ids: no mount table either.
+                    return None;
+                }
+                dups.insert(n.meta.mount);
+            }
+        }
+        Some(dups)
+    }
+
+    fn shares_extents(&self, loc: &u32) -> bool {
+        let dev = self.spec.nodes[*loc as usize].meta.dev;
+        self.spec.dev_fs.get(&dev).is_some_and(|d| d.1)
+    }
+
+    fn subvolume(&self, loc: &u32) -> io::Result<Option<Subvol>> {
+        Ok(self.spec.nodes[*loc as usize].subvol.clone())
+    }
+
     fn open(&self, loc: &u32) -> io::Result<SimStream> {
         if self.spec.is_deleted(*loc) {
             return Err(io::ErrorKind::NotFound.into());
@@ -416,6 +760,47 @@ impl Backend for SimBackend {
             stall_done: false,
             eio_pending: false,
         })
+    }
+}
+
+impl SimBackend {
+    /// What the simulated measurer answers: the spec's extent map, unless the file is gone or
+    /// changed, or cannot be measured.
+    pub fn measure(&self, req: &MeasureReq) -> MeasureMsg {
+        use dut_scan::Backend as _;
+        let file = &req.files[0];
+        let i = self.loc_from_path(&req.path(file));
+        let n = &self.spec.nodes[i as usize];
+        let result = if self.spec.is_deleted(i)
+            || n.vanished
+            || (n.meta.dev, n.meta.ino) != file.inode
+            || n.meta.kind != Kind::File
+        {
+            MeasureResult::Changed
+        } else if n.unmeasurable {
+            MeasureResult::Failed(ErrKind::PermissionDenied)
+        } else {
+            let fs = self.spec.dev_fs[&n.meta.dev].0;
+            let mut m = Measurement {
+                fs: [fs as u8; 16],
+                ..Default::default()
+            };
+            for p in &n.pieces {
+                m.compressed |= p.encoded;
+                match (p.shared, p.encoded) {
+                    (false, _) => m.excl += p.len,
+                    (true, true) => m.points.push((p.phys, p.len)),
+                    (true, false) => m.ranges.push((p.phys, p.phys + p.len)),
+                }
+            }
+            MeasureResult::Measured(m)
+        };
+        MeasureMsg {
+            round: req.round,
+            node: file.node,
+            inode: file.inode,
+            result,
+        }
     }
 }
 
@@ -462,6 +847,8 @@ pub struct SimConfig {
     pub cancels: u32,
     pub max_ticks: u64,
     pub spec: SpecConfig,
+    /// Scan with `cross_mounts`; `None` picks it per seed.
+    pub cross_mounts: Option<bool>,
 }
 
 impl Default for SimConfig {
@@ -483,6 +870,7 @@ impl Default for SimConfig {
             cancels: 1,
             max_ticks: 2_000_000,
             spec: SpecConfig::default(),
+            cross_mounts: None,
         }
     }
 }
@@ -502,6 +890,15 @@ pub struct SimReport {
     pub stalled_msgs: u64,
     pub late: u64,
     pub discarded_cut: u64,
+    /// Subvolume records, read-only ones among them, and duplicate mounts in the final tree.
+    pub subvols: u64,
+    pub ro_subvols: u64,
+    pub dup_mounts: u64,
+    /// Runs with `cross_mounts`.
+    pub cross_runs: u64,
+    /// Measurements answered, and bytes counted once instead of per file in the final tree.
+    pub measured: u64,
+    pub shared_bytes: u64,
 }
 
 pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
@@ -511,6 +908,7 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         &cfg.spec,
         cfg.limits.block_entries,
     ));
+    let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
     let clock = Arc::new(SimClock(AtomicU64::new(1)));
     let backend = SimBackend {
         spec: spec.clone(),
@@ -534,13 +932,17 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     let mut recoveries = 0;
     let mut plans: VecDeque<(Plan, usize)> = VecDeque::new();
     let mut del_q: VecDeque<DeleterMsg> = VecDeque::new();
+    let mut meas_q: Vec<MeasureReq> = Vec::new();
     let mut report = SimReport::default();
 
     applier.command(
         &mut model,
         Command::Scan {
             path: PathBuf::from(ROOT_NAME),
-            opts: JobOptions::default(),
+            opts: JobOptions {
+                cross_mounts,
+                ..JobOptions::default()
+            },
         },
         clock.now(),
     );
@@ -564,11 +966,36 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
                 &report,
             );
         }
+        // One request per file, so answers can arrive in any order.
+        for r in applier.take_measure_requests() {
+            for f in r.files {
+                meas_q.push(MeasureReq {
+                    round: r.round,
+                    dir: r.dir.clone(),
+                    files: vec![f],
+                });
+            }
+        }
         let r = rng.below(100);
         match r {
-            0..60 => {
+            0..55 => {
                 let i = rng.below(workers.len() as u64) as usize;
                 let _: StepResult = workers[i].step(&shared, &*sink, &*clock);
+            }
+            55..60 => {
+                // Answers in any order, interleaved with everything else.
+                for _ in 0..=rng.below(8) {
+                    if meas_q.is_empty() {
+                        break;
+                    }
+                    let req = meas_q.swap_remove(rng.below(meas_q.len() as u64) as usize);
+                    let msg = shared.backend.measure(&req);
+                    report.measured += matches!(msg.result, MeasureResult::Measured(_)) as u64;
+                    applier.apply_measure(&mut model, msg, clock.now());
+                    if let Err(e) = applier.check(&model) {
+                        return fail(format!("invariant after measurement: {e}"), &report);
+                    }
+                }
             }
             60..80 => {
                 for _ in 0..=rng.below(20) {
@@ -710,6 +1137,8 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
             && plans.is_empty()
             && del_q.is_empty()
             && model.status.deleting.is_none()
+            && meas_q.is_empty()
+            && model.status.measuring.is_none()
         {
             // A cancelled job leaves directories incomplete (Cancelled, or Superseded when a
             // cancelled rescan had cut them). Rescan the topmost one, as a user would, until
@@ -732,6 +1161,20 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         }
     }
 
+    report.subvols = model.subvols.len() as u64;
+    report.ro_subvols = model.subvols.values().filter(|s| s.read_only).count() as u64;
+    report.cross_runs = cross_mounts as u64;
+    if let Some(root) = model.tree.roots().next() {
+        let t = model.tree.total(root);
+        report.shared_bytes = t.referenced.saturating_sub(t.alloc);
+    }
+    if let Some(root) = model.tree.roots().next() {
+        let mut stack = vec![root];
+        while let Some(ix) = stack.pop() {
+            report.dup_mounts += model.tree.flags(ix).has(NodeFlags::DUP_MOUNT) as u64;
+            stack.extend(model.tree.children(ix));
+        }
+    }
     let st = &model.status.stats;
     report.max_budget_used = sink.max_used.load(SeqCst);
     report.stalled_msgs = st.stalled;
@@ -758,13 +1201,31 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     applier
         .check(&model)
         .map_err(|e| format!("seed {seed}: final invariant: {e}"))?;
-    let (dirs, abandoned) = compare(&spec, &model.tree, cfg.limits.block_entries).map_err(|e| {
-        let n = &model.status.notices;
-        format!(
-            "seed {seed}: {e}; last notices: {:?}",
-            &n[n.len().saturating_sub(6)..]
-        )
-    })?;
+    applier
+        .check_settled(&model)
+        .map_err(|e| format!("seed {seed}: settled: {e}"))?;
+    if let Ok(v) = std::env::var("DUT_SIM_INODE") {
+        let mut it = v
+            .split(',')
+            .map(|x| x.parse::<u64>().expect("DUT_SIM_INODE=dev,ino"));
+        let key = (it.next().expect("dev"), it.next().expect("ino"));
+        eprintln!("{}", applier.describe_extents(&model, key));
+        for n in spec
+            .nodes
+            .iter()
+            .filter(|n| (n.meta.dev, n.meta.ino) == key)
+        {
+            eprintln!("  spec pieces {:?}", n.pieces);
+        }
+    }
+    let (dirs, abandoned) = compare(&spec, &model, cfg.limits.block_entries, cross_mounts)
+        .map_err(|e| {
+            let n = &model.status.notices;
+            format!(
+                "seed {seed}: {e}; last notices: {:?}",
+                &n[n.len().saturating_sub(6)..]
+            )
+        })?;
     report.dirs = dirs;
     report.abandoned = abandoned;
     Ok(report)
@@ -776,9 +1237,7 @@ fn trace() -> Option<String> {
 
 fn spec_node(shared: &Shared<SimBackend>, tree: &Tree, ix: Ix) -> u32 {
     use dut_scan::Backend as _;
-    shared
-        .backend
-        .loc_from_path(&dut_engine::bytes_to_path(&tree.path(ix)))
+    shared.backend.loc_from_path(&tree.path_buf(ix))
 }
 
 /// One to three visible entries whose removal cannot shift a fault position.
@@ -827,7 +1286,10 @@ fn deleter_step(
     if *i >= plan.items.len() {
         let id = plan.id;
         plans.pop_front();
-        return Some(DeleterMsg::Done { plan: id });
+        return Some(DeleterMsg::Done {
+            plan: id,
+            btrfs: false,
+        });
     }
     let item = plan.items[*i].clone();
     *i += 1;
@@ -903,6 +1365,117 @@ fn random_dir(tree: &Tree, rng: &mut Rng) -> Option<Ix> {
 
 // ---- reference -------------------------------------------------------------------------------
 
+/// Shared-extent accounting by brute force (`docs/btrfs.md` §3.4): which files are measured
+/// (with their unshared bytes), and the shared bytes counted at each path, with the part shared
+/// only outside the scan.
+#[allow(clippy::type_complexity)]
+fn expected_homes(
+    spec: &Spec,
+    seen: &[(u32, Vec<u8>)],
+    charged: &HashMap<(u64, u64), Vec<u8>>,
+) -> (HashMap<Vec<u8>, u64>, HashMap<Vec<u8>, (u64, u64)>) {
+    let mut measured: HashMap<Vec<u8>, u64> = HashMap::new();
+    let mut ranges: HashMap<u32, Vec<(u64, u64, &Vec<u8>)>> = HashMap::new();
+    let mut points: HashMap<(u32, u64), (u64, Vec<&Vec<u8>>)> = HashMap::new();
+    for (d, path) in seen {
+        let n = &spec.nodes[*d as usize];
+        let Some(&(fs, capable)) = spec.dev_fs.get(&n.meta.dev) else {
+            continue;
+        };
+        if n.meta.kind != Kind::File
+            || n.vanished
+            || n.meta.alloc == 0
+            || n.unmeasurable
+            || !capable
+            || (n.meta.nlink > 1 && charged.get(&(n.meta.dev, n.meta.ino)) != Some(path))
+        {
+            continue;
+        }
+        let mut excl = 0;
+        for p in &n.pieces {
+            match (p.shared, p.encoded) {
+                (false, _) => excl += p.len,
+                (true, true) => {
+                    let e = points.entry((fs, p.phys)).or_default();
+                    e.0 = e.0.max(p.len);
+                    if !e.1.contains(&path) {
+                        e.1.push(path);
+                    }
+                }
+                (true, false) => ranges
+                    .entry(fs)
+                    .or_default()
+                    .push((p.phys, p.phys + p.len, path)),
+            }
+        }
+        measured.insert(path.clone(), excl);
+    }
+    let lca = |paths: &[&Vec<u8>]| -> Vec<u8> {
+        let mut l = paths[0].clone();
+        for p in &paths[1..] {
+            while !(p.starts_with(&l) && (p.len() == l.len() || p[l.len()] == SEP)) {
+                let i = l.iter().rposition(|&c| c == SEP).expect("below the root");
+                l.truncate(i);
+            }
+        }
+        l
+    };
+    let mut homes: HashMap<Vec<u8>, (u64, u64)> = HashMap::new();
+    for rs in ranges.values() {
+        let mut bounds: Vec<u64> = rs.iter().flat_map(|r| [r.0, r.1]).collect();
+        bounds.sort();
+        bounds.dedup();
+        for w in bounds.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let mut refs: Vec<&Vec<u8>> = rs
+                .iter()
+                .filter(|r| r.0 <= a && b <= r.1)
+                .map(|r| r.2)
+                .collect();
+            refs.dedup();
+            refs.sort();
+            refs.dedup();
+            if refs.is_empty() {
+                continue;
+            }
+            let e = homes.entry(lca(&refs)).or_default();
+            e.0 += b - a;
+            if refs.len() == 1 {
+                e.1 += b - a;
+            }
+        }
+    }
+    for (len, refs) in points.values() {
+        let e = homes.entry(lca(refs)).or_default();
+        e.0 += len;
+        if refs.len() == 1 {
+            e.1 += len;
+        }
+    }
+    (measured, homes)
+}
+
+/// A directory's subvolume flags and record agree with the spec. A subvolume that was read
+/// completely must have its record; one that failed to open may lack it.
+fn check_subvol(spec: &Spec, model: &Model, d: u32, ix: Ix, path: &[u8]) -> Result<(), String> {
+    let tree = &model.tree;
+    let flags = tree.flags(ix);
+    let rec = model.subvols.get(&tree.node_ref(ix));
+    let want = &spec.nodes[d as usize].subvol;
+    let p = String::from_utf8_lossy(path);
+    match (want, rec) {
+        (Some(w), Some(r)) if w == r => {}
+        (None, None) => {}
+        (Some(_), None) if tree.dir(ix).is_some_and(|r| r.state != DirState::Complete) => {}
+        (w, r) => return Err(format!("{p}: subvolume record {r:?}, expected {w:?}")),
+    }
+    let ro = rec.is_some_and(|r| r.read_only);
+    if flags.has(NodeFlags::SUBVOL) != rec.is_some() || flags.has(NodeFlags::RO_SUBVOL) != ro {
+        return Err(format!("{p}: subvolume flags {flags:?} for record {rec:?}"));
+    }
+    Ok(())
+}
+
 fn allowed(fault: &Fault, len: usize, state: DirState) -> bool {
     use DirState::*;
     match fault {
@@ -933,7 +1506,8 @@ fn prefix(n: &SpecNode, len: usize, state: DirState, block: usize) -> usize {
 }
 
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
-fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), String> {
+fn compare(spec: &Spec, model: &Model, block: usize, cross: bool) -> Result<(usize, u64), String> {
+    let tree = &model.tree;
     let root = tree.roots().next().ok_or("no root")?;
     // Final state of every directory, by path.
     let mut by_path: HashMap<Vec<u8>, Ix> = HashMap::new();
@@ -945,7 +1519,20 @@ fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), Strin
     let state_of = |p: &[u8]| by_path.get(p).and_then(|&ix| tree.dir(ix)).map(|d| d.state);
 
     // Which spec entries the scan saw, and the lowest path of every hard-linked inode.
-    let root_dev = spec.nodes[ROOT as usize].meta.dev;
+    let mount_root = |d: u32| {
+        let (n, p) = (
+            &spec.nodes[d as usize].meta,
+            &spec.nodes[spec.parent[d as usize] as usize].meta,
+        );
+        d != ROOT
+            && if n.mount != 0 && p.mount != 0 {
+                n.mount != p.mount
+            } else {
+                n.dev != p.dev
+            }
+    };
+    // With cross_mounts, how many times each mounted directory was descended into.
+    let mut descended: HashMap<(u64, u64), u32> = HashMap::new();
     let mut seen: Vec<(u32, Vec<u8>)> = vec![];
     let mut charged: HashMap<(u64, u64), Vec<u8>> = HashMap::new();
     let mut abandoned = 0;
@@ -964,8 +1551,48 @@ fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), Strin
             }
             continue;
         }
-        if d != ROOT && n.meta.dev != root_dev {
-            continue;
+        let ix = *by_path
+            .get(&path)
+            .ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
+        let flags = tree.flags(ix);
+        if flags.has(NodeFlags::MOUNT_ROOT) != mount_root(d) {
+            return Err(format!(
+                "{}: mount root flag {} for a {}",
+                String::from_utf8_lossy(&path),
+                flags.has(NodeFlags::MOUNT_ROOT),
+                if mount_root(d) { "mount" } else { "directory" }
+            ));
+        }
+        check_subvol(spec, model, d, ix, &path)?;
+        // With mount ids the duplicates are known; without, the first mount seen wins.
+        let dup = if n.meta.mount != 0 {
+            n.dup_mount
+        } else {
+            flags.has(NodeFlags::DUP_MOUNT)
+        };
+        if cross && mount_root(d) && flags.has(NodeFlags::DUP_MOUNT) != dup {
+            return Err(format!(
+                "{}: duplicate-mount flag {} expected {dup}",
+                String::from_utf8_lossy(&path),
+                flags.has(NodeFlags::DUP_MOUNT)
+            ));
+        }
+        if mount_root(d) {
+            if !cross || dup {
+                if state_of(&path) != Some(DirState::Skipped) {
+                    return Err(format!(
+                        "{}: mount not skipped",
+                        String::from_utf8_lossy(&path)
+                    ));
+                }
+                continue;
+            }
+            *descended.entry((n.meta.dev, n.meta.ino)).or_default() += 1;
+        } else if flags.has(NodeFlags::DUP_MOUNT) {
+            return Err(format!(
+                "{}: marked as a duplicate mount",
+                String::from_utf8_lossy(&path)
+            ));
         }
         let state =
             state_of(&path).ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
@@ -986,6 +1613,12 @@ fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), Strin
         }
     }
 
+    if let Some((k, n)) = descended.iter().find(|&(_, &n)| n > 1) {
+        return Err(format!("mount {k:?} descended into {n} times"));
+    }
+
+    let (measured, homes) = expected_homes(spec, &seen, &charged);
+
     // Expected totals bottom-up.
     let mut expect: HashMap<Vec<u8>, Totals> = HashMap::new();
     seen.sort_by_key(|s| std::cmp::Reverse(s.1.len()));
@@ -995,11 +1628,17 @@ fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), Strin
             let counted = n.meta.kind == Kind::Dir
                 || n.meta.nlink <= 1
                 || charged.get(&(n.meta.dev, n.meta.ino)) == Some(path);
+            let alloc = match measured.get(path) {
+                Some(&excl) => excl,
+                None => n.meta.alloc,
+            };
             Totals {
                 apparent: if counted { n.meta.apparent } else { 0 },
-                alloc: if counted { n.meta.alloc } else { 0 },
+                alloc: if counted { alloc } else { 0 },
+                referenced: if counted { n.meta.alloc } else { 0 },
                 items: 1,
                 errors: 0,
+                ..Totals::default()
             }
         } else {
             Totals {
@@ -1007,9 +1646,20 @@ fn compare(spec: &Spec, tree: &Tree, block: usize) -> Result<(usize, u64), Strin
                 alloc: 0,
                 items: 1,
                 errors: 1,
+                ..Totals::default()
             }
         };
+        if let Some(&(bytes, out)) = homes.get(path) {
+            t.alloc += bytes;
+            t.shared_out += out;
+        }
         if n.meta.kind == Kind::Dir {
+            t.mounts = mount_root(*d) as u64;
+            // Set when the directory was opened; check_subvol verified the flag.
+            t.ro_subvols = by_path
+                .get(path)
+                .is_some_and(|&ix| tree.flags(ix).has(NodeFlags::RO_SUBVOL))
+                as u64;
             if let Some(s) = state_of(path)
                 && matches!(
                     s,

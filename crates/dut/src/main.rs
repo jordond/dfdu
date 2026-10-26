@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand};
 use dut_engine::{Command, Engine, EngineOptions, Model};
 use dut_scan::{JobOptions, PortableBackend};
-use dut_tree::{Ix, Tree};
+use dut_tree::{DirState, Ix, NodeFlags, Tree};
+use dut_tui::SizeMode;
 
 #[derive(Parser)]
 #[command(version, about, args_conflicts_with_subcommands = true)]
@@ -40,11 +41,18 @@ struct ScanArgs {
     #[arg(long, default_value_t = 10)]
     top: usize,
     /// Show apparent sizes instead of disk usage.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "like_du")]
     apparent: bool,
+    /// Count data shared between files (btrfs snapshots, reflinks) once per file, as du does,
+    /// instead of once.
+    #[arg(long)]
+    like_du: bool,
     /// Worker threads.
     #[arg(long)]
     threads: Option<usize>,
+    /// Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does.
+    #[arg(long)]
+    measure_workers: Option<usize>,
     /// Descend into other filesystems.
     #[arg(long)]
     cross_mounts: bool,
@@ -93,7 +101,9 @@ fn main() -> ExitCode {
                     depth: 1,
                     top: 10,
                     apparent: false,
+                    like_du: false,
                     threads: None,
+                    measure_workers: None,
                     cross_mounts: cli.cross_mounts,
                     bytes: false,
                     stall_abandon: 30,
@@ -124,7 +134,9 @@ fn scan(args: ScanArgs) -> ExitCode {
         depth,
         top,
         apparent,
+        like_du,
         threads,
+        measure_workers,
         cross_mounts,
         bytes,
         stall_abandon,
@@ -136,11 +148,17 @@ fn scan(args: ScanArgs) -> ExitCode {
     if let Some(t) = threads {
         opts.workers = t;
     }
+    if let Some(n) = measure_workers {
+        opts.measure_workers = n;
+    }
     let engine = Engine::start(PortableBackend, opts);
     let t0 = Instant::now();
     engine.send(Command::Scan {
         path,
-        opts: JobOptions { cross_mounts },
+        opts: JobOptions {
+            cross_mounts,
+            ..Default::default()
+        },
     });
     engine.wait_idle(None);
     if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
@@ -148,6 +166,13 @@ fn scan(args: ScanArgs) -> ExitCode {
         return ExitCode::from(1);
     }
     let elapsed = t0.elapsed();
+    let mode = if apparent {
+        SizeMode::Apparent
+    } else if like_du {
+        SizeMode::Referenced
+    } else {
+        SizeMode::Disk
+    };
     let code = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
             return ExitCode::from(1);
@@ -155,9 +180,9 @@ fn scan(args: ScanArgs) -> ExitCode {
         let errors = m.tree.total(root).errors;
         if bytes {
             let t = m.tree.total(root);
-            println!("{}", if apparent { t.apparent } else { t.alloc });
+            println!("{}", mode.of(&t));
         } else {
-            print_tree(&m.tree, root, depth, top, apparent);
+            print_tree(m, root, depth, top, mode);
             print_footer(m, root, elapsed);
         }
         if errors > 0 || m.status.incomplete {
@@ -170,55 +195,77 @@ fn scan(args: ScanArgs) -> ExitCode {
     code
 }
 
-fn human(n: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    let mut v = n as f64;
-    let mut u = 0;
-    while v >= 1024.0 && u < UNITS.len() - 1 {
-        v /= 1024.0;
-        u += 1;
-    }
-    if u == 0 {
-        format!("{n} B")
-    } else {
-        format!("{v:.1} {}", UNITS[u])
-    }
+fn size(tree: &Tree, ix: Ix, mode: SizeMode) -> u64 {
+    mode.of(&tree.total(ix))
 }
 
-fn size(tree: &Tree, ix: Ix, apparent: bool) -> u64 {
-    let t = tree.total(ix);
-    if apparent { t.apparent } else { t.alloc }
-}
-
-fn print_tree(tree: &Tree, root: Ix, depth: usize, top: usize, apparent: bool) {
+fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
+    let tree = &m.tree;
     println!(
-        "{:>10}  {}",
-        human(size(tree, root, apparent)),
-        String::from_utf8_lossy(tree.name(root))
+        "{:>10}  {}{}",
+        dut_tui::human(size(tree, root, mode)),
+        String::from_utf8_lossy(tree.name(root)),
+        note(m, root)
     );
+    // Depth first, largest first, `top` entries per directory.
     let mut stack = vec![(root, 0usize)];
     while let Some((ix, d)) = stack.pop() {
+        if ix != root {
+            let slash = if tree.dir(ix).is_some() { "/" } else { "" };
+            println!(
+                "{:>10}  {}{}{}{}",
+                dut_tui::human(size(tree, ix, mode)),
+                "  ".repeat(d),
+                String::from_utf8_lossy(tree.name(ix)),
+                slash,
+                note(m, ix)
+            );
+        }
         if d >= depth {
             continue;
         }
+        // Data the entries share is counted at the directory (`docs/btrfs.md` §3.4).
+        if mode == SizeMode::Disk && tree.home(ix) > 0 {
+            println!(
+                "{:>10}  {}(shared between entries)",
+                dut_tui::human(tree.home(ix)),
+                "  ".repeat(d + 1)
+            );
+        }
         let mut kids: Vec<Ix> = tree.children(ix).collect();
-        kids.sort_by_key(|&c| std::cmp::Reverse(size(tree, c, apparent)));
-        let shown: Vec<Ix> = kids.into_iter().take(top).collect();
-        for &c in shown.iter().rev() {
+        kids.sort_by_key(|&c| std::cmp::Reverse(size(tree, c, mode)));
+        for &c in kids.iter().take(top).rev() {
             stack.push((c, d + 1));
         }
-        for &c in &shown {
-            let slash = if tree.dir(c).is_some() { "/" } else { "" };
-            println!(
-                "{:>10}  {}{}{}",
-                human(size(tree, c, apparent)),
-                "  ".repeat(d + 1),
-                String::from_utf8_lossy(tree.name(c)),
-                slash
-            );
-            let _ = c;
-        }
-        break;
+    }
+}
+
+/// Why an entry looks the way it does: not scanned, a second mount, a btrfs subvolume.
+fn note(m: &Model, ix: Ix) -> String {
+    let tree = &m.tree;
+    let mut parts = vec![];
+    if tree.flags(ix).has(NodeFlags::DUP_MOUNT) {
+        parts.push("mounted again: counted at its other mount".to_string());
+    } else if tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped) {
+        parts.push("other filesystem, not scanned (--cross-mounts)".to_string());
+    }
+    if let Some(l) = dut_tui::subvol_label(m, ix) {
+        parts.push(l);
+    }
+    if tree.flags(ix).has(NodeFlags::COMPRESSED) {
+        parts.push("compressed: at most this".into());
+    }
+    let out = tree.total(ix).shared_out;
+    if out > 0 {
+        parts.push(format!(
+            "{} also used outside the scan",
+            dut_tui::human(out)
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("  [{}]", parts.join("; "))
     }
 }
 
@@ -236,6 +283,35 @@ fn print_footer(m: &Model, root: Ix, elapsed: Duration) {
             ""
         }
     );
+    if t.referenced > t.alloc {
+        let why = if m.status.exact_sizes {
+            "shared data counted once, compressed data at its size on disk"
+        } else {
+            "shared data counted once"
+        };
+        eprintln!(
+            "{} less than du ({}): {why} (--like-du for du's number)",
+            dut_tui::human(t.referenced - t.alloc),
+            dut_tui::human(t.referenced)
+        );
+    }
+    if let Some((name, ratio)) = m.status.profile
+        && ratio != 1.0
+    {
+        eprintln!("btrfs data profile {name}: each byte is stored {ratio:.1} times");
+    }
+    if m.status.compressed_upper_bound {
+        eprintln!(
+            "compressed files are shown at their uncompressed size, an upper bound; run as \
+             root for sizes on disk"
+        );
+    }
+    if m.status.unmeasured > 0 {
+        eprintln!(
+            "{} files could not be measured; data they share may be counted more than once",
+            m.status.unmeasured
+        );
+    }
     if s.corrupt + s.lost + s.duplicate > 0 {
         eprintln!(
             "pipeline: corrupt {} lost {} duplicate {}",

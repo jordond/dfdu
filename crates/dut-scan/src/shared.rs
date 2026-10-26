@@ -1,10 +1,11 @@
 //! Scanner state shared by workers, the watchdog and the applier, and the worker and watchdog
 //! step functions (`docs/data-pipeline.md` §3, §4.3, §5.4, §5.7).
 
+use fixedbitset::FixedBitSet;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst};
 
@@ -14,7 +15,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::backend::{Backend, Block, DirStream};
 use crate::proto::{
-    Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, ScanMsg,
+    Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
     SkipReason, SubdirRec,
 };
 
@@ -60,6 +61,9 @@ impl Default for Limits {
 pub struct JobOptions {
     /// Descend into directories on other filesystems.
     pub cross_mounts: bool,
+    /// The directory whose mounts are checked for duplicates: the visible scan root when a
+    /// rescan covers only part of it. Defaults to the job root.
+    pub scope: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -69,31 +73,34 @@ pub struct Task<L> {
     pub loc: L,
     focus_epoch: u32,
     is_root: bool,
+    /// The directory's own `dev` and mount id (the root's are filled in when it is opened).
+    dev: u64,
+    mount: u64,
+    /// Ask the backend for a subvolume record when opening (`dev` changed from the parent).
+    probe_subvol: bool,
 }
 
 struct JobState {
     ended: AtomicBool,
     next_dir: AtomicU32,
-    root_dev: AtomicU64,
-    early_stop: RwLock<Vec<u64>>,
+    early_stop: RwLock<FixedBitSet>,
+    /// With `cross_mounts`: mount ids not to descend into (`docs/btrfs.md` §3.2), from the
+    /// mount table at job start.
+    dup_mounts: Option<HashSet<u64>>,
+    /// Without a mount table: `(dev, ino)` of every mount root descended into, the job root
+    /// included, so at least a second mount seen later and mount loops are not followed.
+    mount_roots: Mutex<HashSet<(u64, u64)>>,
     opts: JobOptions,
 }
 
 impl JobState {
     fn stopped(&self, dir: DirId) -> bool {
-        let (w, b) = ((dir.0 / 64) as usize, dir.0 % 64);
-        self.early_stop
-            .read()
-            .get(w)
-            .is_some_and(|x| x & (1 << b) != 0)
+        self.early_stop.read().contains(dir.0 as usize)
     }
     fn stop(&self, dir: DirId) {
-        let (w, b) = ((dir.0 / 64) as usize, dir.0 % 64);
         let mut v = self.early_stop.write();
-        if v.len() <= w {
-            v.resize(w + 1, 0);
-        }
-        v[w] |= 1 << b;
+        v.grow(dir.0 as usize + 1);
+        v.insert(dir.0 as usize);
     }
 }
 
@@ -247,8 +254,15 @@ impl<B: Backend> Shared<B> {
         let st = Arc::new(JobState {
             ended: AtomicBool::new(false),
             next_dir: AtomicU32::new(1),
-            root_dev: AtomicU64::new(0),
-            early_stop: RwLock::new(Vec::new()),
+            early_stop: RwLock::new(FixedBitSet::new()),
+            dup_mounts: opts
+                .cross_mounts
+                .then(|| {
+                    self.backend
+                        .duplicate_mounts(opts.scope.as_deref().unwrap_or(root))
+                })
+                .flatten(),
+            mount_roots: Mutex::new(HashSet::new()),
             opts,
         });
         self.jobs.write().insert(job.0, st);
@@ -261,6 +275,9 @@ impl<B: Backend> Shared<B> {
             loc,
             focus_epoch: 0,
             is_root: true,
+            dev: 0,
+            mount: 0,
+            probe_subvol: true,
         });
         self.wake();
         seq
@@ -476,11 +493,7 @@ impl<B: Backend> Worker<B> {
             Ok(r) => r,
             Err(payload) => {
                 self.slot.syscall_since.store(0, SeqCst);
-                let msg = payload
-                    .downcast_ref::<&str>()
-                    .map(|s| s.to_string())
-                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "panic".to_string());
+                let msg = panic_message(&*payload);
                 self.block.clear();
                 if let Some(r) = self.running.take() {
                     let chunk = empty_chunk(&r, ChunkStatus::Panicked(msg));
@@ -597,20 +610,36 @@ impl<B: Backend> Worker<B> {
             self.slot.begin_syscall(clock.now());
             let opened = if r.task.is_root {
                 sh.backend.stat_root(&r.task.loc).and_then(|m| {
-                    r.job.root_dev.store(m.dev, SeqCst);
+                    r.task.dev = m.dev;
+                    r.task.mount = m.mount;
+                    r.job.mount_roots.lock().insert((m.dev, m.ino));
                     sh.backend.open(&r.task.loc).map(|s| (s, Some(m)))
                 })
             } else {
                 sh.backend.open(&r.task.loc).map(|s| (s, None))
             };
+            // Part of opening, under the same stall watch. A failed probe only loses the record.
+            let probe = match &opened {
+                Ok(_) if r.task.probe_subvol => Some(Probe {
+                    subvol: sh.backend.subvolume(&r.task.loc).ok().flatten(),
+                    shares_extents: sh.backend.shares_extents(&r.task.loc),
+                    profile: if r.task.is_root {
+                        sh.backend.data_profile(&r.task.loc)
+                    } else {
+                        None
+                    },
+                }),
+                _ => None,
+            };
             self.slot.syscall_since.store(0, SeqCst);
             match opened {
                 Ok((stream, root_meta)) => {
                     r.stream = Some(stream);
-                    if let Some(m) = root_meta {
-                        // The root's own stat travels in its first chunk.
+                    if root_meta.is_some() || probe.is_some() {
+                        // The root's own stat and the probe travel in the first chunk.
                         let mut c = empty_chunk(r, ChunkStatus::Ok);
-                        c.root_meta = Some(m);
+                        c.root_meta = root_meta;
+                        c.probe = probe.map(Box::new);
                         r.seq += 1;
                         self.slot.outbox.lock().push(ScanMsg::Chunk(c), clock.now());
                     }
@@ -696,8 +725,8 @@ impl<B: Backend> Worker<B> {
     fn emit_block(&mut self, sh: &Shared<B>, clock: &dyn Clock) {
         let r = self.running.as_mut().expect("running");
         let block = std::mem::take(&mut self.block);
-        let root_dev = r.job.root_dev.load(SeqCst);
         let cross = r.job.opts.cross_mounts;
+        let (dir_dev, dir_mount) = (r.task.dev, r.task.mount);
         let (focus, epoch) = (sh.focus.load(SeqCst), sh.focus_epoch.load(SeqCst));
         let child_epoch = if focus == pack(r.task.job, r.task.dir) || r.task.focus_epoch == epoch {
             epoch
@@ -713,7 +742,25 @@ impl<B: Backend> Worker<B> {
             match e.meta {
                 Err(err) => errors.push(EntryError { name: e.name, err }),
                 Ok(m) if m.kind == Kind::Dir => {
-                    let skip = (!cross && m.dev != root_dev).then_some(SkipReason::OtherFilesystem);
+                    // Mount ids when both are known; otherwise a change of `dev` (which also
+                    // happens at btrfs subvolumes, so they are only traversed with mount ids).
+                    let mount_root = if m.mount != 0 && dir_mount != 0 {
+                        m.mount != dir_mount
+                    } else {
+                        m.dev != dir_dev
+                    };
+                    let skip = if !mount_root {
+                        None
+                    } else if !cross {
+                        Some(SkipReason::OtherFilesystem)
+                    } else if match &r.job.dup_mounts {
+                        Some(d) => d.contains(&m.mount),
+                        None => !r.job.mount_roots.lock().insert((m.dev, m.ino)),
+                    } {
+                        Some(SkipReason::DuplicateMount)
+                    } else {
+                        None
+                    };
                     let loc = if skip.is_none() { e.child } else { None };
                     let skip = if skip.is_none() && loc.is_none() {
                         // A directory the backend gave no location for cannot be read.
@@ -721,10 +768,11 @@ impl<B: Backend> Worker<B> {
                     } else {
                         skip
                     };
-                    child_locs.push(loc);
+                    child_locs.push(loc.map(|l| (l, m.dev, m.mount, m.dev != dir_dev)));
                     subdirs.push(SubdirRec {
                         name: e.name,
                         meta: m,
+                        mount_root,
                         skip,
                     });
                 }
@@ -738,13 +786,16 @@ impl<B: Backend> Worker<B> {
         let first = r.job.next_dir.fetch_add(subdirs.len() as u32, SeqCst);
         let mut tasks = Vec::new();
         for (i, loc) in child_locs.into_iter().enumerate() {
-            if let Some(loc) = loc {
+            if let Some((loc, dev, mount, probe_subvol)) = loc {
                 tasks.push(Task {
                     job: r.task.job,
                     dir: DirId(first + i as u32),
                     loc,
                     focus_epoch: child_epoch,
                     is_root: false,
+                    dev,
+                    mount,
+                    probe_subvol,
                 });
             }
         }
@@ -753,6 +804,7 @@ impl<B: Backend> Worker<B> {
             dir: r.task.dir,
             seq: r.seq,
             root_meta: None,
+            probe: None,
             names: block.names,
             files,
             first_subdir: DirId(first),
@@ -778,6 +830,7 @@ fn empty_chunk<B: Backend>(r: &Running<B>, status: ChunkStatus) -> Chunk {
         dir: r.task.dir,
         seq: r.seq,
         root_meta: None,
+        probe: None,
         names: Vec::new(),
         files: Vec::new(),
         first_subdir: DirId(0),
@@ -795,4 +848,12 @@ fn steal<T>(inj: &Injector<T>) -> Option<T> {
             Steal::Retry => continue,
         }
     }
+}
+
+/// The message of a caught panic payload (`panic!` with a literal or a formatted string).
+pub fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".into())
 }

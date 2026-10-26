@@ -2,24 +2,22 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use dut_engine::{Command, DeleteSummary, Engine, EngineOptions, Mode};
 use dut_scan::{JobOptions, PortableBackend};
 use dut_tree::NodeRef;
+use tempfile::TempDir;
 
-static N: AtomicU32 = AtomicU32::new(0);
-
-fn tempdir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "dut-del-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::SeqCst)
-    ));
-    let _ = fs::remove_dir_all(&d);
-    fs::create_dir_all(&d).unwrap();
-    d.canonicalize().unwrap()
+/// A temporary directory under the canonical temp dir: the engine canonicalises scan roots
+/// (on macOS the temp dir is behind the /var symlink), and paths compared with the tree's must
+/// match.
+fn tempdir(tag: &str) -> TempDir {
+    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
+    tempfile::Builder::new()
+        .prefix(&format!("dut-del-{tag}-"))
+        .tempdir_in(base)
+        .unwrap()
 }
 
 fn write(p: &Path, bytes: usize) {
@@ -27,13 +25,14 @@ fn write(p: &Path, bytes: usize) {
     fs::write(p, vec![7u8; bytes]).unwrap();
 }
 
-fn fixture() -> PathBuf {
-    let root = tempdir("tree");
+fn fixture() -> TempDir {
+    let dir = tempdir("tree");
+    let root = dir.path();
     write(&root.join("keep/a.bin"), 10_000);
     write(&root.join("junk/b.bin"), 50_000);
     write(&root.join("junk/sub/c.bin"), 20_000);
     write(&root.join("file.bin"), 3_000);
-    root
+    dir
 }
 
 fn engine(journal: Option<PathBuf>, read_only: bool) -> Engine<PortableBackend> {
@@ -98,10 +97,11 @@ fn journal_kinds(dir: &Path) -> Vec<String> {
 
 #[test]
 fn permanent_delete_updates_tree_and_journal() {
-    let root = fixture();
+    let tree = fixture();
+    let root = tree.path();
     let jdir = tempdir("journal");
-    let e = engine(Some(jdir.clone()), false);
-    scan(&e, &root);
+    let e = engine(Some(jdir.path().to_path_buf()), false);
+    scan(&e, root);
     let before = root_alloc(&e);
     let junk_bytes = e.read(|m| {
         m.tree
@@ -122,25 +122,28 @@ fn permanent_delete_updates_tree_and_journal() {
     });
     // Read the journal after shutdown: the deleter closes it then (Windows locks are mandatory).
     e.shutdown(Duration::from_secs(5));
-    assert_eq!(journal_kinds(&jdir), ["session", "intent", "done"]);
+    assert_eq!(journal_kinds(jdir.path()), ["session", "intent", "done"]);
 }
 
 #[test]
 fn changed_items_are_not_deleted() {
-    let root = fixture();
-    let e = engine(Some(tempdir("journal")), false);
-    scan(&e, &root);
+    let tree = fixture();
+    let root = tree.path();
+    let jdir = tempdir("journal");
+    let e = engine(Some(jdir.path().to_path_buf()), false);
+    scan(&e, root);
     let (file, keep, junk) = (node(&e, "file.bin"), node(&e, "keep"), node(&e, "junk"));
     // A file whose size changed, a directory replaced by a new one, a directory swapped for a
     // symlink to another directory.
     write(&root.join("file.bin"), 4_000);
     fs::rename(root.join("keep"), root.join("keep.old")).unwrap();
     fs::create_dir(root.join("keep")).unwrap();
-    let elsewhere = tempdir("elsewhere");
+    let elsewhere_dir = tempdir("elsewhere");
+    let elsewhere = elsewhere_dir.path();
     write(&elsewhere.join("precious"), 100);
     fs::remove_dir_all(root.join("junk")).unwrap();
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&elsewhere, root.join("junk")).unwrap();
+    std::os::unix::fs::symlink(elsewhere, root.join("junk")).unwrap();
     let s = delete(&e, vec![file, keep, junk], Mode::Permanent);
     assert_eq!(s.deleted, 0, "{s:?}");
     assert_eq!(s.stale, 3, "{s:?}");
@@ -154,10 +157,12 @@ fn changed_items_are_not_deleted() {
 
 #[test]
 fn refusals() {
-    let root = fixture();
+    let tree = fixture();
+    let root = tree.path();
     // The scan root itself.
-    let e = engine(Some(tempdir("journal")), false);
-    scan(&e, &root);
+    let jdir = tempdir("journal");
+    let e = engine(Some(jdir.path().to_path_buf()), false);
+    scan(&e, root);
     let r = e.read(|m| m.tree.node_ref(m.tree.roots().next().unwrap()));
     let s = delete(&e, vec![r], Mode::Permanent);
     assert_eq!((s.deleted, s.refused), (0, 1));
@@ -166,15 +171,16 @@ fn refusals() {
 
     // No journal: nothing is deleted.
     let e = engine(None, false);
-    scan(&e, &root);
+    scan(&e, root);
     let s = delete(&e, vec![node(&e, "junk")], Mode::Permanent);
     assert_eq!((s.deleted, s.refused), (0, 1));
     assert!(root.join("junk").exists());
     e.shutdown(Duration::from_secs(1));
 
     // Read-only: the request is dropped before a plan exists.
-    let e = engine(Some(tempdir("journal")), true);
-    scan(&e, &root);
+    let jdir = tempdir("journal");
+    let e = engine(Some(jdir.path().to_path_buf()), true);
+    scan(&e, root);
     e.send(Command::Delete {
         items: vec![node(&e, "junk")],
         mode: Mode::Permanent,

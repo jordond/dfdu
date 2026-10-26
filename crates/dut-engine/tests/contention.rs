@@ -8,10 +8,17 @@ use std::time::{Duration, Instant};
 
 use dut_engine::{Command, Engine, EngineOptions};
 use dut_scan::{JobOptions, PortableBackend};
+use tempfile::TempDir;
 
-fn tree() -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("dut-contention-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+/// A temporary directory under the canonical temp dir, so its path matches the scan root the
+/// engine reports (on macOS the temp dir is behind the /var symlink).
+fn tempdir() -> TempDir {
+    tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
+}
+
+fn tree() -> TempDir {
+    let tmp = tempdir();
+    let root = tmp.path();
     for d in 0..200 {
         let dir = root.join(format!("d{d:03}/sub"));
         fs::create_dir_all(&dir).unwrap();
@@ -19,7 +26,7 @@ fn tree() -> std::path::PathBuf {
             fs::write(dir.join(format!("f{f}")), vec![0u8; (f * 37) % 5000]).unwrap();
         }
     }
-    root.canonicalize().unwrap()
+    tmp
 }
 
 fn scan(root: &std::path::Path, contend: bool) -> (dut_tree::Totals, Duration) {
@@ -63,11 +70,10 @@ fn scan(root: &std::path::Path, contend: bool) -> (dut_tree::Totals, Duration) {
 
 #[test]
 fn slow_reader_does_not_change_or_stop_the_scan() {
-    let root = tree();
-    let (quiet, _) = scan(&root, false);
-    let (busy, took) = scan(&root, true);
+    let tmp = tree();
+    let (quiet, _) = scan(tmp.path(), false);
+    let (busy, took) = scan(tmp.path(), true);
     assert_eq!(quiet, busy);
     assert_eq!(busy.items, 1 + 200 * 2 + 200 * 100);
     eprintln!("scan under read-lock contention took {took:?}");
-    let _ = fs::remove_dir_all(&root);
 }

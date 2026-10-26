@@ -16,3 +16,8 @@ dut-scan.workspace = true
 dut-engine.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
+humansize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+dunce.workspace = true

@@ -2,14 +2,18 @@
 //! and the headless commands use (`docs/data-pipeline.md` §2, §5).
 
 mod applier;
+mod extents;
 mod links;
+mod measure;
 mod runtime;
 
 pub use applier::{
-    Applier, Command, DeleteProgress, DeleteSummary, JobInfo, JobKind, JobPhase, Model,
-    StalledInfo, Stats, Status, bytes_to_path, meta_of,
+    Applier, Command, DeleteProgress, DeleteSummary, JobInfo, JobKind, JobPhase, MeasureProgress,
+    Model, StalledInfo, Stats, Status, meta_of,
 };
 pub use dut_clean::{DeleteResult, Mode};
-pub use runtime::{
-    Engine, EngineOptions, Inbox, default_crash_dir, panic_message, write_crash_report,
-};
+pub use extents::{ExtentTable, Inode, Measurement};
+pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
+#[cfg(target_os = "linux")]
+pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
+pub use runtime::{Engine, EngineOptions, Inbox, default_crash_dir, write_crash_report};

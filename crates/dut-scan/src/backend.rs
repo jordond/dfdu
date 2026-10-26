@@ -2,11 +2,12 @@
 //! portable backend uses `std::fs` and is the reference the fast per-OS backends are tested
 //! against.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dut_tree::{ErrKind, Kind, Meta};
+use dut_tree::{ErrKind, Kind, Meta, Subvol};
 
 use crate::proto::NameSpan;
 
@@ -37,9 +38,16 @@ impl<L> Default for Block<L> {
 
 impl<L> Block<L> {
     pub fn push(&mut self, name: &[u8], meta: Result<Meta, ErrKind>, child: Option<L>) {
-        let len = name.len().min(u16::MAX as usize);
+        // No filesystem allows a name this long; a truncated name would not convert back to an
+        // OsStr, so record the entry under a placeholder instead.
+        let (name, meta) = if name.len() > u16::MAX as usize {
+            (&b"<name too long>"[..], Err(ErrKind::Other))
+        } else {
+            (name, meta)
+        };
+        let len = name.len();
         let off = self.names.len() as u32;
-        self.names.extend_from_slice(&name[..len]);
+        self.names.extend_from_slice(name);
         self.entries.push(BlockEntry {
             name: NameSpan {
                 off,
@@ -84,6 +92,31 @@ pub trait Backend: Send + Sync + 'static {
     /// Stat of a job root, following a symlink given as the root.
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta>;
     fn open(&self, loc: &Self::Loc) -> io::Result<Self::Stream>;
+    /// The subvolume record if `loc` is a btrfs subvolume root. Called for job roots and for
+    /// directories whose `dev` differs from their parent's.
+    fn subvolume(&self, _loc: &Self::Loc) -> io::Result<Option<Subvol>> {
+        Ok(None)
+    }
+    /// Whether files on `loc`'s filesystem can share extents. Called with
+    /// [`Backend::subvolume`].
+    fn shares_extents(&self, _loc: &Self::Loc) -> bool {
+        false
+    }
+    /// btrfs data profile of `loc`'s filesystem. Called with [`Backend::subvolume`].
+    fn data_profile(&self, _loc: &Self::Loc) -> Option<(&'static str, f64)> {
+        None
+    }
+    /// Mount ids of mounts below `scope` that show data reachable inside `scope` through
+    /// another mount ([`crate::duplicate_mounts`]). `None` when the system has no mount table;
+    /// the scanner then recognises a second mount only by its root's `(dev, ino)`.
+    fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
+        None
+    }
+}
+
+/// Mount id of a directory for [`Meta::mount`], 0 when unknown.
+fn mount_of(path: &Path) -> u64 {
+    dut_sys::mount_id(path).ok().flatten().unwrap_or(0)
 }
 
 /// `std::fs` backend: one `stat` per entry, no OS-specific fast paths.
@@ -94,65 +127,6 @@ pub struct PortableStream {
     iter: fs::ReadDir,
     pending_err: Option<io::Error>,
     done: bool,
-}
-
-pub fn meta_from_std(m: &fs::Metadata) -> Meta {
-    let ft = m.file_type();
-    let kind = if ft.is_dir() {
-        Kind::Dir
-    } else if ft.is_symlink() {
-        Kind::Symlink
-    } else if ft.is_file() {
-        Kind::File
-    } else {
-        Kind::Other
-    };
-    let mtime = m
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs() as i64);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Meta {
-            kind,
-            apparent: m.size(),
-            alloc: m.blocks() * 512,
-            mtime,
-            dev: m.dev(),
-            ino: m.ino(),
-            nlink: m.nlink() as u32,
-        }
-    }
-    #[cfg(windows)]
-    {
-        // Allocation size, volume id, file id and link count need the Windows backend (M2);
-        // std exposes the file id only on nightly. The creation time (100 ns units) stands in
-        // for the inode number, so a file or directory replaced since the scan is told apart.
-        use std::os::windows::fs::MetadataExt;
-        Meta {
-            kind,
-            apparent: m.len(),
-            alloc: m.len(),
-            mtime,
-            dev: 0,
-            ino: m.creation_time(),
-            nlink: 1,
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        Meta {
-            kind,
-            apparent: m.len(),
-            alloc: m.len(),
-            mtime,
-            dev: 0,
-            ino: 0,
-            nlink: 1,
-        }
-    }
 }
 
 impl DirStream for PortableStream {
@@ -188,13 +162,17 @@ impl DirStream for PortableStream {
                 }
                 Some(Ok(entry)) => {
                     let name = entry.file_name();
-                    let meta = entry.metadata().map(|m| meta_from_std(&m));
-                    let child = match &meta {
-                        Ok(m) if m.kind == Kind::Dir => Some(entry.path()),
+                    let mut meta = entry.metadata().map(|m| Meta::from_metadata(&m));
+                    let child = match &mut meta {
+                        Ok(m) if m.kind == Kind::Dir => {
+                            let path = entry.path();
+                            m.mount = mount_of(&path);
+                            Some(path)
+                        }
                         _ => None,
                     };
                     out.push(
-                        name.as_encoded_bytes(),
+                        &dut_tree::name_bytes(&name),
                         meta.map_err(|e| ErrKind::from(&e)),
                         child,
                     );
@@ -214,7 +192,9 @@ impl Backend for PortableBackend {
     }
 
     fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        fs::metadata(loc).map(|m| meta_from_std(&m))
+        let mut m = Meta::from_metadata(&fs::metadata(loc)?);
+        m.mount = mount_of(loc);
+        Ok(m)
     }
 
     fn open(&self, loc: &PathBuf) -> io::Result<PortableStream> {
@@ -223,5 +203,46 @@ impl Backend for PortableBackend {
             pending_err: None,
             done: false,
         })
+    }
+
+    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
+        let table = dut_sys::mount_table().ok()?;
+        Some(crate::duplicate_mounts(&table, scope))
+    }
+
+    fn shares_extents(&self, loc: &PathBuf) -> bool {
+        dut_sys::shares_extents(loc).unwrap_or(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn data_profile(&self, loc: &PathBuf) -> Option<(&'static str, f64)> {
+        let dir = fs::File::open(loc).ok()?;
+        let (p, devices) = dut_sys::data_profile(&dir).ok()?;
+        Some((p.name(), p.raw_ratio(devices)))
+    }
+
+    fn subvolume(&self, loc: &PathBuf) -> io::Result<Option<Subvol>> {
+        let Some(s) = dut_sys::subvol_info(loc)? else {
+            return Ok(None);
+        };
+        // Quota groups need root; without quotas or the privilege there are none.
+        #[cfg(target_os = "linux")]
+        let qgroup = if dut_sys::is_privileged() {
+            fs::File::open(loc)
+                .ok()
+                .and_then(|d| dut_sys::qgroup_usage(&d, s.id).ok().flatten())
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
+        let qgroup = None;
+        Ok(Some(Subvol {
+            id: s.id,
+            uuid: s.uuid,
+            parent_uuid: s.parent_uuid,
+            read_only: s.read_only,
+            otime: s.otime,
+            qgroup,
+        }))
     }
 }

@@ -71,6 +71,20 @@ impl LinkTable {
         reelect
     }
 
+    /// The charged link of an inode in `scope`.
+    pub fn charged(&self, key: (u64, u64), scope: Scope) -> Option<NodeRef> {
+        self.map
+            .get(&key)?
+            .iter()
+            .find(|e| e.scope == scope)?
+            .charged
+    }
+
+    /// Whether any link of the inode is known, in any scope.
+    pub fn has(&self, key: (u64, u64)) -> bool {
+        self.map.contains_key(&key)
+    }
+
     /// Keys with more than one link in `scope` (candidates for the final lowest-path pass).
     pub fn shared_keys(&self, scope: Scope) -> Vec<(u64, u64)> {
         self.map
@@ -125,12 +139,13 @@ impl LinkTable {
     }
 
     /// Charges the live link with the lowest path in `scope` (§5.5). Dead links are pruned.
-    pub fn reelect(&mut self, tree: &mut Tree, key: (u64, u64), scope: Scope) {
+    /// Returns whether the charged link changed.
+    pub fn reelect(&mut self, tree: &mut Tree, key: (u64, u64), scope: Scope) -> bool {
         let Some(v) = self.map.get_mut(&key) else {
-            return;
+            return false;
         };
         let Some(e) = v.iter_mut().find(|e| e.scope == scope) else {
-            return;
+            return false;
         };
         e.links.retain(|&l| tree.resolve(l).is_some());
         let best = e
@@ -140,7 +155,7 @@ impl LinkTable {
             .min_by(|a, b| a.0.cmp(&b.0))
             .map(|(_, l)| l);
         if e.charged == best {
-            return;
+            return false;
         }
         if let Some(old) = e.charged.and_then(|c| tree.resolve(c)) {
             tree.set_charged(old, false);
@@ -156,5 +171,6 @@ impl LinkTable {
                 self.map.remove(&key);
             }
         }
+        true
     }
 }

@@ -1,6 +1,6 @@
 //! Messages from the scanner to the applier (`docs/data-pipeline.md` §4.2).
 
-use dut_tree::{ErrKind, Meta};
+use dut_tree::{ErrKind, Meta, Subvol};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u32);
@@ -20,6 +20,17 @@ pub struct NameSpan {
     pub len: u16,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Probe {
+    /// The directory is a btrfs subvolume root.
+    pub subvol: Option<Subvol>,
+    /// Files on this filesystem can share extents (btrfs, XFS, bcachefs), so measuring them
+    /// is worthwhile (`docs/btrfs.md` §3.4).
+    pub shares_extents: bool,
+    /// btrfs data profile name and raw bytes stored per byte of data (2 for DUP or RAID1).
+    pub profile: Option<(&'static str, f64)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct FileRec {
     pub name: NameSpan,
@@ -30,6 +41,9 @@ pub struct FileRec {
 pub struct SubdirRec {
     pub name: NameSpan,
     pub meta: Meta,
+    /// The directory's mount differs from its parent's (`docs/btrfs.md` §3.2). btrfs
+    /// subvolumes are not mount roots unless mounted.
+    pub mount_root: bool,
     /// Set when the scanner will not read this directory; no task exists for it, and the
     /// applier closes it at once with this reason.
     pub skip: Option<SkipReason>,
@@ -44,6 +58,9 @@ pub struct EntryError {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SkipReason {
     OtherFilesystem,
+    /// With `cross_mounts`: a mount of something this job already scans elsewhere (a bind
+    /// mount, a second mount of a subvolume, or a mount loop).
+    DuplicateMount,
     Excluded,
 }
 
@@ -73,6 +90,9 @@ pub struct Chunk {
     pub seq: u32,
     /// Stat of the job root itself, sent in the root's first chunk.
     pub root_meta: Option<Meta>,
+    /// What the backend found about the directory's filesystem, for job roots and directories
+    /// whose `dev` differs from their parent's; sent in its first chunk.
+    pub probe: Option<Box<Probe>>,
     pub names: Vec<u8>,
     pub files: Vec<FileRec>,
     /// Subdirectories, with ids `first_subdir, first_subdir + 1, ...` in order.

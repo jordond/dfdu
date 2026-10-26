@@ -15,3 +15,5 @@ dut-tree.workspace = true
 crossbeam-channel.workspace = true
 crossbeam-deque.workspace = true
 parking_lot.workspace = true
+fixedbitset.workspace = true
+dut-sys.workspace = true

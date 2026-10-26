@@ -6,8 +6,8 @@ pub enum Violation {
     /// I1: a directory's total differs from its own contribution plus its children's totals.
     Totals {
         node: u32,
-        stored: Totals,
-        computed: Totals,
+        stored: Box<Totals>,
+        computed: Box<Totals>,
     },
     /// I3: a child's parent pointer does not point back at the directory listing it.
     ParentMismatch {
@@ -84,8 +84,8 @@ impl Tree {
                 if stored != t {
                     return Err(Violation::Totals {
                         node: ix.0,
-                        stored,
-                        computed: t,
+                        stored: Box::new(stored),
+                        computed: Box::new(t),
                     });
                 }
                 sums.insert(ix.0, t);

@@ -3,6 +3,7 @@
 //! [`Snapshot`] into the state and applies the row-stability rules.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dut_engine::{Command, Mode};
@@ -10,7 +11,7 @@ use dut_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::order::{Order, SortKey, SortSpec};
-use crate::snapshot::{EntryData, Snapshot, Target};
+use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
 use crate::theme::Theme;
 
 /// Automatic re-sort after this long without input...
@@ -31,6 +32,8 @@ pub enum Overlay {
         node: NodeRef,
         name: String,
         size: u64,
+        /// Part of `size` that data outside the scan also uses.
+        shared_out: u64,
         is_dir: bool,
         mode: Mode,
         /// What the user typed so far (permanent delete asks for the word "delete").
@@ -72,7 +75,7 @@ pub struct App {
     pub snap: Snapshot,
     pub order: Order,
     pub sort: SortSpec,
-    pub apparent: bool,
+    pub size_mode: SizeMode,
     pub hide_hidden: bool,
     pub selected: Option<Selection>,
     /// Indices into `snap.entries`, in display order.
@@ -94,7 +97,7 @@ pub struct App {
     /// The user moved the cursor in the current directory; re-sorts then follow the selected
     /// row instead of returning to the top.
     moved: bool,
-    cursors: HashMap<Vec<u8>, Cursor>,
+    cursors: HashMap<PathBuf, Cursor>,
 }
 
 /// One line describing a finished delete plan.
@@ -125,7 +128,7 @@ impl App {
             snap: Snapshot::default(),
             order: Order::default(),
             sort: SortSpec::default(),
-            apparent: false,
+            size_mode: SizeMode::Disk,
             hide_hidden: false,
             selected: None,
             rows: Vec::new(),
@@ -352,11 +355,7 @@ impl App {
 
     fn enter(&mut self, e: &EntryData) {
         self.save_cursor();
-        let mut path = self.snap.dir_path.clone();
-        if path.last() != Some(&dut_tree::SEP) {
-            path.push(dut_tree::SEP);
-        }
-        path.extend_from_slice(&e.name);
+        let path = self.snap.dir_path.join(&*dut_tree::name_os(&e.name));
         let saved = self.cursors.get(&path).cloned();
         self.target = Target {
             node: Some(e.node),
@@ -376,9 +375,14 @@ impl App {
             return;
         }
         self.save_cursor();
-        let path = self.snap.dir_path.clone();
-        let cut = path.iter().rposition(|&b| b == dut_tree::SEP).unwrap_or(0);
-        let (parent, name) = (path[..cut.max(1)].to_vec(), path[cut + 1..].to_vec());
+        let path = &self.snap.dir_path;
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (parent, name) = (
+            parent.to_path_buf(),
+            dut_tree::name_bytes(name).into_owned(),
+        );
         let saved = self.cursors.get(&parent).cloned();
         self.target = Target {
             node: None,
@@ -499,8 +503,17 @@ impl App {
                 self.sort_requested = true;
             }
             KeyCode::Char('S') => self.sort_requested = true,
-            KeyCode::Char('a') => {
-                self.apparent = !self.apparent;
+            KeyCode::Char(c @ ('a' | 'u')) => {
+                let other = if c == 'a' {
+                    SizeMode::Apparent
+                } else {
+                    SizeMode::Referenced
+                };
+                self.size_mode = if self.size_mode == other {
+                    SizeMode::Disk
+                } else {
+                    other
+                };
                 self.sort_requested = true;
             }
             KeyCode::Char('e') => {
@@ -522,11 +535,12 @@ impl App {
                 self.status = Some("skipping directories that are not responding".into());
             }
             KeyCode::Char(c @ ('d' | 'D')) => {
-                if let Some(e) = self.selected_entry() {
+                if let Some(e) = self.selected_entry().filter(|e| !e.pseudo) {
                     self.overlay = Overlay::ConfirmDelete {
                         node: e.node,
                         name: String::from_utf8_lossy(&e.name).into_owned(),
                         size: e.size,
+                        shared_out: e.shared_out,
                         is_dir: e.is_dir,
                         mode: if c == 'd' {
                             Mode::Trash
@@ -559,7 +573,7 @@ mod tests {
     fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
         let root = test_entry(99, "/r", 0);
         Snapshot {
-            dir_path: b"/r".to_vec(),
+            dir_path: PathBuf::from("/r"),
             dir_node: Some(root.node),
             at_root: true,
             entries,

@@ -13,10 +13,18 @@ use std::time::Duration;
 use dut_engine::{Command, Engine, EngineOptions};
 use dut_scan::{JobOptions, PortableBackend};
 use dut_tree::{Ix, Totals, Tree};
+use tempfile::TempDir;
 
-fn fixture() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("dut-totals-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+/// A temporary directory under the canonical temp dir, so its path matches the scan root the
+/// engine reports (on macOS the temp dir is behind the /var symlink).
+fn tempdir() -> TempDir {
+    tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
+}
+
+/// Returns the tree and a directory outside it that holds a hard link into it.
+fn fixture() -> (TempDir, TempDir) {
+    let tmp = tempdir();
+    let root = tmp.path();
     fs::create_dir_all(root.join("a/b/c")).unwrap();
     fs::create_dir_all(root.join("empty")).unwrap();
     for (p, n) in [
@@ -31,10 +39,9 @@ fn fixture() -> PathBuf {
     fs::write(root.join("a/h1"), vec![9u8; 40_000]).unwrap();
     fs::hard_link(root.join("a/h1"), root.join("a/b/h2")).unwrap();
     fs::hard_link(root.join("a/h1"), root.join("empty/../h3")).unwrap();
-    let outside = std::env::temp_dir().join(format!("dut-totals-out-{}", std::process::id()));
+    let outside = tempdir();
     fs::write(root.join("x1"), vec![1u8; 12_000]).unwrap();
-    let _ = fs::remove_file(&outside);
-    fs::hard_link(root.join("x1"), &outside).unwrap();
+    fs::hard_link(root.join("x1"), outside.path().join("x1")).unwrap();
     // A sparse file: large apparent size, little allocated.
     let f = fs::File::create(root.join("sparse")).unwrap();
     f.set_len(64 * 1024 * 1024).unwrap();
@@ -73,7 +80,7 @@ fn fixture() -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     perm.set_mode(0o000);
     fs::set_permissions(root.join("locked"), perm).unwrap();
-    root.canonicalize().unwrap()
+    (tmp, outside)
 }
 
 /// Reference: a plain recursive walk with the same metadata source as the scanner (the
@@ -121,8 +128,10 @@ fn reference(root: &Path) -> HashMap<Vec<u8>, Totals> {
         let own = Totals {
             apparent: if counted { m.len() } else { 0 },
             alloc: if counted { m.blocks() * 512 } else { 0 },
+            referenced: if counted { m.blocks() * 512 } else { 0 },
             items: 1,
             errors: *errors.get(p).unwrap_or(&0),
+            ..Totals::default()
         };
         // Add to the entry itself and every ancestor inside the root.
         let mut cur = Some(PathBuf::from(std::ffi::OsStr::from_bytes(p)));
@@ -147,7 +156,8 @@ fn walk(tree: &Tree, ix: Ix, out: &mut HashMap<Vec<u8>, Totals>) {
 
 #[test]
 fn totals_match_reference_and_du() {
-    let root = fixture();
+    let (tmp, _outside) = fixture();
+    let root = tmp.path().to_path_buf();
     let e = Engine::start(
         PortableBackend,
         EngineOptions {
@@ -204,9 +214,9 @@ fn totals_match_reference_and_du() {
         assert_eq!(ours_root, du, "disk usage outside deep/ differs from du");
     }
     e.shutdown(Duration::from_secs(1));
+    // So the temporary directory can be removed.
     let mut perm = fs::metadata(root.join("locked")).unwrap().permissions();
     use std::os::unix::fs::PermissionsExt;
     perm.set_mode(0o755);
     let _ = fs::set_permissions(root.join("locked"), perm);
-    let _ = fs::remove_dir_all(&root);
 }
