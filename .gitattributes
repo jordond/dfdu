@@ -1,1 +1,1 @@
-crates/dfdu-tui/tests/frames/*.txt text eol=lf
+crates/dfdu-tui/src/snapshots/*.snap text eol=lf

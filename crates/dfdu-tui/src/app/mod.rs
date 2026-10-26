@@ -1,6 +1,12 @@
 //! UI state and its update function. Keys turn into changes of [`App`] plus effects for the run
-//! loop to carry out; [`App::refresh`] folds a new [`Snapshot`] into the state and applies the
-//! row-stability rules.
+//! loop to carry out: [`App::key`] passes a key to the open overlay, the filter input or the
+//! focused details pane, and otherwise looks it up in the action registry ([`keys`]).
+//! [`App::refresh`] folds a new [`Snapshot`] into the state and applies the row-stability rules.
+//! Each feature keeps its state in its own field and module (`marks`, `filter`, `details`,
+//! `debug`, `motion`, `mouse`); what they read from the engine model arrives in
+//! [`App::extras`].
+
+pub mod keys;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -11,10 +17,14 @@ use dfdu_engine::{Command, Mode};
 use dfdu_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::order::{Order, SortKey, SortSpec};
+use crate::extras::Extras;
+use crate::motion::Motion;
+use crate::order::{Order, SortSpec};
 use crate::problems::ErrorList;
 use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
 use crate::theme::Theme;
+use crate::view::Areas;
+use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette};
 
 /// Automatic re-sort after this long without input...
 const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -50,6 +60,7 @@ pub enum Overlay {
         /// The directory is still being scanned; its size is a lower bound.
         scanning: bool,
     },
+    Palette(palette::Palette),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -101,6 +112,16 @@ pub struct App {
     pub started: Instant,
     pub done_at: Option<Instant>,
     pub quit: bool,
+    pub marks: marks::Marks,
+    pub filter: filter::Filter,
+    pub details: details::Details,
+    pub debug: debug::Debug,
+    pub motion: Motion,
+    pub mouse: mouse::Mouse,
+    /// What the features read from the engine model with the last read.
+    pub extras: Extras,
+    /// Where the last frame drew each part of the screen.
+    pub areas: Areas,
     last_input: Instant,
     last_sort: Instant,
     sort_requested: bool,
@@ -160,6 +181,14 @@ impl App {
             started: now,
             done_at: None,
             quit: false,
+            marks: marks::Marks::default(),
+            filter: filter::Filter::default(),
+            details: details::Details::default(),
+            debug: debug::Debug::default(),
+            motion: Motion::default(),
+            mouse: mouse::Mouse::default(),
+            extras: Extras::default(),
+            areas: Areas::default(),
             // No key pressed yet counts as idle.
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
             last_sort: now,
@@ -200,13 +229,21 @@ impl App {
             .then(|| (self.last_input + IDLE_BEFORE_SORT).max(self.last_sort + MIN_SORT_INTERVAL))
     }
 
+    /// True when the features need a read of the engine model for the next frame although no
+    /// new snapshot is due. A read must make it false: while it is true, the run loop reads
+    /// again at once.
+    pub fn extras_stale(&self) -> bool {
+        marks::stale(self) || details::stale(self)
+    }
+
     fn auto_sort_due(&self, now: Instant) -> bool {
         self.sort_pending()
             && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
             && now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL
     }
 
-    pub fn refresh(&mut self, snap: Snapshot, now: Instant) {
+    pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
+        self.motion.carry_ghosts(&self.snap, &mut snap, now);
         if let Some(d) = &snap.last_delete
             && self
                 .snap
@@ -262,53 +299,76 @@ impl App {
             });
         }
         drop(old);
-        self.update_order(true, dir_changed, finished, old_index, now);
+        self.update_order(true, !appended, dir_changed, finished, old_index, now);
     }
 
     /// Applies sort requests and the automatic sort to the snapshot already held, for a frame
     /// drawn without reading the engine again.
     pub fn reorder(&mut self, now: Instant) {
         let old_index = self.selected_index();
-        self.update_order(false, false, false, old_index, now);
+        self.update_order(false, false, false, false, old_index, now);
     }
 
     /// Sorts or updates the row order, then puts the selection and scroll position back.
-    /// `fresh`: a new snapshot was just folded in.
+    /// `fresh`: a new snapshot was just folded in. `replaced`: its entries are not the previous
+    /// ones with new ones appended (another directory, or a rescan replaced some), so indices
+    /// into the previous entries mean nothing in the new ones.
     fn update_order(
         &mut self,
         fresh: bool,
+        replaced: bool,
         dir_changed: bool,
         finished: bool,
         old_index: Option<usize>,
         now: Instant,
     ) {
-        let hide = self.hide_hidden;
-        let visible = |e: &EntryData| !(hide && e.hidden());
-        let entries = &self.snap.entries;
         let requested = std::mem::take(&mut self.sort_requested);
-        let resorted = if dir_changed || requested {
-            self.order = Order::default();
-            self.order.sort_exact(entries, visible, self.sort);
-            true
+        // `Some(automatic)` when the rows are sorted, `None` when new entries are synced.
+        let sorted = if dir_changed || requested {
+            Some(false)
         } else if self.auto_sort_due(now)
             || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
         {
-            self.order.sort_auto(entries, visible, self.sort);
-            true
+            Some(true)
         } else if fresh {
-            self.order.sync(entries, visible, self.sort);
-            false
+            None
         } else {
             // The entries and the order are those of the last frame: nothing below changes.
             return;
         };
+        self.filter.prepare(&self.snap, replaced);
+        let entries = &self.snap.entries;
+        let (hide, filter) = (self.hide_hidden, &self.filter);
+        let visible =
+            |i: usize, e: &EntryData| !e.ghost && !(hide && e.hidden()) && filter.matches(i, e);
+        match sorted {
+            Some(false) => {
+                self.order = Order::default();
+                self.order.sort_exact(entries, visible, self.sort);
+            }
+            Some(true) => self.order.sort_auto(entries, visible, self.sort),
+            None => self.order.sync(entries, visible, self.sort),
+        }
+        let resorted = sorted.is_some();
         if resorted {
             self.last_sort = now;
             self.changed_since_sort = false;
         }
 
-        self.rows.clear();
+        // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
+        let old_rows = if resorted && !dir_changed {
+            std::mem::take(&mut self.rows)
+        } else {
+            self.rows.clear();
+            Vec::new()
+        };
         self.rows.extend_from_slice(self.order.rows());
+        if let Some(auto) = sorted
+            && !dir_changed
+        {
+            self.motion
+                .resorted(&old_rows, &self.rows, entries, auto, now);
+        }
         self.new_count = self.order.new_entries().len();
         self.new_largest = self
             .order
@@ -396,14 +456,30 @@ impl App {
         self.selected = Some(Selection::of(&self.snap.entries[self.rows[i]]));
     }
 
-    fn select(&mut self, index: usize) {
+    /// Asks for an exact sort before the next frame.
+    pub(crate) fn request_sort(&mut self) {
+        self.sort_requested = true;
+    }
+
+    /// Records user input at `now`: automatic re-sorts wait until the user is idle.
+    pub(crate) fn note_input(&mut self, now: Instant) {
+        self.last_input = now;
+    }
+
+    pub(crate) fn select(&mut self, index: usize) {
         if let Some(&i) = self.rows.get(index) {
             self.selected = Some(Selection::of(&self.snap.entries[i]));
             self.sel_hint.set(index);
         }
     }
 
-    fn move_by(&mut self, delta: isize) {
+    /// Selects row `index` as a cursor move of the user's, so re-sorts follow the selected row.
+    pub(crate) fn move_to(&mut self, index: usize) {
+        self.moved = true;
+        self.select(index);
+    }
+
+    pub(crate) fn move_by(&mut self, delta: isize) {
         if self.rows.is_empty() {
             return;
         }
@@ -473,7 +549,7 @@ impl App {
     }
 
     /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
-    fn go_to(&mut self, path: &std::path::Path, root: &std::path::Path) {
+    pub(crate) fn go_to(&mut self, path: &std::path::Path, root: &std::path::Path) {
         let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
             return;
         };
@@ -495,207 +571,52 @@ impl App {
         });
     }
 
-    fn set_typed(&mut self, t: String) {
-        if let Overlay::ConfirmDelete { typed, .. } = &mut self.overlay {
-            *typed = t;
-        }
-    }
-
+    /// Handles a key: the open overlay takes it first, then the filter input while it is
+    /// edited, then the details pane while it has the focus, and otherwise the action bound to
+    /// it in [`keys::ACTIONS`].
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
-        let mut fx = Vec::new();
         if k.kind == KeyEventKind::Release {
-            return fx;
+            return Vec::new();
         }
-        self.last_input = now;
+        self.note_input(now);
         if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
             self.quit = true;
+            return Vec::new();
+        }
+        match self.overlay {
+            Overlay::None => {}
+            #[allow(
+                clippy::unneeded_struct_pattern,
+                reason = "matches whatever fields the variant has"
+            )]
+            Overlay::Help { .. } => return help::key(self, k),
+            Overlay::Errors { .. } => return error_list::key(self, k),
+            Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
+            Overlay::Palette { .. } => return palette::key(self, k, now),
+        }
+        if filter::editing(self) {
+            return filter::key(self, k, now);
+        }
+        if details::focused(self)
+            && let Some(fx) = details::key(self, &k)
+        {
             return fx;
         }
-        match &self.overlay {
-            Overlay::Help => {
-                self.overlay = Overlay::None;
-                return fx;
-            }
-            Overlay::Errors { list, cursor } => {
-                let (n, page) = (list.items.len(), self.list_height.max(1));
-                let cursor = *cursor;
-                let next = match k.code {
-                    KeyCode::Up | KeyCode::Char('k') => cursor.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => cursor + 1,
-                    KeyCode::PageUp => cursor.saturating_sub(page),
-                    KeyCode::PageDown => cursor + page,
-                    KeyCode::Home | KeyCode::Char('g') => 0,
-                    KeyCode::End | KeyCode::Char('G') => n,
-                    KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                        if let Some(e) = list.items.get(cursor) {
-                            let (path, root) = (e.path.clone(), list.root.clone());
-                            self.overlay = Overlay::None;
-                            self.go_to(&path, &root);
-                        }
-                        return fx;
-                    }
-                    _ => {
-                        self.overlay = Overlay::None;
-                        return fx;
-                    }
-                };
-                if let Overlay::Errors { cursor, .. } = &mut self.overlay {
-                    *cursor = next.min(n.saturating_sub(1));
-                }
-                return fx;
-            }
-            Overlay::ConfirmDelete {
-                node, mode, typed, ..
-            } => {
-                let (node, mode) = (*node, *mode);
-                let mut typed = typed.clone();
-                let confirmed = match (mode, k.code) {
-                    (_, KeyCode::Esc) => false,
-                    (Mode::Trash, KeyCode::Char('y' | 'Y')) => true,
-                    (Mode::Trash, _) => false,
-                    (Mode::Permanent, KeyCode::Enter) => {
-                        if typed != "delete" {
-                            self.status = Some("not deleted: type delete to confirm".into());
-                        }
-                        typed == "delete"
-                    }
-                    (Mode::Permanent, KeyCode::Backspace) => {
-                        typed.pop();
-                        self.set_typed(typed);
-                        return fx;
-                    }
-                    (Mode::Permanent, KeyCode::Char(c)) if typed.len() < 16 => {
-                        typed.push(c);
-                        self.set_typed(typed);
-                        return fx;
-                    }
-                    (Mode::Permanent, _) => return fx,
-                };
-                if confirmed {
-                    fx.push(Effect::Send(Command::Delete {
-                        items: vec![node],
-                        mode,
-                    }));
-                    self.status = Some(match mode {
-                        Mode::Trash => "moving to the Trash…".into(),
-                        Mode::Permanent => "deleting…".into(),
-                    });
-                }
-                self.overlay = Overlay::None;
-                return fx;
-            }
-            Overlay::None => {}
-        }
         self.status = None;
-        let page = self.list_height.max(1) as isize;
-        match k.code {
-            KeyCode::Char('q') => self.quit = true,
-            KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
-            KeyCode::PageUp => self.move_by(-page),
-            KeyCode::PageDown => self.move_by(page),
-            KeyCode::Home | KeyCode::Char('g') => {
-                self.moved = true;
-                self.select(0);
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                self.moved = true;
-                self.select(self.rows.len().saturating_sub(1));
-            }
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => {
-                if let Some(e) = self.selected_entry().filter(|e| e.is_dir).cloned() {
-                    self.enter(&e);
-                }
-            }
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::Backspace => self.up(),
-            KeyCode::Char(c @ ('s' | 'n' | 'C' | 'M')) => {
-                let key = match c {
-                    's' => SortKey::Size,
-                    'n' => SortKey::Name,
-                    'C' => SortKey::Items,
-                    _ => SortKey::Mtime,
-                };
-                self.sort = if self.sort.key == key {
-                    SortSpec {
-                        key,
-                        desc: !self.sort.desc,
-                    }
-                } else {
-                    SortSpec::for_key(key)
-                };
-                self.sort_requested = true;
-            }
-            KeyCode::Char('S') => self.sort_requested = true,
-            KeyCode::Char(c @ ('a' | 'u')) => {
-                let other = if c == 'a' {
-                    SizeMode::Apparent
-                } else {
-                    SizeMode::Referenced
-                };
-                self.size_mode = if self.size_mode == other {
-                    SizeMode::Disk
-                } else {
-                    other
-                };
-                self.sort_requested = true;
-            }
-            KeyCode::Char('e') => {
-                self.hide_hidden = !self.hide_hidden;
-                self.sort_requested = true;
-            }
-            KeyCode::Char('r') => {
-                let node = match self.selected_entry() {
-                    Some(e) if e.is_dir => Some(e.node),
-                    _ => self.snap.dir_node,
-                };
-                if let Some(node) = node {
-                    fx.push(Effect::Send(Command::Rescan { node }));
-                    self.status = Some("rescan requested".into());
-                }
-            }
-            KeyCode::Char('x') if self.snap.stalled > 0 => {
-                fx.push(Effect::Send(Command::AbandonAllStalled));
-                self.status = Some("skipping directories that are not responding".into());
-            }
-            KeyCode::Char(c @ ('d' | 'D')) => {
-                if let Some(e) = self.selected_entry().filter(|e| !e.pseudo) {
-                    self.overlay = Overlay::ConfirmDelete {
-                        node: e.node,
-                        name: String::from_utf8_lossy(&e.name).into_owned(),
-                        size: e.size,
-                        shared_out: e.shared_out,
-                        is_dir: e.is_dir,
-                        mode: if c == 'd' {
-                            Mode::Trash
-                        } else {
-                            Mode::Permanent
-                        },
-                        typed: String::new(),
-                        scanning: matches!(
-                            e.mark,
-                            crate::snapshot::Mark::Scanning
-                                | crate::snapshot::Mark::Stalled
-                                | crate::snapshot::Mark::Rescanning
-                        ),
-                    };
-                }
-            }
-            KeyCode::Char('?') => self.overlay = Overlay::Help,
-            KeyCode::Char('!') => fx.push(Effect::ShowErrors),
-            KeyCode::Esc => self.overlay = Overlay::None,
-            _ => {}
+        match keys::action_for(&k) {
+            Some(a) => keys::run(self, a, now),
+            None => Vec::new(),
         }
-        fx
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::snapshot::test_entry;
     use crate::tests::key;
 
-    fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
+    pub(crate) fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
         let root = test_entry(99, "/r", 0);
         Snapshot {
             dir_path: PathBuf::from("/r"),
@@ -838,60 +759,5 @@ mod tests {
         assert_eq!(names, [b"a", b"b", b"c"]);
         assert_eq!(app.selected.as_ref().and_then(|s| s.node), picked);
         assert_eq!(app.selected_index(), Some(2));
-    }
-
-    #[test]
-    fn trash_delete_sends_a_plan_after_y() {
-        let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t0);
-        assert!(app.key(key(KeyCode::Char('d')), t0).is_empty());
-        assert!(matches!(
-            app.overlay,
-            Overlay::ConfirmDelete {
-                mode: Mode::Trash,
-                ..
-            }
-        ));
-        let fx = app.key(key(KeyCode::Char('y')), t0);
-        assert!(matches!(
-            fx.as_slice(),
-            [Effect::Send(Command::Delete {
-                mode: Mode::Trash,
-                ..
-            })]
-        ));
-        assert!(matches!(app.overlay, Overlay::None));
-    }
-
-    #[test]
-    fn permanent_delete_needs_the_word_delete() {
-        let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t0);
-        app.key(key(KeyCode::Char('D')), t0);
-        // 'y' alone does nothing for a permanent delete.
-        assert!(app.key(key(KeyCode::Char('y')), t0).is_empty());
-        app.key(key(KeyCode::Backspace), t0);
-        for c in "delet".chars() {
-            assert!(app.key(key(KeyCode::Char(c)), t0).is_empty());
-        }
-        assert!(
-            app.key(key(KeyCode::Enter), t0).is_empty(),
-            "incomplete word must not delete"
-        );
-        assert!(matches!(app.overlay, Overlay::None));
-        app.key(key(KeyCode::Char('D')), t0);
-        for c in "delete".chars() {
-            app.key(key(KeyCode::Char(c)), t0);
-        }
-        let fx = app.key(key(KeyCode::Enter), t0);
-        assert!(matches!(
-            fx.as_slice(),
-            [Effect::Send(Command::Delete {
-                mode: Mode::Permanent,
-                ..
-            })]
-        ));
     }
 }

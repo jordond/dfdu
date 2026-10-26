@@ -100,10 +100,11 @@ impl Order {
         &self.new
     }
 
+    /// Sorts the entries for which `visible(index, entry)` holds.
     pub fn sort_exact(
         &mut self,
         entries: &[EntryData],
-        visible: impl Fn(&EntryData) -> bool,
+        visible: impl Fn(usize, &EntryData) -> bool,
         spec: SortSpec,
     ) {
         self.sort(entries, visible, spec, false);
@@ -114,7 +115,7 @@ impl Order {
     pub fn sort_auto(
         &mut self,
         entries: &[EntryData],
-        visible: impl Fn(&EntryData) -> bool,
+        visible: impl Fn(usize, &EntryData) -> bool,
         spec: SortSpec,
     ) {
         self.sort(entries, visible, spec, true);
@@ -123,7 +124,7 @@ impl Order {
     fn sort(
         &mut self,
         entries: &[EntryData],
-        visible: impl Fn(&EntryData) -> bool,
+        visible: impl Fn(usize, &EntryData) -> bool,
         spec: SortSpec,
         quantise: bool,
     ) {
@@ -160,7 +161,7 @@ impl Order {
         let mut keys: Vec<Key> = entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| visible(e))
+            .filter(|&(i, e)| visible(i, e))
             .map(|(i, e)| Key {
                 first: first(e),
                 prev: prev.get(i).copied().unwrap_or(u32::MAX),
@@ -222,7 +223,7 @@ impl Order {
     pub fn sync(
         &mut self,
         entries: &[EntryData],
-        visible: impl Fn(&EntryData) -> bool,
+        visible: impl Fn(usize, &EntryData) -> bool,
         spec: SortSpec,
     ) {
         if self.rows.is_empty() && self.new.is_empty() {
@@ -234,7 +235,7 @@ impl Order {
             known[i] = true;
         }
         for (i, e) in entries.iter().enumerate() {
-            if !known[i] && visible(e) {
+            if !known[i] && visible(i, e) {
                 self.new.push(i);
             }
         }
@@ -253,7 +254,7 @@ mod tests {
             .collect()
     }
 
-    fn all(_: &EntryData) -> bool {
+    fn all(_: usize, _: &EntryData) -> bool {
         true
     }
 

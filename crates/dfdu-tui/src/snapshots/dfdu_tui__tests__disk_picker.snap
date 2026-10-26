@@ -1,3 +1,7 @@
+---
+source: crates/dfdu-tui/src/tests.rs
+expression: out
+---
  dfdu  choose a disk to scan
  mounted on               type           size       used       free
  /                        btrfs     500.0 GiB  400.0 GiB   90.0 GiB  ████████████████       80%  also at /home

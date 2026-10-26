@@ -146,6 +146,9 @@ pub struct EntryData {
     /// The "shared between entries" row: data counted at the directory itself because entries
     /// share it. Not an entry; it cannot be opened or deleted.
     pub pseudo: bool,
+    /// A deleted entry kept in its row until the next re-sort, drawn struck through. Always
+    /// also `pseudo` and never `is_dir`, so it cannot be opened or deleted either.
+    pub ghost: bool,
 }
 
 impl EntryData {
@@ -400,6 +403,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
                 shared_out: t.shared_out,
                 compressed: tree.flags(c).has(dfdu_tree::NodeFlags::COMPRESSED),
                 pseudo: false,
+                ghost: false,
             }
         })
         .collect();
@@ -423,6 +427,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
             shared_out: 0,
             compressed: false,
             pseudo: true,
+            ghost: false,
         });
     }
     snap
@@ -469,5 +474,6 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         shared_out: 0,
         compressed: false,
         pseudo: false,
+        ghost: false,
     }
 }

@@ -1,5 +1,10 @@
 //! Frame tests with ratatui's `TestBackend`: a hand-built mid-scan view, and a view of a real
-//! scan of a temporary directory.
+//! scan of a temporary directory. The helpers here render frames and read the styles of their
+//! cells for the tests of other modules too.
+//!
+//! Frames are compared with insta snapshots in `src/snapshots/`. A changed frame fails with a
+//! diff; `INSTA_UPDATE=always cargo test -p dfdu-tui` rewrites the snapshots, so a reviewer sees
+//! the change in the diff. With `CI` set, a missing snapshot fails instead of being written.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -9,15 +14,18 @@ use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::Totals;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::App;
 use crate::snapshot::{self, EntryData, Mark, Snapshot, Target, test_entry};
 use crate::theme::Theme;
 use crate::view;
 
-fn text(buf: &Buffer) -> String {
+/// The frame as text, one line per row with trailing spaces removed.
+pub(crate) fn text(buf: &Buffer) -> String {
     let w = buf.area.width as usize;
     let mut out = String::new();
     for (i, cell) in buf.content.iter().enumerate() {
@@ -32,10 +40,119 @@ fn text(buf: &Buffer) -> String {
     out
 }
 
-pub(crate) fn render(app: &mut App, now: Instant, w: u16, h: u16) -> String {
+pub(crate) fn render_buffer(app: &mut App, now: Instant, w: u16, h: u16) -> Buffer {
     let mut term = Terminal::new(TestBackend::new(w, h)).expect("terminal");
     term.draw(|f| view::draw(f, app, now)).expect("draw");
-    text(term.backend().buffer())
+    term.backend().buffer().clone()
+}
+
+pub(crate) fn render(app: &mut App, now: Instant, w: u16, h: u16) -> String {
+    text(&render_buffer(app, now, w, h))
+}
+
+/// The frame with its styles, for snapshots that check colour. Each line of text is followed,
+/// unless all its cells have the default style, by `L<row>` and its runs of equally styled
+/// cells, separated by ` | `: the columns `<first>-<last>` (both included), then the
+/// foreground, background and modifiers that differ from the default, as in
+/// `L3 0-6 bold | 8-31 fg=cyan | 40-46 fg=red bold`. Runs of default cells are left out.
+/// Colours are ratatui's names in lower case, `i<n>` when indexed and `#rrggbb` when RGB.
+pub(crate) fn styled(buf: &Buffer) -> String {
+    let area = buf.area;
+    let mut out = String::new();
+    for (row, line) in (area.top()..area.bottom()).zip(text(buf).lines()) {
+        out.push_str(line);
+        out.push('\n');
+        let mut runs = Vec::new();
+        let mut x = area.left();
+        while x < area.right() {
+            let (start, run) = (x, look(&buf[(x, row)]));
+            while x < area.right() && look(&buf[(x, row)]) == run {
+                x += 1;
+            }
+            if run != look(&Cell::EMPTY) {
+                let (first, last) = (start - area.x, x - 1 - area.x);
+                runs.push(format!("{first}-{last} {}", describe(run)));
+            }
+        }
+        if !runs.is_empty() {
+            out.push_str(&format!("L{} {}\n", row - area.y, runs.join(" | ")));
+        }
+    }
+    out
+}
+
+/// What `styled` shows of a cell's style.
+type Look = (Color, Color, Modifier);
+
+fn look(cell: &Cell) -> Look {
+    (cell.fg, cell.bg, cell.modifier)
+}
+
+fn describe((fg, bg, modifier): Look) -> String {
+    let mut parts = Vec::new();
+    if fg != Color::Reset {
+        parts.push(format!("fg={}", colour(fg)));
+    }
+    if bg != Color::Reset {
+        parts.push(format!("bg={}", colour(bg)));
+    }
+    parts.extend(modifier.iter_names().map(|(name, _)| name.to_lowercase()));
+    parts.join(" ")
+}
+
+fn colour(c: Color) -> String {
+    match c {
+        Color::Indexed(n) => format!("i{n}"),
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        c => format!("{c:?}").to_lowercase(),
+    }
+}
+
+/// The cells of the first occurrence of `needle`, looked for row by row; panics with the frame
+/// if it is not there.
+#[track_caller]
+fn find(buf: &Buffer, needle: &str) -> Rect {
+    for y in buf.area.top()..buf.area.bottom() {
+        let mut row = String::new();
+        let mut starts = Vec::new();
+        for x in buf.area.left()..buf.area.right() {
+            starts.push((row.len(), x));
+            row.push_str(buf[(x, y)].symbol());
+        }
+        if let Some(at) = row.find(needle) {
+            let mut cells = starts
+                .iter()
+                .filter(|&&(i, _)| (at..at + needle.len()).contains(&i))
+                .map(|&(_, x)| x);
+            let first = cells.next().expect("a cell starts where the match does");
+            let last = cells.next_back().unwrap_or(first);
+            return Rect::new(first, y, last - first + 1, 1);
+        }
+    }
+    panic!("{needle:?} is not in the frame:\n{}", text(buf));
+}
+
+/// The style of the first cell of the first occurrence of `needle`.
+#[track_caller]
+pub(crate) fn style_at(buf: &Buffer, needle: &str) -> Style {
+    let at = find(buf, needle);
+    buf[(at.x, at.y)].style()
+}
+
+/// Asserts that every cell of the first occurrence of `needle` has a style that satisfies
+/// `pred`.
+#[track_caller]
+pub(crate) fn assert_cue(buf: &Buffer, needle: &str, pred: impl Fn(Style) -> bool) {
+    let at = find(buf, needle);
+    for x in at.left()..at.right() {
+        let style = buf[(x, at.y)].style();
+        assert!(
+            pred(style),
+            "{needle:?}: the cell at column {x}, row {} has {style:?}\n{}",
+            at.y,
+            styled(buf)
+        );
+    }
 }
 
 fn dir(i: u32, name: &str, size: u64, items: u64, mark: Mark) -> EntryData {
@@ -47,10 +164,11 @@ fn dir(i: u32, name: &str, size: u64, items: u64, mark: Mark) -> EntryData {
     }
 }
 
-#[test]
-fn mid_scan_view() {
+/// A scan of a home directory 14 s in, with entries that are scanning, stalled and unreadable,
+/// drawn on 100x12.
+fn mid_scan(theme: Theme) -> Buffer {
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
+    let mut app = App::new(theme, t0);
     let root = test_entry(99, "/home/jo", 0);
     let gib = 1 << 30;
     let entries = vec![
@@ -91,29 +209,82 @@ fn mid_scan_view() {
         ..Default::default()
     };
     app.refresh(snap, t0);
-    let out = render(&mut app, t0 + Duration::from_secs(14), 100, 12);
-    insta_like(&out, "mid_scan");
+    render_buffer(&mut app, t0 + Duration::from_secs(14), 100, 12)
 }
 
-/// Compares against a stored frame in `tests/frames/<name>.txt`; writes it if missing or if
-/// `DFDU_UPDATE_FRAMES` is set, so a reviewer sees changes in the diff.
-fn insta_like(out: &str, name: &str) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/frames")
-        .join(format!("{name}.txt"));
-    if std::env::var_os("DFDU_UPDATE_FRAMES").is_some() || !path.exists() {
-        fs::create_dir_all(path.parent().expect("dir")).expect("mkdir");
-        fs::write(&path, out).expect("write frame");
-        return;
+#[test]
+fn mid_scan_view() {
+    insta::assert_snapshot!("mid_scan", text(&mid_scan(Theme::no_color())));
+}
+
+#[test]
+fn mid_scan_view_colours() {
+    let buf = mid_scan(Theme::ansi16());
+    insta::assert_snapshot!("mid_scan_ansi16", styled(&buf));
+    let reversed = |s: Style| s.add_modifier.contains(Modifier::REVERSED);
+    // The selection is the first row.
+    assert_cue(&buf, "112.0 GiB", reversed);
+    assert_cue(&buf, "Library/", reversed);
+    assert!(!reversed(style_at(&buf, "78.0 GiB")));
+    for name in ["Library/", "dev/", ".android/", "locked/", "nfs/"] {
+        assert_cue(&buf, name, |s| {
+            s.fg == Some(Color::Blue) && s.add_modifier.contains(Modifier::BOLD)
+        });
     }
-    // A checkout with CRLF conversion (Windows) must not count as a changed frame.
-    let want = fs::read_to_string(&path)
-        .expect("read frame")
-        .replace("\r\n", "\n");
-    assert_eq!(
-        out, want,
-        "frame {name} changed; rerun with DFDU_UPDATE_FRAMES=1 to accept"
+    assert_cue(&buf, "notes.sqlite", |s| s.fg == Some(Color::Reset));
+    assert_cue(&buf, "permission denied", |s| s.fg == Some(Color::Red));
+    assert_cue(&buf, "~", |s| s.fg == Some(Color::Yellow));
+    assert_cue(&buf, "not responding", |s| s.fg == Some(Color::Yellow));
+}
+
+/// A 10x2 buffer: two styled runs and a styled cell after a gap on the first row, plain text
+/// and a styled blank cell on the second.
+fn sample_buffer() -> Buffer {
+    let mut buf = Buffer::empty(Rect::new(0, 0, 10, 2));
+    buf.set_string(0, 0, "ab", Style::new().add_modifier(Modifier::BOLD));
+    buf.set_string(2, 0, "cde", Style::new().fg(Color::Cyan));
+    buf.set_string(
+        7,
+        0,
+        "x",
+        Style::new()
+            .fg(Color::Indexed(178))
+            .bg(Color::Rgb(1, 2, 255))
+            .add_modifier(Modifier::ITALIC | Modifier::REVERSED),
     );
+    buf.set_string(8, 0, "y", Style::new().fg(Color::LightRed));
+    buf.set_string(0, 1, "plain", Style::new());
+    buf.set_style(Rect::new(9, 1, 1, 1), Style::new().bg(Color::DarkGray));
+    buf
+}
+
+#[test]
+fn styled_dump_merges_runs() {
+    assert_eq!(
+        styled(&sample_buffer()),
+        "abcde  xy\n\
+         L0 0-1 bold | 2-4 fg=cyan | 7-7 fg=i178 bg=#0102ff italic reversed | 8-8 fg=lightred\n\
+         plain\n\
+         L1 9-9 bg=darkgray\n"
+    );
+    let mut plain = Buffer::empty(Rect::new(0, 0, 4, 1));
+    plain.set_string(0, 0, "abc", Style::new());
+    assert_eq!(styled(&plain), "abc\n");
+}
+
+#[test]
+fn style_at_finds_text() {
+    let buf = sample_buffer();
+    assert_eq!(style_at(&buf, "cde").fg, Some(Color::Cyan));
+    assert_eq!(style_at(&buf, "de").fg, Some(Color::Cyan));
+    // The first cell decides, though the needle runs on into other styles.
+    assert!(style_at(&buf, "bcd").add_modifier.contains(Modifier::BOLD));
+    assert_eq!(style_at(&buf, "lain").fg, Some(Color::Reset));
+    assert_cue(&buf, "cde", |s| s.fg == Some(Color::Cyan));
+    let missing = std::panic::catch_unwind(|| style_at(&buf, "absent"));
+    let msg = missing.expect_err("absent text panics");
+    let msg = msg.downcast_ref::<String>().expect("message");
+    assert!(msg.contains("abcde  xy\nplain"), "{msg}");
 }
 
 /// A temporary directory under the canonical temp dir: the engine canonicalises scan roots (on
@@ -451,7 +622,7 @@ fn disk_picker() {
     term.draw(|f| crate::picker::draw(f, &p, &theme))
         .expect("draw");
     let out = text(term.backend().buffer());
-    insta_like(&out, "disk_picker");
+    insta::assert_snapshot!("disk_picker", out);
     assert!(out.contains("also at /home"), "{out}");
     assert!(out.contains("not responding  network"), "{out}");
 

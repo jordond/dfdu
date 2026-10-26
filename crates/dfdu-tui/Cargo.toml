@@ -18,7 +18,14 @@ dfdu-sys.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
 humansize.workspace = true
+tachyonfx.workspace = true
+nucleo-matcher.workspace = true
+terminal-colorsaurus.workspace = true
+etcetera.workspace = true
+toml.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 tempfile.workspace = true
 dunce.workspace = true
