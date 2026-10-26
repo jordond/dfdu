@@ -15,7 +15,7 @@ use dut_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
 use dut_engine::{Applier, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model};
 use dut_scan::{
     Backend, Batch, Block, Budget, Clock, DirStream, FsClass, JobOptions, Limits, Raw, RawBlock,
-    ScanMsg, Shared, Sink, StepResult, Worker,
+    ScanMsg, Shared, Sink, StepResult, Storage, Worker,
 };
 use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
 use parking_lot::Mutex;
@@ -83,6 +83,8 @@ pub struct SpecNode {
     pub dup_mount: bool,
     /// Mount root of a network or kernel filesystem (others are local).
     pub fs_class: Option<FsClass>,
+    /// What the directory's filesystem is stored on (directories only), for mount limits.
+    pub storage: Storage,
     /// Extent map of a file on a filesystem that shares extents.
     pub pieces: Vec<SimPiece>,
     /// Measuring the file fails (it cannot be opened).
@@ -166,6 +168,8 @@ pub struct SpecConfig {
     pub mount_ids: bool,
     /// Second mounts (copies) of some mounts, next to them.
     pub dup_mounts: bool,
+    /// Chance per directory below the root, per mille, of being another mount's root.
+    pub mount_per_mille: u64,
     /// Extent maps, reflinked copies and snapshots that share data.
     pub extents: bool,
 }
@@ -182,6 +186,7 @@ impl Default for SpecConfig {
             subvols: true,
             mount_ids: true,
             dup_mounts: true,
+            mount_per_mille: 30,
             extents: true,
         }
     }
@@ -215,6 +220,12 @@ impl Spec {
             subvol: None,
             dup_mount: false,
             fs_class: None,
+            storage: [
+                Storage::Solid,
+                Storage::Rotational,
+                Storage::Network,
+                Storage::Unknown,
+            ][rng.below(4) as usize],
             pieces: vec![],
             unmeasurable: false,
         }];
@@ -229,15 +240,24 @@ impl Spec {
             let nfiles = rng.below(cfg.max_files + 1);
             let mut kids = vec![];
             let mount = nodes[d as usize].meta.mount;
+            let parent_storage = nodes[d as usize].storage;
             for i in 0..ndirs {
                 ino += 1;
                 let roll = rng.below(1000);
                 let mut fs_class = None;
-                let (cdev, cmount, cino, subvol) = if cfg.other_fs && depth > 0 && roll < 30 {
+                let mut storage = parent_storage;
+                let other = cfg.mount_per_mille;
+                let (cdev, cmount, cino, subvol) = if cfg.other_fs && depth > 0 && roll < other {
                     fs_class = match rng.below(12) {
                         0 => Some(FsClass::Kernel),
                         1 | 2 => Some(FsClass::Network),
                         _ => None,
+                    };
+                    storage = match (fs_class, rng.below(4)) {
+                        (Some(FsClass::Network), _) => Storage::Network,
+                        (_, 0 | 1) => Storage::Rotational,
+                        (_, 2) => Storage::Solid,
+                        _ => Storage::Unknown,
                     };
                     next_dev += 1;
                     next_mount += 1;
@@ -246,7 +266,7 @@ impl Spec {
                     dev_fs.insert(next_dev, (fs, cfg.extents && rng.chance(500)));
                     let m = if cfg.mount_ids { next_mount } else { 0 };
                     (next_dev, m, ino, None)
-                } else if cfg.subvols && roll < 70 {
+                } else if cfg.subvols && roll < other + 40 {
                     next_dev += 1;
                     dev_fs.insert(next_dev, dev_fs[&dev]);
                     subvol_dirs.push(nodes.len() as u32);
@@ -281,6 +301,7 @@ impl Spec {
                     subvol,
                     dup_mount: false,
                     fs_class,
+                    storage,
                     pieces: vec![],
                     unmeasurable: false,
                 });
@@ -313,6 +334,7 @@ impl Spec {
                     subvol: None,
                     dup_mount: false,
                     fs_class: None,
+                    storage: Storage::Unknown,
                     pieces: vec![],
                     unmeasurable: cfg.faults && rng.chance(30),
                 });
@@ -483,6 +505,7 @@ impl SpecBuilder {
             subvol: None,
             dup_mount: false,
             fs_class: None,
+            storage: Storage::Unknown,
             pieces: vec![],
             unmeasurable: false,
         });
@@ -759,6 +782,15 @@ fn copy_subtree(nodes: &mut Vec<SpecNode>, n: u32) -> u32 {
 
 // ---- backend, clock, sink --------------------------------------------------------------------
 
+/// The key the scanner gives a directory's mount: its mount id, or its device without ids.
+fn mount_key_of(mount: u64, dev: u64) -> (u64, u64) {
+    if mount != 0 { (mount, 0) } else { (0, dev) }
+}
+
+fn mount_key(m: &Meta) -> (u64, u64) {
+    mount_key_of(m.mount, m.dev)
+}
+
 pub struct SimClock(AtomicU64);
 
 impl SimClock {
@@ -776,6 +808,9 @@ impl Clock for SimClock {
 pub struct SimBackend {
     pub spec: Arc<Spec>,
     pub clock: Arc<SimClock>,
+    /// Directories opened with a storage class other than their mount's (§4.5): the scanner
+    /// hands the class of the directory's mount to `open`, whichever mount the scan began on.
+    pub wrong_storage: AtomicU64,
 }
 
 pub struct SimStream {
@@ -926,6 +961,14 @@ impl Backend for SimBackend {
         Some(n.fs_class.unwrap_or(FsClass::Local))
     }
 
+    fn mount_storage(&self, mount: u64, dev: u64) -> Storage {
+        self.spec
+            .nodes
+            .iter()
+            .find(|n| n.meta.kind == Kind::Dir && mount_key(&n.meta) == mount_key_of(mount, dev))
+            .map_or(Storage::Unknown, |n| n.storage)
+    }
+
     fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
         let mut dups = HashSet::new();
         for n in &self.spec.nodes {
@@ -949,7 +992,10 @@ impl Backend for SimBackend {
         Ok(self.spec.nodes[*loc as usize].subvol.clone())
     }
 
-    fn open(&self, loc: &u32) -> io::Result<SimStream> {
+    fn open(&self, loc: &u32, storage: Storage) -> io::Result<SimStream> {
+        if storage != self.spec.nodes[*loc as usize].storage {
+            self.wrong_storage.fetch_add(1, SeqCst);
+        }
         if self.spec.is_deleted(*loc) {
             return Err(io::ErrorKind::NotFound.into());
         }
@@ -1060,6 +1106,9 @@ pub struct SimConfig {
     pub cross_mounts: Option<bool>,
     /// Scan with `network`; `None` picks it per seed.
     pub network: Option<bool>,
+    /// `Limits::rotational_parts` and `Limits::network_parts`; `None` picks them per seed
+    /// (1-2 and 1-3).
+    pub mount_limits: Option<(usize, usize)>,
 }
 
 impl Default for SimConfig {
@@ -1075,6 +1124,7 @@ impl Default for SimConfig {
                 flush_age_ns: 2_000_000,
                 stall_ns: 10_000_000,
                 chunk_credit: 2,
+                ..Limits::default()
             },
             auto_abandon_ns: 400_000_000,
             rescans: 3,
@@ -1084,6 +1134,7 @@ impl Default for SimConfig {
             spec: SpecConfig::default(),
             cross_mounts: None,
             network: None,
+            mount_limits: None,
         }
     }
 }
@@ -1117,6 +1168,12 @@ pub struct SimReport {
     pub shared_bytes: u64,
     /// Blocks stat'ed by chunk tasks rather than by their directory's listing task.
     pub chunk_tasks: u64,
+    /// Mount limits created, tasks that waited for a permit, permits taken back from stuck
+    /// parts, and checks that found a mount running at its limit.
+    pub gates: u64,
+    pub deferred: u64,
+    pub revoked: u64,
+    pub at_limit: u64,
 }
 
 /// A simulation in progress. [`run`] drives one in random order from start to end; scenario
@@ -1146,6 +1203,8 @@ pub struct Sim {
     pub cross_mounts: bool,
     pub network: bool,
     pub report: SimReport,
+    /// Parts `(worker, job, dir, part)` whose mount permit the watchdog took back.
+    revoked: HashSet<(usize, u32, u32, u32)>,
     /// Every scan message applied, in order, when [`Sim::record`] is set (scenario tests).
     pub log: Vec<ScanMsg>,
     pub record: bool,
@@ -1173,12 +1232,22 @@ impl Sim {
         let spec = Arc::new(spec);
         let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
         let network = cfg.network.unwrap_or_else(|| rng.chance(300));
+        let (rotational, net) = cfg
+            .mount_limits
+            .unwrap_or_else(|| (1 + rng.below(2) as usize, 1 + rng.below(3) as usize));
         let clock = Arc::new(SimClock(AtomicU64::new(1)));
         let backend = SimBackend {
             spec: spec.clone(),
             clock: clock.clone(),
+            wrong_storage: AtomicU64::new(0),
         };
-        let shared = Arc::new(Shared::new(backend, cfg.limits.clone()));
+        let limits = Limits {
+            pool_workers: cfg.workers,
+            rotational_parts: rotational,
+            network_parts: net,
+            ..cfg.limits.clone()
+        };
+        let shared = Arc::new(Shared::new(backend, limits));
         let sink = Arc::new(SimSink {
             q: Mutex::new(VecDeque::new()),
             budget: Budget::new(cfg.budget),
@@ -1210,6 +1279,7 @@ impl Sim {
             cross_mounts,
             network,
             report: SimReport::default(),
+            revoked: HashSet::new(),
             log: Vec::new(),
             record: false,
         };
@@ -1237,6 +1307,12 @@ impl Sim {
     }
 
     fn check(&self, after: &str) -> Result<(), String> {
+        let wrong = self.shared.backend.wrong_storage.load(SeqCst);
+        if wrong != 0 {
+            return Err(self.fail(format!(
+                "{wrong} directories opened with the storage of another mount{after}"
+            )));
+        }
         self.applier
             .check(&self.model)
             .map_err(|e| self.fail(format!("invariant{after}: {e}")))
@@ -1249,6 +1325,67 @@ impl Sim {
         self.workers[i].step(&self.shared, &*self.sink, &*self.clock)
     }
 
+    /// Mount limits (§4.5), checked against what the workers run: every part on a limited
+    /// mount holds a permit unless it is a job root or the watchdog took its permit back while
+    /// it was stuck; the permits held, including tasks handed over with one, are the gate's
+    /// count; the parts holding one never exceed the limit; and the limit is the storage's,
+    /// or the pool's size for a job root's mount.
+    pub fn check_mount_limits(&mut self) -> Result<(), String> {
+        let gates: HashMap<(u64, u64), dut_scan::GateStats> = self
+            .shared
+            .gate_stats()
+            .into_iter()
+            .map(|g| ((g.mount, g.dev), g))
+            .collect();
+        let mut held: HashMap<(u64, u64), usize> = HashMap::new();
+        // Revocations of parts that have ended no longer matter.
+        let current: HashSet<_> = (0..self.workers.len())
+            .filter_map(|i| {
+                let (job, dir, part) = self.workers[i].slot.current()?;
+                Some((i, job.0, dir.0, part))
+            })
+            .collect();
+        self.revoked.retain(|p| current.contains(p));
+        for (i, w) in self.workers.iter().enumerate() {
+            if let Some(loc) = w.handoff_loc() {
+                *held
+                    .entry(mount_key(&self.spec.nodes[loc as usize].meta))
+                    .or_default() += 1;
+            }
+            let Some((loc, root, permit)) = w.running_part() else {
+                continue;
+            };
+            let key = mount_key(&self.spec.nodes[loc as usize].meta);
+            if permit {
+                *held.entry(key).or_default() += 1;
+            } else if gates.contains_key(&key) && !root {
+                let (job, dir, part) = w.slot.current().expect("running");
+                if !self.revoked.contains(&(i, job.0, dir.0, part)) {
+                    return Err(self.fail(format!(
+                        "worker {i} runs {loc} on limited mount {key:?} without a permit"
+                    )));
+                }
+            }
+        }
+        let limits = &self.shared.limits;
+        for (key, g) in &gates {
+            let n = held.get(key).copied().unwrap_or(0);
+            if n != g.running || n > g.limit {
+                return Err(self.fail(format!("mount {key:?}: {n} permits held, gate {g:?}")));
+            }
+            self.report.at_limit += (n == g.limit) as u64;
+            let class = match self.shared.backend.mount_storage(key.0, key.1) {
+                Storage::Rotational => limits.rotational_parts,
+                Storage::Network => limits.network_parts,
+                _ => 0,
+            };
+            if g.limit != class && g.limit != limits.pool_workers {
+                return Err(self.fail(format!("mount {key:?}: limit {} for {class}", g.limit)));
+            }
+        }
+        Ok(())
+    }
+
     /// Flushes worker `i`'s outbox: its messages become deliverable, its tasks stealable.
     pub fn flush_worker(&mut self, i: usize) -> bool {
         self.workers[i].flush(&self.shared, &*self.sink)
@@ -1257,9 +1394,20 @@ impl Sim {
     /// One watchdog round, then 1 ms of virtual time. Adds a worker when the runtime would
     /// replace stuck ones.
     pub fn watchdog(&mut self) {
+        let before: Vec<bool> = self
+            .workers
+            .iter()
+            .map(|w| w.running_part().is_some_and(|p| p.2))
+            .collect();
         let rep = self.shared.watchdog_round(&*self.sink, self.clock.now());
-        let target = self.cfg.workers;
-        if self.workers.len() < target + self.shared.allowed_extra_workers(target, &rep) {
+        for (i, had) in before.into_iter().enumerate() {
+            if had && self.workers[i].running_part().is_some_and(|p| !p.2) {
+                let (job, dir, part) = self.workers[i].slot.current().expect("running");
+                self.revoked.insert((i, job.0, dir.0, part));
+            }
+        }
+        let target = self.cfg.workers + self.shared.mount_workers();
+        if self.workers.len() < target + self.shared.allowed_extra_workers(self.cfg.workers, &rep) {
             self.workers.push(Worker::new(&self.shared, false));
         }
         self.report.max_workers = self.report.max_workers.max(self.workers.len());
@@ -1412,6 +1560,7 @@ impl Sim {
             0..55 => {
                 let i = self.rng.below(self.workers.len() as u64) as usize;
                 let _: StepResult = self.step_worker(i);
+                self.check_mount_limits()?;
             }
             55..60 => {
                 // Answers in any order, interleaved with everything else.
@@ -1460,7 +1609,10 @@ impl Sim {
                 self.plans
                     .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
             }
-            80..90 => self.watchdog(),
+            80..90 => {
+                self.watchdog();
+                self.check_mount_limits()?;
+            }
             90..93 => self.tick(),
             93..96 => {
                 if let Some(msg) = deleter_step(
@@ -1593,6 +1745,18 @@ impl Sim {
         let (spec, model) = (&self.spec, &self.model);
         let report = &mut self.report;
         report.chunk_tasks = self.shared.chunk_tasks.load(SeqCst);
+        for g in self.shared.gate_stats() {
+            report.gates += 1;
+            report.deferred += g.deferred;
+            report.revoked += g.revoked;
+            // Parts still stuck forever lost their permits; nothing else is left running.
+            if g.running != 0 || g.pending != 0 {
+                return Err(format!(
+                    "seed {}: mount limit left with work at the end: {g:?}",
+                    self.seed
+                ));
+            }
+        }
         report.subvols = model.subvols.len() as u64;
         report.ro_subvols = model.subvols.values().filter(|s| s.read_only).count() as u64;
         report.cross_runs = self.cross_mounts as u64;

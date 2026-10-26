@@ -295,11 +295,7 @@ fn measure(tree: &Path, workers: Option<usize>, after: usize, seed: u64) -> Run 
         });
         dut_tui::event_loop(&mut terminal, &engine, rx).expect("browse");
     });
-    let hold_max = engine.read(|m| {
-        let hold = &m.status.timing.hold;
-        let k = hold.iter().rposition(|&n| n > 0).unwrap_or(0);
-        Duration::from_micros(1 << k)
-    });
+    let hold_max = engine.read(|m| dut_engine::Timing::max(&m.status.timing.hold));
     engine.shutdown(Duration::from_millis(200));
     let s = probe.state.lock().expect("probe");
     Run {

@@ -80,24 +80,53 @@ pub struct Stats {
 /// How the applier thread spends its time, filled in by the runtime (D1, ROADMAP M2): how
 /// long it holds the write lock per slice, how long it waits to get it, and in total. Not part
 /// of [`Model::fingerprint`], so it never wakes readers by itself.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Timing {
     pub slices: u64,
     /// Time holding the write lock, all slices together.
     pub locked_ns: u64,
-    /// Write-lock hold time per slice, in [`Timing::BUCKETS`] buckets: bucket `k` counts
-    /// slices that took less than `2^k` microseconds (bucket 0: under 1 µs).
+    /// Write-lock hold time per slice, in [`Timing::BUCKETS`] buckets of [`Timing::bucket`].
     pub hold: [u64; Timing::BUCKETS],
     /// Time waiting for the write lock per slice, same buckets.
     pub wait: [u64; Timing::BUCKETS],
 }
 
-impl Timing {
-    pub const BUCKETS: usize = 32;
+impl Default for Timing {
+    fn default() -> Self {
+        Timing {
+            slices: 0,
+            locked_ns: 0,
+            hold: [0; Timing::BUCKETS],
+            wait: [0; Timing::BUCKETS],
+        }
+    }
+}
 
+impl Timing {
+    /// Four buckets per power of two, up to about 35 minutes.
+    pub const BUCKETS: usize = 128;
+
+    /// The bucket of a duration: whole microseconds below 4 µs, then four buckets per power of
+    /// two (4-5 µs, 5-6, 6-7, 7-8, 8-10, ...), so a bucket's bounds are within 25% of each
+    /// other.
     pub fn bucket(d: std::time::Duration) -> usize {
-        let us = d.as_micros() as u64;
-        ((u64::BITS - us.leading_zeros()) as usize).min(Self::BUCKETS - 1)
+        let us = d.as_micros().min(u64::MAX as u128) as u64;
+        if us < 4 {
+            return us as usize;
+        }
+        let e = (u64::BITS - 1 - us.leading_zeros()) as usize;
+        let m = ((us >> (e - 2)) & 3) as usize;
+        (4 * (e - 1) + m).min(Self::BUCKETS - 1)
+    }
+
+    /// The upper bound of bucket `k` (exclusive).
+    pub fn upper(k: usize) -> std::time::Duration {
+        let us = if k < 4 {
+            k as u64 + 1
+        } else {
+            (5 + (k % 4) as u64) << (k / 4 - 1)
+        };
+        std::time::Duration::from_micros(us)
     }
 
     /// Upper bound of the `p`-th percentile (0 to 1) of a histogram.
@@ -108,10 +137,29 @@ impl Timing {
         for (k, &n) in hist.iter().enumerate() {
             seen += n;
             if seen >= want.max(1) {
-                return std::time::Duration::from_micros(1 << k);
+                return Self::upper(k);
             }
         }
         std::time::Duration::ZERO
+    }
+
+    /// Upper bound of the longest time in a histogram.
+    pub fn max(hist: &[u64; Self::BUCKETS]) -> std::time::Duration {
+        hist.iter()
+            .rposition(|&n| n > 0)
+            .map_or(std::time::Duration::ZERO, Self::upper)
+    }
+
+    /// Entries of a histogram at or above `d`, rounded up to a bucket bound (2 ms counts
+    /// from 2.048 ms).
+    pub fn at_least(hist: &[u64; Self::BUCKETS], d: std::time::Duration) -> u64 {
+        let k = Self::bucket(d);
+        let k = if k > 0 && Self::upper(k - 1) < d {
+            k + 1
+        } else {
+            k
+        };
+        hist[k.min(Self::BUCKETS)..].iter().sum()
     }
 }
 
@@ -398,8 +446,10 @@ const STEP_UNITS: usize = 4096;
 /// Hard links examined per step of re-election or merging: whole inodes are taken until this
 /// many of their links have been looked at. Re-electing compares the paths of all of an inode's
 /// links. Counting inodes instead (256 per step) held the write lock for up to 65-130 ms on
-/// a tree of 2,000 inodes with 500 links each, against a slice of 1 ms (§5.6).
-const LINKS_PER_STEP: usize = 2048;
+/// a tree of 2,000 inodes with 500 links each, against a slice of 1 ms (§5.6). 2048 links took
+/// 2.0-2.4 ms per step on the 1M-entry `dut-bench` tree (9,565 links), one step per slice at the
+/// end of each scan; 512 take about 0.5 ms.
+const LINKS_PER_STEP: usize = 512;
 
 pub fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
@@ -1932,5 +1982,32 @@ impl<B: Backend> Applier<B> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Timing;
+    use std::time::Duration;
+
+    #[test]
+    fn timing_buckets_hold_their_durations() {
+        let mut last = 0;
+        for us in 0..100_000u64 {
+            let d = Duration::from_micros(us);
+            let k = Timing::bucket(d);
+            assert!(k == last || k == last + 1, "{us} µs");
+            last = k;
+            assert!(d < Timing::upper(k), "{us} µs");
+            assert!(k == 0 || d >= Timing::upper(k - 1), "{us} µs");
+        }
+        let mut h = [0; Timing::BUCKETS];
+        h[Timing::bucket(Duration::from_micros(2047))] = 1;
+        h[Timing::bucket(Duration::from_micros(2048))] = 10;
+        assert_eq!(Timing::at_least(&h, Duration::from_millis(2)), 10);
+        assert_eq!(
+            Timing::bucket(Duration::from_secs(1 << 40)),
+            Timing::BUCKETS - 1
+        );
     }
 }

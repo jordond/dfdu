@@ -46,6 +46,8 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
 ] }
+fuser = { version = "0.18.0", default-features = false }
+dut-hangfs = { path = "crates/dut-hangfs" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

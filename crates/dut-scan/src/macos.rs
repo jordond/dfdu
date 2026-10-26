@@ -421,7 +421,7 @@ impl Backend for MacBackend {
         }
     }
 
-    fn open(&self, loc: &PathBuf) -> io::Result<MacStream> {
+    fn open(&self, loc: &PathBuf, _storage: dut_sys::Storage) -> io::Result<MacStream> {
         Ok(MacStream {
             fd: Arc::new(open_dir(loc)?),
             path: Arc::new(loc.clone()),
@@ -453,6 +453,10 @@ impl Backend for MacBackend {
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
         self.portable.mount_class(mount, dev)
     }
+
+    fn mount_storage(&self, mount: u64, dev: u64) -> dut_sys::Storage {
+        self.portable.mount_storage(mount, dev)
+    }
 }
 
 #[cfg(test)]
@@ -467,7 +471,9 @@ mod tests {
         dir: &Path,
         per_block: usize,
     ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b.open(&dir.to_path_buf()).unwrap();
+        let mut s = b
+            .open(&dir.to_path_buf(), dut_sys::Storage::Unknown)
+            .unwrap();
         let mut block = Block::default();
         loop {
             let (mut raw, more) = s.next_raw(per_block, 1 << 20).unwrap();
@@ -536,7 +542,10 @@ mod tests {
         );
         assert_eq!(list(&m, &s, 100).len(), 3001);
         // Below the root, a symlink is not opened as a directory.
-        assert!(m.open(&root.join("sym")).is_err());
+        assert!(
+            m.open(&root.join("sym"), dut_sys::Storage::Unknown)
+                .is_err()
+        );
     }
 
     /// The firmlinks at the top of the system volume (listed in `/usr/share/firmlinks`) are
@@ -575,7 +584,10 @@ mod tests {
         fs::create_dir(&locked).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-        let e = MacBackend::default().open(&locked).err().unwrap();
+        let e = MacBackend::default()
+            .open(&locked, dut_sys::Storage::Unknown)
+            .err()
+            .unwrap();
         assert_eq!(ErrKind::from(&e), ErrKind::PermissionDenied);
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     }

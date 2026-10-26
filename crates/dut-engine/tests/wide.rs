@@ -45,8 +45,8 @@ impl<B: Backend> Backend for SlowReads<B> {
     fn stat_root(&self, loc: &B::Loc) -> io::Result<Meta> {
         self.0.stat_root(loc)
     }
-    fn open(&self, loc: &B::Loc) -> io::Result<Self::Stream> {
-        self.0.open(loc).map(SlowStream)
+    fn open(&self, loc: &B::Loc, storage: dut_sys::Storage) -> io::Result<Self::Stream> {
+        self.0.open(loc, storage).map(SlowStream)
     }
     fn subvolume(&self, loc: &B::Loc) -> io::Result<Option<Subvol>> {
         self.0.subvolume(loc)

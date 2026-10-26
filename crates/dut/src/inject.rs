@@ -39,11 +39,11 @@ impl<B: Backend> Backend for PanicOnSecondOpen<B> {
     fn stat_root(&self, loc: &B::Loc) -> io::Result<Meta> {
         self.inner.stat_root(loc)
     }
-    fn open(&self, loc: &B::Loc) -> io::Result<B::Stream> {
+    fn open(&self, loc: &B::Loc, storage: dut_sys::Storage) -> io::Result<B::Stream> {
         if self.opens.fetch_add(1, SeqCst) == 1 {
             panic!("injected worker panic");
         }
-        self.inner.open(loc)
+        self.inner.open(loc, storage)
     }
     fn subvolume(&self, loc: &B::Loc) -> io::Result<Option<Subvol>> {
         self.inner.subvolume(loc)

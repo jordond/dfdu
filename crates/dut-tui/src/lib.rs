@@ -244,4 +244,6 @@ fn spinners_visible(app: &App) -> bool {
 #[cfg(test)]
 mod blocked;
 #[cfg(test)]
+mod soak;
+#[cfg(test)]
 mod tests;

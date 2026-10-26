@@ -76,7 +76,14 @@ impl Pool {
                     let rep = sh.watchdog_round(&*sk, ck.now());
                     let allowed = sh.allowed_extra_workers(st.target, &rep);
                     st.allowed_extra.store(allowed, SeqCst);
-                    if st.active.load(SeqCst) < st.target + allowed {
+                    // Workers for limited mounts are added at once; replacements for stuck
+                    // workers one per round.
+                    let mut want = st.target + sh.mount_workers();
+                    while st.active.load(SeqCst) < want {
+                        spawn_worker(&st, &sh, &sk, &ck);
+                    }
+                    want += allowed;
+                    if st.active.load(SeqCst) < want {
                         spawn_worker(&st, &sh, &sk, &ck);
                     }
                     thread::sleep(Duration::from_millis(10));
@@ -127,11 +134,15 @@ fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
                     break;
                 }
                 // A replacement worker made the pool larger than allowed: a worker without a
-                // task leaves. The compare-and-swap lets only as many leave as are surplus.
+                // task leaves. The compare-and-swap lets only as many leave as are surplus. A
+                // worker holding a handed-over task (§4.5) stays to run it.
                 if !w.is_running() {
-                    let limit = st.target + st.allowed_extra.load(SeqCst);
+                    let limit = st.target + sh.mount_workers() + st.allowed_extra.load(SeqCst);
                     let a = st.active.load(SeqCst);
-                    if a > limit && st.active.compare_exchange(a, a - 1, SeqCst, SeqCst).is_ok() {
+                    if a > limit
+                        && !w.has_handoff()
+                        && st.active.compare_exchange(a, a - 1, SeqCst, SeqCst).is_ok()
+                    {
                         retired = true;
                         break;
                     }

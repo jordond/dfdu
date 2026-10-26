@@ -13,6 +13,7 @@ use dut_tree::{ErrKind, Kind};
 
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, Raw};
+use crate::gate::{Gate, GateStats};
 use crate::proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
     SkipReason, SubdirRec,
@@ -45,7 +46,18 @@ pub struct Limits {
     /// Chunk tasks a directory may have outstanding (§4.3); 0 never hands a block to a chunk
     /// task. The engine sets it to `max(2, workers)` when it is 0.
     pub chunk_credit: usize,
+    /// The pool's worker count, which the thread policy chose for the scan root's storage. A
+    /// job root's mount whose storage has a limit (below) gets this many permits instead; 0
+    /// gives it its storage's limit. The engine sets it to its worker count when it is 0.
+    pub pool_workers: usize,
+    /// Parts that may run at once on a mount on a spinning disk, and on a network mount (§4.5).
+    /// 0 is no limit. Mounts on other storage have none.
+    pub rotational_parts: usize,
+    pub network_parts: usize,
 }
+
+/// At most this many workers are added to the pool for limited mounts, all mounts together.
+pub const MAX_MOUNT_WORKERS: usize = 16;
 
 impl Default for Limits {
     fn default() -> Self {
@@ -57,6 +69,9 @@ impl Default for Limits {
             flush_age_ns: 20_000_000,
             stall_ns: 10_000_000_000,
             chunk_credit: 0,
+            pool_workers: 0,
+            rotational_parts: 2,
+            network_parts: 4,
         }
     }
 }
@@ -86,7 +101,20 @@ pub struct Task<L> {
     /// Set for a chunk task: one block of the directory to stat (§4.2). Otherwise this is the
     /// directory's listing task.
     chunk: Option<Box<ChunkWork<L>>>,
+    /// The limit of the directory's mount, if it has one (§4.5). Set for a job root once it
+    /// is opened; the root task itself runs without a permit.
+    gate: Option<Arc<TaskGate<L>>>,
+    /// What the directory's mount is stored on, as the backend reported it when the scan
+    /// entered the mount; handed to [`Backend::open`]. A directory inherits its parent's.
+    storage: dut_sys::Storage,
 }
+
+/// A mount's concurrency limit, holding the tasks that wait for a permit.
+pub type TaskGate<L> = Gate<Task<L>>;
+
+/// Storage class and limit of each mount the scan entered, by mount key; the limit is `None`
+/// for a mount without one.
+type Gates<L> = HashMap<(u64, u64), (dut_sys::Storage, Option<Arc<TaskGate<L>>>)>;
 
 impl<L: std::fmt::Debug> std::fmt::Debug for Task<L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -207,6 +235,13 @@ pub struct Outbox<L> {
     tasks: Vec<Task<L>>,
     /// A chunk task is among `tasks`: publish it soon, others may be idle.
     has_chunk_task: bool,
+    /// An own task could not run for its mount's limit: publish it, so it can wait in the
+    /// mount's gate and the tasks under it can be taken.
+    gated_task: bool,
+    /// The gate whose permit the running part holds.
+    permit: Option<Arc<TaskGate<L>>>,
+    /// A task handed over with a permit by the part that released it; runs next (§4.5).
+    handoff: Option<Task<L>>,
 }
 
 impl<L> Default for Outbox<L> {
@@ -218,6 +253,9 @@ impl<L> Default for Outbox<L> {
             done: Vec::new(),
             tasks: Vec::new(),
             has_chunk_task: false,
+            gated_task: false,
+            permit: None,
+            handoff: None,
         }
     }
 }
@@ -321,6 +359,16 @@ pub struct Shared<B: Backend> {
     pub idle: AtomicUsize,
     slots: RwLock<Vec<Arc<WorkerSlot<B::Loc>>>>,
     waker: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Limits by mount key ([`mount_key`]); `None` for mounts without one. Looked up when a
+    /// task for a mount root is created.
+    gates: Mutex<Gates<B::Loc>>,
+    /// Workers the pool adds for limited mounts other than job roots' (§4.5).
+    mount_workers: AtomicUsize,
+}
+
+/// A mount's key in [`Shared::gates`]: its id, or its device when there are no mount ids.
+fn mount_key(mount: u64, dev: u64) -> (u64, u64) {
+    if mount != 0 { (mount, 0) } else { (0, dev) }
 }
 
 impl<B: Backend> Shared<B> {
@@ -342,7 +390,63 @@ impl<B: Backend> Shared<B> {
             idle: AtomicUsize::new(0),
             slots: RwLock::new(Vec::new()),
             waker: Mutex::new(None),
+            gates: Mutex::new(HashMap::new()),
+            mount_workers: AtomicUsize::new(0),
         }
+    }
+
+    /// The storage class and the limit of the mount `(mount, dev)`, created when the scan
+    /// first enters the mount (§4.5): `Limits::rotational_parts` on a spinning disk, `Limits::network_parts` on a
+    /// network mount, none on other storage. The mount of a job root gets the pool's size
+    /// instead; any other limited mount adds its limit to the pool, so its tasks do not take
+    /// workers from the rest of the scan. The backend answers from the mount table and sysfs,
+    /// without touching the mount.
+    fn gate_for(
+        &self,
+        mount: u64,
+        dev: u64,
+        job_root: bool,
+    ) -> (dut_sys::Storage, Option<Arc<TaskGate<B::Loc>>>) {
+        let key = mount_key(mount, dev);
+        let mut gates = self.gates.lock();
+        if let Some(g) = gates.get(&key) {
+            return g.clone();
+        }
+        let storage = self.backend.mount_storage(mount, dev);
+        let class_limit = match storage {
+            dut_sys::Storage::Rotational => self.limits.rotational_parts,
+            dut_sys::Storage::Network => self.limits.network_parts,
+            dut_sys::Storage::Solid | dut_sys::Storage::Unknown => 0,
+        };
+        let limit = match class_limit {
+            0 => 0,
+            _ if job_root && self.limits.pool_workers > 0 => self.limits.pool_workers,
+            l => l,
+        };
+        let gate = (limit > 0).then(|| Arc::new(Gate::new(key.0, key.1, limit)));
+        if gate.is_some() && !job_root {
+            let extra = self.mount_workers.load(SeqCst);
+            self.mount_workers
+                .store((extra + limit).min(MAX_MOUNT_WORKERS), SeqCst);
+        }
+        gates.insert(key, (storage, gate.clone()));
+        (storage, gate)
+    }
+
+    /// Workers the pool adds for limited mounts the scans entered (§4.5).
+    pub fn mount_workers(&self) -> usize {
+        self.mount_workers.load(SeqCst)
+    }
+
+    /// Every mount limit created so far.
+    pub fn gate_stats(&self) -> Vec<GateStats> {
+        let gates: Vec<_> = self
+            .gates
+            .lock()
+            .values()
+            .filter_map(|g| g.1.clone())
+            .collect();
+        gates.iter().map(|g| g.stats()).collect()
     }
 
     /// Called after tasks are published, so idle threads can be woken (real runtime only).
@@ -402,6 +506,8 @@ impl<B: Backend> Shared<B> {
             mount: 0,
             probe_subvol: true,
             chunk: None,
+            gate: None,
+            storage: dut_sys::Storage::Unknown,
         });
         self.wake();
         seq
@@ -468,6 +574,9 @@ impl<B: Backend> Shared<B> {
             self.injector.len(),
             self.priority.len()
         );
+        for g in self.gate_stats() {
+            out += &format!("gate {g:?}\n");
+        }
         for (i, slot) in self.slots.read().iter().enumerate() {
             let cur = slot.current.load(SeqCst);
             let ob = slot.outbox.lock();
@@ -529,6 +638,7 @@ impl<B: Backend> Shared<B> {
             }
         }
         ob.has_chunk_task = false;
+        ob.gated_task = false;
         if !ob.done.is_empty() {
             let mut ab = self.abandoned.lock();
             for c in ob.done.drain(..) {
@@ -549,6 +659,7 @@ impl<B: Backend> Shared<B> {
     /// One watchdog round (§3 rule 6, §5.4, §5.7). Never blocks.
     pub fn watchdog_round(&self, sink: &dyn Sink, now: u64) -> WatchdogReport {
         let mut rep = WatchdogReport::default();
+        let mut requeue = Vec::new();
         for slot in self.slots.read().iter() {
             let since = slot.syscall_since.load(SeqCst);
             let is_stuck = since != 0 && now.saturating_sub(since) > self.limits.stall_ns;
@@ -584,11 +695,27 @@ impl<B: Backend> Shared<B> {
                     force = true;
                 }
             }
+            // A part stuck in a call does not count against its mount's limit (§4.5): its
+            // permit goes back, and a task waiting for one is queued again.
+            if is_stuck
+                && let Some(g) = &ob.permit
+                && let Some(next) = g.revoke()
+            {
+                ob.permit = None;
+                requeue.extend(next);
+            }
             let old =
                 !ob.msgs.is_empty() && now.saturating_sub(ob.oldest) > self.limits.flush_age_ns;
             if force || old || (ob.msgs.is_empty() && !ob.is_empty()) {
                 self.flush_locked(&mut ob, sink, false);
             }
+        }
+        if !requeue.is_empty() {
+            // They were published before they waited, so they go to the queue directly.
+            for t in requeue {
+                self.injector.push(t);
+            }
+            self.wake();
         }
         let seq = self.submitted_seq.load(SeqCst);
         let (out, ab) = self.outstanding();
@@ -742,6 +869,7 @@ impl<B: Backend> Worker<B> {
         let ob = self.slot.outbox.lock();
         ob.bytes >= sh.limits.outbox_bytes
             || ob.msgs.len() >= sh.limits.outbox_msgs
+            || ob.gated_task
             || (sh.idle.load(SeqCst) > 0 && (ob.tasks.len() > 1 || ob.has_chunk_task))
     }
 
@@ -760,6 +888,11 @@ impl<B: Backend> Worker<B> {
     /// Ends the current part: it no longer counts as running, and the next flush reports it
     /// done.
     fn end_part(&self, ob: &mut Outbox<B::Loc>, task: &Task<B::Loc>, part: u32) {
+        // The permit passes to the oldest task waiting for one, which this worker runs next.
+        if let Some(g) = ob.permit.take() {
+            debug_assert!(ob.handoff.is_none());
+            ob.handoff = g.leave();
+        }
         ob.done.push((task.job, task.dir, part));
         self.slot.current.store(NO_TASK, SeqCst);
         self.slot.stall_reported.store(false, SeqCst);
@@ -818,23 +951,74 @@ impl<B: Backend> Worker<B> {
         }
     }
 
+    /// The next task: one handed over with a permit, then the newest own task, then the
+    /// priority and normal queues. A task whose mount is at its limit (§4.5) waits in the
+    /// mount's gate if it was published, or stays on the own stack, published at the next
+    /// flush, if not; either way the worker looks further.
     fn take_task(&self, sh: &Shared<B>) -> Option<Task<B::Loc>> {
-        let set = |t: &Task<B::Loc>| {
+        let set = |ob: &mut Outbox<B::Loc>, t: &Task<B::Loc>, permit: bool| {
             self.slot.current.store(pack(t.job, t.dir), SeqCst);
             let part = t.chunk.as_ref().map_or(LISTING_PART, |c| c.seq + 1);
             self.slot.part.store(part, SeqCst);
+            if permit {
+                ob.permit = t.gate.clone();
+            }
         };
         {
             let mut ob = self.slot.outbox.lock();
-            if let Some(t) = ob.tasks.pop() {
-                set(&t);
+            if let Some(t) = ob.handoff.take() {
+                set(&mut ob, &t, true);
+                return Some(t);
+            }
+            let runnable = ob.tasks.last().map(|t| match &t.gate {
+                None => Some(false),
+                Some(g) => g.try_enter().then_some(true),
+            });
+            match runnable {
+                Some(Some(permit)) => {
+                    let t = ob.tasks.pop().expect("task");
+                    set(&mut ob, &t, permit);
+                    return Some(t);
+                }
+                Some(None) => ob.gated_task = true,
+                None => {}
+            }
+        }
+        loop {
+            let t = steal(&sh.priority).or_else(|| steal(&sh.injector))?;
+            let mut ob = self.slot.outbox.lock();
+            let Some(g) = t.gate.clone() else {
+                set(&mut ob, &t, false);
+                return Some(t);
+            };
+            if let Some(t) = g.enter_or_wait(t) {
+                set(&mut ob, &t, true);
                 return Some(t);
             }
         }
-        let t = steal(&sh.priority).or_else(|| steal(&sh.injector))?;
-        let _ob = self.slot.outbox.lock();
-        set(&t);
-        Some(t)
+    }
+
+    /// A task handed over with a permit is waiting to run here; the worker must not exit.
+    pub fn has_handoff(&self) -> bool {
+        self.slot.outbox.lock().handoff.is_some()
+    }
+
+    /// The location of the task handed over to this worker, for tests.
+    pub fn handoff_loc(&self) -> Option<B::Loc> {
+        self.slot
+            .outbox
+            .lock()
+            .handoff
+            .as_ref()
+            .map(|t| t.loc.clone())
+    }
+
+    /// What the worker runs now, for tests: the task's location, whether it is a job root,
+    /// and whether it holds a permit of its mount's limit.
+    pub fn running_part(&self) -> Option<(B::Loc, bool, bool)> {
+        let r = self.running.as_ref()?;
+        let permit = self.slot.outbox.lock().permit.is_some();
+        Some((r.task.loc.clone(), r.task.is_root, permit))
     }
 
     fn step_inner(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
@@ -903,11 +1087,16 @@ impl<B: Backend> Worker<B> {
                 sh.backend.stat_root(&r.task.loc).and_then(|m| {
                     r.task.dev = m.dev;
                     r.task.mount = m.mount;
+                    (r.task.storage, r.task.gate) = sh.gate_for(m.mount, m.dev, true);
                     r.job.mount_roots.lock().insert((m.dev, m.ino));
-                    sh.backend.open(&r.task.loc).map(|s| (s, Some(m)))
+                    sh.backend
+                        .open(&r.task.loc, r.task.storage)
+                        .map(|s| (s, Some(m)))
                 })
             } else {
-                sh.backend.open(&r.task.loc).map(|s| (s, None))
+                sh.backend
+                    .open(&r.task.loc, r.task.storage)
+                    .map(|s| (s, None))
             };
             // Part of opening, under the same stall watch. A failed probe only loses the record.
             let probe = match &opened {
@@ -1022,6 +1211,8 @@ impl<B: Backend> Worker<B> {
                 mount: r.task.mount,
                 probe_subvol: false,
                 chunk: Some(Box::new(ChunkWork { raw, seq, parts })),
+                gate: r.task.gate.clone(),
+                storage: r.task.storage,
             };
             let mut ob = self.slot.outbox.lock();
             sh.outstanding.fetch_add(1, SeqCst);
@@ -1165,7 +1356,13 @@ impl<B: Backend> Worker<B> {
                     } else {
                         skip
                     };
-                    child_locs.push(loc.map(|l| (l, m.dev, m.mount, m.dev != dir_dev)));
+                    let (storage, gate) = match &loc {
+                        Some(_) if mount_root => sh.gate_for(m.mount, m.dev, false),
+                        Some(_) => (r.task.storage, r.task.gate.clone()),
+                        None => (dut_sys::Storage::Unknown, None),
+                    };
+                    child_locs
+                        .push(loc.map(|l| (l, m.dev, m.mount, m.dev != dir_dev, gate, storage)));
                     subdirs.push(SubdirRec {
                         name: e.name,
                         meta: m,
@@ -1182,7 +1379,7 @@ impl<B: Backend> Worker<B> {
         let first = r.job.next_dir.fetch_add(subdirs.len() as u32, SeqCst);
         let mut tasks = Vec::new();
         for (i, loc) in child_locs.into_iter().enumerate() {
-            if let Some((loc, dev, mount, probe_subvol)) = loc {
+            if let Some((loc, dev, mount, probe_subvol, gate, storage)) = loc {
                 tasks.push(Task {
                     job: r.task.job,
                     dir: DirId(first + i as u32),
@@ -1193,6 +1390,8 @@ impl<B: Backend> Worker<B> {
                     mount,
                     probe_subvol,
                     chunk: None,
+                    gate,
+                    storage,
                 });
             }
         }

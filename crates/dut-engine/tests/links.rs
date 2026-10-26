@@ -78,12 +78,11 @@ fn holds(from: &Timing, to: &Timing) -> String {
     for (k, n) in h.iter_mut().enumerate() {
         *n = to.hold[k] - from.hold[k];
     }
-    let longest = h.iter().rposition(|&n| n > 0).unwrap_or(0);
     format!(
         "{} slices, hold p99 < {:?}, longest < {:?}",
         h.iter().sum::<u64>(),
         Timing::percentile(&h, 0.99),
-        Duration::from_micros(1 << longest)
+        Timing::max(&h)
     )
 }
 

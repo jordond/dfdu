@@ -26,6 +26,9 @@ rustix.workspace = true
 # Test-only hooks (Command::InjectPanic).
 fault-injection = []
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+dut-hangfs.workspace = true
+
 [target.'cfg(loom)'.dev-dependencies]
 loom.workspace = true
 

@@ -26,17 +26,24 @@ pub enum Storage {
 /// The storage behind `path`'s filesystem.
 #[cfg(target_os = "linux")]
 pub fn storage(path: &Path) -> Storage {
-    use rustix::fs::FileType;
-
     let Ok(Some(mount)) = crate::mount_id(path) else {
         return Storage::Unknown;
     };
     let Ok(table) = crate::mount_table() else {
         return Storage::Unknown;
     };
-    let Some(e) = table.iter().find(|e| e.id == mount) else {
-        return Storage::Unknown;
-    };
+    match table.iter().find(|e| e.id == mount) {
+        Some(e) => storage_of_mount(e),
+        None => Storage::Unknown,
+    }
+}
+
+/// The storage behind mount `e`, from the mount table entry and sysfs, without touching the
+/// mount itself (a network mount may not answer).
+#[cfg(target_os = "linux")]
+pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
+    use rustix::fs::FileType;
+
     if crate::classify_fs(&e.fstype) == crate::FsClass::Network {
         return Storage::Network;
     }
@@ -53,6 +60,16 @@ pub fn storage(path: &Path) -> Storage {
 #[cfg(not(target_os = "linux"))]
 pub fn storage(_path: &Path) -> Storage {
     Storage::Unknown
+}
+
+/// Network filesystems are known from the mount table; nothing else is on these systems.
+#[cfg(not(target_os = "linux"))]
+pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
+    if crate::classify_fs(&e.fstype) == crate::FsClass::Network {
+        Storage::Network
+    } else {
+        Storage::Unknown
+    }
 }
 
 /// The storage of block device `major:minor`, from the sysfs tree at `sys`.

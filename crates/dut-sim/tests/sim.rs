@@ -50,6 +50,10 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dut_sim::SimRepor
                 t.measured += r.measured;
                 t.shared_bytes += r.shared_bytes;
                 t.chunk_tasks += r.chunk_tasks;
+                t.gates += r.gates;
+                t.deferred += r.deferred;
+                t.revoked += r.revoked;
+                t.at_limit += r.at_limit;
                 t.max_budget_used = t.max_budget_used.max(r.max_budget_used);
             }
             Err(e) => failures.push(e),
@@ -173,4 +177,26 @@ fn no_chunk_tasks() {
     cfg.limits.chunk_credit = 0;
     let t = run_all("no_chunk_tasks", &cfg, 100);
     assert_eq!(t.chunk_tasks, 0);
+}
+
+/// Many mounts on spinning disks and network storage, all scanned, with small limits and more
+/// workers than they allow (`docs/data-pipeline.md` §4.5): tasks wait for permits, stuck parts
+/// give theirs back, and totals still match.
+#[test]
+fn mount_limits() {
+    let cfg = SimConfig {
+        workers: 5,
+        spec: SpecConfig {
+            mount_per_mille: 300,
+            ..Default::default()
+        },
+        cross_mounts: Some(true),
+        network: Some(true),
+        ..Default::default()
+    };
+    let t = run_all("mount_limits", &cfg, 200);
+    assert!(
+        t.gates > 200 && t.deferred > 1000 && t.revoked > 10 && t.at_limit > 1000,
+        "mount limits not exercised: {t:?}"
+    );
 }

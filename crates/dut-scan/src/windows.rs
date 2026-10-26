@@ -185,7 +185,7 @@ impl Backend for WindowsBackend {
         Ok(Meta::from_windows(&dut_sys::stat_path(&loc.path, true)?))
     }
 
-    fn open(&self, loc: &WinLoc) -> io::Result<WindowsStream> {
+    fn open(&self, loc: &WinLoc, _storage: dut_sys::Storage) -> io::Result<WindowsStream> {
         let handle = dut_sys::open_dir(&loc.path, loc.follow)?;
         let volume = dut_sys::volume_of(handle.as_handle())?;
         Ok(WindowsStream {
@@ -220,6 +220,10 @@ impl Backend for WindowsBackend {
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
         self.portable.mount_class(mount, dev)
     }
+
+    fn mount_storage(&self, mount: u64, dev: u64) -> dut_sys::Storage {
+        self.portable.mount_storage(mount, dev)
+    }
 }
 
 #[cfg(test)]
@@ -230,7 +234,9 @@ mod tests {
 
     /// Every entry of a directory as `(name, meta)`, sorted by name.
     fn list<B: Backend>(b: &B, dir: &Path) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b.open(&b.loc_from_path(dir)).unwrap();
+        let mut s = b
+            .open(&b.loc_from_path(dir), dut_sys::Storage::Unknown)
+            .unwrap();
         let mut block = Block::default();
         // A small block size, so entries are read across several calls.
         loop {
@@ -324,7 +330,9 @@ mod tests {
         assert_eq!(entries[1].0, b"leaf");
         assert_eq!(entries[1].1.unwrap().apparent, 99);
         assert_eq!(entries[0].1.unwrap().kind, Kind::Dir);
-        let mut s = b.open(&b.loc_from_path(&deep)).unwrap();
+        let mut s = b
+            .open(&b.loc_from_path(&deep), dut_sys::Storage::Unknown)
+            .unwrap();
         let mut block = Block::default();
         let (mut raw, _) = s.next_raw(10, 1 << 20).unwrap();
         raw.stat(&mut block).unwrap();
@@ -334,7 +342,7 @@ mod tests {
             .find_map(|e| e.child.clone())
             .expect("dot. is a directory");
         let inner = b
-            .open(&child)
+            .open(&child, dut_sys::Storage::Unknown)
             .unwrap()
             .next_raw(10, 1 << 20)
             .unwrap()

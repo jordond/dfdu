@@ -10,7 +10,7 @@
 mod disks;
 mod storage;
 pub use disks::{Disk, Space, disks};
-pub use storage::{Storage, storage, storage_in};
+pub use storage::{Storage, storage, storage_in, storage_of_mount};
 
 #[cfg(target_os = "linux")]
 mod linux;

@@ -128,6 +128,9 @@ pub fn write_crash_report(dir: &std::path::Path, report: &str) -> Option<PathBuf
 
 #[derive(Clone, Debug)]
 pub struct EngineOptions {
+    /// Worker threads, chosen for the scan root's storage ([`workers_for`]). A scan that enters
+    /// a mount with its own limit (a spinning disk, a network mount) adds that many workers,
+    /// at most [`dut_scan::MAX_MOUNT_WORKERS`] (`docs/data-pipeline.md` §4.5).
     pub workers: usize,
     pub budget_bytes: usize,
     pub limits: Limits,
@@ -197,11 +200,23 @@ pub struct Engine<B: Backend> {
 /// Longest time the applier holds the write lock in one slice (§5.6).
 const SLICE: Duration = Duration::from_millis(1);
 
+/// A slice still holding the lock this long after it started has probably been preempted:
+/// workers then yield their CPUs to it (`dut_scan::late`). The last step of a slice can take a
+/// few hundred µs past [`SLICE`].
+const LATE: Duration = Duration::from_micros(1200);
+
+/// Waiting this long for the lock means the applier was probably woken but not given a CPU:
+/// readers hold the lock for a few ms at most (a UI frame; 5 ms in the soak test's reader).
+const WAIT_LATE: Duration = Duration::from_millis(6);
+
 impl<B: Backend> Engine<B> {
     pub fn start(backend: B, opts: EngineOptions) -> Self {
         let mut limits = opts.limits.clone();
         if limits.chunk_credit == 0 {
             limits.chunk_credit = opts.workers.max(2);
+        }
+        if limits.pool_workers == 0 {
+            limits.pool_workers = opts.workers.max(1);
         }
         let shared = Arc::new(Shared::new(backend, limits));
         let (inbox, inbox_rx, budget) = Inbox::new(opts.budget_bytes);
@@ -422,8 +437,10 @@ fn applier_loop<B: Backend>(
             }
         }
         let asked = Instant::now();
+        dut_scan::late::expect_lock_within(WAIT_LATE);
         let mut g = model.write();
         let started = Instant::now();
+        dut_scan::late::expect_lock_within(LATE);
         let before = g.fingerprint();
         let now = clock.now();
         while let Ok(c) = cmd_rx.try_recv() {
@@ -487,6 +504,7 @@ fn applier_loop<B: Backend>(
         // waiting reader wakes up; with work queued back to back (the end of a scan) the UI
         // then waited 40-55 ms for one frame. A fair unlock hands the lock to the waiting
         // reader.
+        dut_scan::late::clear();
         RwLockWriteGuard::unlock_fair(g);
         for p in outgoing {
             let _ = plans.send(p);

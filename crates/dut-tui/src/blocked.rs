@@ -33,16 +33,16 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 
 /// Writes pass while the gate is open and wait while it is closed.
 #[derive(Default)]
-struct Gate {
-    closed: Mutex<bool>,
+pub(crate) struct Gate {
+    pub(crate) closed: Mutex<bool>,
     opened: Condvar,
     /// A writer is waiting at the closed gate.
-    waiting: AtomicBool,
-    flushes: AtomicU64,
+    pub(crate) waiting: AtomicBool,
+    pub(crate) flushes: AtomicU64,
 }
 
 impl Gate {
-    fn pass(&self) {
+    pub(crate) fn pass(&self) {
         let mut closed = self.closed.lock().unwrap();
         while *closed {
             self.waiting.store(true, SeqCst);
@@ -51,14 +51,14 @@ impl Gate {
         self.waiting.store(false, SeqCst);
     }
 
-    fn set(&self, closed: bool) {
+    pub(crate) fn set(&self, closed: bool) {
         *self.closed.lock().unwrap() = closed;
         self.opened.notify_all();
     }
 }
 
 /// The terminal's output: discarded, after waiting at the gate.
-struct GatedWriter(Arc<Gate>);
+pub(crate) struct GatedWriter(pub(crate) Arc<Gate>);
 
 impl Write for GatedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -116,13 +116,13 @@ impl Backend for Held {
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
         self.inner.stat_root(loc)
     }
-    fn open(&self, loc: &Self::Loc) -> io::Result<Self::Stream> {
+    fn open(&self, loc: &Self::Loc, storage: dut_sys::Storage) -> io::Result<Self::Stream> {
         if self.opens.fetch_add(1, SeqCst) == 1
             && let Some(h) = &self.hold
         {
             h.wait();
         }
-        self.inner.open(loc)
+        self.inner.open(loc, storage)
     }
     fn subvolume(&self, loc: &Self::Loc) -> io::Result<Option<Subvol>> {
         self.inner.subvolume(loc)

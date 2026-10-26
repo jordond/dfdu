@@ -80,7 +80,8 @@ struct ScanArgs {
     /// instead of once.
     #[arg(long)]
     like_du: bool,
-    /// Worker threads.
+    /// Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning
+    /// disks: 2, network: 4) add that many.
     #[arg(long)]
     threads: Option<usize>,
     /// Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does.
@@ -95,8 +96,11 @@ struct ScanArgs {
     #[arg(long)]
     errors: bool,
     /// Abandon directories stalled this many seconds.
-    #[arg(long, default_value_t = 30)]
-    stall_abandon: u64,
+    #[arg(long, default_value_t = 30.0, value_parser = seconds)]
+    stall_abandon: f64,
+    /// Report a directory as stalled after one call on it took this many seconds (tests).
+    #[arg(long, default_value_t = 10.0, value_parser = seconds, hide = true)]
+    stall_after: f64,
     /// Print pipeline counters and applier timing (lock hold and wait) after the scan.
     #[arg(long, hide = true)]
     debug_stats: bool,
@@ -110,6 +114,14 @@ struct ScanArgs {
 enum BackendArg {
     Native,
     Portable,
+}
+
+/// A non-negative number of seconds, at most a year.
+fn seconds(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(v) if (0.0..=31_536_000.0).contains(&v) => Ok(v),
+        _ => Err(format!("`{s}` is not a number of seconds")),
+    }
 }
 
 /// `println!` that ends the process quietly when stdout is closed (`dut scan | head`), instead
@@ -177,7 +189,8 @@ fn main() -> ExitCode {
                     mounts: cli.mounts,
                     bytes: false,
                     errors: false,
-                    stall_abandon: 30,
+                    stall_abandon: 30.0,
+                    stall_after: 10.0,
                     debug_stats: false,
                     backend: BackendArg::Native,
                 });
@@ -253,9 +266,10 @@ fn disks() -> ExitCode {
 
 fn scan(args: ScanArgs) -> ExitCode {
     let mut opts = EngineOptions {
-        auto_abandon: Some(Duration::from_secs(args.stall_abandon)),
+        auto_abandon: Some(Duration::from_secs_f64(args.stall_abandon)),
         ..Default::default()
     };
+    opts.limits.stall_ns = Duration::from_secs_f64(args.stall_after).as_nanos() as u64;
     let storage = dut_sys::storage(&args.path);
     opts.workers = args
         .threads
@@ -334,6 +348,15 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
             ExitCode::SUCCESS
         }
     });
+    if debug_stats {
+        for g in engine.scanner().gate_stats() {
+            eprintln!(
+                "mount limit: mount {} (dev {}): {} at once, at most {} were; {} tasks waited, \
+                 {} permits taken back from stuck calls",
+                g.mount, g.dev, g.limit, g.peak, g.deferred, g.revoked
+            );
+        }
+    }
     engine.shutdown(Duration::from_millis(500));
     code
 }
@@ -534,21 +557,19 @@ fn print_debug_stats(m: &Model) {
     );
     let locked = Duration::from_nanos(t.locked_ns);
     let rate = s.entries as f64 / locked.as_secs_f64().max(1e-9);
-    let max = |h: &[u64; Timing::BUCKETS]| {
-        h.iter()
-            .rposition(|&n| n > 0)
-            .map_or(Duration::ZERO, |k| Duration::from_micros(1 << k))
-    };
+    let long = Timing::at_least(&t.hold, Duration::from_millis(2));
     eprintln!(
         "applier: {:.0} ms holding the write lock in {} slices, {:.2}M entries/s; hold p50 < {:?}, \
-         p99 < {:?}, max < {:?}; wait for the lock p99 < {:?}, max < {:?}",
+         p99 < {:?}, max < {:?}, {long} slices ({:.2}%) over 2 ms; wait for the lock p99 < {:?}, \
+         max < {:?}",
         locked.as_secs_f64() * 1000.0,
         t.slices,
         rate / 1e6,
         Timing::percentile(&t.hold, 0.5),
         Timing::percentile(&t.hold, 0.99),
-        max(&t.hold),
+        Timing::max(&t.hold),
+        long as f64 * 100.0 / t.slices.max(1) as f64,
         Timing::percentile(&t.wait, 0.99),
-        max(&t.wait),
+        Timing::max(&t.wait),
     );
 }

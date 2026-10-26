@@ -38,13 +38,17 @@ const PIECE: usize = 2048;
 #[derive(Default, Debug)]
 pub struct LinuxBackend {
     portable: PortableBackend,
+    /// Whether directories on a mount whose storage is not known are read in inode order: the
+    /// scan root's storage.
     inode_order: bool,
 }
 
 impl LinuxBackend {
-    /// The backend for data on `storage`: on a spinning disk each block of entries is
-    /// `statx`ed in inode order, which follows the inode tables' order on the disk instead of
-    /// seeking back and forth in name-hash order.
+    /// The backend for a scan on `storage`. A directory's entries are `statx`ed in inode
+    /// order on a spinning disk, which follows the inode tables' order on the disk instead of
+    /// seeking back and forth in name-hash order, and in directory order otherwise. The order
+    /// follows the storage of the directory's own mount, which the scanner gives to
+    /// [`Backend::open`]; `storage` decides only for a mount whose storage is not known.
     pub fn for_storage(storage: dut_sys::Storage) -> Self {
         LinuxBackend {
             portable: PortableBackend::default(),
@@ -263,14 +267,19 @@ impl Backend for LinuxBackend {
         }
     }
 
-    fn open(&self, loc: &PathBuf) -> io::Result<LinuxStream> {
+    fn open(&self, loc: &PathBuf, storage: dut_sys::Storage) -> io::Result<LinuxStream> {
+        let inode_order = match storage {
+            dut_sys::Storage::Rotational => true,
+            dut_sys::Storage::Solid | dut_sys::Storage::Network => false,
+            dut_sys::Storage::Unknown => self.inode_order,
+        };
         Ok(LinuxStream {
             fd: Arc::new(open_dir(loc)?),
             path: Arc::new(loc.clone()),
             buf: Vec::new(),
             pending_err: None,
             done: false,
-            inode_order: self.inode_order,
+            inode_order,
         })
     }
 
@@ -293,6 +302,10 @@ impl Backend for LinuxBackend {
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
         self.portable.mount_class(mount, dev)
     }
+
+    fn mount_storage(&self, mount: u64, dev: u64) -> dut_sys::Storage {
+        self.portable.mount_storage(mount, dev)
+    }
 }
 
 #[cfg(test)]
@@ -301,8 +314,12 @@ mod tests {
     use std::fs;
 
     /// Every entry of a directory as `(name, meta)`, sorted by name.
-    fn list<B: Backend<Loc = PathBuf>>(b: &B, dir: &Path) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b.open(&dir.to_path_buf()).unwrap();
+    fn list<B: Backend<Loc = PathBuf>>(
+        b: &B,
+        dir: &Path,
+        storage: dut_sys::Storage,
+    ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
+        let mut s = b.open(&dir.to_path_buf(), storage).unwrap();
         let mut block = Block::default();
         // A small block size, so entries are read across several calls (and seeks).
         loop {
@@ -333,13 +350,15 @@ mod tests {
         std::os::unix::fs::symlink("sub", root.join("sym")).unwrap();
         std::os::unix::fs::symlink("nowhere", root.join("dangling")).unwrap();
         fs::write(root.join(OsStr::from_bytes(b"bad-\xff")), b"x").unwrap();
-        let ours = list(&LinuxBackend::default(), root);
-        let theirs = list(&PortableBackend::default(), root);
+        let solid = dut_sys::Storage::Solid;
+        let ours = list(&LinuxBackend::default(), root, solid);
+        let theirs = list(&PortableBackend::default(), root, solid);
         assert_eq!(ours.len(), 24);
         assert_eq!(ours, theirs);
         let hdd = list(
             &LinuxBackend::for_storage(dut_sys::Storage::Rotational),
             root,
+            dut_sys::Storage::Rotational,
         );
         assert_eq!(hdd, theirs);
         let (l, p) = (LinuxBackend::default(), PortableBackend::default());
@@ -348,6 +367,58 @@ mod tests {
         // A symlink given as the root is followed.
         let s = root.join("sym");
         assert_eq!(l.stat_root(&s).unwrap(), p.stat_root(&s).unwrap());
+    }
+
+    /// Inode numbers of a directory's entries in the order one block `stat`s them.
+    fn stat_order(b: &LinuxBackend, dir: &Path, storage: dut_sys::Storage) -> Vec<u64> {
+        let mut s = b.open(&dir.to_path_buf(), storage).unwrap();
+        let mut block = Block::default();
+        let (mut raw, more) = s.next_raw(1 << 20, 1 << 20).unwrap();
+        assert!(!more);
+        raw.stat(&mut block).unwrap();
+        block.entries.iter().map(|e| e.meta.unwrap().ino).collect()
+    }
+
+    /// The stat order follows the storage of the directory's mount, which the scanner gives
+    /// to `open`, whatever the storage the backend was set up for (the scan root's).
+    #[test]
+    fn stat_order_follows_the_storage_of_the_mount() {
+        use dut_sys::Storage::{Network, Rotational, Solid, Unknown};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for i in 0..200 {
+            fs::write(root.join(format!("f{}", (i * 37) % 200)), b"x").unwrap();
+        }
+        // Directory order, which a spinning disk's order is told apart from.
+        let dir_order: Vec<u64> = {
+            use std::os::unix::fs::DirEntryExt;
+            fs::read_dir(root)
+                .unwrap()
+                .map(|e| e.unwrap().ino())
+                .collect()
+        };
+        let ascending = |v: &[u64]| v.windows(2).all(|w| w[0] < w[1]);
+        if ascending(&dir_order) {
+            // A filesystem that lists in inode order (btrfs, say): the orders are the same.
+            eprintln!("skipped: the directory lists in inode order here");
+            return;
+        }
+        for root_storage in [Solid, Rotational, Unknown] {
+            let b = LinuxBackend::for_storage(root_storage);
+            // An HDD mount: inode order. An SSD (or network) mount: directory order.
+            assert!(
+                ascending(&stat_order(&b, root, Rotational)),
+                "{root_storage:?}"
+            );
+            for other in [Solid, Network] {
+                assert_eq!(stat_order(&b, root, other), dir_order, "{root_storage:?}");
+            }
+        }
+        // A mount of unknown storage is read as the scan root's is.
+        let hdd_root = LinuxBackend::for_storage(Rotational);
+        assert!(ascending(&stat_order(&hdd_root, root, Unknown)));
+        let ssd_root = LinuxBackend::for_storage(Solid);
+        assert_eq!(stat_order(&ssd_root, root, Unknown), dir_order);
     }
 
     #[test]
@@ -372,7 +443,7 @@ mod tests {
         rustix::io::write(&f, &[7u8; 99]).unwrap();
         assert!(deep.as_os_str().len() > 4096);
         let b = LinuxBackend::default();
-        let entries = list(&b, &deep);
+        let entries = list(&b, &deep, dut_sys::Storage::Unknown);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1.unwrap().apparent, 99);
         let root = b.stat_root(&deep).unwrap();

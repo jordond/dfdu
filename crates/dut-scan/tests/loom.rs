@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64 as StdAtomicU64, AtomicUsize as StdAtomicUsize
 use dut_scan::sync::Sleepers;
 use dut_scan::{
     Backend, Batch, Block, Budget, Clock, DirId, DirStream, JobId, JobOptions, Limits,
-    ListingStatus, Raw, RawBlock, ScanMsg, Shared, Sink, StepResult, Worker,
+    ListingStatus, Raw, RawBlock, ScanMsg, Shared, Sink, StepResult, Storage, Worker,
 };
 use dut_tree::{Kind, Meta};
 use loom::thread;
@@ -33,33 +33,70 @@ enum E {
     Bad,
 }
 
+/// The device of a mount on a spinning disk: [`Mem::mount_storage`] says so.
+const SPINNING: u64 = 2;
+
 /// Directories by index, 0 being the root. `stuck` makes the first `open` of a directory
-/// report "not ready" that many times, like a call that hangs and then returns.
+/// report "not ready" that many times, like a call that hangs and then returns. `devs` puts
+/// directories on other devices (mounts); calls on [`SPINNING`] directories are counted in
+/// `calls`.
 struct Mem {
     dirs: Vec<Vec<E>>,
     stuck: HashMap<usize, StdAtomicUsize>,
+    calls: Arc<Calls>,
+}
+
+/// Calls in progress on the spinning disk, and the most seen at once.
+struct Calls {
+    devs: Vec<u64>,
+    active: loom::sync::atomic::AtomicUsize,
+    max: StdAtomicUsize,
+}
+
+impl Calls {
+    /// Runs `f` as a call on directory `d`.
+    fn call<R>(&self, d: usize, f: impl FnOnce() -> R) -> R {
+        if self.devs[d] != SPINNING {
+            return f();
+        }
+        let n = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max.fetch_max(n, Ordering::Relaxed);
+        let r = f();
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        r
+    }
 }
 
 impl Mem {
     fn new(dirs: Vec<Vec<E>>) -> Self {
+        let n = dirs.len();
         Mem {
             dirs,
             stuck: HashMap::new(),
+            calls: Arc::new(Calls {
+                devs: vec![1; n],
+                active: loom::sync::atomic::AtomicUsize::new(0),
+                max: StdAtomicUsize::new(0),
+            }),
         }
     }
     fn stuck(mut self, dir: usize, times: usize) -> Self {
         self.stuck.insert(dir, StdAtomicUsize::new(times));
         self
     }
+    fn devs(mut self, devs: &[u64]) -> Self {
+        Arc::get_mut(&mut self.calls).expect("not shared yet").devs = devs.to_vec();
+        self
+    }
 }
 
-fn meta(kind: Kind, ino: u64) -> Meta {
+fn meta(kind: Kind, ino: u64, dev: u64) -> Meta {
     Meta {
         kind,
         apparent: 1,
         alloc: 1,
         mtime: 0,
-        dev: 1,
+        dev,
         ino,
         nlink: 1,
         mount: 0,
@@ -67,45 +104,62 @@ fn meta(kind: Kind, ino: u64) -> Meta {
 }
 
 struct MemStream {
+    dir: usize,
     entries: Vec<E>,
     pos: usize,
+    calls: Arc<Calls>,
 }
 
-struct MemRaw(Vec<E>);
+struct MemRaw {
+    dir: usize,
+    entries: Vec<E>,
+    calls: Arc<Calls>,
+}
 
 impl RawBlock<usize> for MemRaw {
     fn len(&self) -> usize {
-        self.0.len()
+        self.entries.len()
     }
     fn stat(&mut self, out: &mut Block<usize>) -> io::Result<()> {
-        if self.0.iter().any(|e| matches!(e, E::Bad)) {
-            return Err(io::Error::other("stat failed"));
-        }
-        for (i, e) in self.0.drain(..).enumerate() {
-            match e {
-                E::D(d) => out.push(
-                    format!("d{d}").as_bytes(),
-                    Ok(meta(Kind::Dir, d as u64)),
-                    Some(d),
-                ),
-                _ => out.push(
-                    format!("f{i}").as_bytes(),
-                    Ok(meta(Kind::File, 1000 + i as u64)),
-                    None,
-                ),
+        let calls = self.calls.clone();
+        calls.call(self.dir, || {
+            if self.entries.iter().any(|e| matches!(e, E::Bad)) {
+                return Err(io::Error::other("stat failed"));
             }
-        }
-        Ok(())
+            let dev = self.calls.devs[self.dir];
+            for (i, e) in self.entries.drain(..).enumerate() {
+                match e {
+                    E::D(d) => out.push(
+                        format!("d{d}").as_bytes(),
+                        Ok(meta(Kind::Dir, d as u64, self.calls.devs[d])),
+                        Some(d),
+                    ),
+                    _ => out.push(
+                        format!("f{i}").as_bytes(),
+                        Ok(meta(Kind::File, 1000 + i as u64, dev)),
+                        None,
+                    ),
+                }
+            }
+            Ok(())
+        })
     }
 }
 
 impl DirStream for MemStream {
     type Loc = usize;
     fn next_raw(&mut self, max: usize, _: usize) -> io::Result<(Raw<usize>, bool)> {
-        let end = (self.pos + max).min(self.entries.len());
-        let raw = self.entries[self.pos..end].to_vec();
-        self.pos = end;
-        Ok((Box::new(MemRaw(raw)), self.pos < self.entries.len()))
+        let calls = self.calls.clone();
+        calls.call(self.dir, || {
+            let end = (self.pos + max).min(self.entries.len());
+            let raw = MemRaw {
+                dir: self.dir,
+                entries: self.entries[self.pos..end].to_vec(),
+                calls: self.calls.clone(),
+            };
+            self.pos = end;
+            Ok((Box::new(raw) as Raw<usize>, self.pos < self.entries.len()))
+        })
     }
 }
 
@@ -116,19 +170,30 @@ impl Backend for Mem {
         0
     }
     fn stat_root(&self, _: &usize) -> io::Result<Meta> {
-        Ok(meta(Kind::Dir, 0))
+        Ok(meta(Kind::Dir, 0, self.calls.devs[0]))
     }
-    fn open(&self, d: &usize) -> io::Result<MemStream> {
-        if let Some(n) = self.stuck.get(d)
-            && n.load(Ordering::Relaxed) > 0
-        {
-            n.fetch_sub(1, Ordering::Relaxed);
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-        Ok(MemStream {
-            entries: self.dirs[*d].clone(),
-            pos: 0,
+    fn open(&self, d: &usize, _storage: Storage) -> io::Result<MemStream> {
+        self.calls.call(*d, || {
+            if let Some(n) = self.stuck.get(d)
+                && n.load(Ordering::Relaxed) > 0
+            {
+                n.fetch_sub(1, Ordering::Relaxed);
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            Ok(MemStream {
+                dir: *d,
+                entries: self.dirs[*d].clone(),
+                pos: 0,
+                calls: self.calls.clone(),
+            })
         })
+    }
+    fn mount_storage(&self, _mount: u64, dev: u64) -> Storage {
+        if dev == SPINNING {
+            Storage::Rotational
+        } else {
+            Storage::Unknown
+        }
     }
 }
 
@@ -205,6 +270,7 @@ fn limits(block: usize, credit: usize, outbox_msgs: usize) -> Limits {
         flush_age_ns: 0,
         stall_ns: STALL_NS,
         chunk_credit: credit,
+        ..Limits::default()
     }
 }
 
@@ -647,5 +713,119 @@ fn idle_worker_wake_is_not_lost() {
         });
         sh.start_job(JOB, Path::new("/"), JobOptions::default());
         t.join().unwrap();
+    });
+}
+
+/// Directories 1-3 on the spinning disk: `d1` is a mount root.
+const DEVS: [u64; 4] = [1, SPINNING, SPINNING, SPINNING];
+
+/// A scan entering the spinning-disk mount `d1`, limited to one part at a time.
+fn spinning_mount(mem: Mem, outbox_msgs: usize) -> Arc<Shared<Mem>> {
+    let sh = Arc::new(Shared::new(
+        mem,
+        Limits {
+            rotational_parts: 1,
+            ..limits(8, 0, outbox_msgs)
+        },
+    ));
+    let opts = JobOptions {
+        cross_mounts: true,
+        ..JobOptions::default()
+    };
+    sh.start_job(JOB, Path::new("/"), opts);
+    sh
+}
+
+/// Mount limit (§4.5): two workers and the watchdog scan a root whose subdirectory `d1` is a
+/// mount on a spinning disk limited to one part, with two subdirectories of its own. A worker
+/// that takes a task of the mount while the other holds its permit leaves it waiting in the
+/// gate; the part that ends hands its permit to it. Calls on the mount never overlap, every
+/// directory closes once, and the gate ends with no permit held and nothing waiting.
+#[test]
+fn mount_limit_waits_and_hands_over() {
+    model("mount_limit_waits_and_hands_over", Some(3), || {
+        let mem = Mem::new(vec![
+            vec![E::D(1)],
+            vec![E::D(2), E::D(3)],
+            vec![E::F],
+            vec![E::F],
+        ])
+        .devs(&DEVS);
+        let calls = mem.calls.clone();
+        let sh = spinning_mount(mem, 1);
+        let log = Arc::new(Log::default());
+        let mut ws: Vec<_> = (0..2).map(|_| Worker::new(&sh, true)).collect();
+        let hs: Vec<_> = ws
+            .drain(..)
+            .map(|mut w| {
+                let (sh, log) = (sh.clone(), log.clone());
+                thread::spawn(move || {
+                    run(&mut w, &sh, &log, &Clk::new(0));
+                    w
+                })
+            })
+            .collect();
+        sh.watchdog_round(&*log, NOW);
+        let mut ws: Vec<_> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+        drain(&mut ws, &sh, &log);
+        let msgs = log.take();
+        let s = check(&msgs, &[]);
+        assert_eq!(s.closes.len(), 4, "{msgs:?}");
+        assert!(s.quiescent >= 1);
+        assert_eq!(sh.outstanding(), (0, 0));
+        assert!(calls.max.load(Ordering::Relaxed) <= 1, "calls overlapped");
+        let g = &sh.gate_stats()[0];
+        assert_eq!((g.limit, g.running, g.pending), (1, 0, 0), "{g:?}");
+    });
+}
+
+/// A stuck part gives its permit back (§4.5). Worker A holds the permit of a mount limited to
+/// one part and is stuck opening `d2`; `d3` waits in the gate, taken by worker B. Then the
+/// watchdog, A returning from its call and B race: the watchdog takes A's permit back and
+/// requeues `d3`, or A ends `d2` first and hands its permit to `d3`. Either way `d3` runs once,
+/// each directory closes once, and the gate ends with no permit held and nothing waiting.
+#[test]
+fn stuck_part_gives_back_its_permit() {
+    model("stuck_part_gives_back_its_permit", Some(3), || {
+        let mem = Mem::new(vec![
+            vec![E::D(1)],
+            vec![E::D(2), E::D(3)],
+            vec![E::F],
+            vec![E::F],
+        ])
+        .devs(&DEVS)
+        .stuck(2, 1);
+        let sh = spinning_mount(mem, 1000);
+        let log = Arc::new(Log::default());
+        let mut a = Worker::new(&sh, true);
+        let mut b = Worker::new(&sh, true);
+        // A lists the root and `d1` with large outbox limits, so `d2` and `d3` stay on its own
+        // stack, then takes `d2` and stops in the stuck call; every reading of its clock is old.
+        let old = Clk::new(u64::MAX);
+        while a.step(&sh, &*log, &old) != StepResult::Blocked {}
+        a.flush(&sh, &*log);
+        // B takes `d3` from the queue and leaves it waiting for A's permit.
+        assert_eq!(b.step(&sh, &*log, &Clk::new(0)), StepResult::Idle);
+        assert!(!b.is_running());
+        assert_eq!(sh.gate_stats()[0].pending, 1);
+        let (sh1, log1) = (sh.clone(), log.clone());
+        let ta = thread::spawn(move || {
+            run(&mut a, &sh1, &log1, &Clk::new(u64::MAX));
+            a
+        });
+        let (sh2, log2) = (sh.clone(), log.clone());
+        let tb = thread::spawn(move || {
+            run(&mut b, &sh2, &log2, &Clk::new(0));
+            b
+        });
+        sh.watchdog_round(&*log, NOW);
+        let mut ws = vec![ta.join().unwrap(), tb.join().unwrap()];
+        drain(&mut ws, &sh, &log);
+        let msgs = log.take();
+        let s = check(&msgs, &[]);
+        assert_eq!(s.closes.len(), 4, "{msgs:?}");
+        assert_eq!(sh.outstanding(), (0, 0));
+        let g = &sh.gate_stats()[0];
+        assert_eq!((g.running, g.pending), (0, 0), "{g:?}");
     });
 }

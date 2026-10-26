@@ -39,6 +39,7 @@ impl<L> Default for Block<L> {
 
 impl<L> Block<L> {
     pub fn push(&mut self, name: &[u8], meta: Result<Meta, ErrKind>, child: Option<L>) {
+        crate::late::yield_if_applier_late(self.entries.len());
         // No filesystem allows a name this long; a truncated name would not convert back to an
         // OsStr, so record the entry under a placeholder instead.
         let (name, meta) = if name.len() > u16::MAX as usize {
@@ -109,7 +110,11 @@ pub trait Backend: Send + Sync + 'static {
     fn loc_from_path(&self, path: &Path) -> Self::Loc;
     /// Stat of a job root, following a symlink given as the root.
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta>;
-    fn open(&self, loc: &Self::Loc) -> io::Result<Self::Stream>;
+    /// Opens a directory for listing. `storage` is what the directory's mount is stored on
+    /// ([`Backend::mount_storage`], read once when the scan enters the mount, `Unknown` when
+    /// not known), so a backend can read the directory in the order that suits it (inode order
+    /// on a spinning disk). A backend that has no use for it ignores it.
+    fn open(&self, loc: &Self::Loc, storage: dut_sys::Storage) -> io::Result<Self::Stream>;
     /// The subvolume record if `loc` is a btrfs subvolume root. Called for job roots and for
     /// directories whose `dev` differs from their parent's.
     fn subvolume(&self, _loc: &Self::Loc) -> io::Result<Option<Subvol>> {
@@ -135,6 +140,13 @@ pub trait Backend: Send + Sync + 'static {
     /// device `dev` when there is no id. `None` when not known.
     fn mount_class(&self, _mount: u64, _dev: u64) -> Option<FsClass> {
         None
+    }
+    /// What a mount's data is stored on ([`dut_sys::storage`]), for its concurrency limit
+    /// (`docs/data-pipeline.md` §4.5): by `mount` id, or by device `dev` when there is no id.
+    /// Answered from the mount table and sysfs, without touching the mount. Called once per
+    /// mount.
+    fn mount_storage(&self, _mount: u64, _dev: u64) -> dut_sys::Storage {
+        dut_sys::Storage::Unknown
     }
 }
 
@@ -316,7 +328,7 @@ impl Backend for PortableBackend {
         Ok(m)
     }
 
-    fn open(&self, loc: &PathBuf) -> io::Result<PortableStream> {
+    fn open(&self, loc: &PathBuf, _storage: dut_sys::Storage) -> io::Result<PortableStream> {
         Ok(PortableStream {
             iter: fs::read_dir(loc)?,
             pending_err: None,
@@ -342,6 +354,20 @@ impl Backend for PortableBackend {
             *c = fresh;
         }
         c.get(mount, dev)
+    }
+
+    fn mount_storage(&self, mount: u64, dev: u64) -> dut_sys::Storage {
+        let Ok(table) = dut_sys::mount_table() else {
+            return dut_sys::Storage::Unknown;
+        };
+        let entry = table.iter().find(|e| {
+            if mount != 0 {
+                e.id == mount
+            } else {
+                e.st_dev() == dev
+            }
+        });
+        entry.map_or(dut_sys::Storage::Unknown, dut_sys::storage_of_mount)
     }
 
     fn shares_extents(&self, loc: &PathBuf) -> bool {

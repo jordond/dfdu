@@ -9,6 +9,8 @@
 
 mod backend;
 mod budget;
+mod gate;
+pub mod late;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -23,7 +25,8 @@ mod windows;
 
 pub use backend::{Backend, Block, BlockEntry, DirStream, PortableBackend, Raw, RawBlock};
 pub use budget::Budget;
-pub use dut_sys::FsClass;
+pub use dut_sys::{FsClass, Storage};
+pub use gate::GateStats;
 #[cfg(target_os = "linux")]
 pub use linux::{LinuxBackend, LinuxStream};
 #[cfg(target_os = "macos")]
@@ -58,6 +61,6 @@ pub use proto::{
     ScanMsg, SkipReason, SubdirRec,
 };
 pub use shared::{
-    Clock, JobOptions, Limits, Outbox, Shared, Sink, StepResult, Task, WatchdogReport, Worker,
-    WorkerSlot, panic_message,
+    Clock, JobOptions, Limits, MAX_MOUNT_WORKERS, Outbox, Shared, Sink, StepResult, Task, TaskGate,
+    WatchdogReport, Worker, WorkerSlot, panic_message,
 };

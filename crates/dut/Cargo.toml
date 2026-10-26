@@ -24,3 +24,6 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["pty", "termios"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+dut-hangfs.workspace = true
