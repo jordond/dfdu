@@ -6,6 +6,8 @@
 
 mod app;
 mod order;
+mod picker;
+mod problems;
 mod snapshot;
 mod theme;
 mod view;
@@ -21,30 +23,29 @@ use dut_scan::{DirId, JobId, JobOptions, PortableBackend};
 use ratatui::crossterm::event::{self, Event};
 
 pub use app::{App, Effect, Overlay};
+pub use picker::{DISK_TIMEOUT, Picked, Picker};
+pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
 pub use snapshot::{SizeMode, Snapshot, Target, subvol_label};
 pub use theme::{Theme, human};
 
 /// Fastest redraw rate for scan data (ncdu's default refresh is 10 per second).
 const DATA_FRAME: Duration = Duration::from_millis(100);
+/// Most entries the error list shows.
+const ERROR_LIST_MAX: usize = 10_000;
 /// Longest sleep when nothing is going on.
 const IDLE: Duration = Duration::from_secs(3600);
 
 pub struct RunOptions {
-    pub path: PathBuf,
-    pub cross_mounts: bool,
+    /// Directory to browse; `None` shows the disk picker first.
+    pub path: Option<PathBuf>,
+    /// Options of the scan (which mounts it descends into).
+    pub job: JobOptions,
     pub engine: EngineOptions,
 }
 
-/// Opens the browser on `opts.path` and returns when the user quits.
+/// Opens the browser on `opts.path` (or a disk chosen in the picker) and returns when the user
+/// quits.
 pub fn run(opts: RunOptions) -> io::Result<()> {
-    let engine = Engine::start(PortableBackend, opts.engine);
-    engine.send(Command::Scan {
-        path: opts.path,
-        opts: JobOptions {
-            cross_mounts: opts.cross_mounts,
-            ..Default::default()
-        },
-    });
     // Sets a panic hook that restores the terminal before the panic message is printed.
     let mut terminal = ratatui::try_init()?;
     // try_init installed a hook that restores the terminal on panic. Panic hooks also run for
@@ -60,6 +61,25 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             restore(info);
         }
     }));
+    let path = match opts.path {
+        Some(p) => p,
+        None => match picker::pick(&mut terminal, &Theme::from_env()) {
+            Ok(picker::Picked::Scan(p)) => p,
+            Ok(picker::Picked::Quit) => {
+                ratatui::restore();
+                return Ok(());
+            }
+            Err(e) => {
+                ratatui::restore();
+                return Err(e);
+            }
+        },
+    };
+    let engine = Engine::start(PortableBackend::default(), opts.engine);
+    engine.send(Command::Scan {
+        path,
+        opts: opts.job,
+    });
     let result = event_loop(&mut terminal, &engine);
     ratatui::restore();
     engine.shutdown(Duration::from_millis(200));
@@ -137,6 +157,13 @@ fn event_loop(
                     for fx in app.key(k, Instant::now()) {
                         match fx {
                             Effect::Send(cmd) => engine.send(cmd),
+                            Effect::ShowErrors => {
+                                let list = engine.read(|m| match m.tree.roots().next() {
+                                    Some(root) => errors(&m.tree, root, ERROR_LIST_MAX),
+                                    None => ErrorList::default(),
+                                });
+                                app.show_errors(list);
+                            }
                         }
                     }
                     input_dirty = true;

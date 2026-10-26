@@ -11,6 +11,7 @@ use dut_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::order::{Order, SortKey, SortSpec};
+use crate::problems::ErrorList;
 use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
 use crate::theme::Theme;
 
@@ -22,12 +23,19 @@ const MIN_SORT_INTERVAL: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub enum Effect {
     Send(Command),
+    /// Read the error list from the engine and pass it to [`App::show_errors`].
+    ShowErrors,
 }
 
 #[derive(Clone, Debug)]
 pub enum Overlay {
     None,
     Help,
+    /// What could not be read, with a cursor.
+    Errors {
+        list: ErrorList,
+        cursor: usize,
+    },
     ConfirmDelete {
         node: NodeRef,
         name: String,
@@ -399,6 +407,34 @@ impl App {
         });
     }
 
+    /// Opens the error list read by the run loop for [`Effect::ShowErrors`].
+    pub fn show_errors(&mut self, list: ErrorList) {
+        self.overlay = Overlay::Errors { list, cursor: 0 };
+    }
+
+    /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
+    fn go_to(&mut self, path: &std::path::Path, root: &std::path::Path) {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        if path == root {
+            return;
+        }
+        self.save_cursor();
+        self.target = Target {
+            node: None,
+            path: parent.to_path_buf(),
+            ident: None,
+        };
+        self.moved = true;
+        self.scroll = 0;
+        self.selected = Some(Selection {
+            node: None,
+            name: dut_tree::name_bytes(name).into_owned(),
+            dev_ino: (0, 0),
+        });
+    }
+
     /// Handles one key. Returns effects for the run loop.
     fn set_typed(&mut self, t: String) {
         if let Overlay::ConfirmDelete { typed, .. } = &mut self.overlay {
@@ -419,6 +455,34 @@ impl App {
         match &self.overlay {
             Overlay::Help => {
                 self.overlay = Overlay::None;
+                return fx;
+            }
+            Overlay::Errors { list, cursor } => {
+                let (n, page) = (list.items.len(), self.list_height.max(1));
+                let cursor = *cursor;
+                let next = match k.code {
+                    KeyCode::Up | KeyCode::Char('k') => cursor.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => cursor + 1,
+                    KeyCode::PageUp => cursor.saturating_sub(page),
+                    KeyCode::PageDown => cursor + page,
+                    KeyCode::Home | KeyCode::Char('g') => 0,
+                    KeyCode::End | KeyCode::Char('G') => n,
+                    KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                        if let Some(e) = list.items.get(cursor) {
+                            let (path, root) = (e.path.clone(), list.root.clone());
+                            self.overlay = Overlay::None;
+                            self.go_to(&path, &root);
+                        }
+                        return fx;
+                    }
+                    _ => {
+                        self.overlay = Overlay::None;
+                        return fx;
+                    }
+                };
+                if let Overlay::Errors { cursor, .. } = &mut self.overlay {
+                    *cursor = next.min(n.saturating_sub(1));
+                }
                 return fx;
             }
             Overlay::ConfirmDelete {
@@ -558,6 +622,7 @@ impl App {
                 }
             }
             KeyCode::Char('?') => self.overlay = Overlay::Help,
+            KeyCode::Char('!') => fx.push(Effect::ShowErrors),
             KeyCode::Esc => self.overlay = Overlay::None,
             _ => {}
         }

@@ -4,6 +4,9 @@
 //!
 //! On other systems the functions report "not available" (`Ok(None)` or `Unsupported`).
 
+mod disks;
+pub use disks::{Disk, Space, disks};
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -40,6 +43,105 @@ pub struct MountEntry {
     /// mount of `sub`).
     pub root: std::path::PathBuf,
     pub mount_point: std::path::PathBuf,
+    /// Filesystem type (`btrfs`, `nfs4`, `fuse.sshfs`, `proc`).
+    pub fstype: String,
+    /// What is mounted (`/dev/sda1`, `server:/export`).
+    pub source: String,
+}
+
+impl MountEntry {
+    /// [`MountEntry::dev`] as `st_dev` reports it (glibc's `makedev` encoding).
+    pub fn st_dev(&self) -> u64 {
+        let (ma, mi) = (self.dev.0 as u64, self.dev.1 as u64);
+        ((ma & 0xffff_f000) << 32) | ((ma & 0xfff) << 8) | ((mi & 0xffff_ff00) << 12) | (mi & 0xff)
+    }
+}
+
+/// What kind of filesystem a mount is, for deciding whether to scan it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FsClass {
+    /// Disks, memory filesystems (tmpfs), overlays.
+    Local,
+    /// Remote filesystems: slow, can hang, and their data is not on this machine. Scanned only
+    /// when asked for.
+    Network,
+    /// Kernel interfaces (`/proc`, `/sys`, cgroups): no data, sizes that mean nothing. Never
+    /// scanned below the scan root.
+    Kernel,
+}
+
+/// Classifies a filesystem type as `/proc/self/mountinfo` names it.
+pub fn classify_fs(fstype: &str) -> FsClass {
+    const KERNEL: &[&str] = &[
+        "proc",
+        "sysfs",
+        "devtmpfs",
+        "devpts",
+        "cgroup",
+        "cgroup2",
+        "debugfs",
+        "tracefs",
+        "securityfs",
+        "pstore",
+        "bpf",
+        "configfs",
+        "fusectl",
+        "mqueue",
+        "hugetlbfs",
+        "binfmt_misc",
+        "efivarfs",
+        "autofs",
+        "rpc_pipefs",
+        "nsfs",
+        "selinuxfs",
+        "nfsd",
+    ];
+    const NETWORK: &[&str] = &[
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "ncpfs",
+        "afs",
+        "ceph",
+        "glusterfs",
+        "9p",
+        "lustre",
+        "gpfs",
+        "afpfs",
+        "webdav",
+        "davfs",
+        "coda",
+        "orangefs",
+        "beegfs",
+    ];
+    // FUSE filesystems that reach over the network.
+    const NETWORK_FUSE: &[&str] = &[
+        "sshfs",
+        "rclone",
+        "s3fs",
+        "gcsfuse",
+        "goofys",
+        "juicefs",
+        "davfs",
+        "glusterfs",
+        "ceph-fuse",
+        "gvfsd-fuse",
+        "curlftpfs",
+        "smbnetfs",
+        "onedriver",
+    ];
+    let sub = fstype
+        .strip_prefix("fuse.")
+        .or_else(|| fstype.strip_prefix("fuseblk."));
+    if KERNEL.contains(&fstype) {
+        FsClass::Kernel
+    } else if NETWORK.contains(&fstype) || sub.is_some_and(|s| NETWORK_FUSE.contains(&s)) {
+        FsClass::Network
+    } else {
+        FsClass::Local
+    }
 }
 
 /// Parses `/proc/self/mountinfo` text. Malformed lines are skipped.
@@ -53,12 +155,21 @@ pub fn parse_mountinfo(text: &[u8]) -> Vec<MountEntry> {
             let dev = (maj.parse().ok()?, min.parse().ok()?);
             let root = unescape(f.next()?)?;
             let mount_point = unescape(f.next()?)?;
+            // Optional fields end at a lone "-"; the type and source follow.
+            let mut f = f.skip_while(|x| *x != b"-").skip(1);
+            let fstype = String::from_utf8_lossy(f.next()?).into_owned();
+            let source = String::from_utf8_lossy(
+                &unescape(f.next()?)?.into_os_string().into_encoded_bytes(),
+            )
+            .into_owned();
             Some(MountEntry {
                 id,
                 parent,
                 dev,
                 root,
                 mount_point,
+                fstype,
+                source,
             })
         })
         .collect()
@@ -103,5 +214,47 @@ mod tests {
         assert_eq!((m[1].id, m[1].parent, m[1].dev), (51, 50, (0, 41)));
         assert_eq!(m[1].root, std::path::Path::new("/sub"));
         assert_eq!(m[1].mount_point, std::path::Path::new("/srv/b t/mnt"));
+        assert_eq!(
+            (m[0].fstype.as_str(), m[0].source.as_str()),
+            ("btrfs", "/dev/loop0")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mount_devices_match_stat() {
+        use std::os::unix::fs::MetadataExt;
+        let table = mount_table().expect("mountinfo");
+        for mp in ["/", "/proc"] {
+            let Some(e) = table.iter().rev().find(|e| e.mount_point.as_os_str() == mp) else {
+                continue;
+            };
+            assert_eq!(e.st_dev(), std::fs::metadata(mp).unwrap().dev(), "{mp}");
+        }
+        assert_eq!(
+            table
+                .iter()
+                .rev()
+                .find(|e| e.mount_point.as_os_str() == "/proc")
+                .map(|e| classify_fs(&e.fstype)),
+            Some(FsClass::Kernel)
+        );
+    }
+
+    #[test]
+    fn filesystem_classes() {
+        for (t, c) in [
+            ("btrfs", FsClass::Local),
+            ("tmpfs", FsClass::Local),
+            ("overlay", FsClass::Local),
+            ("fuse.mergerfs", FsClass::Local),
+            ("nfs4", FsClass::Network),
+            ("cifs", FsClass::Network),
+            ("fuse.sshfs", FsClass::Network),
+            ("proc", FsClass::Kernel),
+            ("cgroup2", FsClass::Kernel),
+        ] {
+            assert_eq!(classify_fs(t), c, "{t}");
+        }
     }
 }

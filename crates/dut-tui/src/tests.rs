@@ -57,7 +57,10 @@ fn mid_scan_view() {
         dir(1, "dev", 78 * gib, 1_100_000, Mark::Scanning),
         dir(2, ".android", 51 * gib, 214, Mark::None),
         dir(3, "nfs", 0, 1, Mark::Stalled),
-        dir(4, "locked", 0, 1, Mark::Error),
+        EntryData {
+            problem: Some("permission denied".into()),
+            ..dir(4, "locked", 0, 1, Mark::Error)
+        },
         test_entry(5, "notes.sqlite", 625 << 20),
     ];
     let total: u64 = entries.iter().map(|e| e.size).sum();
@@ -130,7 +133,7 @@ fn completed_scan_view() {
     fs::write(dir.join("top.txt"), vec![2u8; 50_000]).expect("write");
 
     let engine = Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             workers: 2,
             ..Default::default()
@@ -179,7 +182,7 @@ fn target_survives_rescan_swap() {
     fs::write(dir.join("sub/inner/f"), vec![0u8; 1000]).expect("write");
 
     let engine = Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             workers: 2,
             ..Default::default()
@@ -216,8 +219,22 @@ fn overlays_fit_a_small_terminal() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let node = test_entry(1, "junk", 0).node;
+    let list = crate::ErrorList {
+        root: "/r".into(),
+        items: (0..50)
+            .map(|i| crate::ErrorItem {
+                node,
+                path: format!("/r/some/rather/long/path/number/{i}").into(),
+                is_dir: true,
+                problem: "permission denied".into(),
+            })
+            .collect(),
+        total: 60,
+        kinds: vec![(dut_tree::ErrKind::PermissionDenied, 60)],
+    };
     for overlay in [
         crate::app::Overlay::Help,
+        crate::app::Overlay::Errors { list, cursor: 49 },
         crate::app::Overlay::ConfirmDelete {
             node,
             name: "junk".into(),
@@ -235,6 +252,11 @@ fn overlays_fit_a_small_terminal() {
         assert_eq!(out.lines().count(), 8, "{out}");
         let out = render(&mut app, t0, 100, 30);
         assert!(out.contains('┌'), "{out}");
+        if matches!(app.overlay, crate::app::Overlay::Errors { .. }) {
+            // Scrolled to the cursor, with the count of what is not listed.
+            assert!(out.contains("number/49/  permission denied"), "{out}");
+            assert!(out.contains("first 50 shown"), "{out}");
+        }
     }
 }
 
@@ -296,4 +318,151 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
 
 fn key(code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
     ratatui::crossterm::event::KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE)
+}
+
+#[test]
+fn errors_are_listed_and_lead_to_the_entry() {
+    use dut_tree::{ErrKind, Kind, Meta};
+    use ratatui::crossterm::event::KeyCode;
+    let meta = |kind, ino| Meta {
+        kind,
+        apparent: 100,
+        alloc: 100,
+        mtime: 0,
+        dev: 1,
+        ino,
+        nlink: 1,
+        mount: 0,
+    };
+    let mut m = dut_engine::Model::default();
+    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 1), true);
+    let a = m.tree.add_dir_flagged(root, b"a", &meta(Kind::Dir, 2), 0);
+    let b = m.tree.add_dir_flagged(a, b"b", &meta(Kind::Dir, 3), 0);
+    let locked = m.tree.add_dir_flagged(b, b"locked", &meta(Kind::Dir, 4), 0);
+    let gone = m
+        .tree
+        .add_file(root, b"gone", &meta(Kind::File, 5), false, None);
+    for d in [root, a, b, locked] {
+        m.tree.dir_mut(d).unwrap().state = dut_tree::DirState::Complete;
+    }
+    m.tree.dir_mut(locked).unwrap().state = dut_tree::DirState::Failed;
+    m.tree.set_error(locked, ErrKind::PermissionDenied);
+    m.tree.set_error(gone, ErrKind::NotFound);
+
+    let list = crate::errors(&m.tree, root, 100);
+    assert_eq!(list.total, 2);
+    let paths: Vec<_> = list.items.iter().map(|e| e.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [
+            std::path::Path::new("/r/a/b/locked"),
+            std::path::Path::new("/r/gone")
+        ]
+    );
+    assert_eq!(
+        list.summary(),
+        "1 permission denied, 1 removed during the scan"
+    );
+
+    let mut target = Target::root();
+    let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
+    let entry = |name: &[u8]| snap.entries.iter().find(|e| e.name == name).unwrap();
+    assert_eq!(entry(b"a").mark, Mark::ErrorsInside);
+    assert_eq!(entry(b"a").errors_inside, 1);
+    assert_eq!(
+        entry(b"gone").problem.as_deref(),
+        Some("removed during the scan")
+    );
+
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    app.refresh(snap, t0);
+    let out = render(&mut app, t0, 100, 12);
+    assert!(out.contains("1 error inside"), "{out}");
+    assert!(out.contains("! errors"), "{out}");
+    let fx = app.key(key(KeyCode::Char('!')), t0);
+    assert!(matches!(fx[..], [crate::Effect::ShowErrors]));
+    app.show_errors(list);
+    let out = render(&mut app, t0, 100, 12);
+    assert!(out.contains("2 not read"), "{out}");
+    // Paths are shown with the platform's separator.
+    let shown = std::path::Path::new("a").join("b").join("locked");
+    assert!(
+        out.contains(&format!("{}/  permission denied", shown.display())),
+        "{out}"
+    );
+    app.key(key(KeyCode::Enter), t0);
+    assert!(matches!(app.overlay, crate::app::Overlay::None));
+    let mut target = app.target.clone();
+    let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
+    app.target = target;
+    app.refresh(snap, t0);
+    assert_eq!(app.snap.dir_path, std::path::Path::new("/r/a/b"));
+    let sel = app.selected_entry().expect("selected");
+    assert_eq!(sel.name, b"locked");
+    assert_eq!(sel.problem.as_deref(), Some("permission denied"));
+}
+
+#[test]
+fn disk_picker() {
+    use dut_sys::{Disk, FsClass, Space};
+    use ratatui::crossterm::event::KeyCode;
+    let gib = 1u64 << 30;
+    let disk = |mp: &str, fstype: &str, class, space| Disk {
+        mount_point: mp.into(),
+        also_at: vec![],
+        fstype: fstype.into(),
+        source: String::new(),
+        class,
+        space,
+    };
+    let mut p = crate::Picker::new(vec![
+        Disk {
+            also_at: vec!["/home".into()],
+            ..disk(
+                "/",
+                "btrfs",
+                FsClass::Local,
+                Some(Space {
+                    total: 500 * gib,
+                    used: 400 * gib,
+                    available: 90 * gib,
+                }),
+            )
+        },
+        disk("/mnt/nas", "nfs4", FsClass::Network, None),
+        disk(
+            "/mnt/usb",
+            "exfat",
+            FsClass::Local,
+            Some(Space {
+                total: 64 * gib,
+                used: 0,
+                available: 64 * gib,
+            }),
+        ),
+    ]);
+    let theme = Theme::no_color();
+    let mut term = Terminal::new(TestBackend::new(110, 8)).expect("terminal");
+    term.draw(|f| crate::picker::draw(f, &p, &theme))
+        .expect("draw");
+    let out = text(term.backend().buffer());
+    insta_like(&out, "disk_picker");
+    assert!(out.contains("also at /home"), "{out}");
+    assert!(out.contains("not responding  network"), "{out}");
+
+    // A mount that does not answer is not scanned; the next one is.
+    assert!(p.key(KeyCode::Down).is_none());
+    assert!(p.key(KeyCode::Enter).is_none());
+    assert!(p.status.as_deref().unwrap().contains("not responding"));
+    assert!(p.key(KeyCode::Down).is_none());
+    assert!(p.key(KeyCode::Down).is_none());
+    match p.key(KeyCode::Enter) {
+        Some(crate::Picked::Scan(path)) => assert_eq!(path, std::path::Path::new("/mnt/usb")),
+        _ => panic!("expected a scan of /mnt/usb"),
+    }
+    assert!(matches!(
+        p.key(KeyCode::Char('q')),
+        Some(crate::Picked::Quit)
+    ));
 }

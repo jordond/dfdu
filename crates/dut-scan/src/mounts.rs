@@ -66,6 +66,8 @@ mod tests {
             dev: (0, dev),
             root: root.into(),
             mount_point: mp.into(),
+            fstype: "btrfs".into(),
+            source: String::new(),
         }
     }
 

@@ -13,6 +13,7 @@ use crossbeam_deque::{Injector, Steal};
 use dut_tree::{ErrKind, Kind};
 use parking_lot::{Mutex, RwLock};
 
+use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream};
 use crate::proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
@@ -61,6 +62,8 @@ impl Default for Limits {
 pub struct JobOptions {
     /// Descend into directories on other filesystems.
     pub cross_mounts: bool,
+    /// Descend into network filesystems (NFS, SMB, sshfs and the like).
+    pub network: bool,
     /// The directory whose mounts are checked for duplicates: the visible scan root when a
     /// rescan covers only part of it. Defaults to the job root.
     pub scope: Option<PathBuf>,
@@ -255,8 +258,7 @@ impl<B: Backend> Shared<B> {
             ended: AtomicBool::new(false),
             next_dir: AtomicU32::new(1),
             early_stop: RwLock::new(FixedBitSet::new()),
-            dup_mounts: opts
-                .cross_mounts
+            dup_mounts: (opts.cross_mounts || opts.network)
                 .then(|| {
                     self.backend
                         .duplicate_mounts(opts.scope.as_deref().unwrap_or(root))
@@ -725,7 +727,7 @@ impl<B: Backend> Worker<B> {
     fn emit_block(&mut self, sh: &Shared<B>, clock: &dyn Clock) {
         let r = self.running.as_mut().expect("running");
         let block = std::mem::take(&mut self.block);
-        let cross = r.job.opts.cross_mounts;
+        let (cross, network) = (r.job.opts.cross_mounts, r.job.opts.network);
         let (dir_dev, dir_mount) = (r.task.dev, r.task.mount);
         let (focus, epoch) = (sh.focus.load(SeqCst), sh.focus_epoch.load(SeqCst));
         let child_epoch = if focus == pack(r.task.job, r.task.dir) || r.task.focus_epoch == epoch {
@@ -749,10 +751,24 @@ impl<B: Backend> Worker<B> {
                     } else {
                         m.dev != dir_dev
                     };
+                    // Kernel filesystems are never scanned; network ones only when asked for,
+                    // decided from the mount table without touching the mount.
+                    let class = if mount_root {
+                        sh.backend.mount_class(m.mount, m.dev)
+                    } else {
+                        None
+                    };
+                    let wanted = match class {
+                        Some(FsClass::Kernel) => Err(SkipReason::Kernel),
+                        Some(FsClass::Network) if network => Ok(()),
+                        Some(FsClass::Network) => Err(SkipReason::Network),
+                        _ if cross => Ok(()),
+                        _ => Err(SkipReason::OtherFilesystem),
+                    };
                     let skip = if !mount_root {
                         None
-                    } else if !cross {
-                        Some(SkipReason::OtherFilesystem)
+                    } else if let Err(why) = wanted {
+                        Some(why)
                     } else if match &r.job.dup_mounts {
                         Some(d) => d.contains(&m.mount),
                         None => !r.job.mount_roots.lock().insert((m.dev, m.ino)),

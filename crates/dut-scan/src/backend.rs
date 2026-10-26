@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use dut_tree::{ErrKind, Kind, Meta, Subvol};
 
+use crate::FsClass;
 use crate::proto::NameSpan;
 
 /// One entry read from a directory.
@@ -112,6 +113,12 @@ pub trait Backend: Send + Sync + 'static {
     fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
         None
     }
+    /// What kind of filesystem a mount root is, from the mount table, without touching the
+    /// mount itself (a network mount may not answer): by `mount` id (a [`Meta::mount`]), or by
+    /// device `dev` when there is no id. `None` when not known.
+    fn mount_class(&self, _mount: u64, _dev: u64) -> Option<FsClass> {
+        None
+    }
 }
 
 /// Mount id of a directory for [`Meta::mount`], 0 when unknown.
@@ -120,8 +127,27 @@ fn mount_of(path: &Path) -> u64 {
 }
 
 /// `std::fs` backend: one `stat` per entry, no OS-specific fast paths.
-#[derive(Default, Clone, Copy, Debug)]
-pub struct PortableBackend;
+#[derive(Default, Debug)]
+pub struct PortableBackend {
+    /// Mount classes from the mount table; re-read when an unknown mount appears.
+    classes: parking_lot::Mutex<MountClasses>,
+}
+
+#[derive(Default, Debug)]
+struct MountClasses {
+    by_id: std::collections::HashMap<u64, FsClass>,
+    by_dev: std::collections::HashMap<u64, FsClass>,
+}
+
+impl MountClasses {
+    fn get(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        if mount != 0 {
+            self.by_id.get(&mount).copied()
+        } else {
+            self.by_dev.get(&dev).copied()
+        }
+    }
+}
 
 pub struct PortableStream {
     iter: fs::ReadDir,
@@ -208,6 +234,21 @@ impl Backend for PortableBackend {
     fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
         let table = dut_sys::mount_table().ok()?;
         Some(crate::duplicate_mounts(&table, scope))
+    }
+
+    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        let mut c = self.classes.lock();
+        if c.get(mount, dev).is_none() {
+            // A mount made since the table was read: read it again.
+            let mut fresh = MountClasses::default();
+            for e in dut_sys::mount_table().ok()? {
+                let class = dut_sys::classify_fs(&e.fstype);
+                fresh.by_id.insert(e.id, class);
+                fresh.by_dev.insert(e.st_dev(), class);
+            }
+            *c = fresh;
+        }
+        c.get(mount, dev)
     }
 
     fn shares_extents(&self, loc: &PathBuf) -> bool {

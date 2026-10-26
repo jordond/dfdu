@@ -31,7 +31,7 @@ fn tree() -> TempDir {
 
 fn scan(root: &std::path::Path, contend: bool) -> (dut_tree::Totals, Duration) {
     let e = Arc::new(Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             workers: 4,
             ..Default::default()

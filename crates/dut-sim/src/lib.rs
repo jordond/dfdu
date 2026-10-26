@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use dut_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
 use dut_engine::{Applier, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model};
 use dut_scan::{
-    Backend, Batch, Block, Budget, Clock, DirStream, JobOptions, Limits, ScanMsg, Shared, Sink,
-    StepResult, Worker,
+    Backend, Batch, Block, Budget, Clock, DirStream, FsClass, JobOptions, Limits, ScanMsg, Shared,
+    Sink, StepResult, Worker,
 };
 use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
 use parking_lot::Mutex;
@@ -73,6 +73,8 @@ pub struct SpecNode {
     pub subvol: Option<Subvol>,
     /// A second mount of another directory in the spec (the backend reports it as such).
     pub dup_mount: bool,
+    /// Mount root of a network or kernel filesystem (others are local).
+    pub fs_class: Option<FsClass>,
     /// Extent map of a file on a filesystem that shares extents.
     pub pieces: Vec<SimPiece>,
     /// Measuring the file fails (it cannot be opened).
@@ -197,6 +199,7 @@ impl Spec {
             vanished: false,
             subvol: None,
             dup_mount: false,
+            fs_class: None,
             pieces: vec![],
             unmeasurable: false,
         }];
@@ -214,7 +217,13 @@ impl Spec {
             for i in 0..ndirs {
                 ino += 1;
                 let roll = rng.below(1000);
+                let mut fs_class = None;
                 let (cdev, cmount, cino, subvol) = if cfg.other_fs && depth > 0 && roll < 30 {
+                    fs_class = match rng.below(12) {
+                        0 => Some(FsClass::Kernel),
+                        1 | 2 => Some(FsClass::Network),
+                        _ => None,
+                    };
                     next_dev += 1;
                     next_mount += 1;
                     mount_dirs.push(nodes.len() as u32);
@@ -256,6 +265,7 @@ impl Spec {
                     vanished: false,
                     subvol,
                     dup_mount: false,
+                    fs_class,
                     pieces: vec![],
                     unmeasurable: false,
                 });
@@ -287,6 +297,7 @@ impl Spec {
                     vanished: cfg.faults && rng.chance(30),
                     subvol: None,
                     dup_mount: false,
+                    fs_class: None,
                     pieces: vec![],
                     unmeasurable: cfg.faults && rng.chance(30),
                 });
@@ -718,6 +729,18 @@ impl Backend for SimBackend {
         Ok(self.spec.nodes[*loc as usize].meta)
     }
 
+    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        let n = self.spec.nodes.iter().find(|n| {
+            n.meta.kind == Kind::Dir
+                && if mount != 0 {
+                    n.meta.mount == mount
+                } else {
+                    n.meta.dev == dev
+                }
+        })?;
+        Some(n.fs_class.unwrap_or(FsClass::Local))
+    }
+
     fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
         let mut dups = HashSet::new();
         for n in &self.spec.nodes {
@@ -849,6 +872,8 @@ pub struct SimConfig {
     pub spec: SpecConfig,
     /// Scan with `cross_mounts`; `None` picks it per seed.
     pub cross_mounts: Option<bool>,
+    /// Scan with `network`; `None` picks it per seed.
+    pub network: Option<bool>,
 }
 
 impl Default for SimConfig {
@@ -871,6 +896,7 @@ impl Default for SimConfig {
             max_ticks: 2_000_000,
             spec: SpecConfig::default(),
             cross_mounts: None,
+            network: None,
         }
     }
 }
@@ -896,6 +922,9 @@ pub struct SimReport {
     pub dup_mounts: u64,
     /// Runs with `cross_mounts`.
     pub cross_runs: u64,
+    /// Network and kernel mounts left unscanned in the final tree.
+    pub network_skipped: u64,
+    pub kernel_skipped: u64,
     /// Measurements answered, and bytes counted once instead of per file in the final tree.
     pub measured: u64,
     pub shared_bytes: u64,
@@ -909,6 +938,7 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         cfg.limits.block_entries,
     ));
     let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
+    let network = cfg.network.unwrap_or_else(|| rng.chance(300));
     let clock = Arc::new(SimClock(AtomicU64::new(1)));
     let backend = SimBackend {
         spec: spec.clone(),
@@ -941,6 +971,7 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
             path: PathBuf::from(ROOT_NAME),
             opts: JobOptions {
                 cross_mounts,
+                network,
                 ..JobOptions::default()
             },
         },
@@ -1171,7 +1202,10 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     if let Some(root) = model.tree.roots().next() {
         let mut stack = vec![root];
         while let Some(ix) = stack.pop() {
-            report.dup_mounts += model.tree.flags(ix).has(NodeFlags::DUP_MOUNT) as u64;
+            let f = model.tree.flags(ix);
+            report.dup_mounts += f.has(NodeFlags::DUP_MOUNT) as u64;
+            report.network_skipped += f.has(NodeFlags::NETWORK) as u64;
+            report.kernel_skipped += f.has(NodeFlags::KERNEL) as u64;
             stack.extend(model.tree.children(ix));
         }
     }
@@ -1218,14 +1252,20 @@ pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
             eprintln!("  spec pieces {:?}", n.pieces);
         }
     }
-    let (dirs, abandoned) = compare(&spec, &model, cfg.limits.block_entries, cross_mounts)
-        .map_err(|e| {
-            let n = &model.status.notices;
-            format!(
-                "seed {seed}: {e}; last notices: {:?}",
-                &n[n.len().saturating_sub(6)..]
-            )
-        })?;
+    let (dirs, abandoned) = compare(
+        &spec,
+        &model,
+        cfg.limits.block_entries,
+        cross_mounts,
+        network,
+    )
+    .map_err(|e| {
+        let n = &model.status.notices;
+        format!(
+            "seed {seed}: {e}; last notices: {:?}",
+            &n[n.len().saturating_sub(6)..]
+        )
+    })?;
     report.dirs = dirs;
     report.abandoned = abandoned;
     Ok(report)
@@ -1506,7 +1546,13 @@ fn prefix(n: &SpecNode, len: usize, state: DirState, block: usize) -> usize {
 }
 
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
-fn compare(spec: &Spec, model: &Model, block: usize, cross: bool) -> Result<(usize, u64), String> {
+fn compare(
+    spec: &Spec,
+    model: &Model,
+    block: usize,
+    cross: bool,
+    network: bool,
+) -> Result<(usize, u64), String> {
     let tree = &model.tree;
     let root = tree.roots().next().ok_or("no root")?;
     // Final state of every directory, by path.
@@ -1570,7 +1616,27 @@ fn compare(spec: &Spec, model: &Model, block: usize, cross: bool) -> Result<(usi
         } else {
             flags.has(NodeFlags::DUP_MOUNT)
         };
-        if cross && mount_root(d) && flags.has(NodeFlags::DUP_MOUNT) != dup {
+        // Kernel filesystems are never descended into, network ones only with `network`; the
+        // class is known only for mount roots the backend can name.
+        let class = if mount_root(d) { n.fs_class } else { None };
+        let wanted = match class {
+            Some(FsClass::Kernel) => false,
+            Some(FsClass::Network) => network,
+            _ => cross,
+        };
+        for (flag, c, what) in [
+            (NodeFlags::NETWORK, FsClass::Network, "network"),
+            (NodeFlags::KERNEL, FsClass::Kernel, "kernel"),
+        ] {
+            if flags.has(flag) != (class == Some(c) && !wanted) {
+                return Err(format!(
+                    "{}: {what} flag {} for class {class:?}",
+                    String::from_utf8_lossy(&path),
+                    flags.has(flag)
+                ));
+            }
+        }
+        if wanted && mount_root(d) && flags.has(NodeFlags::DUP_MOUNT) != dup {
             return Err(format!(
                 "{}: duplicate-mount flag {} expected {dup}",
                 String::from_utf8_lossy(&path),
@@ -1578,7 +1644,7 @@ fn compare(spec: &Spec, model: &Model, block: usize, cross: bool) -> Result<(usi
             ));
         }
         if mount_root(d) {
-            if !cross || dup {
+            if !wanted || dup {
                 if state_of(&path) != Some(DirState::Skipped) {
                     return Err(format!(
                         "{}: mount not skipped",

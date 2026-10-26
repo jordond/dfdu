@@ -42,7 +42,7 @@ fn workdir(f: &Path, tag: &str) -> PathBuf {
 
 fn engine(journal: &Path) -> Engine<PortableBackend> {
     Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             journal_dir: Some(journal.to_path_buf()),
             check_invariants: true,

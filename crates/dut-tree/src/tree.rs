@@ -50,6 +50,10 @@ impl NodeFlags {
     pub const MEASURED: u16 = 1024;
     /// Measured file with compressed extents whose on-disk size is not known (an upper bound).
     pub const COMPRESSED: u16 = 2048;
+    /// Mount of a network filesystem, not descended into (scanned only when asked for).
+    pub const NETWORK: u16 = 4096;
+    /// Mount of a kernel filesystem (`/proc`, `/sys`), never descended into.
+    pub const KERNEL: u16 = 8192;
 
     pub fn has(self, f: u16) -> bool {
         self.0 & f != 0

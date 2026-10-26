@@ -114,7 +114,7 @@ impl Meta {
 }
 
 /// Error classes recorded on entries and directories.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ErrKind {
     PermissionDenied,
     NotFound,
@@ -134,6 +134,27 @@ impl From<&io::Error> for ErrKind {
                 Some(code) => ErrKind::Os(code),
                 None => ErrKind::Other,
             },
+        }
+    }
+}
+
+impl std::fmt::Display for ErrKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrKind::PermissionDenied => f.write_str("permission denied"),
+            ErrKind::NotFound => f.write_str("removed during the scan"),
+            ErrKind::Stalled => f.write_str("not responding"),
+            ErrKind::Other => f.write_str("could not be read"),
+            ErrKind::Os(code) => {
+                // The system's message ("Input/output error (os error 5)") without the code.
+                let msg = io::Error::from_raw_os_error(*code).to_string();
+                let msg = msg.split(" (os error").next().unwrap_or(&msg);
+                let mut c = msg.chars();
+                match c.next() {
+                    Some(first) => write!(f, "{}{}", first.to_lowercase(), c.as_str()),
+                    None => write!(f, "error {code}"),
+                }
+            }
         }
     }
 }

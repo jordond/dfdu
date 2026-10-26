@@ -11,7 +11,7 @@ fn applier_panic_is_fatal_and_reported() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("crash");
     let e = Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             crash_dir: Some(dir.clone()),
             workers: 2,

@@ -46,7 +46,7 @@ fn inner_trash() {
     fs::write(root.join("junk/x.bin"), vec![1u8; 5000]).unwrap();
     let root = root.canonicalize().unwrap();
     let e = Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             journal_dir: Some(base.join("state")),
             workers: 2,

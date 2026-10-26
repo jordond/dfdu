@@ -37,7 +37,7 @@ fn fixture() -> TempDir {
 
 fn engine(journal: Option<PathBuf>, read_only: bool) -> Engine<PortableBackend> {
     Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             journal_dir: journal,
             read_only,

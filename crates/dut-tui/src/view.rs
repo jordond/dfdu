@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Overlay};
 use crate::order::SortKey;
+use crate::problems::ErrorList;
 use crate::snapshot::{EntryData, Mark};
 use crate::theme::{bar, count, human, spinner};
 
@@ -57,7 +58,11 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Paragraph::new(Line::styled(format!(" {msg}"), app.theme.dim)),
         status,
     );
-    let hints = "↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit";
+    let hints = if app.snap.root_total.errors > 0 {
+        "↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d D delete  ! errors  ? help  q quit"
+    } else {
+        "↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit"
+    };
     f.render_widget(
         Paragraph::new(Line::styled(format!(" {hints}"), app.theme.dim)),
         footer,
@@ -66,6 +71,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     match app.overlay.clone() {
         Overlay::None => {}
         Overlay::Help => draw_help(f, app, area),
+        Overlay::Errors { list, cursor } => draw_errors(f, app, area, &list, cursor),
         Overlay::ConfirmDelete {
             name,
             size,
@@ -111,7 +117,10 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect, now: Instant, frame: u64) {
     if root.errors > 0 {
         info.push(Span::raw(" · "));
         info.push(Span::styled(
-            format!("{} errors", count(root.errors)),
+            match root.errors {
+                1 => "1 error".to_string(),
+                n => format!("{} errors", count(n)),
+            },
             t.error,
         ));
     }
@@ -257,6 +266,8 @@ fn entry_line<'a>(
         Mark::Error => ('!', t.error),
         Mark::OtherFs => ('>', t.dim),
         Mark::DupMount => ('=', t.dim),
+        Mark::Network | Mark::Kernel => ('>', t.dim),
+        Mark::ErrorsInside => ('.', t.error),
         Mark::Deleting => ('x', t.warn),
         Mark::Incomplete => ('?', t.warn),
         Mark::None => (' ', Style::new()),
@@ -285,12 +296,30 @@ fn entry_line<'a>(
         Mark::Rescanning => Some(("  rescanning", t.dim)),
         Mark::OtherFs => Some(("  other filesystem", t.dim)),
         Mark::DupMount => Some(("  mounted again: counted at its other mount", t.dim)),
-        Mark::Error if e.is_dir => Some(("  incomplete", t.error)),
+        Mark::Network => Some(("  network filesystem: start with --network to scan", t.dim)),
+        Mark::Kernel => Some(("  kernel filesystem", t.dim)),
         Mark::Incomplete => Some(("  incomplete: r to rescan", t.warn)),
         Mark::Deleting => Some(("  deleting", t.warn)),
-        Mark::Error => Some(("  unreadable", t.error)),
         _ => None,
     };
+    if let Some(p) = &e.problem {
+        spans.push(Span::styled(format!("  {p}"), t.error));
+    } else if e.mark == Mark::Error {
+        let what = if e.is_dir {
+            "  incomplete"
+        } else {
+            "  could not be read"
+        };
+        spans.push(Span::styled(what, t.error));
+    }
+    match e.errors_inside {
+        0 => {}
+        1 => spans.push(Span::styled("  1 error inside", t.error)),
+        n => spans.push(Span::styled(
+            format!("  {} errors inside", count(n)),
+            t.error,
+        )),
+    }
     if let Some(l) = &e.label {
         spans.push(Span::styled(format!("  [{l}]"), t.dim));
     }
@@ -325,6 +354,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("e", "hide or show hidden files"),
         ("r", "rescan the selected directory"),
         ("x", "skip directories that are not responding"),
+        ("!", "list what could not be read, and go to it"),
         ("d", "move to Trash"),
         ("D", "delete permanently (type delete)"),
         ("q Ctrl-C", "quit"),
@@ -354,6 +384,70 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(" Keys ")),
+        r,
+    );
+}
+
+/// The list of entries that could not be read.
+fn draw_errors(f: &mut Frame, app: &App, area: Rect, list: &ErrorList, cursor: usize) {
+    let t = &app.theme;
+    let height = area.height.saturating_sub(4).max(3) as usize;
+    let rows = list.items.len().min(height.saturating_sub(2)).max(1);
+    let top = cursor.saturating_sub(rows - 1);
+    let width = area.width.saturating_sub(4) as usize;
+    let mut lines: Vec<Line> = list
+        .items
+        .iter()
+        .enumerate()
+        .skip(top)
+        .take(rows)
+        .map(|(i, e)| {
+            let rel = e.path.strip_prefix(&list.root).unwrap_or(&e.path);
+            let mut path = if rel.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                rel.display().to_string()
+            };
+            if e.is_dir {
+                path.push('/');
+            }
+            let style = if i == cursor {
+                t.selected
+            } else {
+                Style::new()
+            };
+            let room = width.saturating_sub(e.problem.chars().count() + 4);
+            if path.chars().count() > room {
+                let keep = room.saturating_sub(1);
+                let skip = path.chars().count() - keep;
+                path = format!("…{}", path.chars().skip(skip).collect::<String>());
+            }
+            Line::from(vec![
+                Span::styled(format!(" {path}"), style),
+                Span::styled(format!("  {}", e.problem), t.error),
+            ])
+        })
+        .collect();
+    if list.items.is_empty() {
+        lines.push(Line::styled(" Nothing to list.", t.dim));
+    }
+    let mut foot = String::from(" Enter go to it · Esc close");
+    if (list.items.len() as u64) < list.total {
+        foot += &format!(" · first {} shown", count(list.items.len() as u64));
+    }
+    if let Some(h) = list.hint() {
+        foot += &format!(" · {h}");
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(foot, t.dim));
+    let title = format!(" {} not read: {} ", count(list.total), list.summary());
+    let r = area.centered(
+        Constraint::Length(area.width.saturating_sub(4).min(100)),
+        Constraint::Length(lines.len() as u16 + 2),
+    );
+    f.render_widget(Clear, r);
+    f.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(title)),
         r,
     );
 }

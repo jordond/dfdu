@@ -58,6 +58,10 @@ pub struct EntryError {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SkipReason {
     OtherFilesystem,
+    /// A network filesystem; scanned only with `JobOptions::network`.
+    Network,
+    /// A kernel filesystem (`/proc`, `/sys`, cgroups); never scanned.
+    Kernel,
     /// With `cross_mounts`: a mount of something this job already scans elsewhere (a bind
     /// mount, a second mount of a subvolume, or a mount loop).
     DuplicateMount,

@@ -16,6 +16,7 @@ mod shared;
 
 pub use backend::{Backend, Block, BlockEntry, DirStream, PortableBackend};
 pub use budget::Budget;
+pub use dut_sys::FsClass;
 pub use mounts::duplicate_mounts;
 pub use proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, NameSpan, Probe,

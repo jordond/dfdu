@@ -14,6 +14,7 @@ workspace = true
 dut-tree.workspace = true
 dut-scan.workspace = true
 dut-engine.workspace = true
+dut-sys.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
 humansize.workspace = true

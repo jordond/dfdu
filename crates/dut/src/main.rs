@@ -16,9 +16,11 @@ struct Cli {
     cmd: Option<Cmd>,
     /// Directory to browse (opens the interactive browser when stdout is a terminal).
     path: Option<PathBuf>,
-    /// Descend into other filesystems.
-    #[arg(long)]
-    cross_mounts: bool,
+    #[command(flatten)]
+    mounts: MountArgs,
+    /// Choose a disk to browse from the mounted filesystems.
+    #[arg(long, conflicts_with = "path")]
+    disks: bool,
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
@@ -28,6 +30,35 @@ struct Cli {
 enum Cmd {
     /// Scan a directory and print a summary.
     Scan(ScanArgs),
+    /// List the mounted filesystems with their size and free space.
+    Disks,
+}
+
+/// Which mounts below the scanned directory are descended into. Kernel filesystems (`/proc`,
+/// `/sys`, cgroups) never are.
+#[derive(Args, Clone, Copy, Default)]
+struct MountArgs {
+    /// Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts
+    /// and --network given before it).
+    #[arg(short = 'x', long, overrides_with = "cross_mounts")]
+    one_file_system: bool,
+    /// Descend into other local filesystems (disks, tmpfs).
+    #[arg(long, overrides_with = "one_file_system")]
+    cross_mounts: bool,
+    /// Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with
+    /// or without --cross-mounts.
+    #[arg(long, overrides_with = "one_file_system")]
+    network: bool,
+}
+
+impl MountArgs {
+    fn job(self) -> JobOptions {
+        JobOptions {
+            cross_mounts: self.cross_mounts && !self.one_file_system,
+            network: self.network && !self.one_file_system,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Args)]
@@ -53,15 +84,30 @@ struct ScanArgs {
     /// Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does.
     #[arg(long)]
     measure_workers: Option<usize>,
-    /// Descend into other filesystems.
-    #[arg(long)]
-    cross_mounts: bool,
+    #[command(flatten)]
+    mounts: MountArgs,
     /// Print only the root total in bytes (for scripts and tests).
     #[arg(long)]
     bytes: bool,
+    /// List every entry that could not be read, with the reason.
+    #[arg(long)]
+    errors: bool,
     /// Abandon directories stalled this many seconds.
     #[arg(long, default_value_t = 30)]
     stall_abandon: u64,
+}
+
+/// `println!` that ends the process quietly when stdout is closed (`dut scan | head`), instead
+/// of panicking.
+macro_rules! outln {
+    ($($t:tt)*) => {{
+        use std::io::Write as _;
+        if let Err(e) = writeln!(std::io::stdout(), $($t)*)
+            && e.kind() == std::io::ErrorKind::BrokenPipe
+        {
+            std::process::exit(0);
+        }
+    }};
 }
 
 /// Exit codes from `docs/research/safety-persistence-ops.md` §4.3.
@@ -93,8 +139,10 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan(args),
+        Some(Cmd::Disks) => disks(),
+        None if cli.disks && !std::io::stdout().is_terminal() => disks(),
         None => {
-            let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
+            let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
             if !std::io::stdout().is_terminal() {
                 return scan(ScanArgs {
                     path,
@@ -104,14 +152,15 @@ fn main() -> ExitCode {
                     like_du: false,
                     threads: None,
                     measure_workers: None,
-                    cross_mounts: cli.cross_mounts,
+                    mounts: cli.mounts,
                     bytes: false,
+                    errors: false,
                     stall_abandon: 30,
                 });
             }
             let opts = dut_tui::RunOptions {
-                path,
-                cross_mounts: cli.cross_mounts,
+                path: (!cli.disks).then_some(path),
+                job: cli.mounts.job(),
                 engine: EngineOptions {
                     read_only: cli.read_only,
                     ..Default::default()
@@ -128,6 +177,56 @@ fn main() -> ExitCode {
     }
 }
 
+/// `dut disks`: one line per filesystem, like `df -h`.
+fn disks() -> ExitCode {
+    let list = match dut_sys::disks(dut_tui::DISK_TIMEOUT) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("dut: cannot list disks: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let width = list
+        .iter()
+        .map(|d| d.mount_point.as_os_str().len())
+        .max()
+        .unwrap_or(0)
+        .clamp(10, 40);
+    outln!(
+        "{:<width$}  {:<8} {:>10} {:>10} {:>10}  {:>4}",
+        "MOUNTED ON",
+        "TYPE",
+        "SIZE",
+        "USED",
+        "FREE",
+        "USE%"
+    );
+    for d in &list {
+        let mut line = format!("{:<width$}  {:<8}", d.mount_point.display(), d.fstype);
+        match d.space {
+            Some(s) => {
+                line += &format!(
+                    " {:>10} {:>10} {:>10}  {:>3.0}%",
+                    dut_tui::human(s.total),
+                    dut_tui::human(s.used),
+                    dut_tui::human(s.available),
+                    s.used as f64 * 100.0 / s.total.max(1) as f64
+                );
+            }
+            None => line += "  not responding",
+        }
+        if d.class == dut_sys::FsClass::Network {
+            line += "  network";
+        }
+        if !d.also_at.is_empty() {
+            let also: Vec<String> = d.also_at.iter().map(|p| p.display().to_string()).collect();
+            line += &format!("  also at {}", also.join(", "));
+        }
+        outln!("{line}");
+    }
+    ExitCode::SUCCESS
+}
+
 fn scan(args: ScanArgs) -> ExitCode {
     let ScanArgs {
         path,
@@ -137,8 +236,9 @@ fn scan(args: ScanArgs) -> ExitCode {
         like_du,
         threads,
         measure_workers,
-        cross_mounts,
+        mounts,
         bytes,
+        errors: list_errors,
         stall_abandon,
     } = args;
     let mut opts = EngineOptions {
@@ -151,14 +251,11 @@ fn scan(args: ScanArgs) -> ExitCode {
     if let Some(n) = measure_workers {
         opts.measure_workers = n;
     }
-    let engine = Engine::start(PortableBackend, opts);
+    let engine = Engine::start(PortableBackend::default(), opts);
     let t0 = Instant::now();
     engine.send(Command::Scan {
         path,
-        opts: JobOptions {
-            cross_mounts,
-            ..Default::default()
-        },
+        opts: mounts.job(),
     });
     engine.wait_idle(None);
     if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
@@ -180,10 +277,13 @@ fn scan(args: ScanArgs) -> ExitCode {
         let errors = m.tree.total(root).errors;
         if bytes {
             let t = m.tree.total(root);
-            println!("{}", mode.of(&t));
+            outln!("{}", mode.of(&t));
         } else {
             print_tree(m, root, depth, top, mode);
-            print_footer(m, root, elapsed);
+            if list_errors {
+                print_errors(m, root);
+            }
+            print_footer(m, root, elapsed, list_errors);
         }
         if errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)
@@ -201,7 +301,7 @@ fn size(tree: &Tree, ix: Ix, mode: SizeMode) -> u64 {
 
 fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
     let tree = &m.tree;
-    println!(
+    outln!(
         "{:>10}  {}{}",
         dut_tui::human(size(tree, root, mode)),
         String::from_utf8_lossy(tree.name(root)),
@@ -212,7 +312,7 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
     while let Some((ix, d)) = stack.pop() {
         if ix != root {
             let slash = if tree.dir(ix).is_some() { "/" } else { "" };
-            println!(
+            outln!(
                 "{:>10}  {}{}{}{}",
                 dut_tui::human(size(tree, ix, mode)),
                 "  ".repeat(d),
@@ -226,7 +326,7 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
         }
         // Data the entries share is counted at the directory (`docs/btrfs.md` §3.4).
         if mode == SizeMode::Disk && tree.home(ix) > 0 {
-            println!(
+            outln!(
                 "{:>10}  {}(shared between entries)",
                 dut_tui::human(tree.home(ix)),
                 "  ".repeat(d + 1)
@@ -244,8 +344,20 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
 fn note(m: &Model, ix: Ix) -> String {
     let tree = &m.tree;
     let mut parts = vec![];
+    if let Some(p) = dut_tui::problem(tree, ix) {
+        parts.push(p);
+    }
+    match dut_tui::errors_below(tree, ix) {
+        0 => {}
+        1 => parts.push("1 error inside".into()),
+        n => parts.push(format!("{n} errors inside")),
+    }
     if tree.flags(ix).has(NodeFlags::DUP_MOUNT) {
         parts.push("mounted again: counted at its other mount".to_string());
+    } else if tree.flags(ix).has(NodeFlags::KERNEL) {
+        parts.push("kernel filesystem, never scanned".to_string());
+    } else if tree.flags(ix).has(NodeFlags::NETWORK) {
+        parts.push("network filesystem, not scanned (--network)".to_string());
     } else if tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped) {
         parts.push("other filesystem, not scanned (--cross-mounts)".to_string());
     }
@@ -269,13 +381,35 @@ fn note(m: &Model, ix: Ix) -> String {
     }
 }
 
-fn print_footer(m: &Model, root: Ix, elapsed: Duration) {
+/// Every entry that could not be read, in path order.
+fn print_errors(m: &Model, root: Ix) {
+    let list = dut_tui::errors(&m.tree, root, usize::MAX);
+    if list.items.is_empty() {
+        return;
+    }
+    outln!();
+    outln!("Not read:");
+    for e in &list.items {
+        outln!(
+            "  {}{}: {}",
+            e.path.display(),
+            if e.is_dir { "/" } else { "" },
+            e.problem
+        );
+    }
+}
+
+fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
     let t = m.tree.total(root);
     let s = &m.status.stats;
     eprintln!(
-        "{} items, {} errors, {:.2}s{}",
+        "{} items, {}, {:.2}s{}",
         t.items,
-        t.errors,
+        match t.errors {
+            0 => "no errors".to_string(),
+            1 => "1 error".to_string(),
+            n => format!("{n} errors"),
+        },
         elapsed.as_secs_f64(),
         if m.status.incomplete {
             ", incomplete"
@@ -283,6 +417,17 @@ fn print_footer(m: &Model, root: Ix, elapsed: Duration) {
             ""
         }
     );
+    if t.errors > 0 {
+        let list = dut_tui::errors(&m.tree, root, 0);
+        let mut line = format!("not read: {}", list.summary());
+        if let Some(h) = list.hint() {
+            line += &format!("; {h}");
+        }
+        if !listed {
+            line += "; --errors lists them";
+        }
+        eprintln!("{line}");
+    }
     if t.referenced > t.alloc {
         let why = if m.status.exact_sizes {
             "shared data counted once, compressed data at its size on disk"

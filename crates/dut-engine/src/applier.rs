@@ -547,6 +547,18 @@ impl<B: Backend> Applier<B> {
                     .notice("rescan: that directory is counted at another mount of it".into());
                 return;
             }
+            Some(_) if m.tree.flags(ix).has(NodeFlags::KERNEL) => {
+                m.status
+                    .notice("rescan: that is a kernel filesystem, which is never scanned".into());
+                return;
+            }
+            Some(_) if m.tree.flags(ix).has(NodeFlags::NETWORK) => {
+                m.status.notice(
+                    "rescan: that is a network filesystem; start dut with --network to scan it"
+                        .into(),
+                );
+                return;
+            }
             Some(d) if d.state == DirState::Skipped => {
                 m.status
                     .notice("rescan: that directory is on another filesystem".into());
@@ -912,8 +924,11 @@ impl<B: Backend> Applier<B> {
             if s.mount_root {
                 flags |= NodeFlags::MOUNT_ROOT;
             }
-            if s.skip == Some(SkipReason::DuplicateMount) {
-                flags |= NodeFlags::DUP_MOUNT;
+            match s.skip {
+                Some(SkipReason::DuplicateMount) => flags |= NodeFlags::DUP_MOUNT,
+                Some(SkipReason::Network) => flags |= NodeFlags::NETWORK,
+                Some(SkipReason::Kernel) => flags |= NodeFlags::KERNEL,
+                _ => {}
             }
             let cx = m.tree.add_dir_flagged(ix, c.name(s.name), &s.meta, flags);
             let r = m.tree.node_ref(cx);

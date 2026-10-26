@@ -20,5 +20,8 @@ undocumented_unsafe_blocks = "deny"
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+sysinfo = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true

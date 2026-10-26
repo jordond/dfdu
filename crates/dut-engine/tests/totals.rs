@@ -159,7 +159,7 @@ fn totals_match_reference_and_du() {
     let (tmp, _outside) = fixture();
     let root = tmp.path().to_path_buf();
     let e = Engine::start(
-        PortableBackend,
+        PortableBackend::default(),
         EngineOptions {
             check_invariants: true,
             workers: 4,

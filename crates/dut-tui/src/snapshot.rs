@@ -52,6 +52,12 @@ pub enum Mark {
     OtherFs,
     /// A second mount of something the scan counts elsewhere; not scanned.
     DupMount,
+    /// A directory read in full, with errors somewhere below it.
+    ErrorsInside,
+    /// A network filesystem, not scanned without `--network`.
+    Network,
+    /// A kernel filesystem (`/proc`, `/sys`), never scanned.
+    Kernel,
     /// In a delete plan that has not finished.
     Deleting,
     /// Its scan was stopped (cancelled, or cut for a rescan or delete that did not complete):
@@ -72,6 +78,10 @@ pub struct EntryData {
     pub dev_ino: (u64, u64),
     pub mark: Mark,
     pub error: Option<ErrKind>,
+    /// What went wrong reading it ([`crate::problem`]).
+    pub problem: Option<String>,
+    /// Errors below it, not counting its own.
+    pub errors_inside: u64,
     /// btrfs subvolume label ([`subvol_label`]).
     pub label: Option<String>,
     /// Bytes of its disk usage that data outside the scan also uses: deleting it frees less.
@@ -231,6 +241,12 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
     if tree.flags(ix).has(dut_tree::NodeFlags::DUP_MOUNT) {
         return Mark::DupMount;
     }
+    if tree.flags(ix).has(dut_tree::NodeFlags::KERNEL) {
+        return Mark::Kernel;
+    }
+    if tree.flags(ix).has(dut_tree::NodeFlags::NETWORK) {
+        return Mark::Network;
+    }
     if rescanning.contains(&tree.node_ref(ix)) {
         return Mark::Rescanning;
     }
@@ -247,6 +263,7 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
                 Mark::Incomplete
             }
             _ if tree.error(ix).is_some() => Mark::Error,
+            _ if tree.total(ix).errors > 0 => Mark::ErrorsInside,
             _ => Mark::None,
         },
         None if tree.error(ix).is_some() => Mark::Error,
@@ -319,6 +336,8 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
                 dev_ino: tree.dev_ino(c),
                 mark: mark_of(tree, c, &rescanning),
                 error: tree.error(c),
+                problem: crate::problem(tree, c),
+                errors_inside: crate::errors_below(tree, c),
                 label: subvol_label(m, c),
                 shared_out: t.shared_out,
                 compressed: tree.flags(c).has(dut_tree::NodeFlags::COMPRESSED),
@@ -340,6 +359,8 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
             dev_ino: (0, 0),
             mark: Mark::None,
             error: None,
+            problem: None,
+            errors_inside: 0,
             label: None,
             shared_out: 0,
             compressed: false,
@@ -384,6 +405,8 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         dev_ino: (1, i as u64 + 10),
         mark: Mark::None,
         error: None,
+        problem: None,
+        errors_inside: 0,
         label: None,
         shared_out: 0,
         compressed: false,

@@ -45,6 +45,8 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dut_sim::SimRepor
                 t.ro_subvols += r.ro_subvols;
                 t.dup_mounts += r.dup_mounts;
                 t.cross_runs += r.cross_runs;
+                t.network_skipped += r.network_skipped;
+                t.kernel_skipped += r.kernel_skipped;
                 t.measured += r.measured;
                 t.shared_bytes += r.shared_bytes;
                 t.max_budget_used = t.max_budget_used.max(r.max_budget_used);
@@ -76,6 +78,10 @@ fn coverage_of_risky_paths() {
     assert!(
         t.subvols > 100 && t.ro_subvols > 20 && t.dup_mounts > 5 && t.cross_runs > 50,
         "mounts and subvolumes not exercised: {t:?}"
+    );
+    assert!(
+        t.network_skipped > 5 && t.kernel_skipped > 5,
+        "network and kernel mounts not exercised: {t:?}"
     );
     assert!(
         t.measured > 1000 && t.shared_bytes > 0,
