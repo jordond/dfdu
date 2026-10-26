@@ -1,4 +1,4 @@
-//! Deterministic simulation of the scan pipeline (`docs/data-pipeline.md` §10.1).
+//! Deterministic simulation of the scan pipeline.
 //!
 //! An in-memory filesystem with injected faults is scanned by the real worker, watchdog and
 //! applier code, driven in a seeded random order on one thread with virtual time. After every
@@ -22,8 +22,6 @@ use parking_lot::Mutex;
 use rand::rngs::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
 
-// ---- randomness ------------------------------------------------------------------------------
-
 /// Seeded ChaCha8: the stream for a seed is fixed by the algorithm, so a failing seed replays
 /// the same run on every platform.
 pub struct Rng(ChaCha8Rng);
@@ -41,8 +39,6 @@ impl Rng {
         self.0.random_ratio(per_mille, 1000)
     }
 }
-
-// ---- filesystem spec -------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
@@ -91,7 +87,7 @@ pub struct SpecNode {
     pub unmeasurable: bool,
 }
 
-/// One extent of a simulated file (`docs/btrfs.md` §3.4). Compressed extents are identified by
+/// One extent of a simulated file. Compressed extents are identified by
 /// their physical start; `len` is uncompressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimPiece {
@@ -720,7 +716,7 @@ fn set_dev(nodes: &mut [SpecNode], n: u32, dev: u64) {
     let mut stack = vec![n];
     while let Some(x) = stack.pop() {
         nodes[x as usize].meta.dev = dev;
-        stack.extend(nodes[x as usize].children.clone());
+        stack.extend(&nodes[x as usize].children);
     }
 }
 
@@ -780,8 +776,6 @@ fn copy_subtree(nodes: &mut Vec<SpecNode>, n: u32) -> u32 {
     (nodes.len() - 1) as u32
 }
 
-// ---- backend, clock, sink --------------------------------------------------------------------
-
 /// The key the scanner gives a directory's mount: its mount id, or its device without ids.
 fn mount_key_of(mount: u64, dev: u64) -> (u64, u64) {
     if mount != 0 { (mount, 0) } else { (0, dev) }
@@ -808,7 +802,7 @@ impl Clock for SimClock {
 pub struct SimBackend {
     pub spec: Arc<Spec>,
     pub clock: Arc<SimClock>,
-    /// Directories opened with a storage class other than their mount's (§4.5): the scanner
+    /// Directories opened with a storage class other than their mount's: the scanner
     /// hands the class of the directory's mount to `open`, whichever mount the scan began on.
     pub wrong_storage: AtomicU64,
 }
@@ -876,7 +870,7 @@ impl DirStream for SimStream {
 }
 
 /// A block of a simulated directory, with the directory's stat-phase faults.
-pub struct SimRaw {
+struct SimRaw {
     spec: Arc<Spec>,
     clock: Arc<SimClock>,
     node: u32,
@@ -932,7 +926,7 @@ impl Backend for SimBackend {
         let mut cur = ROOT;
         for part in rest.split(['/', '\\']).filter(|p| !p.is_empty()) {
             let n = &self.spec.nodes[cur as usize];
-            // A name can be both a removed entry and the one that replaced it (scenario 14).
+            // A name can be both a removed entry and the one that replaced it.
             let named = |&&c: &&u32| self.spec.nodes[c as usize].name == part.as_bytes();
             cur = *n
                 .children
@@ -1021,7 +1015,6 @@ impl SimBackend {
     /// What the simulated measurer answers: the spec's extent map, unless the file is gone or
     /// changed, or cannot be measured.
     pub fn measure(&self, req: &MeasureReq) -> MeasureMsg {
-        use dfdu_scan::Backend as _;
         let file = &req.files[0];
         let i = self.loc_from_path(&req.path(file));
         let n = &self.spec.nodes[i as usize];
@@ -1086,8 +1079,6 @@ impl Sink for SimSink {
         });
     }
 }
-
-// ---- driver ----------------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub struct SimConfig {
@@ -1177,7 +1168,7 @@ pub struct SimReport {
 }
 
 /// A simulation in progress. [`run`] drives one in random order from start to end; scenario
-/// tests (`docs/data-pipeline.md` §10.2) build their own spec, force the sequence they are
+/// tests build their own spec, force the sequence they are
 /// about with the step methods, then call [`Sim::run_to_end`], which finishes in random order
 /// and applies every final check.
 pub struct Sim {
@@ -1208,6 +1199,18 @@ pub struct Sim {
     /// Every scan message applied, in order, when [`Sim::record`] is set (scenario tests).
     pub log: Vec<ScanMsg>,
     pub record: bool,
+}
+
+/// Keeps the default panic hook from printing the panics injected by [`Fault`]s; other panics
+/// still print.
+pub fn quiet_injected_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info.payload().downcast_ref::<&str>().copied().unwrap_or("");
+        if msg != "injected panic" {
+            default(info);
+        }
+    }));
 }
 
 /// Runs one seed in random order from start to end.
@@ -1318,14 +1321,11 @@ impl Sim {
             .map_err(|e| self.fail(format!("invariant{after}: {e}")))
     }
 
-    // ---- steps for scripted scenarios ------------------------------------------------------
-
-    /// One step of worker `i`.
     pub fn step_worker(&mut self, i: usize) -> StepResult {
         self.workers[i].step(&self.shared, &*self.sink, &*self.clock)
     }
 
-    /// Mount limits (§4.5), checked against what the workers run: every part on a limited
+    /// Mount limits, checked against what the workers run: every part on a limited
     /// mount holds a permit unless it is a job root or the watchdog took its permit back while
     /// it was stuck; the permits held, including tasks handed over with one, are the gate's
     /// count; the parts holding one never exceed the limit; and the limit is the storage's,
@@ -1448,7 +1448,6 @@ impl Sim {
     /// `Deleted` item is removed from the spec first). When no item is left, the plan's `Done`.
     /// Returns false if no plan is running.
     pub fn delete_next(&mut self, result: DeleteResult) -> Result<bool, String> {
-        use dfdu_scan::Backend as _;
         let Some((plan, i)) = self.plans.front_mut() else {
             return Ok(false);
         };
@@ -1524,7 +1523,6 @@ impl Sim {
         }
     }
 
-    /// Applies every delivered message.
     pub fn apply_all(&mut self) -> Result<(), String> {
         while self.apply_next()?.is_some() {}
         Ok(())
@@ -1540,9 +1538,6 @@ impl Sim {
         Ok(())
     }
 
-    // ---- random driver ---------------------------------------------------------------------
-
-    /// One random step.
     pub fn random_step(&mut self) -> Result<(), String> {
         self.report.ticks += 1;
         // One request per file, so answers can arrive in any order.
@@ -1559,7 +1554,7 @@ impl Sim {
         match r {
             0..55 => {
                 let i = self.rng.below(self.workers.len() as u64) as usize;
-                let _: StepResult = self.step_worker(i);
+                self.step_worker(i);
                 self.check_mount_limits()?;
             }
             55..60 => {
@@ -1835,11 +1830,6 @@ fn trace() -> Option<String> {
     std::env::var("DFDU_SIM_TRACE").ok()
 }
 
-fn spec_node(shared: &Shared<SimBackend>, tree: &Tree, ix: Ix) -> u32 {
-    use dfdu_scan::Backend as _;
-    shared.backend.loc_from_path(&tree.path_buf(ix))
-}
-
 /// One to three visible entries whose removal cannot shift a fault position.
 fn pick_deletable(
     tree: &Tree,
@@ -1856,7 +1846,7 @@ fn pick_deletable(
         stack.extend(tree.children(ix));
         if ix != root
             && !tree.flags(ix).has(NodeFlags::DELETING)
-            && spec.deletable(spec_node(shared, tree, ix))
+            && spec.deletable(shared.backend.loc_from_path(&tree.path_buf(ix)))
         {
             all.push(ix);
         }
@@ -1881,7 +1871,6 @@ fn deleter_step(
     rng: &mut Rng,
     report: &mut SimReport,
 ) -> Option<DeleterMsg> {
-    use dfdu_scan::Backend as _;
     let (plan, i) = plans.front_mut()?;
     if *i >= plan.items.len() {
         let id = plan.id;
@@ -1963,9 +1952,7 @@ fn random_dir(tree: &Tree, rng: &mut Rng) -> Option<Ix> {
     dirs.get(rng.below(dirs.len() as u64) as usize).copied()
 }
 
-// ---- reference -------------------------------------------------------------------------------
-
-/// Shared-extent accounting by brute force (`docs/btrfs.md` §3.4): which files are measured
+/// Shared-extent accounting by brute force: which files are measured
 /// (with their unshared bytes), and the shared bytes counted at each path, with the part shared
 /// only outside the scan.
 #[allow(clippy::type_complexity)]
@@ -2032,7 +2019,6 @@ fn expected_homes(
                 .filter(|r| r.0 <= a && b <= r.1)
                 .map(|r| r.2)
                 .collect();
-            refs.dedup();
             refs.sort();
             refs.dedup();
             if refs.is_empty() {
@@ -2156,6 +2142,14 @@ fn seen_children(
     })
 }
 
+/// `p` is a direct child of `dir`.
+fn is_child(p: &[u8], dir: &[u8]) -> bool {
+    p.len() > dir.len() + 1
+        && p.starts_with(dir)
+        && p[dir.len()] == SEP
+        && !p[dir.len() + 1..].contains(&SEP)
+}
+
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
 fn compare(
     spec: &Spec,
@@ -2166,7 +2160,6 @@ fn compare(
 ) -> Result<(usize, u64), String> {
     let tree = &model.tree;
     let root = tree.roots().next().ok_or("no root")?;
-    // Final state of every directory, by path.
     let mut by_path: HashMap<Vec<u8>, Ix> = HashMap::new();
     let mut stack = vec![root];
     while let Some(ix) = stack.pop() {
@@ -2175,7 +2168,6 @@ fn compare(
     }
     let state_of = |p: &[u8]| by_path.get(p).and_then(|&ix| tree.dir(ix)).map(|d| d.state);
 
-    // Which spec entries the scan saw, and the lowest path of every hard-linked inode.
     let mount_root = |d: u32| {
         let (n, p) = (
             &spec.nodes[d as usize].meta,
@@ -2190,6 +2182,7 @@ fn compare(
     };
     // With cross_mounts, how many times each mounted directory was descended into.
     let mut descended: HashMap<(u64, u64), u32> = HashMap::new();
+    // Which spec entries the scan saw, and the lowest path of every hard-linked inode.
     let mut seen: Vec<(u32, Vec<u8>)> = vec![];
     let mut charged: HashMap<(u64, u64), Vec<u8>> = HashMap::new();
     let mut abandoned = 0;
@@ -2352,16 +2345,8 @@ fn compare(
             {
                 t.errors += 1;
             }
-            let mut prefix_len = path.len() + 1;
-            if prefix_len == 0 {
-                prefix_len = 1;
-            }
             for (p, ct) in expect.iter() {
-                if p.len() > prefix_len
-                    && p.starts_with(path)
-                    && p[path.len()] == SEP
-                    && !p[prefix_len..].contains(&SEP)
-                {
+                if is_child(p, path) {
                     t.add(ct);
                 }
             }
@@ -2386,12 +2371,7 @@ fn compare(
                 .collect();
             let mut expected: Vec<String> = expect
                 .keys()
-                .filter(|p| {
-                    p.starts_with(path)
-                        && p.len() > path.len()
-                        && p[path.len()] == SEP
-                        && !p[path.len() + 1..].contains(&SEP)
-                })
+                .filter(|p| is_child(p, path))
                 .map(|p| String::from_utf8_lossy(&p[path.len() + 1..]).into_owned())
                 .collect();
             expected.sort();
@@ -2419,7 +2399,7 @@ fn compare(
                 String::from_utf8_lossy(path)
             ));
         }
-        checked += (tree.dir(ix).is_some()) as usize;
+        checked += tree.dir(ix).is_some() as usize;
     }
     if by_path.len() != expect.len() {
         let extra: Vec<String> = by_path

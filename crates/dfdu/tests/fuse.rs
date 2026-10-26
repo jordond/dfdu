@@ -1,8 +1,7 @@
-//! Headless `dfdu scan` on a hung mount (ROADMAP M2 acceptance, `docs/data-pipeline.md`
-//! §10.4): a FUSE filesystem (`dfdu-hangfs`) mounted as a network filesystem below the scanned
-//! directory, two of its directories never answering their listing and one file never
-//! answering its stat. `dfdu scan --network --stall-abandon` reports within a bound, with the
-//! three directories listed as not responding, and exits with code 3.
+//! Headless `dfdu scan` on a hung mount: a FUSE filesystem (`dfdu-hangfs`) mounted as a network
+//! filesystem below the scanned directory, two of its directories never answering their listing and
+//! one file never answering its stat. `dfdu scan --network --stall-abandon` reports within a bound,
+//! with the three directories listed as not responding, and exits with code 3.
 //!
 //! The process can exit only once the stuck calls return: the kernel waits out a FUSE request
 //! the daemon has already read, even for a killed process. So the test waits for the report,

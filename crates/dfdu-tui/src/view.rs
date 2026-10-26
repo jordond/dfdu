@@ -68,22 +68,11 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         footer,
     );
 
-    match app.overlay.clone() {
+    match &app.overlay {
         Overlay::None => {}
         Overlay::Help => draw_help(f, app, area),
-        Overlay::Errors { list, cursor } => draw_errors(f, app, area, &list, cursor),
-        Overlay::ConfirmDelete {
-            name,
-            size,
-            shared_out,
-            is_dir,
-            mode,
-            typed,
-            scanning,
-            ..
-        } => draw_confirm(
-            f, app, area, &name, size, shared_out, is_dir, mode, &typed, scanning,
-        ),
+        Overlay::Errors { list, cursor } => draw_errors(f, app, area, list, *cursor),
+        Overlay::ConfirmDelete { .. } => draw_confirm(f, app, area),
     }
 }
 
@@ -203,7 +192,8 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, frame: u64) {
     }
     app.scroll = app.scroll.min(rows.saturating_sub(1));
 
-    let t = app.theme.clone();
+    let app = &*app;
+    let t = &app.theme;
     let mut lines = Vec::with_capacity(height);
     if rows == 0 && app.new_count == 0 {
         let msg = match app.snap.dir_mark {
@@ -226,7 +216,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, frame: u64) {
         .take(height.saturating_sub(extra))
     {
         let e = &app.snap.entries[i];
-        let mut line = entry_line(e, &t, frame, max, total, bw);
+        let mut line = entry_line(e, t, frame, max, total, bw);
         if sel == Some(row) {
             line = line.style(t.selected);
         }
@@ -382,7 +372,6 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// The list of entries that could not be read.
 fn draw_errors(f: &mut Frame, app: &App, area: Rect, list: &ErrorList, cursor: usize) {
     let t = &app.theme;
     let height = area.height.saturating_sub(4).max(3) as usize;
@@ -446,28 +435,29 @@ fn draw_errors(f: &mut Frame, app: &App, area: Rect, list: &ErrorList, cursor: u
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_confirm(
-    f: &mut Frame,
-    app: &App,
-    area: Rect,
-    name: &str,
-    size: u64,
-    shared_out: u64,
-    is_dir: bool,
-    mode: Mode,
-    typed: &str,
-    scanning: bool,
-) {
-    let what = if is_dir {
+fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
+    let Overlay::ConfirmDelete {
+        name,
+        size,
+        shared_out,
+        is_dir,
+        mode,
+        typed,
+        scanning,
+        ..
+    } = &app.overlay
+    else {
+        return;
+    };
+    let what = if *is_dir {
         format!("{name}/")
     } else {
-        name.to_string()
+        name.clone()
     };
-    let size_line = if scanning {
-        format!(" at least {} (still scanning)", human(size))
+    let size_line = if *scanning {
+        format!(" at least {} (still scanning)", human(*size))
     } else {
-        format!(" {}", human(size))
+        format!(" {}", human(*size))
     };
     let mut lines = match mode {
         Mode::Trash => vec![Line::raw(format!(" Move {what} to the Trash?"))],
@@ -477,11 +467,11 @@ fn draw_confirm(
         ],
     };
     lines.push(Line::styled(size_line, app.theme.dim));
-    if shared_out > 0 {
+    if *shared_out > 0 {
         lines.push(Line::styled(
             format!(
                 " May free less: {} of it is also used outside the scan.",
-                human(shared_out)
+                human(*shared_out)
             ),
             app.theme.warn,
         ));
@@ -498,7 +488,7 @@ fn draw_confirm(
             Span::raw(" type "),
             Span::styled("delete", app.theme.key),
             Span::raw(" and Enter: "),
-            Span::raw(typed.to_string()),
+            Span::raw(typed.as_str()),
             Span::raw("   "),
             Span::styled("Esc", app.theme.key),
             Span::raw(" cancel"),

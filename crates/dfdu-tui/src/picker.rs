@@ -92,7 +92,7 @@ pub fn draw(f: &mut Frame, p: &Picker, t: &Theme) {
     );
     let height = list.height as usize;
     let top = p.cursor.saturating_sub(height.saturating_sub(1));
-    let bw = (list.width as usize).saturating_sub(80).clamp(0, 20);
+    let bw = (list.width as usize).saturating_sub(80).min(20);
     let lines: Vec<Line> = p
         .disks
         .iter()

@@ -1,5 +1,5 @@
-//! The last messages and commands the applier handled, for crash reports
-//! (`docs/data-pipeline.md` §8). Summaries only: ids, counts and statuses, no names.
+//! The last messages and commands the applier handled, for crash reports. Summaries only: ids,
+//! counts and statuses, no names.
 
 use std::fmt::Write as _;
 

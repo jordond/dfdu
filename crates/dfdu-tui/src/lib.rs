@@ -1,5 +1,5 @@
-//! The interactive browser (`docs/research/tui-design.md`). The run loop reads the engine model
-//! under the read lock only to copy a [`snapshot::Snapshot`], then draws from the copy.
+//! The interactive browser. The run loop reads the engine model under the read lock only to copy
+//! a [`snapshot::Snapshot`], then draws from the copy.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -50,7 +50,6 @@ pub struct RunOptions {
 /// Opens the browser on `opts.path` (or a disk chosen in the picker) and returns when the user
 /// quits.
 pub fn run(opts: RunOptions) -> io::Result<()> {
-    // Sets a panic hook that restores the terminal before the panic message is printed.
     let mut terminal = ratatui::try_init()?;
     // try_init installed a hook that restores the terminal on panic. Panic hooks also run for
     // panics that are caught, and worker and applier panics are caught and recorded by the
@@ -226,7 +225,7 @@ where
             recv(engine.wake()) -> _ => {
                 // The applier wakes only when its fingerprint changed; it can still match what
                 // was last drawn (the frame read it already), so compare before redrawing.
-                let v = engine.read(snapshot::version);
+                let v = engine.read(|m| m.fingerprint());
                 if Some(v) != seen_version {
                     data_dirty = true;
                 }

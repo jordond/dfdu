@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Sender, unbounded};
 use dfdu_tree::{ErrKind, Kind};
 
 use crate::journal::Journal;
@@ -22,7 +22,7 @@ pub struct DeleterHandle {
 /// Starts the deleter. Results go to `out`. Without a journal directory, or if the journal
 /// cannot be created, every item is refused: nothing is deleted without a record.
 pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> DeleterHandle {
-    let (tx, rx): (Sender<Plan>, Receiver<Plan>) = unbounded();
+    let (tx, rx) = unbounded::<Plan>();
     let abort = Arc::new(AtomicBool::new(false));
     let ab = abort.clone();
     let thread = thread::Builder::new()

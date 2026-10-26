@@ -1,4 +1,4 @@
-//! Hard-link table owned by the applier (`docs/data-pipeline.md` §5.5).
+//! Hard-link table owned by the applier.
 
 use std::collections::HashMap;
 
@@ -9,9 +9,8 @@ pub type Scope = u32;
 pub const VISIBLE: Scope = 0;
 
 /// A list that holds up to two items without allocating. Nearly every inode with hard links
-/// has links in one scope, and most have two; with a `Vec` for each, the allocations took a
-/// tenth of the applier's time at 10M entries (95k inodes), each `malloc` about 1 µs in its
-/// fragmented heap.
+/// has links in one scope, and most have two; a `Vec` for each costs about a tenth of the
+/// applier's time at 10M entries, in a fragmented heap.
 #[derive(Debug, Default)]
 enum Small<T> {
     #[default]
@@ -272,7 +271,7 @@ impl LinkTable {
         (reelect, n)
     }
 
-    /// Charges the live link with the lowest path in `scope` (§5.5); links that do not resolve
+    /// Charges the live link with the lowest path in `scope`; links that do not resolve
     /// are skipped (freed ones are dropped by [`LinkTable::prune`]). Returns whether the charged
     /// link changed, and the number of links looked at.
     pub fn reelect(&mut self, tree: &mut Tree, key: (u64, u64), scope: Scope) -> (bool, usize) {

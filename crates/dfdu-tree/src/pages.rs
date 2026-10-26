@@ -1,8 +1,8 @@
 //! Growable storage in fixed-size pages. Growing never moves or copies what is already stored,
 //! so adding one entry costs at most one page allocation. A plain `Vec` doubles and copies: at
 //! 1M nodes that is a 32 MB copy inside one applier slice, several times the 1 ms a slice may
-//! hold the write lock (`docs/data-pipeline.md` §5.6). Nodes, directory records, child lists
-//! and names are stored this way, and the applier's per-job directory maps.
+//! hold the write lock. Nodes, directory records, child lists and names are stored this way, and
+//! the applier's per-job directory maps.
 
 use std::ops::{Index, IndexMut};
 
@@ -191,7 +191,6 @@ impl KidArena {
         }
     }
 
-    /// Removes the last child.
     pub fn pop(&mut self, k: &mut Kids) -> Option<u32> {
         while let Some(m) = k.more.as_deref_mut() {
             match m.last_mut().and_then(Vec::pop) {
@@ -303,7 +302,6 @@ impl NameArena {
         &self.pages[page][off..off + len]
     }
 
-    /// Length of the name a handle refers to.
     pub fn len_of(h: u64) -> u64 {
         h & ((1 << NAME_LEN_BITS) - 1)
     }

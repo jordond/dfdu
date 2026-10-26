@@ -1,6 +1,6 @@
-//! UI state and its update function (`docs/research/tui-design.md` §2.2). Keys turn into
-//! changes of [`App`] plus effects for the run loop to carry out; [`App::refresh`] folds a new
-//! [`Snapshot`] into the state and applies the row-stability rules.
+//! UI state and its update function. Keys turn into changes of [`App`] plus effects for the run
+//! loop to carry out; [`App::refresh`] folds a new [`Snapshot`] into the state and applies the
+//! row-stability rules.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -114,7 +114,7 @@ pub struct App {
 }
 
 /// One line describing a finished delete plan. On btrfs the freed space shows up in the free
-/// space only after the transaction commits, and for snapshots after the cleaner ran (B11).
+/// space only after the transaction commits, and for snapshots after the cleaner ran.
 pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
     let mut parts = vec![format!(
         "deleted {} ({})",
@@ -206,7 +206,6 @@ impl App {
             && now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL
     }
 
-    /// Folds a new snapshot into the state.
     pub fn refresh(&mut self, snap: Snapshot, now: Instant) {
         if let Some(d) = &snap.last_delete
             && self
@@ -496,7 +495,6 @@ impl App {
         });
     }
 
-    /// Handles one key. Returns effects for the run loop.
     fn set_typed(&mut self, t: String) {
         if let Overlay::ConfirmDelete { typed, .. } = &mut self.overlay {
             *typed = t;
@@ -695,6 +693,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::snapshot::test_entry;
+    use crate::tests::key;
 
     fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
         let root = test_entry(99, "/r", 0);
@@ -707,10 +706,6 @@ mod tests {
             version,
             ..Default::default()
         }
-    }
-
-    fn key(c: KeyCode) -> KeyEvent {
-        KeyEvent::new(c, KeyModifiers::NONE)
     }
 
     #[test]

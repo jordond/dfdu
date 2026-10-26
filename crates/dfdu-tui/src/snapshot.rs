@@ -1,5 +1,5 @@
 //! Copying what one frame needs out of the engine model. This runs under the read lock, so it
-//! only reads and copies; drawing happens after the lock is released (`data-pipeline.md` §3).
+//! only reads and copies; drawing happens after the lock is released.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use dfdu_tree::{DirState, ErrKind, Ix, Kind, NodeRef, Totals, Tree, name_bytes};
 /// Which size the list shows.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum SizeMode {
-    /// Disk usage, data shared between files counted once (`docs/btrfs.md` §3.4).
+    /// Disk usage, data shared between files counted once.
     #[default]
     Disk,
     Apparent,
@@ -126,7 +126,7 @@ pub struct EntryData {
     pub name: Name,
     pub kind: Kind,
     pub is_dir: bool,
-    /// Size in the current mode (disk usage or apparent).
+    /// Size in the current [`SizeMode`].
     pub size: u64,
     pub items: u64,
     pub mtime: i64,
@@ -186,13 +186,21 @@ impl Target {
         }
     }
 
-    /// See [`resolve`].
+    /// By reference if it still resolves, otherwise by path with an identity check. `None` if
+    /// neither works.
     pub fn resolve(&self, tree: &Tree) -> Option<Ix> {
-        resolve(tree, self)
+        if let Some(ix) = self.node.and_then(|r| tree.resolve_visible(r)) {
+            return Some(ix);
+        }
+        let ix = find_path(tree, &self.path)?;
+        match self.ident {
+            Some(id) if id.dev_ino != (0, 0) && ident(tree, ix) != id => None,
+            _ => Some(ix),
+        }
     }
 }
 
-pub fn ident(tree: &Tree, ix: Ix) -> Ident {
+fn ident(tree: &Tree, ix: Ix) -> Ident {
     Ident {
         dev_ino: tree.dev_ino(ix),
         kind: tree.kind(ix),
@@ -214,19 +222,6 @@ pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
         return Some(cur);
     }
     None
-}
-
-/// Resolves a target: by reference if it still resolves, otherwise by path with an identity
-/// check. Returns `None` if neither works.
-pub fn resolve(tree: &Tree, t: &Target) -> Option<Ix> {
-    if let Some(ix) = t.node.and_then(|r| tree.resolve_visible(r)) {
-        return Some(ix);
-    }
-    let ix = find_path(tree, &t.path)?;
-    match t.ident {
-        Some(id) if id.dev_ino != (0, 0) && ident(tree, ix) != id => None,
-        _ => Some(ix),
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -257,11 +252,6 @@ pub struct Snapshot {
     pub focus: Option<(u32, u32)>,
     /// Cheap fingerprint of the model, to skip redraws when nothing changed.
     pub version: u64,
-}
-
-/// A fingerprint that changes whenever anything visible could have changed.
-pub fn version(m: &Model) -> u64 {
-    m.fingerprint()
 }
 
 /// "subvolume" or "snapshot of NAME", with ", read-only", for btrfs subvolume roots.
@@ -347,7 +337,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
         unmeasured: m.status.unmeasured,
         compressed_upper_bound: m.status.compressed_upper_bound,
         profile: m.status.profile,
-        version: version(m),
+        version: m.fingerprint(),
         ..Default::default()
     };
     let Some(root) = tree.roots().next() else {
@@ -355,7 +345,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     };
     snap.root_total = tree.total(root);
 
-    let mut dir = resolve(tree, target);
+    let mut dir = target.resolve(tree);
     // The directory is gone: go up until something resolves.
     let mut path = target.path.clone();
     while dir.is_none() && path.pop() {

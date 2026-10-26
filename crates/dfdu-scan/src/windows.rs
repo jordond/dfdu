@@ -1,7 +1,6 @@
-//! Windows backend (ROADMAP M2): `GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo`
-//! into a 64 KiB buffer per directory, which returns each entry's sizes, attributes, reparse
-//! tag, write time and file id with its name, so no entry is opened to learn its size
-//! (`docs/research/scanning.md` §3.3).
+//! Windows backend: `GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo` into a 64 KiB
+//! buffer per directory, which returns each entry's sizes, attributes, reparse tag, write time
+//! and file id with its name, so no entry is opened to learn its size.
 //!
 //! Reading a block ([`DirStream::next_raw`]) takes the entries from that buffer, metadata
 //! included. Stat'ing it ([`RawBlock::stat`]) converts the names and asks for the one thing the

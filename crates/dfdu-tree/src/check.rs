@@ -1,30 +1,30 @@
 use crate::{Ix, NodeFlags, Totals, Tree};
 
-/// A structural invariant violation (`data-pipeline.md` I1, I3).
+/// A structural invariant violation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Violation {
-    /// I1: a directory's total differs from its own contribution plus its children's totals.
+    /// A directory's total differs from its own contribution plus its children's totals.
     Totals {
         node: u32,
         stored: Box<Totals>,
         computed: Box<Totals>,
     },
-    /// I3: a child's parent pointer does not point back at the directory listing it.
+    /// A child's parent pointer does not point back at the directory listing it.
     ParentMismatch {
         node: u32,
         listed_under: u32,
         parent: u32,
     },
-    /// I3: a reachable child is freed or marked detached.
+    /// A reachable child is freed or marked detached.
     DeadChild { node: u32, listed_under: u32 },
-    /// I3: a root is freed or detached.
+    /// A root is freed or detached.
     DeadRoot { node: u32 },
 }
 
 impl Tree {
-    /// Checks I1 and I3 for every node reachable from the visible roots and from `extra_roots`
-    /// (rescan shadows). Cost is linear in the reachable tree; used after every slice step in
-    /// debug builds and simulation tests.
+    /// Checks totals and parent links of every node reachable from the visible roots and from
+    /// `extra_roots` (rescan shadows). Cost is linear in the reachable tree; used after every
+    /// slice step in debug builds and simulation tests.
     pub fn check(&self, extra_roots: &[Ix]) -> Result<(), Violation> {
         let roots: Vec<Ix> = self.roots().chain(extra_roots.iter().copied()).collect();
         for &r in &roots {
@@ -48,13 +48,10 @@ impl Tree {
             if !expanded {
                 stack.push((ix, true));
                 for c in self.children(ix) {
-                    if c.0 as usize >= self.slot_count() || self.is_free_slot(c.0) {
-                        return Err(Violation::DeadChild {
-                            node: c.0,
-                            listed_under: ix.0,
-                        });
-                    }
-                    if self.flags(c).has(NodeFlags::DETACHED) {
+                    if c.0 as usize >= self.slot_count()
+                        || self.is_free_slot(c.0)
+                        || self.flags(c).has(NodeFlags::DETACHED)
+                    {
                         return Err(Violation::DeadChild {
                             node: c.0,
                             listed_under: ix.0,

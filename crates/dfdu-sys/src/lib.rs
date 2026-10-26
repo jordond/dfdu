@@ -1,9 +1,8 @@
-//! OS calls that no safe crate provides, behind safe wrappers (`docs/btrfs.md` §3.8). Syscalls
-//! with safe rustix APIs are called directly; only the btrfs ioctls and macOS
-//! `getattrlistbulk` need `unsafe`, each in one block with its argument struct checked against
-//! the kernel's size or `libc`'s definitions.
-//! On Windows, the directory enumeration and file information calls the Windows backend
-//! uses (`windows.rs`).
+//! OS calls that no safe crate provides, behind safe wrappers: the btrfs ioctls and FIEMAP on
+//! Linux, `getattrlistbulk` on macOS, and the directory enumeration and file information calls
+//! of the Windows backend. Syscalls with safe rustix APIs are called directly. Each ioctl or
+//! `getattrlistbulk` argument struct is checked against the kernel's size or `libc`'s
+//! definitions.
 //!
 //! On other systems the functions report "not available" (`Ok(None)` or `Unsupported`).
 

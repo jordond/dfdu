@@ -1,10 +1,9 @@
-//! A hung mount does not stop the scan (ROADMAP M2, `docs/data-pipeline.md` §10.4): a FUSE
-//! filesystem (`dfdu-hangfs`) whose selected directories never answer `readdir` and whose
-//! selected file never answers `getattr`, mounted as a network filesystem below the scan root
-//! and scanned with `network`. The scan finishes with those directories reported stalled and
-//! then abandoned, everything else counted exactly, at most the mount's limit of requests
-//! being answered at once, and no more worker threads than the pool, the mount's workers and
-//! one per stuck call.
+//! A hung mount does not stop the scan: a FUSE filesystem (`dfdu-hangfs`) whose selected
+//! directories never answer `readdir` and whose selected file never answers `getattr`, mounted as a
+//! network filesystem below the scan root and scanned with `network`. The scan finishes with those
+//! directories reported stalled and then abandoned, everything else counted exactly, at most the
+//! mount's limit of requests being answered at once, and no more worker threads than the pool, the
+//! mount's workers and one per stuck call.
 //!
 //! Needs `/dev/fuse` and root (or `fusermount3`); skipped with a message otherwise, unless
 //! `DFDU_FUSE_REQUIRED` is set (CI).
@@ -206,7 +205,7 @@ fn hung_network_mount_is_abandoned_and_the_rest_counted() {
     );
 
     // The mount is limited to 4 parts at once and adds 4 workers; each stuck call may cost
-    // one more thread (the stuck caps, data-pipeline.md §5.4).
+    // one more thread, up to a cap.
     let gates = engine.scanner().gate_stats();
     assert_eq!(gates.len(), 1, "{gates:?}");
     let g = &gates[0];

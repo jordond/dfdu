@@ -1,7 +1,7 @@
-//! What the browser shows on btrfs (`docs/btrfs.md` B5, B6, B11-B13), on the fixture of
-//! `scripts/btrfs-fixture.sh` whose mount point is in `DFDU_BTRFS_DIR` (and its DUP filesystem
-//! at `$DFDU_BTRFS_DIR-dup`). Skipped (passing) when the variable is not set. Each test checks
-//! what its mode shows: unprivileged and as root.
+//! What the browser shows on btrfs, on the fixture of `scripts/btrfs-fixture.sh` whose mount
+//! point is in `DFDU_BTRFS_DIR` (and its DUP filesystem at `$DFDU_BTRFS_DIR-dup`). Skipped
+//! (passing) when the variable is not set. Each test checks what its mode shows: unprivileged
+//! and as root.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,7 +74,7 @@ fn select(app: &mut App, name: &str, t: Instant) {
     panic!("{name} not in the list");
 }
 
-/// B6 and B13. Unprivileged: compressed files are labelled as upper bounds and the header says
+/// Unprivileged: compressed files are labelled as upper bounds and the header says
 /// so. As root: sizes are exact, so neither appears, and subvolumes show their quota groups.
 #[test]
 fn compressed_labels_and_quota_groups() {
@@ -121,7 +121,7 @@ fn compressed_labels_and_quota_groups() {
     e.shutdown(Duration::from_secs(1));
 }
 
-/// B5: a snapshot scanned alone shares data with snapshots outside the scan. Its rows say how
+/// A snapshot scanned alone shares data with snapshots outside the scan. Its rows say how
 /// much, and the delete dialog says the delete may free less.
 #[test]
 fn data_used_outside_the_scan_may_free_less() {
@@ -157,7 +157,7 @@ fn data_used_outside_the_scan_may_free_less() {
     e.shutdown(Duration::from_secs(1));
 }
 
-/// B11: after a delete on btrfs the status line says that btrfs frees the space when the
+/// After a delete on btrfs the status line says that btrfs frees the space when the
 /// transaction commits.
 #[test]
 fn delete_on_btrfs_notes_when_space_is_freed() {
@@ -193,7 +193,7 @@ fn delete_on_btrfs_notes_when_space_is_freed() {
     );
 }
 
-/// B12: on a filesystem with the DUP data profile the header states the multiplier.
+/// On a filesystem with the DUP data profile the header states the multiplier.
 #[test]
 fn dup_profile_in_the_header() {
     let Some((f, _lock)) = fixture() else { return };

@@ -1,5 +1,5 @@
-//! A panic in the applier thread is reported, written to a crash file, and does not leave
-//! callers waiting forever (`docs/data-pipeline.md` §8).
+//! A panic in the applier thread is reported, written to a crash file, and does not leave callers
+//! waiting forever.
 
 use std::time::Duration;
 

@@ -1,9 +1,8 @@
-//! Scenario 11 of `docs/data-pipeline.md` §10.2 on a real tree: a Nix-like store whose files
-//! are hard-linked from many profiles, scanned, then the profiles rescanned, so the rescan's
-//! links are merged into the visible ones when it swaps in. Every inode must end with exactly
-//! one charged link, and the totals must count each inode once. The simulation runs the same
-//! scenario with 2,000 links (`crates/dfdu-sim/tests/scenarios.rs`); this runs it with the
-//! engine's real threads and up to a million links.
+//! A Nix-like store whose files are hard-linked from many profiles, scanned, then the profiles
+//! rescanned, so the rescan's links are merged into the visible ones when it swaps in. Every inode
+//! must end with exactly one charged link, and the totals must count each inode once. The
+//! simulation runs the same scenario with 2,000 links (`crates/dfdu-sim/tests/scenarios.rs`); this
+//! runs it with the engine's real threads and up to a million links.
 
 #![cfg(unix)]
 
@@ -169,14 +168,10 @@ fn check(inodes: usize, profiles: usize) {
         let profiles = child(m, root, "profiles");
         assert_eq!(
             m.tree.total(profiles).items,
-            1 + links + profiles_dirs(m, profiles)
+            1 + links + m.tree.children(profiles).count() as u64
         );
     });
     e.shutdown(Duration::from_secs(1));
-}
-
-fn profiles_dirs(m: &Model, profiles: Ix) -> u64 {
-    m.tree.children(profiles).count() as u64
 }
 
 #[test]

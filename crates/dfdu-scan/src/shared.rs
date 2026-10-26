@@ -1,5 +1,5 @@
 //! Scanner state shared by workers, the watchdog and the applier, and the worker and watchdog
-//! step functions (`docs/data-pipeline.md` §3, §4.3, §5.4, §5.7).
+//! step functions.
 
 use fixedbitset::FixedBitSet;
 use std::collections::{HashMap, HashSet};
@@ -43,15 +43,15 @@ pub struct Limits {
     pub outbox_msgs: usize,
     pub flush_age_ns: u64,
     pub stall_ns: u64,
-    /// Chunk tasks a directory may have outstanding (§4.3); 0 never hands a block to a chunk
-    /// task. The engine sets it to `max(2, workers)` when it is 0.
+    /// Chunk tasks a directory may have outstanding; 0 never hands a block to a chunk task. The
+    /// engine sets it to `max(2, workers)` when it is 0.
     pub chunk_credit: usize,
     /// The pool's worker count, which the thread policy chose for the scan root's storage. A
     /// job root's mount whose storage has a limit (below) gets this many permits instead; 0
     /// gives it its storage's limit. The engine sets it to its worker count when it is 0.
     pub pool_workers: usize,
-    /// Parts that may run at once on a mount on a spinning disk, and on a network mount (§4.5).
-    /// 0 is no limit. Mounts on other storage have none.
+    /// Parts that may run at once on a mount on a spinning disk, and on a network mount. 0 is
+    /// no limit. Mounts on other storage have none.
     pub rotational_parts: usize,
     pub network_parts: usize,
 }
@@ -98,11 +98,11 @@ pub struct Task<L> {
     mount: u64,
     /// Ask the backend for a subvolume record when opening (`dev` changed from the parent).
     probe_subvol: bool,
-    /// Set for a chunk task: one block of the directory to stat (§4.2). Otherwise this is the
+    /// Set for a chunk task: one block of the directory to stat. Otherwise this is the
     /// directory's listing task.
     chunk: Option<Box<ChunkWork<L>>>,
-    /// The limit of the directory's mount, if it has one (§4.5). Set for a job root once it
-    /// is opened; the root task itself runs without a permit.
+    /// The limit of the directory's mount, if it has one. Set for a job root once it is opened;
+    /// the root task itself runs without a permit.
     gate: Option<Arc<TaskGate<L>>>,
     /// What the directory's mount is stored on, as the backend reported it when the scan
     /// entered the mount; handed to [`Backend::open`]. A directory inherits its parent's.
@@ -134,9 +134,9 @@ pub struct ChunkWork<L> {
     parts: Arc<DirParts>,
 }
 
-/// The parts of a directory read by more than one task: its listing task and the chunk tasks
-/// it handed blocks to. Whoever finishes the last part sends the directory's one `Close`
-/// (§4.2), with every part's outcome in its status.
+/// The parts of a directory read by more than one task: its listing task and the chunk tasks it
+/// handed blocks to. Whoever finishes the last part sends the directory's one `Close`, with
+/// every part's outcome in its status.
 #[derive(Default)]
 pub struct DirParts {
     /// The listing task (until it finishes) plus chunk tasks not finished.
@@ -204,8 +204,7 @@ struct JobState {
     ended: AtomicBool,
     next_dir: AtomicU32,
     early_stop: RwLock<FixedBitSet>,
-    /// With `cross_mounts`: mount ids not to descend into (`docs/btrfs.md` §3.2), from the
-    /// mount table at job start.
+    /// With `cross_mounts`: mount ids not to descend into, from the mount table at job start.
     dup_mounts: Option<HashSet<u64>>,
     /// Without a mount table: `(dev, ino)` of every mount root descended into, the job root
     /// included, so at least a second mount seen later and mount loops are not followed.
@@ -240,7 +239,7 @@ pub struct Outbox<L> {
     gated_task: bool,
     /// The gate whose permit the running part holds.
     permit: Option<Arc<TaskGate<L>>>,
-    /// A task handed over with a permit by the part that released it; runs next (§4.5).
+    /// A task handed over with a permit by the part that released it; runs next.
     handoff: Option<Task<L>>,
 }
 
@@ -304,7 +303,6 @@ pub struct WorkerSlot<L> {
     current: AtomicU64,
     part: AtomicU32,
     stall_reported: AtomicBool,
-    pub waiting_budget: AtomicBool,
 }
 
 impl<L> WorkerSlot<L> {
@@ -315,12 +313,7 @@ impl<L> WorkerSlot<L> {
             current: AtomicU64::new(NO_TASK),
             part: AtomicU32::new(LISTING_PART),
             stall_reported: AtomicBool::new(false),
-            waiting_budget: AtomicBool::new(false),
         }
-    }
-
-    pub fn in_syscall_since(&self) -> u64 {
-        self.syscall_since.load(SeqCst)
     }
 
     /// The part being run: `(job, dir, part)`, part 0 being the listing task and part
@@ -362,7 +355,7 @@ pub struct Shared<B: Backend> {
     /// Limits by mount key ([`mount_key`]); `None` for mounts without one. Looked up when a
     /// task for a mount root is created.
     gates: Mutex<Gates<B::Loc>>,
-    /// Workers the pool adds for limited mounts other than job roots' (§4.5).
+    /// Workers the pool adds for limited mounts other than job roots'.
     mount_workers: AtomicUsize,
 }
 
@@ -395,9 +388,9 @@ impl<B: Backend> Shared<B> {
         }
     }
 
-    /// The storage class and the limit of the mount `(mount, dev)`, created when the scan
-    /// first enters the mount (§4.5): `Limits::rotational_parts` on a spinning disk, `Limits::network_parts` on a
-    /// network mount, none on other storage. The mount of a job root gets the pool's size
+    /// The storage class and the limit of the mount `(mount, dev)`, created when the scan first
+    /// enters the mount: `Limits::rotational_parts` on a spinning disk, `Limits::network_parts`
+    /// on a network mount, none on other storage. The mount of a job root gets the pool's size
     /// instead; any other limited mount adds its limit to the pool, so its tasks do not take
     /// workers from the rest of the scan. The backend answers from the mount table and sysfs,
     /// without touching the mount.
@@ -433,7 +426,7 @@ impl<B: Backend> Shared<B> {
         (storage, gate)
     }
 
-    /// Workers the pool adds for limited mounts the scans entered (§4.5).
+    /// Workers the pool adds for limited mounts the scans entered.
     pub fn mount_workers(&self) -> usize {
         self.mount_workers.load(SeqCst)
     }
@@ -474,10 +467,8 @@ impl<B: Backend> Shared<B> {
         self.jobs.read().get(&job.0).cloned()
     }
 
-    // ---- applier API ---------------------------------------------------------------------
-
-    /// Submits the root task of a job. The applier creates the root placeholder first.
-    /// Returns the `submitted_seq` value that covers this job (§5.7).
+    /// Submits the root task of a job. The applier creates the root placeholder first. Returns
+    /// the `submitted_seq` value that covers this job.
     pub fn start_job(&self, job: JobId, root: &Path, opts: JobOptions) -> u64 {
         let st = Arc::new(JobState {
             ended: AtomicBool::new(false),
@@ -558,8 +549,8 @@ impl<B: Backend> Shared<B> {
         complete
     }
 
-    /// Makes `(job, dir)` the focus (§4.3). The focus is stored before the epoch changes;
-    /// readers load the epoch first (`Worker::emit_block`).
+    /// Makes `(job, dir)` the focus. The focus is stored before the epoch changes; readers load
+    /// the epoch first (`Worker::emit_block`).
     pub fn set_focus(&self, job: JobId, dir: DirId) {
         self.focus.store(pack(job, dir), SeqCst);
         self.focus_epoch.fetch_add(1, SeqCst);
@@ -610,8 +601,6 @@ impl<B: Backend> Shared<B> {
         )
     }
 
-    // ---- flushing ------------------------------------------------------------------------
-
     /// Sends the outbox and then publishes its tasks, under the caller's outbox lock.
     /// Returns false if `blocking` is false and the budget is exhausted.
     fn flush_locked(&self, ob: &mut Outbox<B::Loc>, sink: &dyn Sink, blocking: bool) -> bool {
@@ -654,9 +643,7 @@ impl<B: Backend> Shared<B> {
         true
     }
 
-    // ---- watchdog --------------------------------------------------------------------------
-
-    /// One watchdog round (§3 rule 6, §5.4, §5.7). Never blocks.
+    /// One watchdog round. Never blocks.
     pub fn watchdog_round(&self, sink: &dyn Sink, now: u64) -> WatchdogReport {
         let mut rep = WatchdogReport::default();
         let mut requeue = Vec::new();
@@ -695,8 +682,8 @@ impl<B: Backend> Shared<B> {
                     force = true;
                 }
             }
-            // A part stuck in a call does not count against its mount's limit (§4.5): its
-            // permit goes back, and a task waiting for one is queued again.
+            // A part stuck in a call does not count against its mount's limit: its permit goes
+            // back, and a task waiting for one is queued again.
             if is_stuck
                 && let Some(g) = &ob.permit
                 && let Some(next) = g.revoke()
@@ -725,8 +712,8 @@ impl<B: Backend> Shared<B> {
         rep
     }
 
-    /// How many workers beyond the pool's target may exist (§5.4): one per stuck worker, at
-    /// most `min(target, 16)` for stalls still being waited on, and at most 64 more for workers
+    /// How many workers beyond the pool's target may exist: one per stuck worker, at most
+    /// `min(target, 16)` for stalls still being waited on, and at most 64 more for workers
     /// stuck on tasks the applier abandoned. A thread stuck in a call cannot be stopped, so
     /// without the second allowance a few abandoned stalls could leave no worker for the rest.
     pub fn allowed_extra_workers(&self, target: usize, rep: &WatchdogReport) -> usize {
@@ -796,7 +783,7 @@ impl<B: Backend> Worker<B> {
     }
 
     /// Runs one step: take a task, open a directory, read one block, or stat one. Panics are
-    /// caught and recorded against the directory (§4.2).
+    /// caught and recorded against the directory.
     pub fn step(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
         if self.must_flush(sh) && !self.flush(sh, sink) {
             return StepResult::WaitingBudget;
@@ -879,10 +866,7 @@ impl<B: Backend> Worker<B> {
         if ob.is_empty() {
             return true;
         }
-        self.slot.waiting_budget.store(true, SeqCst);
-        let ok = sh.flush_locked(&mut ob, sink, self.blocking);
-        self.slot.waiting_budget.store(false, SeqCst);
-        ok
+        sh.flush_locked(&mut ob, sink, self.blocking)
     }
 
     /// Ends the current part: it no longer counts as running, and the next flush reports it
@@ -952,9 +936,9 @@ impl<B: Backend> Worker<B> {
     }
 
     /// The next task: one handed over with a permit, then the newest own task, then the
-    /// priority and normal queues. A task whose mount is at its limit (§4.5) waits in the
-    /// mount's gate if it was published, or stays on the own stack, published at the next
-    /// flush, if not; either way the worker looks further.
+    /// priority and normal queues. A task whose mount is at its limit waits in the mount's gate
+    /// if it was published, or stays on the own stack, published at the next flush, if not;
+    /// either way the worker looks further.
     fn take_task(&self, sh: &Shared<B>) -> Option<Task<B::Loc>> {
         let set = |ob: &mut Outbox<B::Loc>, t: &Task<B::Loc>, permit: bool| {
             self.slot.current.store(pack(t.job, t.dir), SeqCst);
@@ -1195,7 +1179,7 @@ impl<B: Backend> Worker<B> {
             .as_ref()
             .map_or(credit, |p| credit - p.in_flight().min(credit));
         if more && free > 0 {
-            // More blocks follow: another worker can stat this one (§4.2).
+            // More blocks follow: another worker can stat this one.
             let parts = r
                 .parts
                 .get_or_insert_with(|| Arc::new(DirParts::new()))

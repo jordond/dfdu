@@ -1,5 +1,4 @@
-//! Row order of the current directory, kept stable while sizes stream in
-//! (`docs/research/tui-design.md` §2.5).
+//! Row order of the current directory, kept stable while sizes stream in.
 //!
 //! The order is rebuilt only when asked: an exact sort on entering a directory, on a sort key
 //! or on `S`, and an automatic sort after the user has been idle. Between sorts, rows keep
@@ -60,7 +59,6 @@ fn name_cmp(a: &[u8], b: &[u8]) -> Ordering {
     la.cmp(lb).then_with(|| a.cmp(b))
 }
 
-/// Display order as indices into the entries of the current snapshot.
 /// The first 8 bytes of the name in ASCII lower case, zero-padded, as a big-endian number:
 /// when two prefixes differ they order names as [`name_cmp`] does, since names contain no
 /// zero bytes.
@@ -84,6 +82,7 @@ struct Key {
     index: u32,
 }
 
+/// Display order as indices into the entries of the current snapshot.
 #[derive(Debug, Default)]
 pub struct Order {
     rows: Vec<usize>,
@@ -101,7 +100,6 @@ impl Order {
         &self.new
     }
 
-    /// Exact sort of every visible entry.
     pub fn sort_exact(
         &mut self,
         entries: &[EntryData],

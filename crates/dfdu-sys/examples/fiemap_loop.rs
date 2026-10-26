@@ -1,4 +1,4 @@
-//! A bare FIEMAP loop: the floor for extent measurement (ROADMAP MB, `docs/btrfs.md` §3.4).
+//! A bare FIEMAP loop, the lower bound on the time of extent measurement.
 //!
 //! Lists the regular files with allocated blocks below a directory, staying on its mount and
 //! entering btrfs subvolumes (the files `dfdu` measures), then reads every file's extent map with

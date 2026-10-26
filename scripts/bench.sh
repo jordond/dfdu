@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Times dfdu against the other disk usage tools found on PATH, on a dfdu-bench tree (ROADMAP M2).
+# Times dfdu against the other disk usage tools found on PATH, on a dfdu-bench tree.
 # Wall time and peak memory come from hyperfine (2.0 or later reports memory).
 #
 # Usage: scripts/bench.sh [options] WORKDIR

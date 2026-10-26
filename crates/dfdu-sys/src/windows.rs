@@ -1,14 +1,11 @@
-//! Windows calls (ROADMAP M2) behind safe wrappers: directory enumeration with sizes
-//! (`GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo`), link counts by name relative
-//! to an open directory (`NtQueryInformationByName`), and the metadata of one path from an open
-//! handle, as [`dfdu_tree::WinStat`].
+//! Windows calls behind safe wrappers: directory enumeration with sizes
+//! (`GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo`), link counts by name
+//! relative to an open directory (`NtQueryInformationByName`), and the metadata of one path
+//! from an open handle, as [`dfdu_tree::WinStat`].
 //!
 //! Paths are opened with `NtCreateFile` in the NT namespace (`\??\C:\dir`), so they are not
 //! limited to `MAX_PATH`; a path already in verbatim form (`\\?\`, see [`verbatim_path`]) is
 //! not normalised either, so names ending in a dot or a space can be opened.
-//!
-//! Every `unsafe` block states why it is sound (`clippy::undocumented_unsafe_blocks` is denied
-//! for the crate).
 
 #![allow(unsafe_code)]
 
@@ -270,7 +267,7 @@ fn filetime(t: FILETIME) -> u64 {
 /// directory enumeration. For NTFS-compressed and sparse files that is what the data takes on
 /// disk; `GetCompressedFileSizeW` reports the same for them. Files compressed by WOF (CompactOS)
 /// keep their data in an alternate stream, which neither number includes (unverified).
-pub fn stat_handle(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
+fn stat_handle(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
     let mut bh = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: `bh` is valid for writes; the structure has integer fields only.
     if unsafe { GetFileInformationByHandle(h.as_raw_handle(), &mut bh) } == 0 {
@@ -464,7 +461,6 @@ pub struct DirReader {
     done: bool,
 }
 
-/// One directory entry.
 pub struct RawEntry<'a> {
     /// The name in UTF-16, as little-endian bytes ([`RawEntry::name_units`]).
     pub name: &'a [u8],
@@ -575,7 +571,6 @@ impl DirReader {
         }
     }
 
-    /// Reads the next buffer of entries.
     fn fill(&mut self, dir: BorrowedHandle<'_>) -> io::Result<()> {
         loop {
             // A call that succeeds without writing would otherwise leave the previous buffer's

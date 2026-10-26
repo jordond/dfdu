@@ -2,11 +2,10 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::sync::{AtomicUsize, Condvar, Mutex};
 
-/// Counting semaphore on bytes in transit to the applier (`docs/data-pipeline.md` §4.3).
+/// Counting semaphore on bytes in transit to the applier.
 pub struct Budget {
     capacity: usize,
     used: Mutex<usize>,
-    /// Most bytes in transit at once so far.
     peak: AtomicUsize,
     freed: Condvar,
 }

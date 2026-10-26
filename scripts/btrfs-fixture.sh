@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates the btrfs fixture of docs/btrfs.md §4 on a loop-mounted image and prints its path;
+# Creates the btrfs test fixture on a loop-mounted image and prints its path;
 # also a small filesystem with the DUP data profile at <mountpoint>-dup.
 # Needs root (mkfs, mount). Usage: btrfs-fixture.sh <image> <mountpoint> [owner]
 # The owner (default: $SUDO_USER, else root) owns everything, so tests can run as that user.
@@ -42,7 +42,6 @@ touch plain/bookend.bin
 btrfs property set plain/bookend.bin compression no
 head -c 8M /dev/urandom >plain/bookend.bin
 sync
-# Unaligned, so the extents at both ends of the rewrite stay partly referenced.
 dd if=/dev/urandom of=plain/bookend.bin bs=256K count=8 seek=13 conv=notrunc status=none
 
 btrfs -q subvolume create sub

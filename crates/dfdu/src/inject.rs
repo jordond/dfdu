@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use dfdu_scan::{Backend, FsClass};
 use dfdu_tree::{Meta, Subvol};
 
-/// Whether the environment asks for a worker panic.
 pub fn requested() -> bool {
     std::env::var_os("DFDU_TEST_WORKER_PANIC").is_some()
 }

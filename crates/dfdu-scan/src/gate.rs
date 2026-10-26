@@ -1,6 +1,6 @@
-//! Per-mount concurrency limits (`docs/data-pipeline.md` §4.5): at most `limit` parts of
-//! directories on one mount run at once, so a spinning disk is not read by every worker and a
-//! hung network mount holds only its own permits.
+//! Per-mount concurrency limits: at most `limit` parts of directories on one mount run at once,
+//! so a spinning disk is not read by every worker and a hung network mount holds only its own
+//! permits.
 //!
 //! A gate never blocks a worker. A task that finds its mount at the limit is kept in the gate's
 //! pending list and the worker looks for other work; the part that next releases a permit takes
@@ -16,7 +16,6 @@ use std::collections::VecDeque;
 
 use crate::sync::Mutex;
 
-/// See the module docs.
 pub struct Gate<T> {
     /// Mount id, or 0 with `dev` when the backend has no mount ids.
     pub mount: u64,
@@ -68,7 +67,6 @@ impl<T> Gate<T> {
         }
     }
 
-    /// Takes a permit if one is free.
     pub fn try_enter(&self) -> bool {
         let mut s = self.state.lock();
         s.try_take(self.limit)

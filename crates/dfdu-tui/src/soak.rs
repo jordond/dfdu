@@ -1,4 +1,4 @@
-//! Soak test (`docs/data-pipeline.md` §10.4, ROADMAP M2): a scan of a large tree on disk with a
+//! Soak test: a scan of a large tree on disk with a
 //! reader holding the read lock for 5 ms in a loop and the real UI loop drawing to a terminal
 //! whose writes block for seconds at a time. The scan must complete with the totals of an
 //! undisturbed scan, data in transit must stay within the byte budget, and the applier's p99

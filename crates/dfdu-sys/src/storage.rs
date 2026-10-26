@@ -1,5 +1,5 @@
-//! What a directory's data is stored on, for the scanner's thread policy (ROADMAP M2): a
-//! spinning disk is read with few threads, since parallel reads there only add seeks.
+//! What a directory's data is stored on, for the scanner's thread policy: a spinning disk is
+//! read with few threads, since parallel reads there only add seeks.
 //!
 //! On Linux the answer comes from sysfs: the `queue/rotational` flag of the disk under the
 //! mount's block device, following partitions to their disk and device-mapper and md devices
@@ -10,7 +10,6 @@
 
 use std::path::Path;
 
-/// See the module docs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Storage {
     /// Solid state, or anything else that serves parallel reads well.

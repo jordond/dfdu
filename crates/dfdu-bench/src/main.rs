@@ -1,4 +1,4 @@
-//! `dfdu-bench gen`: a seeded synthetic tree for benchmarks (ROADMAP M2). The same seed and
+//! `dfdu-bench gen`: a seeded synthetic tree for benchmarks. The same seed and
 //! size give the same tree on every machine and with any number of threads, so timings taken on
 //! different days or machines compare like with like.
 //!

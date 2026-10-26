@@ -1,6 +1,5 @@
 //! Semantic styles. Defaults use only the 16 ANSI colours so they read on light and dark
-//! backgrounds; `NO_COLOR` keeps the modifiers (bold, reverse) and drops every colour. Theme
-//! files and truecolor palettes come in M3.
+//! backgrounds; `NO_COLOR` keeps the modifiers (bold, reverse) and drops every colour.
 
 use humansize::{BINARY, format_size};
 use ratatui::style::{Color, Modifier, Style};

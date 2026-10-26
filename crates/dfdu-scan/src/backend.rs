@@ -71,8 +71,8 @@ impl<L> Block<L> {
 }
 
 /// Entries read from a directory and not yet stat'ed. The worker reading the directory stats
-/// them itself, or hands them to a chunk task another worker runs (`docs/data-pipeline.md`
-/// §4.2), so a wide directory is stat'ed by several workers at once.
+/// them itself, or hands them to a chunk task another worker runs, so a wide directory is
+/// stat'ed by several workers at once.
 pub trait RawBlock<L>: Send {
     fn len(&self) -> usize;
 
@@ -141,10 +141,9 @@ pub trait Backend: Send + Sync + 'static {
     fn mount_class(&self, _mount: u64, _dev: u64) -> Option<FsClass> {
         None
     }
-    /// What a mount's data is stored on ([`dfdu_sys::storage`]), for its concurrency limit
-    /// (`docs/data-pipeline.md` §4.5): by `mount` id, or by device `dev` when there is no id.
-    /// Answered from the mount table and sysfs, without touching the mount. Called once per
-    /// mount.
+    /// What a mount's data is stored on ([`dfdu_sys::storage`]), for its concurrency limit: by
+    /// `mount` id, or by device `dev` when there is no id. Answered from the mount table and
+    /// sysfs, without touching the mount. Called once per mount.
     fn mount_storage(&self, _mount: u64, _dev: u64) -> dfdu_sys::Storage {
         dfdu_sys::Storage::Unknown
     }

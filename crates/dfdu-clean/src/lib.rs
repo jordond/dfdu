@@ -1,6 +1,6 @@
-//! Deletion (`docs/data-pipeline.md` §7.4, §9.2): plans built by the applier, verification of
-//! every item against the scan, trash or permanent delete, and a per-session journal whose
-//! intent record reaches the disk before an item is touched.
+//! Deletion: plans built by the applier, verification of every item against the scan, trash or
+//! permanent delete, and a per-session journal whose intent record reaches the disk before an
+//! item is touched.
 
 mod deleter;
 mod journal;

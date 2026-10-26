@@ -1,7 +1,7 @@
-//! A panic in a scan worker is caught by the engine and recorded as one `Panicked` directory
-//! (`docs/data-pipeline.md` §8). Headless `dfdu scan` finishes the scan, reports that directory
-//! like any other unreadable one (exit status 3), and writes no crash report: the panic hook
-//! leaves panics the engine catches alone.
+//! A panic in a scan worker is caught by the engine and recorded as one `Panicked` directory.
+//! Headless `dfdu scan` finishes the scan, reports that directory like any other unreadable one
+//! (exit status 3), and writes no crash report: the panic hook leaves panics the engine catches
+//! alone.
 //!
 //! The environment variable `DFDU_TEST_WORKER_PANIC` (hidden; read by `dfdu scan`) makes the scan
 //! panic when it opens the first directory below the root.

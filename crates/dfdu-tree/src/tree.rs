@@ -46,8 +46,8 @@ impl NodeFlags {
     pub const RO_SUBVOL: u16 = 256;
     /// Mount of something already scanned elsewhere in the job; not descended into.
     pub const DUP_MOUNT: u16 = 512;
-    /// File whose extents were measured: its own disk usage is its unshared bytes
-    /// (`docs/btrfs.md` §3.4) instead of its allocation.
+    /// File whose extents were measured: its own disk usage is its unshared bytes instead of its
+    /// allocation.
     pub const MEASURED: u16 = 1024;
     /// Measured file with compressed extents whose on-disk size is not known (an upper bound).
     pub const COMPRESSED: u16 = 2048;
@@ -64,7 +64,7 @@ impl NodeFlags {
     }
 }
 
-/// Scan state of a directory. Everything but `Pending` is terminal (`data-pipeline.md` I2).
+/// Scan state of a directory. Everything but `Pending` is terminal.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum DirState {
     Pending,
@@ -182,7 +182,7 @@ impl Iterator for Children<'_> {
 
 impl ExactSizeIterator for Children<'_> {}
 
-/// One slot, kept to 56 bytes: memory per entry decides how large a tree fits (ROADMAP M2,
+/// One slot, kept to 56 bytes: memory per entry decides how large a tree fits (the target is
 /// under 100 MB for 1M entries). Fields most entries do not need live in side tables.
 #[derive(Clone, Debug)]
 struct Node {
@@ -221,8 +221,7 @@ fn pack_alloc(alloc: u64) -> Option<u32> {
     u32::try_from(alloc / 512).ok().filter(|&b| b != ALLOC_BIG)
 }
 
-/// Shared-extent bytes of a node (`docs/btrfs.md` §3.4); zero except on filesystems that share
-/// extents.
+/// Shared-extent bytes of a node; zero except on filesystems that share extents.
 #[derive(Copy, Clone, Debug, Default)]
 struct Extents {
     /// Unshared bytes of a `MEASURED` file.
@@ -286,8 +285,6 @@ pub struct Tree {
     nodes: Pages<Node>,
     /// Parallel to `nodes` once any node has shared-extent bytes; empty until then.
     extents: Pages<Extents>,
-    /// Parallel to `nodes` once any node has a category (M5); empty until then.
-    categories: Pages<u16>,
     /// Device numbers the nodes' `dev` indexes, and the reverse map.
     devs: Vec<u64>,
     dev_index: std::collections::HashMap<u64, u32>,
@@ -313,8 +310,6 @@ impl Tree {
     pub fn new() -> Self {
         Self::default()
     }
-
-    // ---- reading -------------------------------------------------------------------------
 
     pub fn version(&self) -> u64 {
         self.version
@@ -349,9 +344,8 @@ impl Tree {
     }
 
     /// [`Tree::resolve`], and `None` also when the node or an ancestor is a directory marked
-    /// `cut`: the applier's gate (`docs/data-pipeline.md` §5.1) in one walk up the tree. At 10M
-    /// entries the nodes of a walk are rarely in the cache, so each walk costs a cache miss
-    /// per level.
+    /// `cut` (the cut check of the applier's gate), in one walk up the tree. At 10M entries the
+    /// nodes of a walk are rarely in the cache, so each walk costs a cache miss per level.
     pub fn resolve_uncut(&self, r: NodeRef) -> Option<Ix> {
         let n = self.nodes.get(r.index as usize)?;
         if n.generation != r.generation {
@@ -428,10 +422,6 @@ impl Tree {
             }
             i = n.parent;
         }
-    }
-
-    pub fn is_attached(&self, ix: Ix) -> bool {
-        self.top(ix).is_some()
     }
 
     pub fn is_visible(&self, ix: Ix) -> bool {
@@ -548,10 +538,6 @@ impl Tree {
         d
     }
 
-    pub fn category(&self, ix: Ix) -> u16 {
-        self.categories.get(ix.0 as usize).copied().unwrap_or(0)
-    }
-
     pub fn dir(&self, ix: Ix) -> Option<&DirRec> {
         let d = self.nodes[ix.0 as usize].dir;
         (d != NONE).then(|| &self.dirs[d as usize])
@@ -624,15 +610,11 @@ impl Tree {
     /// Filesystem path of the node: the root's path joined with each name below it. Use this for
     /// anything handed to the OS; [`Tree::path`] is a byte key for ordering and lookups.
     pub fn path_buf(&self, ix: Ix) -> PathBuf {
-        let mut parts = vec![ix];
-        let mut cur = ix;
-        while let Some(p) = self.parent(cur) {
-            parts.push(p);
-            cur = p;
-        }
+        let mut parts = Vec::new();
+        self.ancestors(ix, &mut parts);
         let mut out = PathBuf::new();
-        for p in parts.iter().rev() {
-            out.push(&*name_os(self.name(*p)));
+        for p in parts {
+            out.push(&*name_os(self.name(p)));
         }
         out
     }
@@ -640,15 +622,11 @@ impl Tree {
     /// Path from the topmost ancestor as bytes, components joined with [`SEP`]: a key for
     /// ordering (hard-link charging) and lookups, not for passing to the OS.
     pub fn path(&self, ix: Ix) -> Vec<u8> {
-        let mut parts = vec![ix];
-        let mut cur = ix;
-        while let Some(p) = self.parent(cur) {
-            parts.push(p);
-            cur = p;
-        }
+        let mut parts = Vec::new();
+        self.ancestors(ix, &mut parts);
         let mut out = Vec::new();
-        for (i, p) in parts.iter().rev().enumerate() {
-            let name = self.name(*p);
+        for (i, p) in parts.into_iter().enumerate() {
+            let name = self.name(p);
             if i > 0 && out.last() != Some(&SEP) {
                 out.push(SEP);
             }
@@ -704,8 +682,6 @@ impl Tree {
         })
     }
 
-    // ---- building --------------------------------------------------------------------------
-
     fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: u16) -> u32 {
         // Names are never truncated: a cut name would not convert back (`name_os`). Entry names
         // are at most a few hundred bytes; root paths can be longer, up to 16 MiB.
@@ -749,10 +725,6 @@ impl Tree {
         self.set_alloc(i, meta.alloc);
         if !self.extents.is_empty() {
             *self.ext_mut(i) = Extents::default();
-        }
-        if !self.categories.is_empty() {
-            self.categories.grow_to(self.nodes.len(), 0);
-            self.categories[i as usize] = 0;
         }
         i
     }
@@ -836,27 +808,22 @@ impl Tree {
 
     /// Adds `delta` to `dir` and every ancestor, and marks them changed.
     pub fn propagate_add(&mut self, dir: Ix, delta: &Totals) {
-        let v = self.bump();
-        let mut i = dir.0;
-        while i != NONE {
-            let n = &self.nodes[i as usize];
-            let (d, p) = (n.dir, n.parent);
-            let rec = &mut self.dirs[d as usize];
-            rec.total.add(delta);
-            rec.changed_at = v;
-            i = p;
-        }
+        self.propagate(dir, |t| t.add(delta));
     }
 
     /// Subtracts `delta` from `dir` and every ancestor, and marks them changed.
     pub fn propagate_sub(&mut self, dir: Ix, delta: &Totals) {
+        self.propagate(dir, |t| t.sub(delta));
+    }
+
+    fn propagate(&mut self, dir: Ix, f: impl Fn(&mut Totals)) {
         let v = self.bump();
         let mut i = dir.0;
         while i != NONE {
             let n = &self.nodes[i as usize];
             let (d, p) = (n.dir, n.parent);
             let rec = &mut self.dirs[d as usize];
-            rec.total.sub(delta);
+            f(&mut rec.total);
             rec.changed_at = v;
             i = p;
         }
@@ -872,13 +839,10 @@ impl Tree {
                 errors: 1,
                 ..Totals::default()
             };
-            match self.dir(ix).is_some() {
-                true => self.propagate_add(ix, &one),
-                false => {
-                    if let Some(p) = self.parent(ix) {
-                        self.propagate_add(p, &one)
-                    }
-                }
+            if self.dir(ix).is_some() {
+                self.propagate_add(ix, &one);
+            } else if let Some(p) = self.parent(ix) {
+                self.propagate_add(p, &one);
             }
         }
     }
@@ -974,18 +938,10 @@ impl Tree {
                 self.parent(ix)
             };
             if let Some(t) = target {
-                // Both in one walk: `propagate_add` then `propagate_sub` walked twice.
-                let v = self.bump();
-                let mut i = t.0;
-                while i != NONE {
-                    let n = &self.nodes[i as usize];
-                    let (d, p) = (n.dir, n.parent);
-                    let rec = &mut self.dirs[d as usize];
-                    rec.total.add(&new);
-                    rec.total.sub(&old);
-                    rec.changed_at = v;
-                    i = p;
-                }
+                self.propagate(t, |tot| {
+                    tot.add(&new);
+                    tot.sub(&old);
+                });
             }
         } else {
             self.bump();
@@ -997,14 +953,6 @@ impl Tree {
         self.bump();
     }
 
-    pub fn set_category(&mut self, ix: Ix, category: u16) {
-        if category != 0 || !self.categories.is_empty() {
-            self.categories.grow_to(self.nodes.len(), 0);
-            self.categories[ix.0 as usize] = category;
-        }
-        self.bump();
-    }
-
     /// Marks a directory changed without changing totals (state changes the UI should see).
     pub fn touch(&mut self, ix: Ix) {
         let v = self.bump();
@@ -1012,8 +960,6 @@ impl Tree {
             d.changed_at = v;
         }
     }
-
-    // ---- detaching and freeing ---------------------------------------------------------------
 
     /// Unlinks `ix` from its parent (or from the visible roots), subtracts its totals from the
     /// ancestors and queues the subtree for freeing. References into it stop resolving at once.
@@ -1076,10 +1022,6 @@ impl Tree {
     fn remove_child(&mut self, parent: Ix, child: u32) {
         let d = self.nodes[parent.0 as usize].dir as usize;
         self.kids.remove(&mut self.dirs[d].kids, child);
-    }
-
-    pub fn has_free_work(&self) -> bool {
-        !self.free_work.is_empty()
     }
 
     /// Frees up to `budget` nodes of detached subtrees, children before parents, so no freed
@@ -1149,8 +1091,7 @@ impl Tree {
         self.live -= 1;
     }
 
-    // ---- crate-internal access for the invariant checker ------------------------------------
-
+    // For the invariant checker.
     pub(crate) fn slot_count(&self) -> usize {
         self.nodes.len()
     }
@@ -1321,15 +1262,13 @@ mod tests {
         loop {
             let done = t.free_step(1, |_| {});
             // Allocate into freed slots between steps, as the applier would.
-            if let Some(&slot) = t.free_nodes.last() {
-                let _ = slot;
-                let n = add_file(&mut t, root, "new", 1);
+            if !t.free_nodes.is_empty() {
+                add_file(&mut t, root, "new", 1);
                 for r in &refs {
                     if let Some(ix) = t.resolve(*r) {
                         assert!(!t.is_visible(ix), "a freed subtree node became visible");
                     }
                 }
-                let _ = n;
             }
             if done {
                 break;

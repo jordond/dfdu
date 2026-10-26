@@ -1,11 +1,11 @@
-//! Extent measurement (`docs/btrfs.md` §3.4): the applier asks for files on filesystems that
+//! Extent measurement: the applier asks for files on filesystems that
 //! can share extents to be measured; measurer threads open each file, check it is still the
 //! scanned inode, read its extent map and reply. Like the deleter, they never touch the tree.
 
 use std::path::PathBuf;
 use std::thread;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Sender, unbounded};
 use dfdu_tree::{ErrKind, NodeRef};
 
 use crate::extents::{Inode, Measurement};
@@ -53,7 +53,7 @@ pub struct MeasureMsg {
 /// returned sender is dropped (a thread stuck in a filesystem call is left behind, like a stuck
 /// scan worker).
 pub fn spawn_measurers(n: usize, out: Sender<Vec<MeasureMsg>>) -> Sender<MeasureReq> {
-    let (tx, rx): (Sender<MeasureReq>, Receiver<MeasureReq>) = unbounded();
+    let (tx, rx) = unbounded();
     for i in 0..n.max(1) {
         let (rx, out) = (rx.clone(), out.clone());
         thread::Builder::new()
@@ -136,7 +136,7 @@ pub fn from_extents(fs: [u8; 16], extents: &[dfdu_sys::Extent]) -> Measurement {
     m
 }
 
-/// Exact measurement (as root, `docs/btrfs.md` §3.5): every extent at its size on disk
+/// Exact measurement (as root): every extent at its size on disk
 /// (compressed size for compressed data, the whole extent where only part is still
 /// referenced), once per file. Extents FIEMAP marks shared for the part of the file they cover
 /// are keyed by their disk address, so every file referencing one counts the same extent once.

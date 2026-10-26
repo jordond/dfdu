@@ -1,7 +1,7 @@
-//! Synchronisation types used by the scanner's shared state, so the same code runs under `loom`
-//! (`docs/data-pipeline.md` §10.3). Normal builds use `std` atomics, `parking_lot` locks and
-//! `crossbeam-deque`'s injector directly. With `--cfg loom`, the atomics, locks and thread
-//! parking are `loom`'s, behind the `parking_lot` API, and the injector is a locked queue:
+//! Synchronisation types used by the scanner's shared state, so the same code runs under
+//! `loom`. Normal builds use `std` atomics, `parking_lot` locks and `crossbeam-deque`'s
+//! injector directly. With `--cfg loom`, the atomics, locks and thread parking are `loom`'s,
+//! behind the `parking_lot` API, and the injector is a locked queue:
 //! `loom` cannot run `crossbeam-deque`, and the protocol around the injector only needs it to
 //! be a linearizable FIFO.
 
@@ -164,7 +164,6 @@ impl Sleepers {
         }
     }
 
-    /// Unparks every registered thread.
     pub fn wake_all(&self) {
         for t in self.threads.lock().drain(..) {
             t.unpark();

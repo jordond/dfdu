@@ -23,22 +23,22 @@ fn errno(e: rustix::io::Errno) -> io::Error {
 /// Mount id of `path` itself (symlinks are not followed, automounts are not triggered).
 /// `Ok(None)` when the kernel does not report one (before Linux 5.8).
 pub fn mount_id(path: &Path) -> io::Result<Option<u64>> {
-    mount_id_at(CWD, path)
-}
-
-/// [`mount_id`] relative to a directory descriptor.
-pub fn mount_id_at(dir: impl AsFd, name: impl AsRef<Path>) -> io::Result<Option<u64>> {
     let flags = AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT;
-    match rustix::fs::statx(dir, name.as_ref(), flags, StatxFlags::MNT_ID) {
-        Ok(st) => Ok((st.stx_mask & StatxFlags::MNT_ID.bits() != 0).then_some(st.stx_mnt_id)),
-        Err(rustix::io::Errno::NOSYS) => Ok(None),
-        Err(e) => Err(errno(e)),
-    }
+    statx_mount_id(rustix::fs::statx(CWD, path, flags, StatxFlags::MNT_ID))
 }
 
 /// Mount id of an open file or directory.
 pub fn mount_id_fd(fd: impl AsFd) -> io::Result<Option<u64>> {
-    match rustix::fs::statx(fd, "", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID) {
+    statx_mount_id(rustix::fs::statx(
+        fd,
+        "",
+        AtFlags::EMPTY_PATH,
+        StatxFlags::MNT_ID,
+    ))
+}
+
+fn statx_mount_id(r: rustix::io::Result<rustix::fs::Statx>) -> io::Result<Option<u64>> {
+    match r {
         Ok(st) => Ok((st.stx_mask & StatxFlags::MNT_ID.bits() != 0).then_some(st.stx_mnt_id)),
         Err(rustix::io::Errno::NOSYS) => Ok(None),
         Err(e) => Err(errno(e)),
@@ -102,7 +102,7 @@ const GET_SUBVOL_INFO: rustix::ioctl::Opcode =
 /// Subvolume information for an open subvolume root directory (no privileges needed, Linux
 /// 4.18). Fails with `ENOTTY` on other filesystems.
 #[allow(unsafe_code)]
-pub fn subvol_info_fd(dir: impl AsFd) -> io::Result<SubvolInfo> {
+fn subvol_info_fd(dir: impl AsFd) -> io::Result<SubvolInfo> {
     // SAFETY: GET_SUBVOL_INFO is `_IOR(0x94, 60, struct btrfs_ioctl_get_subvol_info_args)`;
     // `GetSubvolInfoArgs` has that layout (size checked above) and every bit pattern is a valid
     // value of it, so the kernel writing it in full produces a valid value.
@@ -166,16 +166,6 @@ pub fn destroy_subvolume_at(parent: impl AsFd, name: &OsStr) -> io::Result<()> {
     unsafe { ioctl(parent.as_fd(), Setter::<SNAP_DESTROY, VolArgs>::new(args)) }.map_err(errno)
 }
 
-pub fn destroy_subvolume(parent: &Path, name: &OsStr) -> io::Result<()> {
-    destroy_subvolume_at(open_dir(CWD, parent)?, name)
-}
-
-/// Opens a directory below `dir` without following symlinks, for walks that must not leave the
-/// tree (deletion).
-pub fn open_dir_at(dir: BorrowedFd<'_>, name: &OsStr) -> io::Result<OwnedFd> {
-    open_dir(dir, Path::new(name))
-}
-
 const XFS_SUPER_MAGIC: i64 = 0x5846_5342;
 const BCACHEFS_SUPER_MAGIC: i64 = 0xca45_1a4e;
 
@@ -208,22 +198,26 @@ const _: () = assert!(std::mem::size_of::<FsInfoArgs>() == 1024);
 
 const FS_INFO: rustix::ioctl::Opcode = opcode::read::<FsInfoArgs>(BTRFS_IOCTL_MAGIC, 31);
 
-/// The btrfs filesystem uuid (the same for every subvolume and mount of it). No privileges.
+/// `BTRFS_IOC_FS_INFO`. No privileges.
 #[allow(unsafe_code)]
-pub fn btrfs_fsid(fd: impl AsFd) -> io::Result<[u8; 16]> {
+fn fs_info(fd: BorrowedFd<'_>) -> io::Result<FsInfoArgs> {
     // SAFETY: FS_INFO is `_IOR(0x94, 31, struct btrfs_ioctl_fs_info_args)`; `FsInfoArgs` has
     // that layout (size checked above), with no invalid bit patterns. The kernel reads `flags`
     // (zero here: request no optional fields) and writes the struct.
-    let a = unsafe {
+    unsafe {
         let mut args: FsInfoArgs = std::mem::zeroed();
         ioctl(
-            fd.as_fd(),
+            fd,
             rustix::ioctl::Updater::<FS_INFO, FsInfoArgs>::new(&mut args),
         )
         .map(|()| args)
     }
-    .map_err(errno)?;
-    Ok(a.fsid)
+    .map_err(errno)
+}
+
+/// The btrfs filesystem uuid (the same for every subvolume and mount of it). No privileges.
+pub fn btrfs_fsid(fd: impl AsFd) -> io::Result<[u8; 16]> {
+    Ok(fs_info(fd.as_fd())?.fsid)
 }
 
 /// One extent as FIEMAP reports it.
@@ -722,22 +716,7 @@ pub fn data_profile(fd: impl AsFd) -> io::Result<(Profile, u64)> {
     } else {
         Profile::Single
     };
-    Ok((profile, num_devices(fd.as_fd())?))
-}
-
-#[allow(unsafe_code)]
-fn num_devices(fd: BorrowedFd<'_>) -> io::Result<u64> {
-    // SAFETY: as in `btrfs_fsid`.
-    let a = unsafe {
-        let mut args: FsInfoArgs = std::mem::zeroed();
-        ioctl(
-            fd,
-            rustix::ioctl::Updater::<FS_INFO, FsInfoArgs>::new(&mut args),
-        )
-        .map(|()| args)
-    }
-    .map_err(errno)?;
-    Ok(a.num_devices)
+    Ok((profile, fs_info(fd.as_fd())?.num_devices))
 }
 
 /// Whether this process may do what root may: delete read-only snapshots, read extent trees.
@@ -766,7 +745,10 @@ mod tests {
         assert_eq!(subvol_info(d.path()).unwrap(), None);
         let fd = open_dir(CWD, d.path()).unwrap();
         let e = subvol_info_fd(&fd).unwrap_err();
-        assert_eq!(e.raw_os_error(), Some(libc_enotty()));
+        assert_eq!(
+            e.raw_os_error(),
+            Some(rustix::io::Errno::NOTTY.raw_os_error())
+        );
     }
 
     #[test]
@@ -786,13 +768,10 @@ mod tests {
     #[test]
     fn destroy_rejects_bad_names() {
         let d = tempfile::tempdir().unwrap();
+        let dir = open_dir(CWD, d.path()).unwrap();
         for bad in ["", "a/b", "a\0b"] {
-            let e = destroy_subvolume(d.path(), OsStr::new(bad)).unwrap_err();
+            let e = destroy_subvolume_at(&dir, OsStr::new(bad)).unwrap_err();
             assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
         }
-    }
-
-    fn libc_enotty() -> i32 {
-        rustix::io::Errno::NOTTY.raw_os_error()
     }
 }

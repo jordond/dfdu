@@ -17,7 +17,6 @@ dfdu-engine.workspace = true
 dfdu-tui.workspace = true
 dfdu-sys.workspace = true
 clap.workspace = true
-anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

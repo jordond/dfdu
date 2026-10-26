@@ -1,4 +1,4 @@
-//! UI latency (ROADMAP M1): time from start to the first frame that shows scanned data, and
+//! UI latency: time from start to the first frame that shows scanned data, and
 //! from a key press to the frame that shows its effect, while a scan runs.
 //!
 //! This drives the real run loop (`dfdu_tui::event_loop`) and the real engine with the native
@@ -258,8 +258,7 @@ fn measure(tree: &Path, workers: Option<usize>, after: usize, seed: u64) -> Run 
                     let s = driver.state.lock().expect("probe");
                     (s.done.is_some(), s.pending.len())
                 };
-                // A user would stop typing at some point when nothing happens: skip this key
-                // if four are waiting.
+                // A user would stop typing when nothing happens.
                 if backlog >= MAX_BACKLOG {
                     continue;
                 }

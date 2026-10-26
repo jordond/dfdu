@@ -1,6 +1,6 @@
-//! Per-session deletion journal (`docs/data-pipeline.md` §9.2): one JSON object per line, each
-//! with a CRC-32C, `intent` written and synced before the item is touched. The file is held
-//! under an exclusive lock for the session, so another instance never treats it as abandoned.
+//! Per-session deletion journal: one JSON object per line, each with a CRC-32C, `intent` written
+//! and synced before the item is touched. The file is held under an exclusive lock for the
+//! session, so another instance never treats it as abandoned.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -83,8 +83,7 @@ struct ItemRec {
     size: u64,
     mtime: i64,
     /// btrfs: the uuid of the subvolume holding the item, in intent records. Subvolume `st_dev`
-    /// numbers can change between mounts, so recovery matches the inode within this
-    /// subvolume (`docs/btrfs.md` §3.6).
+    /// numbers can change between mounts, so recovery matches the inode within this subvolume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     subvol_uuid: Option<String>,
 }
@@ -231,7 +230,6 @@ pub fn check_line(line: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::Identity;
-    use dfdu_tree::NodeRef;
 
     #[test]
     fn lines_carry_valid_crc_and_detect_damage() {
@@ -249,9 +247,8 @@ mod tests {
             mount: 0,
         };
         let root = tree.new_root(b"/x", &meta, true);
-        let node: NodeRef = tree.node_ref(root);
         let item = PlanItem {
-            node,
+            node: tree.node_ref(root),
             path: PathBuf::from("/tmp/a \"quoted\"\nname"),
             identity: Identity {
                 dev: 1,

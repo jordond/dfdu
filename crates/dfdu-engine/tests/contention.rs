@@ -1,5 +1,5 @@
-//! A reader holding the read lock for long stretches (a slow renderer) delays the applier
-//! between slices but cannot stop a scan or change its result (`docs/data-pipeline.md` §10.4).
+//! A reader holding the read lock for long stretches (a slow renderer) delays the applier between
+//! slices but cannot stop a scan or change its result.
 
 use std::fs;
 use std::sync::Arc;
@@ -89,9 +89,9 @@ fn slow_reader_does_not_change_or_stop_the_scan() {
     eprintln!("scan under read-lock contention took {took:?}");
 }
 
-/// An engine with nothing to do waits on its channels instead of taking the write lock. With
-/// extent measurement off (macOS and Windows), the measurers' closed channel was always ready
-/// and the applier took the lock in a loop.
+/// An engine with nothing to do waits on its channels instead of taking the write lock, also
+/// with extent measurement off (macOS and Windows), where the measurers' channel is closed and
+/// so always ready.
 #[test]
 fn idle_engine_does_not_spin() {
     for measure_workers in [0, 1] {

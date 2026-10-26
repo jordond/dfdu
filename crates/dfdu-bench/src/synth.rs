@@ -1,7 +1,7 @@
 //! A scanner backend serving a [`Plan`] from memory: the same directories, names, sizes, hard
 //! links and symlinks `dfdu-bench gen` would create, without creating them. The applier's cost
 //! depends on the messages it receives, not on where the workers read them, so this measures
-//! the applier at 10M entries with RAM instead of 10M inodes (ROADMAP M2, D1).
+//! the applier at 10M entries with RAM instead of 10M inodes.
 //!
 //! Directories are listed subdirectories first, then the other entries in plan order. Inode
 //! numbers: directory `d` is `d + 1`; files are numbered after the directories in plan order,
@@ -111,13 +111,11 @@ impl SynthTree {
         let entry = &self.plan.dirs[d as usize].entries[k as usize];
         let (kind, apparent, alloc, ino, nlink) = match *entry {
             Entry::Data(size) => {
-                // Small files are written, larger ones sparse (as `dfdu-bench gen` makes them).
-                let alloc = if size > 0 && size <= 512 { 4096 } else { 0 };
                 let nlink = self.nlink.get(&(d, k)).copied().unwrap_or(1);
                 (
                     Kind::File,
                     size,
-                    alloc,
+                    alloc(size),
                     self.first_ino[d as usize] + k as u64,
                     nlink,
                 )
@@ -126,11 +124,10 @@ impl SynthTree {
                 let Entry::Data(size) = self.plan.dirs[ld as usize].entries[lf as usize] else {
                     unreachable!("hard links point at data files")
                 };
-                let alloc = if size > 0 && size <= 512 { 4096 } else { 0 };
                 (
                     Kind::File,
                     size,
-                    alloc,
+                    alloc(size),
                     self.first_ino[ld as usize] + lf as u64,
                     self.nlink[&(ld, lf)],
                 )
@@ -154,6 +151,11 @@ impl SynthTree {
             mount: 0,
         }
     }
+}
+
+/// Small files are written, larger ones sparse (as `dfdu-bench gen` makes them).
+fn alloc(size: u64) -> u64 {
+    if size > 0 && size <= 512 { 4096 } else { 0 }
 }
 
 /// The backend. Paths other than [`ROOT`] are not supported (rescans of subdirectories).

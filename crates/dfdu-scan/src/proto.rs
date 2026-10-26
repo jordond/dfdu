@@ -1,4 +1,4 @@
-//! Messages from the scanner to the applier (`docs/data-pipeline.md` §4.2).
+//! Messages from the scanner to the applier.
 
 use dfdu_tree::{ErrKind, Meta, Subvol};
 
@@ -24,8 +24,8 @@ pub struct NameSpan {
 pub struct Probe {
     /// The directory is a btrfs subvolume root.
     pub subvol: Option<Subvol>,
-    /// Files on this filesystem can share extents (btrfs, XFS, bcachefs), so measuring them
-    /// is worthwhile (`docs/btrfs.md` §3.4).
+    /// Files on this filesystem can share extents (btrfs, XFS, bcachefs), so measuring them is
+    /// worthwhile.
     pub shares_extents: bool,
     /// btrfs data profile name and raw bytes stored per byte of data (2 for DUP or RAID1).
     pub profile: Option<(&'static str, f64)>,
@@ -41,8 +41,8 @@ pub struct FileRec {
 pub struct SubdirRec {
     pub name: NameSpan,
     pub meta: Meta,
-    /// The directory's mount differs from its parent's (`docs/btrfs.md` §3.2). btrfs
-    /// subvolumes are not mount roots unless mounted.
+    /// The directory's mount differs from its parent's. btrfs subvolumes are not mount roots
+    /// unless mounted.
     pub mount_root: bool,
     /// Set when the scanner will not read this directory; no task exists for it, and the
     /// applier closes it at once with this reason.
@@ -137,7 +137,7 @@ pub enum ScanMsg {
         job: JobId,
         dir: DirId,
     },
-    /// Every non-abandoned task has had its `Close` flushed (§5.7).
+    /// Every non-abandoned task has had its `Close` flushed.
     Quiescent {
         submitted_seq: u64,
     },

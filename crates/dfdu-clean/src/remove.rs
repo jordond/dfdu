@@ -1,4 +1,4 @@
-//! Permanent deletion that never leaves the item's filesystem (`docs/btrfs.md` §3.6).
+//! Permanent deletion that never leaves the item's filesystem.
 //!
 //! `std::fs::remove_dir_all` descends into whatever is mounted below the directory, so a mount
 //! made after the scan would have its files deleted too. This walk opens each directory
@@ -23,7 +23,7 @@ mod imp {
     use std::io;
     use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
     use std::os::unix::ffi::OsStrExt;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use dfdu_tree::Kind;
     use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
@@ -128,8 +128,7 @@ mod imp {
                 _ => false,
             };
             if is_dir {
-                let child: PathBuf = path.join(&n);
-                remove_dir(dfd.as_fd(), &n, root, &child)?;
+                remove_dir(dfd.as_fd(), &n, root, &path.join(&n))?;
             } else {
                 rustix::fs::unlinkat(&dfd, n.as_os_str(), AtFlags::empty()).map_err(errno)?;
             }

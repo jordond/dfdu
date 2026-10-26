@@ -1,4 +1,4 @@
-//! Shared-extent table owned by the applier (`docs/btrfs.md` §3.4).
+//! Shared-extent table owned by the applier.
 //!
 //! Data that several files reference (snapshots, reflinked copies, deduplicated files) is
 //! counted once, at the lowest common ancestor of the files referencing it ("homed" there). A
@@ -19,7 +19,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use dfdu_tree::{Ix, NodeFlags, NodeRef, Tree};
 
 /// Multiply-rotate hashing for the table's integer keys (inode numbers, disk addresses): the
-/// default SipHash took a noticeable part of the applier's time per measured file.
+/// default SipHash is a noticeable part of the applier's time per measured file.
 #[derive(Default, Clone, Copy)]
 struct IntHasher(u64);
 
@@ -111,10 +111,6 @@ pub struct ExtentTable {
 }
 
 impl ExtentTable {
-    pub fn is_empty(&self) -> bool {
-        self.inodes.is_empty()
-    }
-
     /// The node an inode's measurement is counted at.
     pub fn pos(&self, inode: Inode) -> Option<NodeRef> {
         self.inodes.get(&inode).map(|r| r.pos)
@@ -182,11 +178,7 @@ impl ExtentTable {
     fn add_range(&mut self, tree: &mut Tree, fs: Fs, a: u64, b: u64, inode: Inode, at: Ix) {
         self.split(fs, a);
         self.split(fs, b);
-        let starts: Vec<u64> = self
-            .segs
-            .range((fs, a)..(fs, b))
-            .map(|(&(_, s), _)| s)
-            .collect();
+        let starts = self.starts(fs, a, b);
         let mut cur = a;
         let mut touched = Vec::new();
         for s in starts {
@@ -226,6 +218,14 @@ impl ExtentTable {
         }
     }
 
+    /// Starts of the segments that begin in `[a, b)`.
+    fn starts(&self, fs: Fs, a: u64, b: u64) -> Vec<u64> {
+        self.segs
+            .range((fs, a)..(fs, b))
+            .map(|(&(_, s), _)| s)
+            .collect()
+    }
+
     /// Splits the segment containing `x` (if any) at `x`. Both halves keep the home; the bytes
     /// counted there do not change.
     fn split(&mut self, fs: Fs, x: u64) {
@@ -252,11 +252,7 @@ impl ExtentTable {
         };
         let fs = rec.fs;
         for &(a, b) in &rec.ranges {
-            let starts: Vec<u64> = self
-                .segs
-                .range((fs, a)..(fs, b))
-                .map(|(&(_, s), _)| s)
-                .collect();
+            let starts = self.starts(fs, a, b);
             for s in starts {
                 let seg = self.segs.get_mut(&(fs, s)).expect("listed");
                 seg.refs.retain(|&r| r != inode);
@@ -293,11 +289,7 @@ impl ExtentTable {
             tree.set_measured(ix, excl, compressed);
         }
         for (a, b) in ranges {
-            let starts: Vec<u64> = self
-                .segs
-                .range((fs, a)..(fs, b))
-                .map(|(&(_, s), _)| s)
-                .collect();
+            let starts = self.starts(fs, a, b);
             for s in starts {
                 let seg = self.segs.get_mut(&(fs, s)).expect("listed");
                 rehome_seg(tree, &self.inodes, s, seg, None);
@@ -341,7 +333,7 @@ impl ExtentTable {
         out
     }
 
-    /// Every measured inode is counted at a visible node, and every segment has a home.
+    /// Checks that every measured inode is counted at a visible node.
     pub fn check_settled(&self, tree: &Tree) -> Result<(), String> {
         for (k, r) in &self.inodes {
             if tree.resolve_visible(r.pos).is_none() {
@@ -481,7 +473,6 @@ fn home_for(
 
 /// Moves `old_len` bytes out of the old home and `new_len` into the new one, with whether
 /// they are shared only outside the scan.
-#[allow(clippy::too_many_arguments)]
 fn move_home(
     tree: &mut Tree,
     home: &mut Option<NodeRef>,

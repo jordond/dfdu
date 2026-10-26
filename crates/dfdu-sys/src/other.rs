@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 
@@ -15,10 +14,6 @@ pub fn subvol_info(_path: &Path) -> io::Result<Option<SubvolInfo>> {
 
 pub fn is_btrfs(_path: &Path) -> io::Result<bool> {
     Ok(false)
-}
-
-pub fn destroy_subvolume(_parent: &Path, _name: &OsStr) -> io::Result<()> {
-    Err(io::ErrorKind::Unsupported.into())
 }
 
 pub fn mount_table() -> io::Result<Vec<crate::MountEntry>> {

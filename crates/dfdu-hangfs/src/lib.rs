@@ -1,7 +1,7 @@
-//! A FUSE filesystem for tests (`docs/data-pipeline.md` §10.4): it serves an in-memory tree in
-//! which selected directories never answer `readdir` and selected files never answer
-//! `getattr`, like a hung network mount, while the rest answers normally, optionally after a
-//! delay so that concurrent requests can be counted.
+//! A FUSE filesystem for tests: it serves an in-memory tree in which selected directories never
+//! answer `readdir` and selected files never answer `getattr`, like a hung network mount, while
+//! the rest answers normally, optionally after a delay so that concurrent requests can be
+//! counted.
 //!
 //! The filesystem runs in the test process (one `fuser` session thread). A request that hangs
 //! is kept, unanswered, until [`Mounted::release`] or drop, which answer every kept request
@@ -92,9 +92,7 @@ impl Spec {
     pub fn alloc(&self, n: usize) -> u64 {
         blocks(self.nodes[n].size) * 512
     }
-}
 
-impl Spec {
     /// A tree for scan tests: `dirs` directories `ok<i>` with eight files and a subdirectory of
     /// four, plus three directories a scan cannot finish: `hung` and `deep/hung`, whose
     /// listings never answer, and `slow`, whose file `stuck` never answers its stat. Returns
@@ -155,7 +153,7 @@ impl Spec {
 }
 
 /// The size directories report.
-pub const DIR_SIZE: u64 = 4096;
+const DIR_SIZE: u64 = 4096;
 
 fn blocks(size: u64) -> u64 {
     size.div_ceil(4096) * 8
@@ -179,8 +177,6 @@ struct State {
     /// Requests being answered after the delay, and the most at once.
     in_flight: AtomicUsize,
     peak: AtomicUsize,
-    /// Requests that hung so far.
-    hung: AtomicUsize,
 }
 
 impl State {
@@ -260,7 +256,6 @@ impl HangFs {
     /// Keeps the request unanswered, unless the filesystem has been released: then the reply
     /// is dropped here, which answers it with `EIO`.
     fn hold(&self, reply: Box<dyn Send>) {
-        self.state.hung.fetch_add(1, SeqCst);
         let mut held = self.state.held.lock().unwrap();
         if !self.state.released.load(SeqCst) {
             held.push(reply);
@@ -399,11 +394,6 @@ impl Mounted {
         // The mount is usable once the root answers.
         std::fs::metadata(at)?;
         Ok(m)
-    }
-
-    /// Requests that hung so far, answered or not.
-    pub fn hung(&self) -> usize {
-        self.state.hung.load(SeqCst)
     }
 
     /// Requests kept unanswered now.

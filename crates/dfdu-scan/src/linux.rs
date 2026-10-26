@@ -1,6 +1,6 @@
-//! Linux backend (ROADMAP M2): `getdents64` into a buffer per directory, and one `statx` per
-//! entry relative to the directory's descriptor, which raw blocks share so other workers can
-//! stat parts of a wide directory. The mount id comes in the same `statx` call, where
+//! Linux backend: `getdents64` into a buffer per directory, and one `statx` per entry relative
+//! to the directory's descriptor, which raw blocks share so other workers can stat parts of a
+//! wide directory. The mount id comes in the same `statx` call, where
 //! the portable backend needs a second, full-path call for every directory. Directories are
 //! opened by full path, and paths longer than `PATH_MAX` are opened a piece at a time with
 //! `openat`, so trees of any depth are read.
@@ -389,7 +389,6 @@ mod tests {
         for i in 0..200 {
             fs::write(root.join(format!("f{}", (i * 37) % 200)), b"x").unwrap();
         }
-        // Directory order, which a spinning disk's order is told apart from.
         let dir_order: Vec<u64> = {
             use std::os::unix::fs::DirEntryExt;
             fs::read_dir(root)

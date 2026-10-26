@@ -1,6 +1,6 @@
 //! The applier core: gate, chunk and close handling, pending accounting, jobs, cuts, rescans,
-//! stalls, quiescence and hard links (`docs/data-pipeline.md` §5-§7). No threads: the runtime
-//! and the simulation harness both drive it.
+//! stalls, quiescence and hard links. No threads: the runtime and the simulation harness both
+//! drive it.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -79,9 +79,9 @@ pub struct Stats {
     pub quiescent: u64,
 }
 
-/// How the applier thread spends its time, filled in by the runtime (D1, ROADMAP M2): how
-/// long it holds the write lock per slice, how long it waits to get it, and in total. Not part
-/// of [`Model::fingerprint`], so it never wakes readers by itself.
+/// How the applier thread spends its time, filled in by the runtime: how long it holds the
+/// write lock per slice, how long it waits to get it, and in total. Not part of
+/// [`Model::fingerprint`], so it never wakes readers by itself.
 #[derive(Clone, Debug)]
 pub struct Timing {
     pub slices: u64,
@@ -217,7 +217,7 @@ pub struct Status {
     pub fatal: Option<String>,
     /// Outcome of the most recent finished plan.
     pub last_delete: Option<DeleteSummary>,
-    /// Shared-extent measurement in progress (`docs/btrfs.md` §3.4).
+    /// Shared-extent measurement in progress.
     pub measuring: Option<MeasureProgress>,
     /// Files whose extents could not be measured; their shared data may be counted more than
     /// once.
@@ -290,7 +290,7 @@ pub enum Command {
         path: PathBuf,
         opts: JobOptions,
     },
-    /// Rescan a visible directory (§7.3).
+    /// Rescan a visible directory.
     Rescan {
         node: NodeRef,
     },
@@ -298,7 +298,7 @@ pub enum Command {
         job: JobId,
     },
     CancelAll,
-    /// Delete these visible nodes (§7.4). Plans run one at a time.
+    /// Delete these visible nodes. Plans run one at a time.
     Delete {
         items: Vec<NodeRef>,
         mode: Mode,
@@ -308,7 +308,7 @@ pub enum Command {
     /// Panics inside the applier, to test crash handling.
     #[cfg(feature = "fault-injection")]
     InjectPanic,
-    /// Give up on a stalled directory (§5.4).
+    /// Give up on a stalled directory.
     Abandon {
         node: NodeRef,
     },
@@ -341,7 +341,7 @@ enum Slot {
 }
 
 impl Job {
-    /// A rescan that has not swapped in yet: it still counts for the overlap rules (§7.2),
+    /// A rescan that has not swapped in yet: it still blocks overlapping rescans and deletes,
     /// including while it settles hard links after its scan finished.
     fn swap_pending(&self) -> bool {
         matches!(self.phase, JobPhase::Running | JobPhase::Finishing)
@@ -417,7 +417,7 @@ pub struct Applier<B: Backend> {
     deferred_rescans: Vec<NodeRef>,
     /// Refuse every delete request.
     pub read_only: bool,
-    /// Measure extents after each job (`docs/btrfs.md` §3.4).
+    /// Measure extents after each job.
     pub measure: bool,
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
@@ -448,15 +448,12 @@ struct ActivePlan {
 const STEP_UNITS: usize = 4096;
 
 /// Hard links examined per step of re-election or merging: whole inodes are taken until this
-/// many of their links have been looked at. Re-electing compares the paths of all of an inode's
-/// links. Counting inodes instead (256 per step) held the write lock for up to 65-130 ms on
-/// a tree of 2,000 inodes with 500 links each, against a slice of 1 ms (§5.6). 2048 links took
-/// 2.0-2.4 ms per step on the 1M-entry `dfdu-bench` tree (9,565 links), one step per slice at the
-/// end of each scan; 512 take about 0.5 ms there, but 2-2.5 ms on a 10M-entry tree, where each
-/// link's walk up the tree misses the cache. 128 keep a step well under a slice at 10M.
+/// many of their links have been looked at, since re-electing compares the paths of all of an
+/// inode's links. 128 keep a step well under the 1 ms write-lock slice on a 10M-entry tree,
+/// where each link's walk up the tree misses the cache.
 const LINKS_PER_STEP: usize = 128;
 
-pub fn meta_of(tree: &Tree, ix: Ix) -> Meta {
+fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
     let (dev, ino) = tree.dev_ino(ix);
     Meta {
@@ -553,9 +550,7 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    // ---- commands --------------------------------------------------------------------------
-
-    pub fn command(&mut self, m: &mut Model, cmd: Command, now: u64) {
+    pub fn command(&mut self, m: &mut Model, cmd: Command, _now: u64) {
         m.recent.push(Event::of_command(&cmd));
         match cmd {
             Command::Scan { path, opts } => {
@@ -566,11 +561,11 @@ impl<B: Backend> Applier<B> {
                 self.start(m, id, JobKind::Initial, root, root, VISIBLE, path, opts);
             }
             Command::Rescan { node } => self.rescan(m, node),
-            Command::Cancel { job } => self.cancel(m, job.0),
+            Command::Cancel { job } => self.cancel(job.0),
             Command::CancelAll => {
                 let ids: Vec<u32> = self.jobs.keys().copied().collect();
                 for id in ids {
-                    self.cancel(m, id);
+                    self.cancel(id);
                 }
             }
             Command::Abandon { node } => self.abandon(m, node),
@@ -592,7 +587,6 @@ impl<B: Backend> Applier<B> {
                 }
             }
         }
-        let _ = now;
         m.status.commands_applied += 1;
         self.refresh_status(m);
     }
@@ -674,7 +668,7 @@ impl<B: Backend> Applier<B> {
             }
             Some(_) => {}
         }
-        // Overlap rules (§7.2).
+        // Overlap with deletes and other rescans.
         if self.plan_overlaps(&m.tree, ix) {
             m.status.notice(
                 "rescan: a delete in this directory is in progress; rescan after it completes"
@@ -701,15 +695,9 @@ impl<B: Backend> Applier<B> {
             }
         }
         for id in cancel {
-            self.cancel(m, id);
+            self.cancel(id);
         }
-        // If the directory is still being scanned by its job, cut it there.
-        let rec = m.tree.dir(ix).expect("dir");
-        if rec.state == DirState::Pending && !rec.cut {
-            let (job, dir) = (rec.job, rec.dir_id);
-            self.cut(m, ix, DirState::Superseded);
-            self.scan.stop_dirs(JobId(job), [DirId(dir)]);
-        }
+        self.cut(m, ix, DirState::Superseded);
         let id = self.next_job;
         self.next_job += 1;
         let path = m.tree.path_buf(ix);
@@ -736,22 +724,29 @@ impl<B: Backend> Applier<B> {
         self.start(m, id, JobKind::Rescan, ix, shadow, id, path, opts);
     }
 
-    /// Cuts a still-scanning subtree: no more data from its job, and it reports to its parent
-    /// at once with `state` (§7.1).
+    /// Cuts a directory its job is still scanning: its job's tasks for it are stopped, and it
+    /// reports to its parent at once with `state`. Does nothing to a directory that is not
+    /// pending or already cut.
     fn cut(&mut self, m: &mut Model, ix: Ix, state: DirState) {
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let Some(rec) = m.tree.dir_mut(ix) else {
+            return;
+        };
+        if rec.state != DirState::Pending || rec.cut {
+            return;
+        }
         rec.cut = true;
         rec.state = state;
         rec.outcome = state;
-        let job = rec.job;
+        let (job, dir) = (rec.job, rec.dir_id);
         if !rec.reported {
             rec.reported = true;
             self.report_up(m, job, ix);
         }
         m.tree.touch(ix);
+        self.scan.stop_dirs(JobId(job), [DirId(dir)]);
     }
 
-    fn cancel(&mut self, m: &mut Model, id: u32) {
+    fn cancel(&mut self, id: u32) {
         let Some(j) = self.jobs.get_mut(&id) else {
             return;
         };
@@ -766,7 +761,6 @@ impl<B: Backend> Applier<B> {
             stack: vec![root],
         });
         self.work.push_back(Work::FinishJob { job: id });
-        let _ = m;
     }
 
     fn abandon(&mut self, m: &mut Model, node: NodeRef) {
@@ -783,9 +777,7 @@ impl<B: Backend> Applier<B> {
         }
         m.tree.set_error(ix, ErrKind::Stalled);
         self.close_listing(m, job, ix, DirState::Abandoned);
-        if !self.scan.abandon(JobId(job), DirId(dir)) {
-            self.retry_abandon.push((JobId(job), DirId(dir)));
-        }
+        self.scanner_abandon(JobId(job), DirId(dir));
     }
 
     fn scanner_abandon(&mut self, job: JobId, dir: DirId) {
@@ -848,8 +840,6 @@ impl<B: Backend> Applier<B> {
         self.refresh_status(m);
     }
 
-    // ---- messages --------------------------------------------------------------------------
-
     /// Applies one scanner message.
     pub fn apply(&mut self, m: &mut Model, msg: ScanMsg, now: u64) {
         m.status.stats.messages += 1;
@@ -902,7 +892,8 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    /// §5.1. Returns the directory node if the message should be applied.
+    /// Returns the directory node if the message should be applied. A message for a directory
+    /// that is gone or cut also stops its tasks and those of the chunk's subdirectories.
     fn gate(
         &mut self,
         m: &mut Model,
@@ -930,10 +921,10 @@ impl<B: Backend> Applier<B> {
                 return None;
             }
         };
-        // Gone, detached, or under a cut.
         if let Some(ix) = r.and_then(|r| m.tree.resolve_uncut(r)) {
             return Some(ix);
         }
+        // Gone, detached, or under a cut.
         st.discarded_cut += 1;
         let mut stop = vec![dir];
         if let Some((first, n)) = subdirs {
@@ -956,7 +947,7 @@ impl<B: Backend> Applier<B> {
         if rec.listing_closed {
             // From a part that returned after the directory was abandoned. Its subdirectories
             // were never added, but tasks for them exist: stop them, and drop what they send
-            // (as under a cut, §5.1).
+            // (as under a cut).
             m.status.stats.late += 1;
             let ids: Vec<DirId> = (0..c.subdirs.len() as u32)
                 .map(|i| DirId(c.first_subdir.0 + i))
@@ -1011,13 +1002,7 @@ impl<B: Backend> Applier<B> {
         for e in &c.errors {
             let meta = Meta {
                 kind: Kind::Other,
-                apparent: 0,
-                alloc: 0,
-                mtime: 0,
-                dev: 0,
-                ino: 0,
-                nlink: 1,
-                mount: 0,
+                ..empty_dir_meta()
             };
             let fx = m
                 .tree
@@ -1136,7 +1121,7 @@ impl<B: Backend> Applier<B> {
         self.close_listing(m, job, ix, outcome);
     }
 
-    /// §5.3: closes the directory's own listing and decrements its pending count.
+    /// Closes the directory's own listing and decrements its pending count.
     fn close_listing(&mut self, m: &mut Model, job: u32, ix: Ix, outcome: DirState) {
         let rec = m.tree.dir_mut(ix).expect("dir");
         debug_assert!(!rec.listing_closed);
@@ -1149,11 +1134,10 @@ impl<B: Backend> Applier<B> {
             }
             self.refresh_status(m);
         }
-        // Marker, sibling and degrade rules run here once the rules engine exists (M5).
         self.dec_pending(m, job, ix);
     }
 
-    /// Decrements `ix`'s pending count and cascades completion upward (§5.3, I2, I4).
+    /// Decrements `ix`'s pending count and cascades completion upward.
     fn dec_pending(&mut self, m: &mut Model, job: u32, ix: Ix) {
         let rec = m.tree.dir_mut(ix).expect("dir");
         debug_assert!(rec.pending > 0, "pending underflow");
@@ -1203,8 +1187,6 @@ impl<B: Backend> Applier<B> {
         });
         self.work.push_back(Work::FinishJob { job });
     }
-
-    // ---- incremental work ------------------------------------------------------------------
 
     /// Runs one bounded unit of incremental work.
     pub fn work_step(&mut self, m: &mut Model) {
@@ -1412,7 +1394,7 @@ impl<B: Backend> Applier<B> {
             }
         }
         // Every job's end (done or cancelled) settles the visible charges to the lowest path, so
-        // per-directory totals never depend on scan order (P5, §5.5).
+        // per-directory totals never depend on scan order.
         self.work.push_back(Work::FinalPassVisible);
         // Keep finished jobs out of the status list once nothing refers to them.
         if self.jobs.len() > 64 {
@@ -1428,8 +1410,6 @@ impl<B: Backend> Applier<B> {
             }
         }
     }
-
-    // ---- extent measurement (docs/btrfs.md §3.4) ---------------------------------------------
 
     fn start_measure(&mut self, m: &mut Model, root: NodeRef) {
         if !self.measure || self.extent_devs.is_empty() {
@@ -1570,8 +1550,8 @@ impl<B: Backend> Applier<B> {
             MeasureResult::Changed => {}
             MeasureResult::Failed(_) => m.status.unmeasured += 1,
         }
-        // The part of `refresh_status` a result can change; the whole of it, once per result,
-        // took a tenth of the applier's time while measuring.
+        // Only the part of `refresh_status` a result can change: all of it per result costs a
+        // tenth of the applier's time while measuring.
         if self.measure_stack.is_empty() && self.measure_inflight == 0 {
             m.status.measuring = None;
         }
@@ -1626,8 +1606,6 @@ impl<B: Backend> Applier<B> {
         self.measure_last = now;
     }
 
-    // ---- deletion (§7.2, §7.4) --------------------------------------------------------------
-
     /// Plans for the deleter thread, taken by the runtime after each slice.
     pub fn take_plans(&mut self) -> Vec<Plan> {
         std::mem::take(&mut self.outgoing_plans)
@@ -1652,8 +1630,8 @@ impl<B: Backend> Applier<B> {
             .any(|p| p == ix || Self::is_ancestor(tree, p, ix) || Self::is_ancestor(tree, ix, p))
     }
 
-    /// Why the tree says `ix` cannot be deleted (`docs/btrfs.md` §3.6); the deleter checks the
-    /// filesystem again before touching it.
+    /// Why the tree says `ix` cannot be deleted; the deleter checks the filesystem again
+    /// before touching it.
     fn delete_refusal(tree: &Tree, ix: Ix) -> Option<String> {
         let flags = tree.flags(ix);
         let t = tree.total(ix);
@@ -1702,7 +1680,7 @@ impl<B: Backend> Applier<B> {
             if m.tree.flags(ix).has(NodeFlags::DELETING) || !seen.insert(ix) {
                 continue;
             }
-            // Overlap with rescans (§7.2): a running rescan of the item, an ancestor or a
+            // Overlap with rescans: a running rescan of the item, an ancestor or a
             // descendant blocks it. Cancelling a descendant's rescan instead would leave that
             // directory cut, with partial totals, if this delete then did not happen.
             let blocked = self
@@ -1729,17 +1707,7 @@ impl<B: Backend> Applier<B> {
                 ));
                 continue;
             }
-            if m.tree
-                .dir(ix)
-                .is_some_and(|d| d.state == DirState::Pending && !d.cut)
-            {
-                let (job, dir) = {
-                    let d = m.tree.dir(ix).expect("dir");
-                    (d.job, d.dir_id)
-                };
-                self.cut(m, ix, DirState::Deleting);
-                self.scan.stop_dirs(JobId(job), [DirId(dir)]);
-            }
+            self.cut(m, ix, DirState::Deleting);
             m.tree.set_deleting(ix, true);
             let (dev, ino) = m.tree.dev_ino(ix);
             out.push(PlanItem {
@@ -1825,7 +1793,7 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    /// Applies a result from the deleter (§7.4 steps 3-5).
+    /// Applies a result from the deleter.
     pub fn apply_delete(&mut self, m: &mut Model, msg: DeleterMsg) {
         match msg {
             DeleterMsg::Item {
@@ -1890,7 +1858,6 @@ impl<B: Backend> Applier<B> {
                     d.done = done;
                 }
                 if rescan {
-                    // Its totals are no longer known: the scan was stopped or part of it is gone.
                     self.deferred_rescans.push(node);
                 }
                 self.retry_deferred_rescans(m);
@@ -1919,9 +1886,6 @@ impl<B: Backend> Applier<B> {
         self.refresh_status(m);
     }
 
-    // ---- invariants ------------------------------------------------------------------------
-
-    /// Checks I1 and I3 (tree), I2 and I4 (accounting) for running jobs. Linear in tree size.
     /// The extent table's view of one inode, for debugging.
     pub fn describe_extents(&self, m: &Model, inode: Inode) -> String {
         self.extents.describe(&m.tree, inode)
@@ -1933,6 +1897,8 @@ impl<B: Backend> Applier<B> {
         self.extents.check_settled(&m.tree)
     }
 
+    /// Checks the tree's structure and totals, and the pending counts of running jobs. Linear
+    /// in tree size.
     pub fn check(&self, m: &Model) -> Result<(), String> {
         m.tree
             .check(&self.shadow_roots(&m.tree))
@@ -1959,7 +1925,7 @@ impl<B: Backend> Applier<B> {
                 }
                 if rec.pending != expect {
                     return Err(format!(
-                        "I2: {:?} pending {} expected {} (job {})",
+                        "{:?} pending {} expected {} (job {})",
                         m.tree.path_buf(ix).display(),
                         rec.pending,
                         expect,
@@ -1968,7 +1934,7 @@ impl<B: Backend> Applier<B> {
                 }
                 if (rec.pending == 0) != rec.state.is_terminal() {
                     return Err(format!(
-                        "I2: pending {} with state {:?}",
+                        "pending {} with state {:?}",
                         rec.pending, rec.state
                     ));
                 }

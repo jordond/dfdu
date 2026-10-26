@@ -135,7 +135,7 @@ fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
                 }
                 // A replacement worker made the pool larger than allowed: a worker without a
                 // task leaves. The compare-and-swap lets only as many leave as are surplus. A
-                // worker holding a handed-over task (§4.5) stays to run it.
+                // worker holding a handed-over task stays to run it.
                 if !w.is_running() {
                     let limit = st.target + sh.mount_workers() + st.allowed_extra.load(SeqCst);
                     let a = st.active.load(SeqCst);

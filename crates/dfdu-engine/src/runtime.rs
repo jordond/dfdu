@@ -18,14 +18,14 @@ use crate::applier::{Applier, Command, Model, Timing};
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 
 /// The applier's inbox: one channel, so control messages keep their order relative to data,
-/// plus the byte budget that bounds data in transit (§4.3).
-pub struct Inbox {
+/// plus the byte budget that bounds data in transit.
+struct Inbox {
     tx: Sender<Batch>,
     budget: Arc<Budget>,
 }
 
 impl Inbox {
-    pub fn new(budget_bytes: usize) -> (Inbox, Receiver<Batch>, Arc<Budget>) {
+    fn new(budget_bytes: usize) -> (Inbox, Receiver<Batch>, Arc<Budget>) {
         let (tx, rx) = unbounded();
         let budget = Arc::new(Budget::new(budget_bytes));
         (
@@ -79,8 +79,8 @@ fn crash_report(msg: &str, m: &Model) -> String {
 }
 
 /// The engine's part of a crash report: counters, anomalies, jobs and the last messages and
-/// commands applied (§8).
-pub fn crash_details(m: &Model) -> String {
+/// commands applied.
+fn crash_details(m: &Model) -> String {
     format!(
         "stats: {:?}\nanomalies: {:?}\njobs: {:?}\n\n{}",
         m.status.stats,
@@ -130,7 +130,7 @@ pub fn write_crash_report(dir: &std::path::Path, report: &str) -> Option<PathBuf
 pub struct EngineOptions {
     /// Worker threads, chosen for the scan root's storage ([`workers_for`]). A scan that enters
     /// a mount with its own limit (a spinning disk, a network mount) adds that many workers,
-    /// at most [`dfdu_scan::MAX_MOUNT_WORKERS`] (`docs/data-pipeline.md` §4.5).
+    /// at most [`dfdu_scan::MAX_MOUNT_WORKERS`].
     pub workers: usize,
     pub budget_bytes: usize,
     pub limits: Limits,
@@ -144,13 +144,13 @@ pub struct EngineOptions {
     pub read_only: bool,
     /// Where crash reports go.
     pub crash_dir: Option<PathBuf>,
-    /// Threads measuring extents on filesystems that share them (`docs/btrfs.md` §3.4); 0
-    /// turns measurement off and sizes are what `du` reports.
+    /// Threads measuring extents on filesystems that share them; 0 turns measurement off and
+    /// sizes are what `du` reports.
     pub measure_workers: usize,
 }
 
-/// Worker threads for data on `storage` (ROADMAP M2 thread policy): two on a spinning disk,
-/// where more threads only add seeks; otherwise one per core, 2 to 16.
+/// Worker threads for data on `storage`: two on a spinning disk, where more threads only add
+/// seeks; otherwise one per core, 2 to 16.
 pub fn workers_for(storage: dfdu_sys::Storage) -> usize {
     match storage {
         dfdu_sys::Storage::Rotational => 2,
@@ -197,7 +197,7 @@ pub struct Engine<B: Backend> {
     budget: Arc<Budget>,
 }
 
-/// Longest time the applier holds the write lock in one slice (§5.6).
+/// Longest time the applier holds the write lock in one slice.
 const SLICE: Duration = Duration::from_millis(1);
 
 /// A slice still holding the lock this long after it started has probably been preempted:
@@ -234,9 +234,9 @@ impl<B: Backend> Engine<B> {
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
         let measurers =
             (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, meas_tx));
-        // Without measurers the sender is gone, and a receiver whose senders are gone is
-        // always ready: the applier's `select!` returned at once and it took the write lock in
-        // a loop, 1.5 µs apart (measurement is off on macOS and Windows).
+        // Without measurers the sender is dropped, and a receiver with no senders is always
+        // ready: the applier's `select!` would return at once and it would take the write lock
+        // in a loop (measurement is off on macOS and Windows).
         let meas_rx = if measurers.is_some() {
             meas_rx
         } else {
@@ -265,7 +265,7 @@ impl<B: Backend> Engine<B> {
                 }));
                 if let Err(p) = r {
                     // An applier panic is a bug. Record it where readers will see it, write a
-                    // crash report, and stop changing the model (§8).
+                    // crash report, and stop changing the model.
                     let msg = panic_message(&*p);
                     let mut g = model.write();
                     let report = crash_report(&msg, &g);
@@ -317,7 +317,7 @@ impl<B: Backend> Engine<B> {
         let _ = self.cmd_tx.send(cmd);
     }
 
-    /// Runs `f` under the read lock. Do no I/O inside `f` (§3 rules 3-4).
+    /// Runs `f` under the read lock. Do no I/O inside `f`: the applier waits for the lock.
     pub fn read<R>(&self, f: impl FnOnce(&Model) -> R) -> R {
         f(&self.model.read())
     }
@@ -331,7 +331,7 @@ impl<B: Backend> Engine<B> {
         &self.shared
     }
 
-    /// The byte budget on scanner data in transit to the applier (§4.3).
+    /// The byte budget on scanner data in transit to the applier.
     pub fn budget(&self) -> &Budget {
         &self.budget
     }
@@ -366,7 +366,7 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Cancels everything and stops the threads, waiting at most `wait` for workers. Threads
-    /// stuck in a filesystem call are left behind (§8).
+    /// stuck in a filesystem call are left behind.
     pub fn shutdown(mut self, wait: Duration) {
         self.send(Command::CancelAll);
         self.stop.store(true, SeqCst);
@@ -509,9 +509,8 @@ fn applier_loop<B: Backend>(
         t.hold[Timing::bucket(held)] += 1;
         t.wait[Timing::bucket(started - asked)] += 1;
         // A plain unlock lets this thread take the lock again for the next slice before a
-        // waiting reader wakes up; with work queued back to back (the end of a scan) the UI
-        // then waited 40-55 ms for one frame. A fair unlock hands the lock to the waiting
-        // reader.
+        // waiting reader wakes up, so with work queued back to back (the end of a scan) a reader
+        // can wait tens of ms. A fair unlock hands the lock to the waiting reader.
         dfdu_scan::late::clear();
         RwLockWriteGuard::unlock_fair(g);
         for p in outgoing {

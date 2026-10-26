@@ -1,7 +1,7 @@
 //! The tree of scanned nodes.
 //!
 //! Only the applier (`dfdu-engine`) mutates a [`Tree`]; everything else reads it under a read
-//! lock or holds [`NodeRef`]s. See `docs/data-pipeline.md` §4.1 and §6.
+//! lock or holds [`NodeRef`]s.
 
 mod check;
 mod meta;

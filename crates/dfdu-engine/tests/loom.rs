@@ -1,4 +1,4 @@
-//! `loom` test of the applier's wake to readers (`docs/data-pipeline.md` §3 rule 2, §10.3).
+//! `loom` test of the applier's wake to readers.
 //!
 //! ```text
 //! RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test --release -p dfdu-engine --test loom

@@ -1,7 +1,7 @@
 //! Totals against an independent reference walker (and `du` where available) on a fixture
 //! with hard links, symlinks and a loop, a sparse file, a name that is not valid UTF-8 (UTF-16
-//! on Windows), a path longer than 4096 bytes and an unreadable directory (ROADMAP M1
-//! acceptance), with the portable backend and the native one (Linux, macOS, Windows).
+//! on Windows), a path longer than 4096 bytes and an unreadable directory, with the portable
+//! backend and the native one (Linux, macOS, Windows).
 
 #![cfg(any(unix, windows))]
 
@@ -245,7 +245,6 @@ fn reference(root: &Path) -> HashMap<Vec<u8>, Totals> {
             errors: *errors.get(p).unwrap_or(&0),
             ..Totals::default()
         };
-        // Add to the entry itself and every ancestor inside the root.
         let mut cur = Some(PathBuf::from(&*dfdu_tree::name_os(p)));
         while let Some(c) = cur {
             totals.entry(key(&c)).or_default().add(&own);

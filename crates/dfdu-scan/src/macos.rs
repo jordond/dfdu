@@ -1,11 +1,10 @@
-//! macOS backend (ROADMAP M2): `getattrlistbulk` reads a directory's entries with their
+//! macOS backend: `getattrlistbulk` reads a directory's entries with their
 //! metadata, about a thousand per call into a 128 KiB buffer, so files need no `lstat`.
 //!
-//! The split between reading and stat'ing (`docs/data-pipeline.md` §4.2) falls differently
-//! than on Linux: [`DirStream::next_raw`] makes the `getattrlistbulk` calls and turns each
-//! file's record into its [`Meta`] there. [`RawBlock::stat`], which may run on another worker,
-//! calls `fstatat` relative to the directory only for the entries the records cannot describe
-//! exactly:
+//! The split between reading and stat'ing falls differently than on Linux:
+//! [`DirStream::next_raw`] makes the `getattrlistbulk` calls and turns each file's record into
+//! its [`Meta`] there. [`RawBlock::stat`], which may run on another worker, calls `fstatat`
+//! relative to the directory only for the entries the records cannot describe exactly:
 //! - directories: their records carry no `st_nlink` (`ATTR_DIR_LINKCOUNT` is a different
 //!   number), and a mount point's record describes the directory it covers, where `lstat`
 //!   describes the root of the mounted volume, which is what mount decisions need;
@@ -18,17 +17,16 @@
 //!
 //! Firmlinks (`SF_FIRMLINK`, macOS 10.15) join directories of the read-only system volume to
 //! the Data volume (`/Users` to `/System/Volumes/Data/Users`), so a scan of `/` would see the
-//! Data volume twice (`docs/research/scanning.md` §3.2.3). They are reported as symlinks of
-//! size 0 with the record's own device and inode: shown, not descended. The data is counted
-//! once, under `/System/Volumes/Data`, which is a separate APFS volume and so a mount
-//! (`st_dev` differs): scanned with `--cross-mounts`, or by scanning it or a directory below a
-//! firmlink (`/Users/me`) directly.
+//! Data volume twice. They are reported as symlinks of size 0 with the record's own device and
+//! inode: shown, not descended. The data is counted once, under `/System/Volumes/Data`, which
+//! is a separate APFS volume and so a mount (`st_dev` differs): scanned with `--cross-mounts`,
+//! or by scanning it or a directory below a firmlink (`/Users/me`) directly.
 //!
 //! Elsewhere a wide directory's subdirectories can be read by other workers while its own
 //! enumeration continues. On SMB (`smbfs`), where the kernel restarts an enumeration that
-//! another one interrupted and a scan can then loop (`scanning.md` §3.2.2), every directory is
-//! read to the end in its first [`DirStream::next_raw`] call, before any subdirectory task
-//! exists, and handed out in blocks from memory.
+//! another one interrupted and a scan can then loop, every directory is read to the end in its
+//! first [`DirStream::next_raw`] call, before any subdirectory task exists, and handed out in
+//! blocks from memory.
 //!
 //! Directories are opened by full path with `O_NOFOLLOW`, in pieces when the path is longer
 //! than `PATH_MAX` (1024 bytes). Permission errors, including directories that TCC protects
@@ -50,7 +48,7 @@ use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags};
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock};
 
-/// `getattrlistbulk` buffer (`scanning.md` §3.2.1: 64-128 KiB).
+/// `getattrlistbulk` buffer; Apple suggests 64-128 KiB.
 const BULK_BUF: usize = 128 * 1024;
 /// Buffers kept for reuse; more are freed (only drained SMB directories need more at once).
 const POOL_MAX: usize = 32;

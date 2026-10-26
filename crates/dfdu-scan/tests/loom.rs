@@ -1,7 +1,6 @@
-//! `loom` tests of the scanner's hand-written synchronisation (`docs/data-pipeline.md` §10.3).
-//! They run the real `Shared`, `Worker`, watchdog round and `Budget` on `loom`'s atomics and
-//! locks (`src/sync.rs`) with a small in-memory backend, and check the messages the applier
-//! would receive.
+//! `loom` tests of the scanner's hand-written synchronisation. They run the real `Shared`,
+//! `Worker`, watchdog round and `Budget` on `loom`'s atomics and locks (`src/sync.rs`) with a
+//! small in-memory backend, and check the messages the applier would receive.
 //!
 //! ```text
 //! RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test --release -p dfdu-scan --test loom
@@ -21,8 +20,6 @@ use dfdu_scan::{
 };
 use dfdu_tree::{Kind, Meta};
 use loom::thread;
-
-// ---- in-memory backend ---------------------------------------------------------------------
 
 /// One entry of a directory: a file, or a subdirectory by index.
 #[derive(Clone, Copy, Debug)]
@@ -197,9 +194,7 @@ impl Backend for Mem {
     }
 }
 
-// ---- sink, clock -----------------------------------------------------------------------------
-
-/// The applier's inbox as one ordered log, optionally with a byte budget.
+/// The applier's inbox as one ordered log.
 #[derive(Default)]
 struct Log {
     msgs: loom::sync::Mutex<Vec<ScanMsg>>,
@@ -310,8 +305,6 @@ fn drain(ws: &mut [Worker<Mem>], sh: &Shared<Mem>, sink: &Log) {
     sh.watchdog_round(sink, NOW);
 }
 
-// ---- checks ----------------------------------------------------------------------------------
-
 #[derive(Debug, Default)]
 struct Seen {
     closes: HashMap<DirId, (u32, ListingStatus)>,
@@ -337,10 +330,9 @@ fn check(log: &[ScanMsg], unclosed_ok: &[DirId]) -> Seen {
     s
 }
 
-/// Checks the inbox order the applier relies on (§4.3, §5.7): every message about a directory
-/// comes after the chunk naming it; at most one `Close` per directory; at a `Quiescent`, every
-/// named directory not in `unclosed_ok` is closed. Returns what it saw and the named
-/// directories.
+/// Checks the inbox order the applier relies on: every message about a directory comes after
+/// the chunk naming it; at most one `Close` per directory; at a `Quiescent`, every named
+/// directory not in `unclosed_ok` is closed. Returns what it saw and the named directories.
 fn check_order(log: &[ScanMsg], unclosed_ok: &[DirId]) -> (Seen, HashSet<DirId>) {
     let mut named: HashSet<DirId> = [DirId::ROOT].into();
     let mut s = Seen::default();
@@ -386,9 +378,9 @@ fn check_order(log: &[ScanMsg], unclosed_ok: &[DirId]) -> (Seen, HashSet<DirId>)
 }
 
 /// Explores `f` with at most `bound` preemptions per execution, or every interleaving with
-/// `None` (`LOOM_MAX_PREEMPTIONS` overrides it), and prints how many executions that took.
-/// The bounds keep the suite to seconds; each test still fails at its bound when the bug it
-/// found, or the mutation it was checked against, is put back (`docs/data-pipeline.md` §10.3).
+/// `None` (`LOOM_MAX_PREEMPTIONS` overrides it), and prints how many executions that took. The
+/// bounds keep the suite to seconds and are large enough for each test to catch the races it
+/// targets when the code under test is broken on purpose.
 fn model(name: &str, bound: Option<usize>, f: impl Fn() + Sync + Send + 'static) {
     let runs = Arc::new(StdAtomicUsize::new(0));
     let mut b = loom::model::Builder::new();
@@ -409,8 +401,6 @@ fn model(name: &str, bound: Option<usize>, f: impl Fn() + Sync + Send + 'static)
         start.elapsed()
     );
 }
-
-// ---- tests -----------------------------------------------------------------------------------
 
 /// Outbox flush and publication, unfinished-part counting and `Close` election, `outstanding`
 /// and quiescence. Two workers and the watchdog scan a root with one subdirectory of three
@@ -470,11 +460,11 @@ fn list_root(w: &mut Worker<Mem>, sh: &Shared<Mem>, log: &Log) {
     }
 }
 
-/// Stall handoff (§4.3, §5.4, scenario 3). Worker A holds the root's chunk and both child tasks
-/// in its outbox and gets stuck opening the first child. The watchdog flushes A's outbox,
-/// which publishes the second child, and appends `Stalled`; worker B can take the second child.
-/// Each child is listed by exactly one worker (one `Close` each), and `Stalled` follows the
-/// chunk naming the directory and names only the directory whose call was stuck.
+/// Stall handoff. Worker A holds the root's chunk and both child tasks in its outbox and gets
+/// stuck opening the first child. The watchdog flushes A's outbox, which publishes the second
+/// child, and appends `Stalled`; worker B can take the second child. Each child is listed by
+/// exactly one worker (one `Close` each), and `Stalled` follows the chunk naming the directory
+/// and names only the directory whose call was stuck.
 #[test]
 fn stall_report_and_handoff() {
     model("stall_report_and_handoff", Some(4), || {
@@ -511,9 +501,9 @@ fn stall_report_and_handoff() {
     });
 }
 
-/// Abandon racing the stuck part's return (§5.4): the applier abandons child 1 while the worker
-/// stuck opening it returns and finishes it, then runs a watchdog round. The part is accounted
-/// to exactly one side: recorded as abandoned while running and released by its own flush, or
+/// Abandon racing the stuck part's return: the applier abandons child 1 while the worker stuck
+/// opening it returns and finishes it, then runs a watchdog round. The part is accounted to
+/// exactly one side: recorded as abandoned while running and released by its own flush, or
 /// finished before the applier looked. Child 1 closes once, and `outstanding` and
 /// `outstanding_abandoned` both end at zero.
 #[test]
@@ -542,11 +532,11 @@ fn abandon_races_stuck_part_returning() {
     });
 }
 
-/// `outstanding` and quiescence with a part that stays stuck (§5.7): while worker A is stuck in
-/// child 1 (or about to take it), the applier abandons the directory and the watchdog runs.
-/// Once the abandon is recorded, a watchdog round reports `Quiescent` although child 1 has no
-/// `Close`; when the stuck call returns, its flush releases the abandoned count and nothing is
-/// reported twice.
+/// `outstanding` and quiescence with a part that stays stuck: while worker A is stuck in child
+/// 1 (or about to take it), the applier abandons the directory and the watchdog runs. Once the
+/// abandon is recorded, a watchdog round reports `Quiescent` although child 1 has no `Close`;
+/// when the stuck call returns, its flush releases the abandoned count and nothing is reported
+/// twice.
 #[test]
 fn quiescence_with_abandoned_stuck_part() {
     model("quiescence_with_abandoned_stuck_part", Some(6), || {
@@ -587,9 +577,9 @@ fn quiescence_with_abandoned_stuck_part() {
     });
 }
 
-/// Early-stop bitset (§7.1): the applier stops child 1 while worker A takes its task. If the
-/// stop was set before A began, A closes the directory `Cancelled` without reading it; either
-/// way it closes once.
+/// Early-stop bitset: the applier stops child 1 while worker A takes its task. If the stop was
+/// set before A began, A closes the directory `Cancelled` without reading it; either way it
+/// closes once.
 #[test]
 fn early_stop_seen_by_later_take() {
     model("early_stop_seen_by_later_take", None, || {
@@ -621,8 +611,8 @@ fn early_stop_seen_by_later_take() {
     });
 }
 
-/// Byte budget (§4.3): two producers take 2 of 3 bytes each, one blocking and one trying first;
-/// the consumer releases what each sent. Use never exceeds the capacity, a blocked producer is
+/// Byte budget: two producers take 2 of 3 bytes each, one blocking and one trying first; the
+/// consumer releases what each sent. Use never exceeds the capacity, a blocked producer is
 /// woken by the release (a lost wake would deadlock), the budget ends empty, and a request
 /// larger than the capacity is clamped to it.
 #[test]
@@ -660,10 +650,10 @@ fn budget_bounds_and_wakes() {
     });
 }
 
-/// Focus atomic (§4.3): the root is the focus, and the UI moves the focus elsewhere while a
-/// worker names the root's child. The child is published after the change, so it must go to
-/// the normal queue: it was named either before the change (with the old epoch, which no
-/// longer matches) or after it (the root is no longer the focus).
+/// Focus atomic: the root is the focus, and the UI moves the focus elsewhere while a worker
+/// names the root's child. The child is published after the change, so it must go to the normal
+/// queue: it was named either before the change (with the old epoch, which no longer matches)
+/// or after it (the root is no longer the focus).
 #[test]
 fn focus_change_does_not_prioritise_old_focus() {
     model("focus_change_does_not_prioritise_old_focus", None, || {
@@ -736,11 +726,11 @@ fn spinning_mount(mem: Mem, outbox_msgs: usize) -> Arc<Shared<Mem>> {
     sh
 }
 
-/// Mount limit (§4.5): two workers and the watchdog scan a root whose subdirectory `d1` is a
-/// mount on a spinning disk limited to one part, with two subdirectories of its own. A worker
-/// that takes a task of the mount while the other holds its permit leaves it waiting in the
-/// gate; the part that ends hands its permit to it. Calls on the mount never overlap, every
-/// directory closes once, and the gate ends with no permit held and nothing waiting.
+/// Mount limit: two workers and the watchdog scan a root whose subdirectory `d1` is a mount on
+/// a spinning disk limited to one part, with two subdirectories of its own. A worker that takes
+/// a task of the mount while the other holds its permit leaves it waiting in the gate; the part
+/// that ends hands its permit to it. Calls on the mount never overlap, every directory closes
+/// once, and the gate ends with no permit held and nothing waiting.
 #[test]
 fn mount_limit_waits_and_hands_over() {
     model("mount_limit_waits_and_hands_over", Some(3), || {
@@ -779,11 +769,11 @@ fn mount_limit_waits_and_hands_over() {
     });
 }
 
-/// A stuck part gives its permit back (§4.5). Worker A holds the permit of a mount limited to
-/// one part and is stuck opening `d2`; `d3` waits in the gate, taken by worker B. Then the
-/// watchdog, A returning from its call and B race: the watchdog takes A's permit back and
-/// requeues `d3`, or A ends `d2` first and hands its permit to `d3`. Either way `d3` runs once,
-/// each directory closes once, and the gate ends with no permit held and nothing waiting.
+/// A stuck part gives its permit back. Worker A holds the permit of a mount limited to one part
+/// and is stuck opening `d2`; `d3` waits in the gate, taken by worker B. Then the watchdog, A
+/// returning from its call and B race: the watchdog takes A's permit back and requeues `d3`, or
+/// A ends `d2` first and hands its permit to `d3`. Either way `d3` runs once, each directory
+/// closes once, and the gate ends with no permit held and nothing waiting.
 #[test]
 fn stuck_part_gives_back_its_permit() {
     model("stuck_part_gives_back_its_permit", Some(3), || {

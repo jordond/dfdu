@@ -13,6 +13,3 @@ workspace = true
 [dependencies]
 os_str_bytes.workspace = true
 fixedbitset.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true

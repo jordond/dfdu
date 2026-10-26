@@ -1,6 +1,6 @@
-//! Applier throughput (D1, ROADMAP M2): records the scanner's messages for a tree once, then
-//! times only the applier applying them, on one thread with nothing else running, so the
-//! number does not depend on how the workers and the applier share the CPU.
+//! Applier throughput: records the scanner's messages for a tree once, then times only the
+//! applier applying them, on one thread with nothing else running, so the number does not
+//! depend on how the workers and the applier share the CPU.
 //!
 //! ```text
 //! apply_rate [--runs N] DIR
@@ -206,8 +206,6 @@ fn main() {
             "--stat-ns" => stat_ns = num(args.next()),
             "--engine" => workers = Some(num(args.next()) as usize),
             _ if dir.is_none() && !a.starts_with('-') => dir = Some(PathBuf::from(a)),
-            // The earlier form, `apply_rate DIR RUNS`.
-            _ if dir.is_some() && a.parse::<usize>().is_ok() => runs = num(Some(a)) as usize,
             _ => panic!("{usage}"),
         }
     }

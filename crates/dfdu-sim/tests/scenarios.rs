@@ -1,12 +1,11 @@
-//! Named regression scenarios (`docs/data-pipeline.md` §10.2), one test each. Each builds a
-//! small filesystem, forces the scenario's sequence by stepping workers, the watchdog and the
-//! applier by hand, checks what that sequence must lead to, then finishes the run in random
-//! order with every check of the random simulation (invariants after each step, totals
-//! against the spec, no lost, corrupt or duplicate messages). The random tail runs for
-//! several seeds, so what follows the scripted part varies too.
+//! Scripted regression scenarios for the scan pipeline. Each test builds a small filesystem, forces
+//! the scenario's sequence by stepping workers, the watchdog and the applier by hand, checks what
+//! that sequence must lead to, then finishes the run in random order with every check of the random
+//! simulation (invariants after each step, totals against the spec, no lost, corrupt or duplicate
+//! messages). The random tail runs for several seeds, so what follows the scripted part varies too.
 
 use dfdu_scan::{ChunkStatus, DirId, JobId, ListingStatus, ScanMsg, StepResult};
-use dfdu_sim::{Fault, Sim, SimConfig, Spec, SpecBuilder};
+use dfdu_sim::{Fault, Sim, SimConfig, Spec, SpecBuilder, quiet_injected_panics};
 use dfdu_tree::{DirState, Ix};
 
 /// Seeds for the random tail of each scenario.
@@ -25,16 +24,6 @@ fn cfg() -> SimConfig {
     c.limits.outbox_msgs = 1000;
     c.limits.outbox_bytes = 1 << 20;
     c
-}
-
-fn quiet_injected_panics() {
-    let default = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let msg = info.payload().downcast_ref::<&str>().copied().unwrap_or("");
-        if msg != "injected panic" {
-            default(info);
-        }
-    }));
 }
 
 /// The node at `path` below the root ("" is the root), by name.
@@ -152,12 +141,10 @@ fn list_w(sim: &mut Sim) -> (JobId, DirId) {
     w
 }
 
-// ---- 1 -----------------------------------------------------------------------------------
-
 /// A directory split into chunks, one chunk panicking, `Close` arriving before the last chunk:
 /// the `Close` is held until the last chunk, then the listing closes as `Partial`.
 #[test]
-fn s1_panicking_chunk_and_close_before_last_chunk() {
+fn panicking_chunk_and_close_before_last_chunk() {
     for_seeds(
         || wide(Fault::StatPanic(1)),
         cfg(),
@@ -199,7 +186,7 @@ fn s1_panicking_chunk_and_close_before_last_chunk() {
 /// between the two chunk tasks. The last part still sends one `Close` counting both, and
 /// every part is accounted for, so the scanner reaches quiescence.
 #[test]
-fn s1_panicking_and_cancelled_chunks() {
+fn panicking_and_cancelled_chunks() {
     for_seeds(
         || wide(Fault::StatPanic(0)),
         cfg(),
@@ -228,8 +215,6 @@ fn s1_panicking_and_cancelled_chunks() {
         },
     );
 }
-
-// ---- 2 -----------------------------------------------------------------------------------
 
 /// `w` with twelve entries: a subdirectory `s` in block 0 and `t` in block 1. While `t` has
 /// not finished, `w` is not terminal and its job keeps running, so messages for `w` after an
@@ -270,7 +255,7 @@ fn watchdog_until_delivery(sim: &mut Sim, max: usize) {
 /// quiescence; what it sends on returning is late, and the task for the subdirectory its
 /// block names is stopped.
 #[test]
-fn s2_stalled_part_abandoned_then_returns() {
+fn stalled_part_abandoned_then_returns() {
     const STALL: u64 = 1_000_000_000;
     for_seeds(
         || {
@@ -351,8 +336,6 @@ fn ran_stopped_task(sim: &Sim) -> bool {
             })
 }
 
-// ---- 3 and 4 -----------------------------------------------------------------------------
-
 /// The root holds `p`, whose one block names a directory `b` whose read never returns, then
 /// `a`. A worker runs the first child from its private stack first.
 fn parent_with_stuck_child() -> Spec {
@@ -406,7 +389,7 @@ fn block_in_child(sim: &mut Sim) -> ((JobId, DirId), (JobId, DirId)) {
 /// A worker blocked in a syscall while its outbox holds its parent's chunk and unpublished
 /// child tasks: the watchdog delivers both, then `Stalled`, in that order and in one flush.
 #[test]
-fn s3_watchdog_delivers_outbox_of_blocked_worker() {
+fn watchdog_delivers_outbox_of_blocked_worker() {
     for_seeds(parent_with_stuck_child, cfg_late_age_flush(), |sim| {
         let (p, b) = block_in_child(sim);
         watchdog_until_delivery(sim, 20);
@@ -429,7 +412,7 @@ fn s3_watchdog_delivers_outbox_of_blocked_worker() {
 /// the parent's messages. Once the applier frees budget, the next age flush delivers all of it
 /// in order.
 #[test]
-fn s4_stall_detected_with_budget_exhausted() {
+fn stall_detected_with_budget_exhausted() {
     let cfg = cfg_late_age_flush();
     let (stall, age) = (cfg.limits.stall_ns, cfg.limits.flush_age_ns);
     for_seeds(parent_with_stuck_child, cfg.clone(), |sim| {
@@ -465,14 +448,12 @@ fn s4_stall_detected_with_budget_exhausted() {
     });
 }
 
-// ---- 5 -----------------------------------------------------------------------------------
-
 /// `Close` for a directory arriving just before its `Stalled`, then an abandon. A chunk part
 /// stalls and its `Stalled` cannot be sent (budget); the part returns, and the listing, which
 /// finishes last, sends the `Close` from another worker first. The `Close` is held for the
 /// chunk; the `Stalled` marks the directory; the abandon closes it; the chunk is late.
 #[test]
-fn s5_close_before_stalled_then_abandon() {
+fn close_before_stalled_then_abandon() {
     const STALL: u64 = 30_000_000;
     let mut cfg = cfg();
     cfg.limits.chunk_credit = 1;
@@ -544,14 +525,12 @@ fn s5_close_before_stalled_then_abandon() {
     );
 }
 
-// ---- 6 -----------------------------------------------------------------------------------
-
 /// A worker running a child from its private stack whose chunk tasks would be stolen before
 /// the parent's chunk is flushed. Impossible: until worker 0 flushes, nothing it created is
 /// stealable, and its flush sends the chunk naming the child before publishing the child's
 /// chunk tasks.
 #[test]
-fn s6_chunk_tasks_of_unflushed_child_are_not_stealable() {
+fn chunk_tasks_of_unflushed_child_are_not_stealable() {
     for_seeds(
         || wide(Fault::None),
         cfg(),
@@ -587,13 +566,11 @@ fn s6_chunk_tasks_of_unflushed_child_are_not_stealable() {
     );
 }
 
-// ---- 7 -----------------------------------------------------------------------------------
-
 /// Quiescence raced by a worker that steals a task right after another publishes and parks:
 /// no watchdog round sends `Quiescent` while a task exists, published or running. And a
 /// `Quiescent` already sent before a rescan job started does not judge that job.
 #[test]
-fn s7_quiescence_with_published_and_new_tasks() {
+fn quiescence_with_published_and_new_tasks() {
     for_seeds(
         || {
             let mut b = SpecBuilder::new();
@@ -653,8 +630,6 @@ fn s7_quiescence_with_published_and_new_tasks() {
         },
     );
 }
-
-// ---- commands ----------------------------------------------------------------------------
 
 /// Steps every worker, applies everything and runs the watchdog until no job runs and
 /// nothing is in flight.
@@ -729,11 +704,11 @@ fn nested() -> Spec {
     b.build()
 }
 
-/// The delete rows of the overlap table (§7.2) against rescans: a rescan of the item, an
-/// ancestor or a descendant of the running or a queued plan is rejected, including a rescan
-/// requested while a delete in its subtree runs; once the plans are done, it is accepted.
+/// Rescans against delete plans: a rescan of the item, an ancestor or a descendant of the running
+/// or a queued plan is rejected, including a rescan requested while a delete in its subtree runs;
+/// once the plans are done, it is accepted.
 #[test]
-fn s8_rescan_while_delete_overlaps() {
+fn rescan_while_delete_overlaps() {
     for_seeds(nested, cfg(), |sim| {
         finish_jobs(sim);
         delete(sim, &["a/b"]);
@@ -772,12 +747,11 @@ fn s8_rescan_while_delete_overlaps() {
     });
 }
 
-/// The rescan rows against other rescans, and the delete rows against rescans: a delete of
-/// the target, an ancestor or a descendant of a running rescan is refused; a rescan of the
-/// target or a descendant is rejected; a rescan of an ancestor cancels the running one; a
-/// rescan of a detached directory is rejected.
+/// Rescans and deletes against a running rescan: a delete of the target, an ancestor or a
+/// descendant of a running rescan is refused; a rescan of the target or a descendant is rejected; a
+/// rescan of an ancestor cancels the running one; a rescan of a detached directory is rejected.
 #[test]
-fn s8_rescans_and_deletes_against_rescans() {
+fn rescans_and_deletes_against_rescans() {
     for_seeds(nested, cfg(), |sim| {
         finish_jobs(sim);
         rescan(sim, "a/b");
@@ -811,10 +785,10 @@ fn s8_rescans_and_deletes_against_rescans() {
     });
 }
 
-/// The rows for a directory the initial scan is still reading: a rescan cuts it, and it
+/// A directory the initial scan is still reading: a rescan cuts it, and it
 /// reports `Superseded` to its parent; a delete cuts it, and it reports `Deleting`.
 #[test]
-fn s8_rescan_and_delete_inside_running_scan() {
+fn rescan_and_delete_inside_running_scan() {
     for_seeds(nested, cfg(), |sim| {
         scan_root(sim);
         assert_eq!(state(sim, "a"), DirState::Pending);
@@ -827,14 +801,12 @@ fn s8_rescan_and_delete_inside_running_scan() {
     });
 }
 
-// ---- 9 -----------------------------------------------------------------------------------
-
 /// A delete of a directory still being scanned, then late messages for its descendants:
 /// those that arrive while it is cut and those that arrive after it was detached are
 /// discarded, and none counts as corrupt or makes anything lost. Worker 0 holds `keep` open,
 /// so the job is still running when the late messages arrive.
 #[test]
-fn s9_delete_while_scanning_then_late_messages() {
+fn delete_while_scanning_then_late_messages() {
     for_seeds(
         || {
             let mut b = SpecBuilder::new();
@@ -891,9 +863,7 @@ fn s9_delete_while_scanning_then_late_messages() {
     );
 }
 
-// ---- 11 ----------------------------------------------------------------------------------
-
-/// Number of charged links among the nodes at `paths`.
+/// The entries of `paths` that hold their inode's charge.
 fn charged(sim: &Sim, paths: &[&str]) -> Vec<String> {
     paths
         .iter()
@@ -911,7 +881,7 @@ fn charged(sim: &Sim, paths: &[&str]) -> Vec<String> {
 /// outside a rescanned subtree. The charge moves to the lowest remaining path after the
 /// delete, and stays single after the rescan's scope is merged.
 #[test]
-fn s11_hard_links_across_delete_and_rescan() {
+fn hard_links_across_delete_and_rescan() {
     for_seeds(
         || {
             let mut b = SpecBuilder::new();
@@ -950,7 +920,7 @@ fn s11_hard_links_across_delete_and_rescan() {
 /// Rescanning the profiles swaps in a scope of 2,000 links. The merge runs in steps, with the
 /// invariants holding after each, and every inode ends with one charge.
 #[test]
-fn s11_dense_links_swapped_in() {
+fn dense_links_swapped_in() {
     let spec = || {
         let mut b = SpecBuilder::new();
         let store = b.dir(dfdu_sim::ROOT, "store");
@@ -1011,14 +981,12 @@ fn s11_dense_links_swapped_in() {
     }
 }
 
-// ---- 14 ----------------------------------------------------------------------------------
-
 /// A mark on a file that is replaced by a different file with the same name before a rescan
 /// swap. After the swap the mark's reference no longer resolves, and found again by path the
 /// new file's identity differs, so the mark is reported gone instead of moving to it. A mark
 /// on a file that was not replaced follows it.
 #[test]
-fn s14_mark_on_replaced_file_is_gone_after_swap() {
+fn mark_on_replaced_file_is_gone_after_swap() {
     let spec = || {
         let mut b = SpecBuilder::new();
         let w = b.dir(dfdu_sim::ROOT, "w");
@@ -1056,12 +1024,10 @@ fn s14_mark_on_replaced_file_is_gone_after_swap() {
     });
 }
 
-// ---- 15 ----------------------------------------------------------------------------------
-
 /// Cancelling the initial scan while a rescan inside it runs: the rescan is independent; it
 /// finishes and swaps in.
 #[test]
-fn s15_cancel_initial_scan_while_rescan_runs() {
+fn cancel_initial_scan_while_rescan_runs() {
     for_seeds(nested, cfg(), |sim| {
         scan_root(sim);
         rescan(sim, "a");
@@ -1079,7 +1045,7 @@ fn s15_cancel_initial_scan_while_rescan_runs() {
 /// Cancelling a rescan whose target was superseded from the initial scan: the shadow is
 /// dropped and the target stays visible, cut and incomplete; the initial scan goes on.
 #[test]
-fn s15_cancel_rescan_of_superseded_directory() {
+fn cancel_rescan_of_superseded_directory() {
     for_seeds(nested, cfg(), |sim| {
         scan_root(sim);
         rescan(sim, "a");

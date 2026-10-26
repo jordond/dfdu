@@ -1,6 +1,6 @@
-//! Scanning, measurement and deletion on btrfs (`docs/btrfs.md` B1-B11, B13), against the fixture of
-//! `scripts/btrfs-fixture.sh` whose mount point is in `DFDU_BTRFS_DIR`. Skipped (passing) when
-//! the variable is not set. Cases that need root run only when the tests run as root.
+//! Scanning, measurement and deletion on btrfs, against the fixture of `scripts/btrfs-fixture.sh`
+//! whose mount point is in `DFDU_BTRFS_DIR`. Skipped (passing) when the variable is not set. Cases
+//! that need root run only when the tests run as root.
 
 #![cfg(target_os = "linux")]
 
@@ -211,7 +211,7 @@ fn uuid(u: &[u8; 16]) -> String {
     )
 }
 
-/// B3 and B13, as root (`btrfs subvolume list` and quota groups need it): every subvolume's
+/// As root (`btrfs subvolume list` and quota groups need it): every subvolume's
 /// record matches btrfs's list, and its quota group numbers match `btrfs qgroup show`.
 #[test]
 fn subvolume_records_and_quota_groups_match_btrfs() {
@@ -414,7 +414,7 @@ fn a_mount_inside_an_item_is_refused() {
     assert!(refused && intact, "refused {refused}, intact {intact}");
 }
 
-/// B9, root only (mounts a tmpfs): a mount that appears after the scan stops the delete at the
+/// Root only (mounts a tmpfs): a mount that appears after the scan stops the delete at the
 /// mount; nothing on the mounted filesystem is touched.
 #[test]
 fn a_mount_made_after_the_scan_stops_the_delete() {
@@ -656,7 +656,7 @@ fn a_snapshot_alone_reports_its_shared_data_as_shared_outside() {
 
 const TRASH_INNER: &str = "DFDU_BTRFS_TRASH_INNER";
 
-/// B10: with the trash in the top-level subvolume, an item in another subvolume is refused for
+/// With the trash in the top-level subvolume, an item in another subvolume is refused for
 /// trash (a rename between subvolumes is impossible, so it would be copied). Re-runs this binary
 /// with `XDG_DATA_HOME` set, since changing the environment of a running process needs `unsafe`.
 #[test]

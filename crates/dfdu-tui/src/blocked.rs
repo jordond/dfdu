@@ -1,5 +1,5 @@
 //! A UI blocked on terminal writes does not slow the scan, and data in transit stays within the
-//! byte budget (ROADMAP M1, `docs/data-pipeline.md` §8 "Slow or blocked terminal").
+//! byte budget.
 //!
 //! Runs the real event loop with a terminal whose writes block, against a scan of a tree on
 //! disk, three ways: the loop drawing normally; the loop stuck in a terminal write for a fixed
@@ -34,7 +34,7 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 /// Writes pass while the gate is open and wait while it is closed.
 #[derive(Default)]
 pub(crate) struct Gate {
-    pub(crate) closed: Mutex<bool>,
+    closed: Mutex<bool>,
     opened: Condvar,
     /// A writer is waiting at the closed gate.
     pub(crate) waiting: AtomicBool,
@@ -42,7 +42,7 @@ pub(crate) struct Gate {
 }
 
 impl Gate {
-    pub(crate) fn pass(&self) {
+    fn pass(&self) {
         let mut closed = self.closed.lock().unwrap();
         while *closed {
             self.waiting.store(true, SeqCst);

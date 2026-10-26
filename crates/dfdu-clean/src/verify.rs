@@ -6,13 +6,11 @@ use dfdu_tree::{ErrKind, Kind, Meta};
 
 use crate::{DeleteResult, Mode, PlanItem, Refusal};
 
-/// Paths never deleted, whatever a plan or rule says (`categories-and-cleanup.md` §8, minimal
-/// M1 set): filesystem roots, top-level system directories, the kernel filesystems, the user's
-/// home directory itself.
+/// Paths never deleted, whatever a plan or rule says (a minimal set): filesystem roots,
+/// top-level system directories, the kernel filesystems, the user's home directory itself.
 pub fn is_protected(path: &Path) -> bool {
-    let comps: Vec<Component> = path.components().collect();
-    let normal = comps
-        .iter()
+    let normal = path
+        .components()
         .filter(|c| matches!(c, Component::Normal(_)))
         .count();
     if normal <= 1 {
@@ -99,7 +97,7 @@ fn same_mount(a: &Path, b: &Path) -> Option<bool> {
     None
 }
 
-/// Checks an item before deletion (§7.4 step 2). `Ok` means it may be deleted now.
+/// Checks an item before deletion. `Ok` means it may be deleted now.
 pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), DeleteResult> {
     let path = &item.path;
     if !path.is_absolute() || !scan_root.is_absolute() {

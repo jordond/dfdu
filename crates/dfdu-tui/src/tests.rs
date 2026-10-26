@@ -10,6 +10,7 @@ use dfdu_tree::Totals;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
 use crate::snapshot::{self, EntryData, Mark, Snapshot, Target, test_entry};
@@ -310,20 +311,19 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
         .position(|&i| app.snap.entries[i].pseudo)
         .unwrap();
     for _ in 0..at {
-        app.key(key(ratatui::crossterm::event::KeyCode::Down), t0);
+        app.key(key(KeyCode::Down), t0);
     }
-    app.key(key(ratatui::crossterm::event::KeyCode::Char('D')), t0);
+    app.key(key(KeyCode::Char('D')), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::None));
 }
 
-pub(crate) fn key(code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
-    ratatui::crossterm::event::KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE)
+pub(crate) fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
 }
 
 #[test]
 fn errors_are_listed_and_lead_to_the_entry() {
     use dfdu_tree::{ErrKind, Kind, Meta};
-    use ratatui::crossterm::event::KeyCode;
     let meta = |kind, ino| Meta {
         kind,
         apparent: 100,
@@ -411,7 +411,6 @@ fn errors_are_listed_and_lead_to_the_entry() {
 #[test]
 fn disk_picker() {
     use dfdu_sys::{Disk, FsClass, Space};
-    use ratatui::crossterm::event::KeyCode;
     let gib = 1u64 << 30;
     let disk = |mp: &str, fstype: &str, class, space| Disk {
         mount_point: mp.into(),

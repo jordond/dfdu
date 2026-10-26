@@ -35,5 +35,4 @@ loom.workspace = true
 [dev-dependencies]
 dfdu-engine = { path = ".", features = ["fault-injection"] }
 dfdu-bench.workspace = true
-dfdu-clean.workspace = true
 tempfile.workspace = true

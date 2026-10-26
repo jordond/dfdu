@@ -1,6 +1,5 @@
-//! A wide directory read in many blocks, most of them stat'ed by chunk tasks on other workers
-//! (`docs/data-pipeline.md` §4.2), with each backend: totals, items and subdirectories match a
-//! plain walk.
+//! A wide directory read in many blocks, most of them stat'ed by chunk tasks on other workers, with
+//! each backend: totals, items and subdirectories match a plain walk.
 
 use std::collections::HashSet;
 use std::fs;
@@ -163,9 +162,8 @@ fn wide_directory_in_chunk_tasks() {
     fixture(tmp.path());
     let (bytes, items) = walk(tmp.path());
 
-    // At full speed, how many blocks go to chunk tasks depends on timing (on Linux the portable
-    // backend gave 11 or fewer in 5 of 150 runs); the totals must match whatever the split.
-    // With slowed reads nearly every block goes to a chunk task.
+    // At full speed, how many blocks go to chunk tasks depends on timing; the totals must match
+    // whatever the split. With slowed reads nearly every block goes to a chunk task.
     let (t, _) = scan(PortableBackend::default(), tmp.path());
     assert_eq!((t.apparent, t.items, t.errors), (bytes, items, 0));
     let (n, chunk_tasks) = scan(SlowReads(PortableBackend::default()), tmp.path());

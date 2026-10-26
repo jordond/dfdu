@@ -1,17 +1,7 @@
-//! Seeded simulation runs (`docs/data-pipeline.md` §10.1). Set `DFDU_SIM_SEEDS` to run more
+//! Seeded simulation runs. Set `DFDU_SIM_SEEDS` to run more
 //! seeds and `DFDU_SIM_SEED` to rerun one.
 
-use dfdu_sim::{SimConfig, SpecConfig, run};
-
-fn quiet_injected_panics() {
-    let default = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let msg = info.payload().downcast_ref::<&str>().copied().unwrap_or("");
-        if msg != "injected panic" {
-            default(info);
-        }
-    }));
-}
+use dfdu_sim::{SimConfig, SpecConfig, quiet_injected_panics, run};
 
 fn seeds(default: u64) -> Vec<u64> {
     if let Ok(s) = std::env::var("DFDU_SIM_SEED") {
@@ -180,7 +170,7 @@ fn no_chunk_tasks() {
 }
 
 /// Many mounts on spinning disks and network storage, all scanned, with small limits and more
-/// workers than they allow (`docs/data-pipeline.md` §4.5): tasks wait for permits, stuck parts
+/// workers than they allow: tasks wait for permits, stuck parts
 /// give theirs back, and totals still match.
 #[test]
 fn mount_limits() {

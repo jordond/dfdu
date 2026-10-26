@@ -1,6 +1,6 @@
 //! A panic on the UI thread restores the terminal (raw mode off, alternate screen left, cursor
 //! shown) and then writes a crash report with the panic, the engine's counters and its last
-//! messages (`docs/data-pipeline.md` §8).
+//! messages.
 //!
 //! Runs the real `dfdu` binary on a pseudo-terminal. The environment variable
 //! `DFDU_TEST_UI_PANIC` (hidden; read by the event loop in `dfdu_tui`) makes the browser panic on

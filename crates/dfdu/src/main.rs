@@ -137,7 +137,7 @@ macro_rules! outln {
     }};
 }
 
-/// Exit codes from `docs/research/safety-persistence-ops.md` §4.3.
+/// Exit code when an entry could not be read or the scan is incomplete.
 const EXIT_PARTIAL: u8 = 3;
 
 /// Writes a crash report for a panic on any thread, with the engine's counters and last
@@ -176,7 +176,7 @@ fn main() -> ExitCode {
         Some(Cmd::Disks) => disks(),
         None if cli.disks && !std::io::stdout().is_terminal() => disks(),
         None => {
-            let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
+            let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
             if !std::io::stdout().is_terminal() {
                 return scan(ScanArgs {
                     path,
@@ -328,10 +328,9 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         let Some(root) = m.tree.roots().next() else {
             return ExitCode::from(1);
         };
-        let errors = m.tree.total(root).errors;
+        let total = m.tree.total(root);
         if bytes {
-            let t = m.tree.total(root);
-            outln!("{}", mode.of(&t));
+            outln!("{}", mode.of(&total));
         } else {
             print_tree(m, root, depth, top, mode);
             if list_errors {
@@ -342,7 +341,7 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         if debug_stats {
             print_debug_stats(m);
         }
-        if errors > 0 || m.status.incomplete {
+        if total.errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
@@ -390,7 +389,7 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
         if d >= depth {
             continue;
         }
-        // Data the entries share is counted at the directory (`docs/btrfs.md` §3.4).
+        // Data the entries share is counted at the directory.
         if mode == SizeMode::Disk && tree.home(ix) > 0 {
             outln!(
                 "{:>10}  {}(shared between entries)",
@@ -531,8 +530,8 @@ fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
     }
 }
 
-/// `--debug-stats`: what went through the pipeline and how the applier spent its time (D1:
-/// entries applied per second of lock time, hold and wait times per slice).
+/// `--debug-stats`: what went through the pipeline and how the applier spent its time (entries
+/// applied per second of lock time, hold and wait times per slice).
 fn print_debug_stats(m: &Model) {
     let s = &m.status.stats;
     let t = &m.status.timing;

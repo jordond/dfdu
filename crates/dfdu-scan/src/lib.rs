@@ -1,7 +1,6 @@
 //! The scanner. Workers read directories through a [`Backend`], append everything they produce
-//! to their own [`Outbox`], and make new tasks stealable only when the outbox is flushed, so the
-//! applier always receives the message naming a directory before any message about it
-//! (`docs/data-pipeline.md` §4.3).
+//! to their own [`Outbox`], and make new tasks stealable only when the outbox is flushed, so
+//! the applier always receives the message naming a directory before any message about it.
 //!
 //! The worker and watchdog logic are step functions with no threads or sleeping inside them.
 //! [`runtime`] drives them with real threads; the simulation harness drives the same code in a
@@ -35,8 +34,7 @@ pub use mounts::duplicate_mounts;
 #[cfg(windows)]
 pub use windows::{WinLoc, WindowsBackend, WindowsStream};
 
-/// The fastest backend for this platform: the Linux, macOS and Windows ones there, the
-/// portable one elsewhere (ROADMAP M2).
+/// The fastest backend for this platform; the portable one where there is no native one.
 #[cfg(target_os = "linux")]
 pub type NativeBackend = LinuxBackend;
 #[cfg(target_os = "macos")]

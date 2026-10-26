@@ -27,7 +27,7 @@ pub struct Meta {
     pub mount: u64,
 }
 
-/// A btrfs subvolume root (`docs/btrfs.md` §3.3).
+/// A btrfs subvolume root.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subvol {
     pub id: u64,
@@ -242,12 +242,12 @@ impl std::fmt::Display for ErrKind {
 pub struct Totals {
     pub apparent: u64,
     /// Disk usage: allocation, with data shared between files counted once, at the lowest
-    /// node containing every reference to it (`docs/btrfs.md` §3.4).
+    /// node containing every reference to it.
     pub alloc: u64,
     /// Allocation as `du` counts it, shared data once per file referencing it.
     pub referenced: u64,
     /// Part of `alloc` that is shared with data outside the scan: deleting the node does not
-    /// free it (`docs/btrfs.md` B5).
+    /// free it.
     pub shared_out: u64,
     /// Number of nodes, the node itself included.
     pub items: u64,

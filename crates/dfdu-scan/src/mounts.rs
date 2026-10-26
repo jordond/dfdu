@@ -1,5 +1,5 @@
-//! Which mounts inside a scan show data the scan already reaches through another mount
-//! (`docs/btrfs.md` §3.2): bind mounts, a second mount of a btrfs subvolume, mount loops.
+//! Which mounts inside a scan show data the scan already reaches through another mount: bind
+//! mounts, a second mount of a btrfs subvolume, mount loops.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

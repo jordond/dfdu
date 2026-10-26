@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs the dfdu browser in a pseudo-terminal and times it from outside (ROADMAP M1).
+"""Runs the dfdu browser in a pseudo-terminal and times it from outside.
 
 Measures, per run:
 - start to the first frame with entries: from just before the process is started to the first
