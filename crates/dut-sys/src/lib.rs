@@ -1,6 +1,9 @@
 //! OS calls that no safe crate provides, behind safe wrappers (`docs/btrfs.md` §3.8). Syscalls
-//! with safe rustix APIs are called directly; only the btrfs ioctls need `unsafe`, each in one
-//! block with its argument struct checked against the kernel's size.
+//! with safe rustix APIs are called directly; only the btrfs ioctls and macOS
+//! `getattrlistbulk` need `unsafe`, each in one block with its argument struct checked against
+//! the kernel's size or `libc`'s definitions.
+//! On Windows, the directory enumeration and file information calls the Windows backend
+//! uses (`windows.rs`).
 //!
 //! On other systems the functions report "not available" (`Ok(None)` or `Unsupported`).
 
@@ -18,6 +21,20 @@ pub use linux::*;
 mod other;
 #[cfg(not(target_os = "linux"))]
 pub use other::*;
+
+#[cfg(any(target_os = "macos", test))]
+mod bulk;
+#[cfg(target_os = "macos")]
+pub use bulk::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG, parse_bulk_record};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::read_bulk;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::*;
 
 /// A btrfs subvolume root, as `BTRFS_IOC_GET_SUBVOL_INFO` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]

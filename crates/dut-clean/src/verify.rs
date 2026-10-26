@@ -89,7 +89,13 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
     if is_protected(path) {
         return Err(DeleteResult::Refused(Refusal::Protected));
     }
-    let m = match fs::symlink_metadata(path) {
+    // The same conversion the scanner used, so the fields compare like for like (on Windows
+    // the file id and volume serial number, which std does not report).
+    #[cfg(not(windows))]
+    let now = fs::symlink_metadata(path).map(|m| Meta::from_metadata(&m));
+    #[cfg(windows)]
+    let now = dut_sys::stat_path(path, false).map(|w| Meta::from_windows(&w));
+    let now = match now {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             return Err(DeleteResult::Stale("no longer exists".into()));
@@ -103,8 +109,6 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         }
     };
     let id = &item.identity;
-    // The same conversion the scanner used, so the fields compare like for like.
-    let now = Meta::from_metadata(&m);
     let kind = now.kind;
     let same = kind == id.kind
         && now.dev == id.dev

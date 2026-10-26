@@ -647,9 +647,12 @@ dependencies = [
 name = "dut-sys"
 version = "0.1.0"
 dependencies = [
+ "dut-tree",
+ "libc",
  "rustix",
  "sysinfo",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

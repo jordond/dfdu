@@ -23,7 +23,7 @@ hex.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
 dut-sys.workspace = true
 
 [dev-dependencies]

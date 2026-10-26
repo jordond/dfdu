@@ -14,10 +14,10 @@ use dut_tree::{Meta, Subvol, Totals};
 
 /// Each block read takes 2 ms longer, so chunk tasks finish (and return the directory's credit)
 /// while the listing still reads, on any OS. At full speed the listing can read the whole
-/// directory before a woken worker finishes its first block: on Windows the portable backend's
-/// stats cost nothing (`FindNextFileW` returns the metadata with the name), so the listing worker
-/// stats its blocks in about the time a woken thread takes to start, and the directory gets only
-/// the chunk tasks of its initial credit (4).
+/// directory before a woken worker finishes its first block: where stats are cheap (on Windows
+/// the listing returns most of the metadata with the name), the listing worker stats its blocks
+/// in about the time a woken thread takes to start, and the directory gets only the chunk tasks
+/// of its initial credit (4).
 struct SlowReads<B>(B);
 
 struct SlowStream<S>(S);
@@ -90,7 +90,7 @@ fn walk(root: &Path) -> (u64, u64) {
             let e = e.unwrap();
             let m = e.metadata().unwrap();
             items += 1;
-            if seen.insert(file_id(&m)) {
+            if seen.insert(file_id(&e.path(), &m)) {
                 bytes += m.len();
             }
             if m.is_dir() {
@@ -102,18 +102,25 @@ fn walk(root: &Path) -> (u64, u64) {
 }
 
 #[cfg(unix)]
-fn file_id(m: &fs::Metadata) -> (u64, u64) {
+fn file_id(_path: &Path, m: &fs::Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     (m.dev(), m.ino())
 }
 
-/// Without file ids (Windows, until its backend): every entry is its own file. The fixture's
-/// hard link is then counted twice by both sides.
-#[cfg(not(unix))]
-fn file_id(m: &fs::Metadata) -> (u64, u64) {
+/// The volume serial number and file id, which std reports only on nightly, from the file
+/// opened for its attributes.
+#[cfg(windows)]
+fn file_id(path: &Path, _m: &fs::Metadata) -> (u64, u64) {
+    let m = dut_tree::Meta::from_windows(&dut_sys::stat_path(path, false).unwrap());
+    (m.dev, m.ino)
+}
+
+/// Without file ids: every entry is its own file. The fixture's hard link is then counted
+/// twice by both sides.
+#[cfg(not(any(unix, windows)))]
+fn file_id(_path: &Path, _m: &fs::Metadata) -> (u64, u64) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    let _ = m;
     (0, N.fetch_add(1, Ordering::Relaxed))
 }
 
@@ -175,6 +182,24 @@ fn wide_directory_in_chunk_tasks() {
         );
         let (n, chunk_tasks) = scan(SlowReads(linux()), tmp.path());
         assert_eq!(n, t, "Linux backend ({storage:?}), slowed reads");
+        assert!(chunk_tasks > 10, "{chunk_tasks} chunk tasks");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let (n, _) = scan(dut_scan::MacBackend::default(), tmp.path());
+        assert_eq!(n, t, "macOS backend and portable backend differ");
+        let (n, chunk_tasks) = scan(SlowReads(dut_scan::MacBackend::default()), tmp.path());
+        assert_eq!(n, t, "macOS backend, slowed reads");
+        assert!(chunk_tasks > 10, "{chunk_tasks} chunk tasks");
+    }
+
+    #[cfg(windows)]
+    {
+        let (n, _) = scan(dut_scan::WindowsBackend::default(), tmp.path());
+        assert_eq!(n, t, "Windows backend and portable backend differ");
+        let (n, chunk_tasks) = scan(SlowReads(dut_scan::WindowsBackend::default()), tmp.path());
+        assert_eq!(n, t, "Windows backend, slowed reads");
         assert!(chunk_tasks > 10, "{chunk_tasks} chunk tasks");
     }
 }

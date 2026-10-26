@@ -1,11 +1,13 @@
-//! Deletion against a real filesystem: verification against the scan, refusals, journal.
+//! Deletion against a real filesystem: verification against the scan, refusals, journal. Each
+//! test runs with the portable backend, and on Windows with the Windows backend too, whose
+//! file ids and volume serial numbers the deleter checks against.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dut_engine::{Command, DeleteSummary, Engine, EngineOptions, Mode};
-use dut_scan::{JobOptions, PortableBackend};
+use dut_scan::{Backend, JobOptions, PortableBackend};
 use dut_tree::NodeRef;
 use tempfile::TempDir;
 
@@ -35,9 +37,9 @@ fn fixture() -> TempDir {
     dir
 }
 
-fn engine(journal: Option<PathBuf>, read_only: bool) -> Engine<PortableBackend> {
+fn engine<B: Backend>(backend: B, journal: Option<PathBuf>, read_only: bool) -> Engine<B> {
     Engine::start(
-        PortableBackend::default(),
+        backend,
         EngineOptions {
             journal_dir: journal,
             read_only,
@@ -48,7 +50,7 @@ fn engine(journal: Option<PathBuf>, read_only: bool) -> Engine<PortableBackend> 
     )
 }
 
-fn scan(e: &Engine<PortableBackend>, root: &Path) {
+fn scan<B: Backend>(e: &Engine<B>, root: &Path) {
     e.send(Command::Scan {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
@@ -56,7 +58,7 @@ fn scan(e: &Engine<PortableBackend>, root: &Path) {
     assert!(e.wait_idle(Some(Duration::from_secs(20))));
 }
 
-fn node(e: &Engine<PortableBackend>, rel: &str) -> NodeRef {
+fn node<B: Backend>(e: &Engine<B>, rel: &str) -> NodeRef {
     e.read(|m| {
         let mut ix = m.tree.roots().next().unwrap();
         for part in rel.split('/') {
@@ -70,14 +72,14 @@ fn node(e: &Engine<PortableBackend>, rel: &str) -> NodeRef {
     })
 }
 
-fn delete(e: &Engine<PortableBackend>, items: Vec<NodeRef>, mode: Mode) -> DeleteSummary {
+fn delete<B: Backend>(e: &Engine<B>, items: Vec<NodeRef>, mode: Mode) -> DeleteSummary {
     e.send(Command::Delete { items, mode });
     assert!(e.wait_idle(Some(Duration::from_secs(20))));
     e.read(|m| m.status.last_delete.clone())
         .expect("a plan finished")
 }
 
-fn root_alloc(e: &Engine<PortableBackend>) -> u64 {
+fn root_alloc<B: Backend>(e: &Engine<B>) -> u64 {
     e.read(|m| m.tree.total(m.tree.roots().next().unwrap()).alloc)
 }
 
@@ -97,10 +99,16 @@ fn journal_kinds(dir: &Path) -> Vec<String> {
 
 #[test]
 fn permanent_delete_updates_tree_and_journal() {
+    permanent_delete(PortableBackend::default);
+    #[cfg(windows)]
+    permanent_delete(dut_scan::WindowsBackend::default);
+}
+
+fn permanent_delete<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
     let jdir = tempdir("journal");
-    let e = engine(Some(jdir.path().to_path_buf()), false);
+    let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let before = root_alloc(&e);
     let junk_bytes = e.read(|m| {
@@ -127,10 +135,16 @@ fn permanent_delete_updates_tree_and_journal() {
 
 #[test]
 fn changed_items_are_not_deleted() {
+    changed_items(PortableBackend::default);
+    #[cfg(windows)]
+    changed_items(dut_scan::WindowsBackend::default);
+}
+
+fn changed_items<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
     let jdir = tempdir("journal");
-    let e = engine(Some(jdir.path().to_path_buf()), false);
+    let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let (file, keep, junk) = (node(&e, "file.bin"), node(&e, "keep"), node(&e, "junk"));
     // A file whose size changed, a directory replaced by a new one, a directory swapped for a
@@ -144,6 +158,20 @@ fn changed_items_are_not_deleted() {
     fs::remove_dir_all(root.join("junk")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(elsewhere, root.join("junk")).unwrap();
+    // A junction, which needs no privilege.
+    #[cfg(windows)]
+    assert!(
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(root.join("junk"))
+            .arg(elsewhere)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
     let s = delete(&e, vec![file, keep, junk], Mode::Permanent);
     assert_eq!(s.deleted, 0, "{s:?}");
     assert_eq!(s.stale, 3, "{s:?}");
@@ -157,11 +185,17 @@ fn changed_items_are_not_deleted() {
 
 #[test]
 fn refusals() {
+    refusals_with(PortableBackend::default);
+    #[cfg(windows)]
+    refusals_with(dut_scan::WindowsBackend::default);
+}
+
+fn refusals_with<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
     // The scan root itself.
     let jdir = tempdir("journal");
-    let e = engine(Some(jdir.path().to_path_buf()), false);
+    let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let r = e.read(|m| m.tree.node_ref(m.tree.roots().next().unwrap()));
     let s = delete(&e, vec![r], Mode::Permanent);
@@ -170,7 +204,7 @@ fn refusals() {
     e.shutdown(Duration::from_secs(1));
 
     // No journal: nothing is deleted.
-    let e = engine(None, false);
+    let e = engine(backend(), None, false);
     scan(&e, root);
     let s = delete(&e, vec![node(&e, "junk")], Mode::Permanent);
     assert_eq!((s.deleted, s.refused), (0, 1));
@@ -179,7 +213,7 @@ fn refusals() {
 
     // Read-only: the request is dropped before a plan exists.
     let jdir = tempdir("journal");
-    let e = engine(Some(jdir.path().to_path_buf()), true);
+    let e = engine(backend(), Some(jdir.path().to_path_buf()), true);
     scan(&e, root);
     e.send(Command::Delete {
         items: vec![node(&e, "junk")],

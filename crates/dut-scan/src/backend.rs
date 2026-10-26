@@ -143,7 +143,9 @@ fn mount_of(path: &Path) -> u64 {
     dut_sys::mount_id(path).ok().flatten().unwrap_or(0)
 }
 
-/// `std::fs` backend: one `stat` per entry, no OS-specific fast paths.
+/// `std::fs` backend: one `stat` per entry, no OS-specific fast paths. On Windows, where std
+/// has no allocation size, file id or link count, each entry is opened for them instead
+/// ([`dut_sys::stat_path`]).
 #[derive(Default, Debug)]
 pub struct PortableBackend {
     /// Mount classes from the mount table; re-read when an unknown mount appears.
@@ -181,11 +183,19 @@ impl RawBlock<PathBuf> for PortableRaw {
     }
 
     fn stat(&mut self, out: &mut Block<PathBuf>) -> io::Result<()> {
+        #[cfg(windows)]
+        let mut volume = None;
         for entry in self.0.drain(..) {
             let name = entry.file_name();
-            let mut meta = entry.metadata().map(|m| Meta::from_metadata(&m));
+            #[cfg(not(windows))]
+            let (mut meta, enter) = (entry.metadata().map(|m| Meta::from_metadata(&m)), true);
+            #[cfg(windows)]
+            let (mut meta, enter) = match windows_meta(&entry, &mut volume) {
+                Ok((m, enter)) => (Ok(m), enter),
+                Err(e) => (Err(e), true),
+            };
             let child = match &mut meta {
-                Ok(m) if m.kind == Kind::Dir => {
+                Ok(m) if m.kind == Kind::Dir && enter => {
                     let path = entry.path();
                     m.mount = mount_of(&path);
                     Some(path)
@@ -200,6 +210,58 @@ impl RawBlock<PathBuf> for PortableRaw {
         }
         Ok(())
     }
+}
+
+/// Metadata of a directory entry on Windows, and whether it may be opened: the entry's kind,
+/// write time and attributes from the listing (`FindNextFileW`), the rest from the entry opened
+/// with attribute access ([`dut_sys::stat_path`]), as std has no allocation size, file id or
+/// link count. The listing's size is used for directories and links; files take theirs from
+/// the file, as a directory entry's copy can be out of date for a file with several names.
+/// Cloud placeholders and offline files are not opened (`WinStat::recalls_on_open`): they get
+/// allocation 0 and file id 0, and a placeholder directory is not entered. `volume` caches the
+/// directory's volume serial number for them.
+#[cfg(windows)]
+fn windows_meta(entry: &fs::DirEntry, volume: &mut Option<u32>) -> io::Result<(Meta, bool)> {
+    use dut_tree::{WinStat, win_attr};
+    use std::os::windows::fs::MetadataExt;
+    let m = entry.metadata()?;
+    let mut w = WinStat {
+        attributes: m.file_attributes(),
+        // Only the name-surrogate bit decides the kind; the real tag comes with the handle.
+        reparse_tag: if m.file_type().is_symlink() {
+            win_attr::TAG_NAME_SURROGATE
+        } else {
+            0
+        },
+        size: m.len(),
+        alloc: 0,
+        last_write: m.last_write_time(),
+        volume: 0,
+        file_id: 0,
+        nlink: 1,
+    };
+    if w.recalls_on_open() {
+        w.volume = match *volume {
+            Some(v) => v,
+            None => {
+                let dir = entry.path();
+                let v = dut_sys::stat_path(dir.parent().unwrap_or(&dir), true)?.volume;
+                *volume = Some(v);
+                v
+            }
+        };
+        return Ok((Meta::from_windows(&w), false));
+    }
+    let h = dut_sys::stat_path(&entry.path(), false)?;
+    w.reparse_tag = h.reparse_tag;
+    w.alloc = h.alloc;
+    w.volume = h.volume;
+    w.file_id = h.file_id;
+    if w.kind() == Kind::File {
+        w.size = h.size;
+        w.nlink = h.nlink;
+    }
+    Ok((Meta::from_windows(&w), true))
 }
 
 impl DirStream for PortableStream {
@@ -246,7 +308,10 @@ impl Backend for PortableBackend {
     }
 
     fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
+        #[cfg(not(windows))]
         let mut m = Meta::from_metadata(&fs::metadata(loc)?);
+        #[cfg(windows)]
+        let mut m = Meta::from_windows(&dut_sys::stat_path(loc, true)?);
         m.mount = mount_of(loc);
         Ok(m)
     }

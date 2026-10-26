@@ -183,7 +183,9 @@ struct Node {
 const _: () = assert!(std::mem::size_of::<Node>() <= 56);
 
 /// [`Node::blocks`] of an allocation that is not a whole number of 512-byte blocks below
-/// 2 TiB. Every backend reports whole blocks; files of 2 TiB or more are rare.
+/// 2 TiB. Unix backends report whole blocks, and Windows whole clusters, except NTFS files whose
+/// data is inside their MFT record (up to about 700 bytes), whose allocation is a multiple of 8
+/// and goes to the side map; files of 2 TiB or more are rare.
 const ALLOC_BIG: u32 = u32::MAX;
 
 /// Packs an allocation into a node's block count; `None` when it needs [`Tree::big_allocs`].
@@ -1137,6 +1139,32 @@ mod tests {
                     String::from_utf8_lossy(&t.path(b))
                 );
             }
+        }
+    }
+
+    /// Allocations as the backends report them come back exactly: 512-byte blocks, Windows
+    /// clusters, NTFS's 8-byte multiples for data inside the MFT record, and past 2 TiB.
+    #[test]
+    fn allocations_round_trip() {
+        let mut t = Tree::new();
+        let root = t.new_root(b"/r", &dir_meta(), true);
+        for alloc in [
+            0,
+            512,
+            4096,
+            65536 * 3,
+            104,
+            8,
+            2 << 40,
+            (2 << 40) + 4096,
+            u64::MAX,
+        ] {
+            let m = Meta {
+                alloc,
+                ..file_meta(1, alloc, 1)
+            };
+            let f = t.add_file(root, b"f", &m, false, None);
+            assert_eq!(t.own(f).alloc, alloc);
         }
     }
 

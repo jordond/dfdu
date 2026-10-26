@@ -77,9 +77,10 @@ impl Meta {
         }
         #[cfg(windows)]
         {
-            // Allocation size, volume id, file id and link count need the Windows backend (M2);
-            // std exposes the file id only on nightly. The creation time (100 ns units) stands in
-            // for the inode number, so a file or directory replaced since the scan is told apart.
+            // std has no allocation size, and the volume serial, file id and link count only on
+            // nightly: the scanners and the deleter use [`Meta::from_windows`] with what
+            // `dut-sys` reads instead. The creation time (100 ns units) stands in for the inode
+            // number here.
             use std::os::windows::fs::MetadataExt;
             Meta {
                 kind,
@@ -110,6 +111,83 @@ impl Meta {
     /// A file with `nlink > 1` takes part in hard-link charging.
     pub fn is_hardlink(&self) -> bool {
         self.kind != Kind::Dir && self.nlink > 1
+    }
+
+    /// Metadata from what Windows reports ([`WinStat`]). Both Windows backends and the
+    /// deleter's check go through this, so their values compare like for like.
+    pub fn from_windows(w: &WinStat) -> Meta {
+        // FILETIME counts 100 ns intervals since 1601; std's `modified()` rounds the same way
+        // and has no time before 1970.
+        let secs = (w.last_write / 10_000_000) as i64 - 11_644_473_600;
+        Meta {
+            kind: w.kind(),
+            apparent: w.size,
+            alloc: w.alloc,
+            mtime: secs.max(0),
+            dev: w.volume as u64,
+            // NTFS file ids are 64-bit file reference numbers in the low half; ReFS uses all
+            // 128 bits, folded here into the 64 the tree stores.
+            ino: (w.file_id as u64) ^ ((w.file_id >> 64) as u64),
+            nlink: w.nlink,
+            mount: 0,
+        }
+    }
+}
+
+/// `FILE_ATTRIBUTE_*` bits and reparse tag bits [`WinStat`] looks at.
+pub mod win_attr {
+    pub const DIRECTORY: u32 = 0x10;
+    pub const REPARSE_POINT: u32 = 0x400;
+    pub const OFFLINE: u32 = 0x1000;
+    pub const RECALL_ON_OPEN: u32 = 0x4_0000;
+    pub const RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
+    /// The reparse tag bit of name surrogates: symlinks, junctions, volume mount points.
+    pub const TAG_NAME_SURROGATE: u32 = 0x2000_0000;
+}
+
+/// One file as Windows describes it, in a directory enumeration entry or from an open handle.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct WinStat {
+    /// `FILE_ATTRIBUTE_*` bits.
+    pub attributes: u32,
+    /// The reparse tag when `attributes` has `FILE_ATTRIBUTE_REPARSE_POINT`, else 0.
+    pub reparse_tag: u32,
+    /// `EndOfFile`.
+    pub size: u64,
+    /// `AllocationSize`: whole clusters for data outside the MFT record, an 8-byte multiple for
+    /// data stored in it (small files on NTFS).
+    pub alloc: u64,
+    /// `LastWriteTime`, 100 ns intervals since 1601.
+    pub last_write: u64,
+    /// Volume serial number (`GetVolumeInformationByHandleW`, `dwVolumeSerialNumber`).
+    pub volume: u32,
+    pub file_id: u128,
+    pub nlink: u32,
+}
+
+impl WinStat {
+    /// The kind as std decides it: a reparse point whose tag is a name surrogate (symlink,
+    /// junction, volume mount point) is a link and never followed; other reparse points (cloud
+    /// placeholders, deduplicated or WOF-compressed files) are what their attributes say.
+    pub fn kind(&self) -> Kind {
+        if self.attributes & win_attr::REPARSE_POINT != 0
+            && self.reparse_tag & win_attr::TAG_NAME_SURROGATE != 0
+        {
+            Kind::Symlink
+        } else if self.attributes & win_attr::DIRECTORY != 0 {
+            Kind::Dir
+        } else {
+            Kind::File
+        }
+    }
+
+    /// Whether opening it can fetch data from elsewhere: cloud placeholders (OneDrive
+    /// "online-only" files and folders not yet listed) and files moved to offline storage.
+    /// Scanners take their sizes from the directory enumeration and never open them.
+    pub fn recalls_on_open(&self) -> bool {
+        self.attributes
+            & (win_attr::OFFLINE | win_attr::RECALL_ON_OPEN | win_attr::RECALL_ON_DATA_ACCESS)
+            != 0
     }
 }
 
@@ -215,5 +293,48 @@ impl Totals {
         self.errors = self.errors.saturating_sub(o.errors);
         self.mounts = self.mounts.saturating_sub(o.mounts);
         self.ro_subvols = self.ro_subvols.saturating_sub(o.ro_subvols);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_metadata() {
+        let w = |attributes, reparse_tag| WinStat {
+            attributes,
+            reparse_tag,
+            ..WinStat::default()
+        };
+        // Symlink, junction, a cloud file, a WOF-compressed file, a directory.
+        assert_eq!(w(0x420, 0xA000_000C).kind(), Kind::Symlink);
+        assert_eq!(w(0x410, 0xA000_0003).kind(), Kind::Symlink);
+        assert_eq!(w(0x420, 0x9000_001A).kind(), Kind::File);
+        assert_eq!(w(0x400, 0x8000_0017).kind(), Kind::File);
+        assert_eq!(w(0x10, 0).kind(), Kind::Dir);
+        assert!(w(0x40_0020, 0x9000_001A).recalls_on_open());
+        assert!(!w(0x20, 0).recalls_on_open());
+        let m = Meta::from_windows(&WinStat {
+            attributes: 0x20,
+            size: 100,
+            alloc: 104,
+            // 2001-09-09 01:46:40 UTC plus 0.9 s.
+            last_write: (1_000_000_000 + 11_644_473_600) * 10_000_000 + 9_000_000,
+            volume: 0xDEAD_BEEF,
+            file_id: (7 << 64) | 5,
+            nlink: 2,
+            ..WinStat::default()
+        });
+        assert_eq!(
+            (m.kind, m.apparent, m.alloc, m.mtime, m.dev, m.ino, m.nlink),
+            (Kind::File, 100, 104, 1_000_000_000, 0xDEAD_BEEF, 2, 2)
+        );
+        // Before 1970, as std's `modified()` has it.
+        let old = Meta::from_windows(&WinStat {
+            last_write: 5,
+            ..WinStat::default()
+        });
+        assert_eq!(old.mtime, 0);
     }
 }
