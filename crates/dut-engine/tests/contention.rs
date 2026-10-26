@@ -88,3 +88,30 @@ fn slow_reader_does_not_change_or_stop_the_scan() {
     assert_eq!(busy.items, 1 + 200 * 2 + 200 * 100);
     eprintln!("scan under read-lock contention took {took:?}");
 }
+
+/// An engine with nothing to do waits on its channels instead of taking the write lock. With
+/// extent measurement off (macOS and Windows), the measurers' closed channel was always ready
+/// and the applier took the lock in a loop.
+#[test]
+fn idle_engine_does_not_spin() {
+    for measure_workers in [0, 1] {
+        let e = Engine::start(
+            PortableBackend::default(),
+            EngineOptions {
+                workers: 1,
+                measure_workers,
+                journal_dir: None,
+                crash_dir: None,
+                ..Default::default()
+            },
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        let slices = e.read(|m| m.status.timing.slices);
+        // One slice per 50 ms wait, and a few for start-up.
+        assert!(
+            slices < 30,
+            "{slices} slices with {measure_workers} measurers"
+        );
+        e.shutdown(Duration::from_secs(1));
+    }
+}

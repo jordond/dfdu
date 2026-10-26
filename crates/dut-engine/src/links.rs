@@ -2,23 +2,105 @@
 
 use std::collections::HashMap;
 
-use dut_tree::{NodeRef, Tree};
+use dut_tree::{Ix, NodeRef, Tree};
 
 /// Scope 0 is the visible tree; a rescan's shadow uses its job id as scope.
 pub type Scope = u32;
 pub const VISIBLE: Scope = 0;
 
+/// A list that holds up to two items without allocating. Nearly every inode with hard links
+/// has links in one scope, and most have two; with a `Vec` for each, the allocations took a
+/// tenth of the applier's time at 10M entries (95k inodes), each `malloc` about 1 µs in its
+/// fragmented heap.
+#[derive(Debug, Default)]
+enum Small<T> {
+    #[default]
+    Empty,
+    One([T; 1]),
+    Two([T; 2]),
+    Many(Vec<T>),
+}
+
+impl<T> Small<T> {
+    fn push(&mut self, x: T) {
+        *self = match std::mem::take(self) {
+            Small::Empty => Small::One([x]),
+            Small::One([a]) => Small::Two([a, x]),
+            Small::Two([a, b]) => Small::Many(vec![a, b, x]),
+            Small::Many(mut v) => {
+                v.push(x);
+                Small::Many(v)
+            }
+        };
+    }
+
+    fn into_vec(self) -> Vec<T> {
+        match self {
+            Small::Empty => Vec::new(),
+            Small::One(a) => a.into(),
+            Small::Two(a) => a.into(),
+            Small::Many(v) => v,
+        }
+    }
+
+    fn retain(&mut self, mut f: impl FnMut(&T) -> bool) {
+        for x in std::mem::take(self).into_vec() {
+            if f(&x) {
+                self.push(x);
+            }
+        }
+    }
+
+    fn swap_remove(&mut self, i: usize) -> T {
+        let mut v = std::mem::take(self).into_vec();
+        let x = v.swap_remove(i);
+        for y in v {
+            self.push(y);
+        }
+        x
+    }
+
+    fn extend(&mut self, other: Small<T>) {
+        for x in other.into_vec() {
+            self.push(x);
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Small<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        match self {
+            Small::Empty => &[],
+            Small::One(a) => a,
+            Small::Two(a) => a,
+            Small::Many(v) => v,
+        }
+    }
+}
+
+impl<T> std::ops::DerefMut for Small<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        match self {
+            Small::Empty => &mut [],
+            Small::One(a) => a,
+            Small::Two(a) => a,
+            Small::Many(v) => v,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct ScopeEntry {
     scope: Scope,
-    links: Vec<NodeRef>,
+    links: Small<NodeRef>,
     charged: Option<NodeRef>,
 }
 
 /// The links of one inode, by scope.
 #[derive(Debug, Default)]
 struct Links {
-    scopes: Vec<ScopeEntry>,
+    scopes: Small<ScopeEntry>,
     /// Freed links still in the lists. A freed link stays until the lists are pruned: finding
     /// it would cost a search of its list, and freeing a subtree removes many links of the same
     /// inodes.
@@ -30,6 +112,8 @@ struct Links {
 #[derive(Debug, Default)]
 pub struct LinkTable {
     map: HashMap<(u64, u64), Links>,
+    /// Ancestor chains for [`LinkTable::reelect`], kept to save two allocations per inode.
+    chains: (Vec<Ix>, Vec<Ix>),
 }
 
 impl LinkTable {
@@ -47,16 +131,17 @@ impl LinkTable {
         }
     }
 
-    /// Whether a new link in `scope` should be charged (no other link of the inode is).
-    pub fn should_charge(&self, key: (u64, u64), scope: Scope) -> bool {
-        self.map
-            .get(&key)
-            .and_then(|v| v.scopes.iter().find(|e| e.scope == scope))
-            .is_none_or(|e| e.charged.is_none())
-    }
-
-    pub fn add(&mut self, key: (u64, u64), scope: Scope, node: NodeRef, charged: bool) {
+    /// Adds a link a scan found. It is charged if no other link of the inode in `scope` is;
+    /// `make` creates its node, told whether it is charged. One lookup of the inode.
+    pub fn add_scanned(
+        &mut self,
+        key: (u64, u64),
+        scope: Scope,
+        make: impl FnOnce(bool) -> NodeRef,
+    ) {
         let e = self.entry(key, scope);
+        let charged = e.charged.is_none();
+        let node = make(charged);
         e.links.push(node);
         if charged {
             e.charged = Some(node);
@@ -199,23 +284,29 @@ impl LinkTable {
         };
         let n = e.links.len();
         // The first link with the lowest path, comparing ancestor chains, not built paths.
-        let (mut best, mut best_chain, mut chain) = (None, Vec::new(), Vec::new());
-        for &l in &e.links {
-            let Some(ix) = tree.resolve(l) else { continue };
-            tree.ancestors(ix, &mut chain);
-            if best.is_none() || tree.cmp_paths(&chain, &best_chain).is_lt() {
+        let (best_chain, chain) = &mut self.chains;
+        let (mut best, mut old) = (None, None);
+        for &l in e.links.iter() {
+            let Some(ix) = tree.resolve_ancestors(l, chain) else {
+                continue;
+            };
+            if e.charged == Some(l) {
+                old = Some(ix);
+            }
+            if best.is_none() || tree.cmp_paths(chain, best_chain).is_lt() {
                 best = Some(l);
-                std::mem::swap(&mut best_chain, &mut chain);
+                std::mem::swap(best_chain, chain);
             }
         }
         if e.charged == best {
             return (false, n);
         }
-        if let Some(old) = e.charged.and_then(|c| tree.resolve(c)) {
+        // The charged link is one of the links, found above if it resolves.
+        if let Some(old) = old.or_else(|| e.charged.and_then(|c| tree.resolve(c))) {
             tree.set_charged(old, false);
         }
-        if let Some(b) = best {
-            let ix = tree.resolve(b).expect("live");
+        if best.is_some() {
+            let ix = *best_chain.last().expect("resolved");
             tree.set_charged(ix, true);
         }
         e.charged = best;

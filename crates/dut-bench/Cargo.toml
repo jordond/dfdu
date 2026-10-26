@@ -1,6 +1,6 @@
 [package]
 name = "dut-bench"
-description = "Benchmark support: seeded synthetic trees for timing scans against other tools"
+description = "Benchmark support: seeded synthetic trees for timing scans against other tools, and a backend serving them from memory"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+dut-scan.workspace = true
+dut-tree.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 rand.workspace = true

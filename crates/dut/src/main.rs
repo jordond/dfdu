@@ -549,11 +549,15 @@ fn print_debug_stats(m: &Model) {
         s.stalled
     );
     let (names, garbage) = m.tree.name_bytes();
+    let (kids, kids_freed) = m.tree.child_slots();
     eprintln!(
-        "tree: {} nodes, {:.1} MiB of names ({:.1} MiB freed)",
+        "tree: {} nodes, {:.1} MiB of names ({:.1} MiB freed), {:.1} MiB of child lists \
+         ({:.1} MiB freed)",
         m.tree.live_nodes(),
         names as f64 / 1048576.0,
-        garbage as f64 / 1048576.0
+        garbage as f64 / 1048576.0,
+        kids as f64 * 4.0 / 1048576.0,
+        kids_freed as f64 * 4.0 / 1048576.0
     );
     let locked = Duration::from_nanos(t.locked_ns);
     let rate = s.entries as f64 / locked.as_secs_f64().max(1e-9);

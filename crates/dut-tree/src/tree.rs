@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use fixedbitset::FixedBitSet;
 
-use crate::pages::{NameArena, Pages};
+use crate::pages::{KidArena, Kids, NameArena, Pages};
 use crate::{ErrKind, Kind, Meta, Totals, name_os};
 
 const NONE: u32 = u32::MAX;
@@ -89,7 +89,7 @@ impl DirState {
 /// Per-directory record. The scan bookkeeping fields are owned by the applier.
 #[derive(Clone, Debug)]
 pub struct DirRec {
-    pub(crate) children: Vec<u32>,
+    pub(crate) kids: Kids,
     pub(crate) total: Totals,
     pub state: DirState,
     /// State taken when `pending` reaches zero, set when the listing closes.
@@ -102,16 +102,19 @@ pub struct DirRec {
     pub cut: bool,
     pub stalled: bool,
     pub chunks_seen: u32,
-    /// Chunk sequence numbers applied, for dropping duplicates; freed when the listing closes
-    /// ([`DirRec::close`]), after which no chunk is applied.
-    pub seen_seq: FixedBitSet,
+    /// Chunk sequence numbers applied, for dropping duplicates: 0-63 in `seen_low`, the rest
+    /// in `seen_high`, which stays unallocated for all but wide directories (a directory
+    /// takes one chunk per 4,096 entries). Freed when the listing closes ([`DirRec::close`]),
+    /// after which no chunk is applied.
+    seen_low: u64,
+    seen_high: FixedBitSet,
     pub changed_at: u64,
 }
 
 impl DirRec {
     fn new() -> Self {
         DirRec {
-            children: Vec::new(),
+            kids: Kids::default(),
             total: Totals::default(),
             state: DirState::Pending,
             outcome: DirState::Complete,
@@ -123,28 +126,23 @@ impl DirRec {
             cut: false,
             stalled: false,
             chunks_seen: 0,
-            seen_seq: FixedBitSet::new(),
+            seen_low: 0,
+            seen_high: FixedBitSet::new(),
             changed_at: 0,
         }
     }
 
     /// Records chunk `seq` as seen. Returns false if it was already seen.
     pub fn mark_seq(&mut self, seq: u32) -> bool {
-        let i = seq as usize;
-        self.seen_seq.grow(i + 1);
-        !self.seen_seq.put(i)
-    }
-
-    /// Room for `n` more children. A directory's first chunk reserves exactly: most
-    /// directories arrive in one chunk, and doubling would leave a quarter of the list unused
-    /// on average. Later chunks grow it as a `Vec` does, so wide directories are not copied
-    /// once per chunk.
-    pub fn reserve_children(&mut self, n: usize) {
-        if self.children.is_empty() {
-            self.children.reserve_exact(n);
-        } else {
-            self.children.reserve(n);
+        if seq < 64 {
+            let bit = 1 << seq;
+            let new = self.seen_low & bit == 0;
+            self.seen_low |= bit;
+            return new;
         }
+        let i = (seq - 64) as usize;
+        self.seen_high.grow(i + 1);
+        !self.seen_high.put(i)
     }
 
     /// Closes the listing. No more chunks are applied, so the duplicate filter is freed and
@@ -152,10 +150,37 @@ impl DirRec {
     pub fn close(&mut self, outcome: DirState) {
         self.listing_closed = true;
         self.outcome = outcome;
-        self.seen_seq = FixedBitSet::new();
-        self.children.shrink_to_fit();
+        self.seen_high = FixedBitSet::new();
+        self.kids.shrink();
     }
 }
+
+/// Iterator over a directory's children ([`Tree::children`]).
+pub struct Children<'a> {
+    head: std::slice::Iter<'a, u32>,
+    more: std::slice::Iter<'a, Vec<u32>>,
+    left: usize,
+}
+
+impl Iterator for Children<'_> {
+    type Item = Ix;
+
+    fn next(&mut self) -> Option<Ix> {
+        loop {
+            if let Some(&c) = self.head.next() {
+                self.left -= 1;
+                return Some(Ix(c));
+            }
+            self.head = self.more.next()?.iter();
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+}
+
+impl ExactSizeIterator for Children<'_> {}
 
 /// One slot, kept to 56 bytes: memory per entry decides how large a tree fits (ROADMAP M2,
 /// under 100 MB for 1M entries). Fields most entries do not need live in side tables.
@@ -272,7 +297,8 @@ pub struct Tree {
     big_errors: std::collections::HashMap<u32, i32>,
     /// Allocations a node's block count cannot hold, by slot.
     big_allocs: std::collections::HashMap<u32, u64>,
-    dirs: Vec<DirRec>,
+    dirs: Pages<DirRec>,
+    kids: KidArena,
     free_nodes: Vec<u32>,
     free_dirs: Vec<u32>,
     names: NameArena,
@@ -320,6 +346,55 @@ impl Tree {
             return None;
         }
         self.top(Ix(r.index)).map(|_| Ix(r.index))
+    }
+
+    /// [`Tree::resolve`], and `None` also when the node or an ancestor is a directory marked
+    /// `cut`: the applier's gate (`docs/data-pipeline.md` §5.1) in one walk up the tree. At 10M
+    /// entries the nodes of a walk are rarely in the cache, so each walk costs a cache miss
+    /// per level.
+    pub fn resolve_uncut(&self, r: NodeRef) -> Option<Ix> {
+        let n = self.nodes.get(r.index as usize)?;
+        if n.generation != r.generation {
+            return None;
+        }
+        let mut i = r.index;
+        loop {
+            let n = &self.nodes[i as usize];
+            if n.flags.has(NodeFlags::DETACHED) || n.flags.has(NodeFlags::FREE) {
+                return None;
+            }
+            if n.dir != NONE && self.dirs[n.dir as usize].cut {
+                return None;
+            }
+            if n.parent == NONE {
+                return Some(Ix(r.index));
+            }
+            i = n.parent;
+        }
+    }
+
+    /// [`Tree::resolve`] and [`Tree::ancestors`] in one walk: the node and its ancestors into
+    /// `out`, topmost first, if it resolves.
+    pub fn resolve_ancestors(&self, r: NodeRef, out: &mut Vec<Ix>) -> Option<Ix> {
+        out.clear();
+        let n = self.nodes.get(r.index as usize)?;
+        if n.generation != r.generation {
+            return None;
+        }
+        let mut i = r.index;
+        loop {
+            let n = &self.nodes[i as usize];
+            if n.flags.has(NodeFlags::DETACHED) || n.flags.has(NodeFlags::FREE) {
+                out.clear();
+                return None;
+            }
+            out.push(Ix(i));
+            if n.parent == NONE {
+                out.reverse();
+                return Some(Ix(r.index));
+            }
+            i = n.parent;
+        }
     }
 
     /// Whether `r` names a node that has been freed (its slot may hold another node by now).
@@ -487,11 +562,31 @@ impl Tree {
         (d != NONE).then(|| &mut self.dirs[d as usize])
     }
 
-    pub fn children(&self, ix: Ix) -> impl ExactSizeIterator<Item = Ix> + '_ {
-        self.dir(ix)
-            .map_or(&[][..], |d| &d.children[..])
-            .iter()
-            .map(|&c| Ix(c))
+    pub fn children(&self, ix: Ix) -> Children<'_> {
+        let (head, more) = match self.dir(ix) {
+            Some(d) => self.kids.parts(&d.kids),
+            None => (&[][..], &[][..]),
+        };
+        Children {
+            left: head.len() + more.iter().map(Vec::len).sum::<usize>(),
+            head: head.iter(),
+            more: more.iter(),
+        }
+    }
+
+    /// Room for `n` more children of `ix`, so the children of a chunk are stored together. A
+    /// directory's first chunk reserves exactly what it needs: most directories arrive in one
+    /// chunk. Later chunks add blocks at least as large as the list so far ([`KidArena`]).
+    pub fn reserve_children(&mut self, ix: Ix, n: usize) {
+        let d = self.nodes[ix.0 as usize].dir;
+        assert!(d != NONE, "children reserved for a non-directory");
+        self.kids.reserve(&mut self.dirs[d as usize].kids, n);
+    }
+
+    /// Slots of the child lists in shared pages (the blocks of directories that took several
+    /// chunks are not counted), and how many of them lists that were freed left unused.
+    pub fn child_slots(&self) -> (u64, u64) {
+        self.kids.slots()
     }
 
     /// What this node contributes by itself (one item, its own error, its own bytes unless it
@@ -731,7 +826,7 @@ impl Tree {
     fn push_child(&mut self, parent: Ix, child: u32) {
         let d = self.nodes[parent.0 as usize].dir;
         assert!(d != NONE, "child added to a non-directory");
-        self.dirs[d as usize].children.push(child);
+        self.kids.push(&mut self.dirs[d as usize].kids, child);
     }
 
     fn bump(&mut self) -> u64 {
@@ -879,8 +974,18 @@ impl Tree {
                 self.parent(ix)
             };
             if let Some(t) = target {
-                self.propagate_add(t, &new);
-                self.propagate_sub(t, &old);
+                // Both in one walk: `propagate_add` then `propagate_sub` walked twice.
+                let v = self.bump();
+                let mut i = t.0;
+                while i != NONE {
+                    let n = &self.nodes[i as usize];
+                    let (d, p) = (n.dir, n.parent);
+                    let rec = &mut self.dirs[d as usize];
+                    rec.total.add(&new);
+                    rec.total.sub(&old);
+                    rec.changed_at = v;
+                    i = p;
+                }
             }
         } else {
             self.bump();
@@ -944,12 +1049,8 @@ impl Tree {
         let (old_total, new_total) = (self.total(old), self.total(new));
         if parent != NONE {
             let d = self.nodes[parent as usize].dir as usize;
-            let pos = self.dirs[d]
-                .children
-                .iter()
-                .position(|&c| c == old.0)
-                .expect("child");
-            self.dirs[d].children[pos] = new.0;
+            let found = self.kids.replace(&mut self.dirs[d].kids, old.0, new.0);
+            assert!(found, "child");
             self.nodes[new.0 as usize].parent = parent;
             self.propagate_sub(Ix(parent), &old_total);
             self.propagate_add(Ix(parent), &new_total);
@@ -974,10 +1075,7 @@ impl Tree {
 
     fn remove_child(&mut self, parent: Ix, child: u32) {
         let d = self.nodes[parent.0 as usize].dir as usize;
-        let ch = &mut self.dirs[d].children;
-        if let Some(pos) = ch.iter().position(|&c| c == child) {
-            ch.remove(pos);
-        }
+        self.kids.remove(&mut self.dirs[d].kids, child);
     }
 
     pub fn has_free_work(&self) -> bool {
@@ -1004,7 +1102,7 @@ impl Tree {
                 }
                 FreeWork::Expanded(i) => {
                     let d = self.nodes[i as usize].dir as usize;
-                    match self.dirs[d].children.pop() {
+                    match self.kids.pop(&mut self.dirs[d].kids) {
                         Some(c) => {
                             self.free_work.push(FreeWork::Expanded(i));
                             if self.nodes[c as usize].dir == NONE {
@@ -1044,7 +1142,7 @@ impl Tree {
         if n.dir != NONE {
             let d = n.dir;
             n.dir = NONE;
-            self.dirs[d as usize].children = Vec::new();
+            self.kids.free(&mut self.dirs[d as usize].kids);
             self.free_dirs.push(d);
         }
         self.free_nodes.push(i);

@@ -34,5 +34,6 @@ loom.workspace = true
 
 [dev-dependencies]
 dut-engine = { path = ".", features = ["fault-injection"] }
+dut-bench.workspace = true
 dut-clean.workspace = true
 tempfile.workspace = true

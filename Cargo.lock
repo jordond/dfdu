@@ -578,6 +578,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dut-scan",
+ "dut-tree",
  "rand 0.10.3",
 ]
 
@@ -605,6 +607,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "dunce",
+ "dut-bench",
  "dut-clean",
  "dut-engine",
  "dut-hangfs",

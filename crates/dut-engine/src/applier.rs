@@ -11,7 +11,9 @@ use dut_scan::{
     Backend, Chunk, ChunkStatus, DirId, JobId, JobOptions, ListingStatus, ScanMsg, Shared,
     SkipReason,
 };
-use dut_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Subvol, Totals, Tree};
+use dut_tree::{
+    DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Pages, Subvol, Totals, Tree,
+};
 
 use crate::extents::{ExtentTable, Inode};
 use crate::links::{LinkTable, Scope, VISIBLE};
@@ -318,7 +320,7 @@ struct Job {
     root: NodeRef,
     scope: Scope,
     opts: JobOptions,
-    map: Vec<Slot>,
+    map: Pages<Slot>,
     held_close: HashMap<u32, (u32, ListingStatus)>,
     stalled: HashMap<u32, u64>,
     submitted_seq: u64,
@@ -355,7 +357,7 @@ impl Job {
     fn put(&mut self, d: DirId, s: Slot) {
         let i = d.0 as usize;
         if self.map.len() <= i {
-            self.map.resize(i + 1, Slot::Unknown);
+            self.map.grow_to(i + 1, Slot::Unknown);
         }
         self.map[i] = s;
     }
@@ -448,8 +450,9 @@ const STEP_UNITS: usize = 4096;
 /// links. Counting inodes instead (256 per step) held the write lock for up to 65-130 ms on
 /// a tree of 2,000 inodes with 500 links each, against a slice of 1 ms (§5.6). 2048 links took
 /// 2.0-2.4 ms per step on the 1M-entry `dut-bench` tree (9,565 links), one step per slice at the
-/// end of each scan; 512 take about 0.5 ms.
-const LINKS_PER_STEP: usize = 512;
+/// end of each scan; 512 take about 0.5 ms there, but 2-2.5 ms on a 10M-entry tree, where each
+/// link's walk up the tree misses the cache. 128 keep a step well under a slice at 10M.
+const LINKS_PER_STEP: usize = 128;
 
 pub fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
@@ -614,7 +617,7 @@ impl<B: Backend> Applier<B> {
             root: m.tree.node_ref(root),
             scope,
             opts: opts.clone(),
-            map: Vec::new(),
+            map: Pages::default(),
             held_close: HashMap::new(),
             stalled: HashMap::new(),
             submitted_seq: 0,
@@ -925,36 +928,20 @@ impl<B: Backend> Applier<B> {
                 return None;
             }
         };
-        let cut = match r.and_then(|r| m.tree.resolve(r)) {
-            None => true,
-            Some(ix) => {
-                let mut cur = Some(ix);
-                let mut cut = false;
-                while let Some(c) = cur {
-                    if m.tree.dir(c).is_some_and(|d| d.cut) {
-                        cut = true;
-                        break;
-                    }
-                    cur = m.tree.parent(c);
-                }
-                if !cut {
-                    return Some(ix);
-                }
-                cut
-            }
-        };
-        if cut {
-            st.discarded_cut += 1;
-            let mut stop = vec![dir];
-            if let Some((first, n)) = subdirs {
-                stop.extend((0..n as u32).map(|i| DirId(first.0 + i)));
-            }
-            let j = self.jobs.get_mut(&job.0).expect("checked above");
-            for &d in &stop[1..] {
-                j.put(d, Slot::Dead);
-            }
-            self.scan.stop_dirs(job, stop);
+        // Gone, detached, or under a cut.
+        if let Some(ix) = r.and_then(|r| m.tree.resolve_uncut(r)) {
+            return Some(ix);
         }
+        st.discarded_cut += 1;
+        let mut stop = vec![dir];
+        if let Some((first, n)) = subdirs {
+            stop.extend((0..n as u32).map(|i| DirId(first.0 + i)));
+        }
+        let j = self.jobs.get_mut(&job.0).expect("checked above");
+        for &d in &stop[1..] {
+            j.put(d, Slot::Dead);
+        }
+        self.scan.stop_dirs(job, stop);
         None
     }
 
@@ -1000,24 +987,23 @@ impl<B: Backend> Applier<B> {
             }
         }
         m.tree
-            .dir_mut(ix)
-            .expect("dir")
-            .reserve_children(c.files.len() + c.errors.len() + c.subdirs.len());
+            .reserve_children(ix, c.files.len() + c.errors.len() + c.subdirs.len());
         let j = self.jobs.get_mut(&c.job.0).expect("gated job");
         let scope = j.scope;
         let mut delta = Totals::default();
         for f in &c.files {
             let name = c.name(f.name);
-            let charged = if f.meta.is_hardlink() {
-                self.links.should_charge((f.meta.dev, f.meta.ino), scope)
+            let fx = if f.meta.is_hardlink() {
+                let mut fx = Ix(0);
+                self.links
+                    .add_scanned((f.meta.dev, f.meta.ino), scope, |charged| {
+                        fx = m.tree.add_file(ix, name, &f.meta, charged, None);
+                        m.tree.node_ref(fx)
+                    });
+                fx
             } else {
-                false
+                m.tree.add_file(ix, name, &f.meta, false, None)
             };
-            let fx = m.tree.add_file(ix, name, &f.meta, charged, None);
-            if f.meta.is_hardlink() {
-                let r = m.tree.node_ref(fx);
-                self.links.add((f.meta.dev, f.meta.ino), scope, r, charged);
-            }
             delta.add(&m.tree.own(fx));
         }
         for e in &c.errors {
@@ -1396,7 +1382,7 @@ impl<B: Backend> Applier<B> {
         } else {
             JobPhase::Done
         };
-        j.map = Vec::new();
+        j.map = Pages::default();
         j.held_close.clear();
         let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
         let job = j.id;

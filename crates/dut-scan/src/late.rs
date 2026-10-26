@@ -3,7 +3,7 @@
 //! With as many workers as cores, the applier shares a core with a worker. The kernel preempts
 //! it when its time slice ends, which is often inside one of its 1 ms lock slices
 //! (`docs/data-pipeline.md` §5.6), and the worker then runs for its own time slice while the
-//! lock stays held: 2-6 ms measured on 4 cores, so 10-14% of slices held the lock for over 2 ms
+//! lock stays held: 2-6 ms measured on 4 cores, so 10-15% of slices held the lock for over 2 ms
 //! and readers (the UI) waited that long. Raising the applier's priority needs privileges, and
 //! lowering the workers' (nice 10) still left 3% of slices over 2 ms.
 //!
@@ -15,8 +15,8 @@
 //!
 //! The same happens while the applier waits for the lock. A reader's unlock wakes it, but with
 //! every CPU busy it can wait for a worker's time slice to end before it runs: with a reader
-//! holding the lock for 5 ms at a time, the applier's p99 wait was 10-12 ms, and 7 ms with
-//! workers yielding once it has waited 6 ms.
+//! holding the lock for 5 ms at a time, the applier's p99 wait was 10-14 ms, and 7-10 ms with
+//! workers yielding once it has waited 6 ms (`docs/benchmarks.md`).
 //!
 //! One value per process: with two engines in one process (tests), workers also yield for the
 //! other engine's applier, which costs a little time and nothing else.

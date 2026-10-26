@@ -16,6 +16,7 @@ dut-engine = { path = "crates/dut-engine" }
 dut-clean = { path = "crates/dut-clean" }
 dut-tui = { path = "crates/dut-tui" }
 dut-sys = { path = "crates/dut-sys" }
+dut-bench = { path = "crates/dut-bench" }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"

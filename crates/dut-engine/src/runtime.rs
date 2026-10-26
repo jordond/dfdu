@@ -234,6 +234,14 @@ impl<B: Backend> Engine<B> {
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
         let measurers =
             (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, meas_tx));
+        // Without measurers the sender is gone, and a receiver whose senders are gone is
+        // always ready: the applier's `select!` returned at once and it took the write lock in
+        // a loop, 1.5 µs apart (measurement is off on macOS and Windows).
+        let meas_rx = if measurers.is_some() {
+            meas_rx
+        } else {
+            crossbeam_channel::never()
+        };
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
         let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());

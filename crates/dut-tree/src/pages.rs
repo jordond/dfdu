@@ -1,7 +1,8 @@
 //! Growable storage in fixed-size pages. Growing never moves or copies what is already stored,
 //! so adding one entry costs at most one page allocation. A plain `Vec` doubles and copies: at
 //! 1M nodes that is a 32 MB copy inside one applier slice, several times the 1 ms a slice may
-//! hold the write lock (`docs/data-pipeline.md` §5.6).
+//! hold the write lock (`docs/data-pipeline.md` §5.6). Nodes, directory records, child lists
+//! and names are stored this way, and the applier's per-job directory maps.
 
 use std::ops::{Index, IndexMut};
 
@@ -9,8 +10,9 @@ const PAGE_SHIFT: u32 = 16;
 const PAGE: usize = 1 << PAGE_SHIFT;
 const MASK: usize = PAGE - 1;
 
-/// An array of `T` in pages of 65,536 elements.
-pub(crate) struct Pages<T> {
+/// An array of `T` in pages of 65,536 elements. A page's memory is reserved when the page is
+/// started and touched as it fills.
+pub struct Pages<T> {
     pages: Vec<Vec<T>>,
     len: usize,
 }
@@ -68,6 +70,189 @@ impl<T> IndexMut<usize> for Pages<T> {
     fn index_mut(&mut self, i: usize) -> &mut T {
         assert!(i < self.len, "index {i} out of {}", self.len);
         &mut self.pages[i >> PAGE_SHIFT][i & MASK]
+    }
+}
+
+const KID_PAGE_BITS: u32 = 16;
+const KID_PAGE: usize = 1 << KID_PAGE_BITS;
+
+/// Every directory's child list. A directory's first chunk of children goes into a segment of
+/// a page shared with other directories, sized for that chunk: most directories arrive in one
+/// chunk, and a `Vec` per directory cost a `malloc` each (about 1 µs each in the applier's
+/// fragmented heap at 10M entries). When the segment is full, later children go into blocks of
+/// the directory's own, each at least as large as the list before it, up to a page. Growing
+/// never moves what is stored, so the lock is never held for a copy of a wide directory's list
+/// (a `Vec` of 10M entries doubling copied 40 MB).
+///
+/// Segments of freed directories are not reused, like names ([`NameArena`]).
+#[derive(Default)]
+pub(crate) struct KidArena {
+    pages: Vec<Vec<u32>>,
+    garbage: u64,
+}
+
+/// One directory's child list in a [`KidArena`]: a segment of `len` of `cap` slots at `pos`
+/// (page and offset), then the blocks in `more`, in order.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Kids {
+    pos: u32,
+    len: u32,
+    cap: u32,
+    /// Boxed: 8 bytes in every directory record instead of 24, and only directories of
+    /// several chunks have blocks.
+    #[allow(clippy::box_collection)]
+    more: Option<Box<Vec<Vec<u32>>>>,
+}
+
+impl Kids {
+    fn blocks(&self) -> &[Vec<u32>] {
+        self.more.as_deref().map_or(&[], |m| &m[..])
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize + self.blocks().iter().map(Vec::len).sum::<usize>()
+    }
+
+    /// Drops the unused room at the end of the last block (a wide directory's last chunk).
+    pub fn shrink(&mut self) {
+        if let Some(b) = self.more.as_mut().and_then(|m| m.last_mut()) {
+            b.shrink_to_fit();
+        }
+    }
+}
+
+impl KidArena {
+    fn page_off(k: &Kids) -> (usize, usize) {
+        (
+            (k.pos >> KID_PAGE_BITS) as usize,
+            (k.pos as usize) & (KID_PAGE - 1),
+        )
+    }
+
+    /// The children: the segment, then the blocks.
+    pub fn parts<'a>(&'a self, k: &'a Kids) -> (&'a [u32], &'a [Vec<u32>]) {
+        let seg = if k.cap == 0 {
+            &[][..]
+        } else {
+            let (p, o) = Self::page_off(k);
+            &self.pages[p][o..o + k.len as usize]
+        };
+        (seg, k.blocks())
+    }
+
+    fn seg_mut(&mut self, k: &Kids) -> &mut [u32] {
+        if k.cap == 0 {
+            return &mut [];
+        }
+        let (p, o) = Self::page_off(k);
+        &mut self.pages[p][o..o + k.cap as usize]
+    }
+
+    /// Room for `n` more children.
+    pub fn reserve(&mut self, k: &mut Kids, n: usize) {
+        let free = match k.more.as_deref().and_then(|m| m.last()) {
+            Some(b) => b.capacity() - b.len(),
+            None => (k.cap - k.len) as usize,
+        };
+        if n <= free {
+            return;
+        }
+        if k.cap == 0 && k.more.is_none() && n <= KID_PAGE {
+            let fits = self.pages.last().is_some_and(|p| KID_PAGE - p.len() >= n);
+            if !fits {
+                assert!(
+                    self.pages.len() < 1 << (32 - KID_PAGE_BITS),
+                    "fewer than 2^32 children"
+                );
+                self.pages.push(Vec::with_capacity(KID_PAGE));
+            }
+            let page = self.pages.len() - 1;
+            let p = &mut self.pages[page];
+            k.pos = (page << KID_PAGE_BITS | p.len()) as u32;
+            k.cap = n as u32;
+            p.resize(p.len() + n, 0);
+            return;
+        }
+        let size = n.max(k.len().clamp(1, KID_PAGE));
+        k.more
+            .get_or_insert_default()
+            .push(Vec::with_capacity(size));
+    }
+
+    pub fn push(&mut self, k: &mut Kids, c: u32) {
+        self.reserve(k, 1);
+        match k.more.as_deref_mut().and_then(|m| m.last_mut()) {
+            Some(b) => b.push(c),
+            None => {
+                let i = k.len as usize;
+                self.seg_mut(k)[i] = c;
+                k.len += 1;
+            }
+        }
+    }
+
+    /// Removes the last child.
+    pub fn pop(&mut self, k: &mut Kids) -> Option<u32> {
+        while let Some(m) = k.more.as_deref_mut() {
+            match m.last_mut().and_then(Vec::pop) {
+                Some(c) => return Some(c),
+                None => {
+                    m.pop();
+                    if m.is_empty() {
+                        k.more = None;
+                    }
+                }
+            }
+        }
+        if k.len == 0 {
+            return None;
+        }
+        k.len -= 1;
+        Some(self.seg_mut(k)[k.len as usize])
+    }
+
+    /// Removes `c`, keeping the order of the others. Returns false if it is not a child.
+    pub fn remove(&mut self, k: &mut Kids, c: u32) -> bool {
+        let len = k.len as usize;
+        let seg = self.seg_mut(k);
+        if let Some(i) = seg[..len].iter().position(|&x| x == c) {
+            seg.copy_within(i + 1..len, i);
+            k.len -= 1;
+            return true;
+        }
+        for b in k.more.iter_mut().flat_map(|m| m.iter_mut()) {
+            if let Some(i) = b.iter().position(|&x| x == c) {
+                b.remove(i);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Puts `new` in the place of `old`. Returns false if `old` is not a child.
+    pub fn replace(&mut self, k: &mut Kids, old: u32, new: u32) -> bool {
+        let len = k.len as usize;
+        let seg = &mut self.seg_mut(k)[..len];
+        let slot = seg.iter_mut().find(|x| **x == old).or_else(|| {
+            k.more
+                .iter_mut()
+                .flat_map(|m| m.iter_mut())
+                .flat_map(|b| b.iter_mut())
+                .find(|x| **x == old)
+        });
+        slot.map(|x| *x = new).is_some()
+    }
+
+    /// Frees the list; its segment's slots are not reused.
+    pub fn free(&mut self, k: &mut Kids) {
+        self.garbage += k.cap as u64;
+        *k = Kids::default();
+    }
+
+    /// Slots in pages, and how many of them freed lists left unused.
+    pub fn slots(&self) -> (u64, u64) {
+        let used = self.pages.iter().map(|p| p.len() as u64).sum();
+        (used, self.garbage)
     }
 }
 
@@ -148,6 +333,74 @@ mod tests {
         assert_eq!(p[PAGE], 7);
         p.grow_to(4 * PAGE, 9);
         assert_eq!((p.len(), p[4 * PAGE - 1]), (4 * PAGE, 9));
+    }
+
+    /// Child lists behave as `Vec`s do under the applier's operations, with several lists
+    /// sharing pages, lists growing past a page, and lists freed and started again.
+    #[test]
+    fn child_lists_match_vecs() {
+        let mut a = KidArena::default();
+        let mut lists: Vec<(Kids, Vec<u32>)> = (0..40).map(|_| Default::default()).collect();
+        let mut x: u64 = 0x9e3779b97f4a7c15;
+        let mut rnd = |n: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % n
+        };
+        let mut next = 0u32;
+        for _ in 0..5_000 {
+            let i = rnd(lists.len() as u64) as usize;
+            let (k, v) = &mut lists[i];
+            match rnd(10) {
+                0..=4 => {
+                    // A chunk: reserve, then push.
+                    let n = match rnd(100) {
+                        0 => 3 * KID_PAGE as u64 / 2,
+                        1..=4 => rnd(5000),
+                        _ => rnd(40),
+                    } as usize;
+                    a.reserve(k, n);
+                    for _ in 0..n {
+                        a.push(k, next);
+                        v.push(next);
+                        next += 1;
+                    }
+                }
+                5 => {
+                    a.push(k, next);
+                    v.push(next);
+                    next += 1;
+                }
+                6 if !v.is_empty() => {
+                    let c = v.remove(rnd(v.len() as u64) as usize);
+                    assert!(a.remove(k, c));
+                }
+                7 if !v.is_empty() => {
+                    let j = rnd(v.len() as u64) as usize;
+                    assert!(a.replace(k, v[j], next));
+                    v[j] = next;
+                    next += 1;
+                }
+                8 => {
+                    for _ in 0..rnd(100) {
+                        assert_eq!(a.pop(k), v.pop());
+                    }
+                }
+                _ if rnd(20) == 0 => {
+                    a.free(k);
+                    v.clear();
+                }
+                _ => k.shrink(),
+            }
+            assert!(!a.remove(k, u32::MAX));
+            let (seg, more) = a.parts(k);
+            let got: Vec<u32> = seg.iter().chain(more.iter().flatten()).copied().collect();
+            assert_eq!(&got, v);
+            assert_eq!(k.len(), v.len());
+        }
+        let (slots, garbage) = a.slots();
+        assert!(garbage <= slots);
     }
 
     #[test]
