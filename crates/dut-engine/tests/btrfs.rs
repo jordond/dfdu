@@ -1,4 +1,4 @@
-//! Scanning and deletion on btrfs (`docs/btrfs.md` B1-B3, B8-B10), against the fixture of
+//! Scanning, measurement and deletion on btrfs (`docs/btrfs.md` B1-B11, B13), against the fixture of
 //! `scripts/btrfs-fixture.sh` whose mount point is in `DUT_BTRFS_DIR`. Skipped (passing) when
 //! the variable is not set. Cases that need root run only when the tests run as root.
 
@@ -128,7 +128,7 @@ fn second_mount_is_not_counted_twice() {
     let j = tempfile::tempdir().unwrap();
     let e = engine(j.path());
     scan(&e, &f, true);
-    e.read(|m| {
+    let crossing = e.read(|m| {
         let t = &m.tree;
         let root = t.roots().next().unwrap();
         // `mnt` shows `sub`, which the scan reaches without it.
@@ -136,7 +136,119 @@ fn second_mount_is_not_counted_twice() {
         assert!(t.flags(mnt).has(NodeFlags::DUP_MOUNT));
         assert_eq!(t.total(mnt).items, 1, "descended into the second mount");
         assert!(t.total(child(t, root, "sub")).items > 1);
+        t.total(root)
     });
+    e.shutdown(Duration::from_secs(1));
+    // The root totals are those of a scan that stays on the mount.
+    let e = engine(j.path());
+    scan(&e, &f, false);
+    let staying = e.read(|m| m.tree.total(m.tree.roots().next().unwrap()));
+    e.shutdown(Duration::from_secs(1));
+    assert_eq!(
+        (
+            crossing.alloc,
+            crossing.referenced,
+            crossing.apparent,
+            crossing.items
+        ),
+        (
+            staying.alloc,
+            staying.referenced,
+            staying.apparent,
+            staying.items
+        )
+    );
+}
+
+/// `btrfs subvolume list` and `btrfs qgroup show` output for the fixture's subvolumes, by path
+/// relative to the fixture (its top level): id, uuid, parent uuid, read-only, and quota group
+/// `(referenced, exclusive)`.
+type ListedSubvol = (u64, String, Option<String>, bool, (u64, u64));
+
+fn btrfs_subvolumes(f: &Path) -> HashMap<String, ListedSubvol> {
+    let run = |args: &[&str]| {
+        let out = Proc::new("btrfs").args(args).arg(f).output().unwrap();
+        assert!(out.status.success(), "btrfs {args:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let read_only: Vec<String> = run(&["subvolume", "list", "-r"])
+        .lines()
+        .filter_map(|l| l.split(" path ").nth(1).map(str::to_string))
+        .collect();
+    let mut qgroups: HashMap<u64, (u64, u64)> = HashMap::new();
+    for l in run(&["qgroup", "show", "--raw"]).lines() {
+        let w: Vec<&str> = l.split_whitespace().collect();
+        if let [id, rfer, excl, ..] = w[..]
+            && let Some(id) = id.strip_prefix("0/").and_then(|x| x.parse().ok())
+        {
+            qgroups.insert(id, (rfer.parse().unwrap(), excl.parse().unwrap()));
+        }
+    }
+    let mut out = HashMap::new();
+    for l in run(&["subvolume", "list", "-u", "-q"]).lines() {
+        // ID 258 gen 9 top level 5 parent_uuid <uuid or -> uuid <uuid> path snap-ro
+        let w: Vec<&str> = l.split_whitespace().collect();
+        let at = |k: &str| w[w.iter().position(|x| *x == k).unwrap() + 1];
+        let id: u64 = at("ID").parse().unwrap();
+        let parent = Some(at("parent_uuid").to_string()).filter(|p| p != "-");
+        let path = l.split(" path ").nth(1).unwrap().to_string();
+        let ro = read_only.contains(&path);
+        let q = qgroups.get(&id).copied().unwrap_or_default();
+        out.insert(path, (id, at("uuid").to_string(), parent, ro, q));
+    }
+    out
+}
+
+fn uuid(u: &[u8; 16]) -> String {
+    let h: String = u.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    )
+}
+
+/// B3 and B13, as root (`btrfs subvolume list` and quota groups need it): every subvolume's
+/// record matches btrfs's list, and its quota group numbers match `btrfs qgroup show`.
+#[test]
+fn subvolume_records_and_quota_groups_match_btrfs() {
+    let Some((f, _lock)) = fixture() else { return };
+    if !dut_sys::is_privileged() {
+        return;
+    }
+    let j = tempfile::tempdir().unwrap();
+    let e = engine(j.path());
+    scan(&e, &f, false);
+    let want = btrfs_subvolumes(&f);
+    let mut paths: Vec<&String> = want.keys().collect();
+    paths.sort();
+    assert_eq!(paths, ["snap-ro", "snap-rw", "sub", "sub/nested"]);
+    for (path, (id, uid, parent, ro, q)) in &want {
+        let r = node(&e, path);
+        let got = e.read(|m| {
+            let ix = m.tree.resolve(r).unwrap();
+            assert_eq!(
+                m.tree.flags(ix).has(NodeFlags::RO_SUBVOL),
+                *ro,
+                "{path} read-only flag"
+            );
+            m.subvols[&r].clone()
+        });
+        assert_eq!(
+            (
+                got.id,
+                uuid(&got.uuid),
+                got.parent_uuid.as_ref().map(uuid),
+                got.read_only,
+                got.qgroup
+            ),
+            (*id, uid.clone(), parent.clone(), *ro, Some(*q)),
+            "{path}"
+        );
+    }
     e.shutdown(Duration::from_secs(1));
 }
 
@@ -168,11 +280,35 @@ fn subvolumes_and_snapshots_are_deleted() {
     let j = tempfile::tempdir().unwrap();
     let e = engine(j.path());
     scan(&e, &w, false);
+    let hex = |u: [u8; 16]| -> String { u.iter().map(|b| format!("{b:02x}")).collect() };
+    let uuid_of = |p: &Path| hex(dut_sys::subvol_info(p).unwrap().unwrap().uuid);
+    // Each item's intent record names the subvolume it is in: the snapshot and the subvolume
+    // are their own, `d` is in the fixture's top level.
+    let want = [
+        ("snap", uuid_of(&w.join("snap"))),
+        ("d", uuid_of(&f)),
+        ("sv", uuid_of(&sv)),
+    ];
     delete(
         &e,
         vec![node(&e, "snap"), node(&e, "d"), node(&e, "sv")],
         Mode::Permanent,
     );
+    let journal: String = fs::read_dir(j.path())
+        .unwrap()
+        .map(|f| fs::read_to_string(f.unwrap().path()).unwrap())
+        .collect();
+    for (name, uuid) in want {
+        let path = format!("\"path\":\"{}\"", w.join(name).display());
+        let intent = journal
+            .lines()
+            .find(|l| l.contains("\"t\":\"intent\"") && l.contains(&path))
+            .unwrap_or_else(|| panic!("no intent for {name}: {journal}"));
+        assert!(
+            intent.contains(&format!("\"subvol_uuid\":\"{uuid}\"")),
+            "{intent}"
+        );
+    }
     let s = e.read(|m| m.status.last_delete.clone()).expect("summary");
     assert_eq!(
         (s.deleted, s.failed, s.refused),
@@ -276,6 +412,38 @@ fn a_mount_inside_an_item_is_refused() {
     sh(&["umount", w.join("h/mp").to_str().unwrap()]);
     let _ = fs::remove_dir_all(&w);
     assert!(refused && intact, "refused {refused}, intact {intact}");
+}
+
+/// B9, root only (mounts a tmpfs): a mount that appears after the scan stops the delete at the
+/// mount; nothing on the mounted filesystem is touched.
+#[test]
+fn a_mount_made_after_the_scan_stops_the_delete() {
+    let Some((f, _lock)) = fixture() else { return };
+    if !dut_sys::is_privileged() {
+        return;
+    }
+    let w = workdir(&f, "late-mount");
+    fs::create_dir_all(w.join("h/mp")).unwrap();
+    fs::write(w.join("h/file"), b"x").unwrap();
+    let j = tempfile::tempdir().unwrap();
+    let e = engine(j.path());
+    scan(&e, &w, false);
+    let mp = w.join("h/mp");
+    sh(&["mount", "-t", "tmpfs", "tmpfs", mp.to_str().unwrap()]);
+    fs::write(mp.join("precious"), b"p").unwrap();
+    delete(&e, vec![node(&e, "h")], Mode::Permanent);
+    let s = e.read(|m| m.status.last_delete.clone()).expect("summary");
+    let n = notices(&e);
+    let intact = mp.join("precious").exists();
+    e.shutdown(Duration::from_secs(1));
+    sh(&["umount", mp.to_str().unwrap()]);
+    let _ = fs::remove_dir_all(&w);
+    assert!(intact, "deleted into the mount");
+    assert_eq!((s.deleted, s.failed), (0, 1), "{n:?}");
+    assert!(
+        n.iter().any(|t| t.contains("a filesystem is mounted at")),
+        "{n:?}"
+    );
 }
 
 /// Brute-force reference for shared-data accounting: every file's extent map, every byte range
@@ -529,9 +697,11 @@ fn trash_inner() {
     delete(&e, vec![node(&e, "sv/x")], Mode::Trash);
     let n = notices(&e);
     assert!(w.join("sv/x").exists(), "{n:?}");
-    assert!(
-        n.iter().any(|t| t.contains("another btrfs subvolume")),
-        "{n:?}"
+    // The message names the item's subvolume.
+    let named = format!(
+        "in btrfs subvolume {}, the trash in another",
+        w.join("sv").display()
     );
+    assert!(n.iter().any(|t| t.contains(&named)), "{n:?}");
     e.shutdown(Duration::from_secs(1));
 }

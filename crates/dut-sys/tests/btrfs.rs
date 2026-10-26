@@ -149,45 +149,14 @@ fn file_extent_items_as_root() {
     assert_eq!((profile, devices), (dut_sys::Profile::Single, 1));
 }
 
-/// Root only: a filesystem with the DUP data profile stores every byte twice.
+/// The fixture's second filesystem, at `$DUT_BTRFS_DIR-dup`, has the DUP data profile: every
+/// byte is stored twice. Reading the profile needs no privileges.
 #[test]
-fn dup_profile_as_root() {
-    let Some(_) = fixture() else { return };
-    if !dut_sys::is_privileged() {
-        return;
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    let img = tmp.path().join("dup.img");
-    let mnt = tmp.path().join("m");
-    std::fs::create_dir(&mnt).unwrap();
-    let run = |args: &[&std::ffi::OsStr]| {
-        let st = std::process::Command::new(args[0])
-            .args(&args[1..])
-            .status()
-            .unwrap();
-        assert!(st.success(), "{args:?}");
-    };
-    std::fs::File::create(&img)
-        .unwrap()
-        .set_len(256 << 20)
-        .unwrap();
-    run(&[
-        "mkfs.btrfs".as_ref(),
-        "-q".as_ref(),
-        "-d".as_ref(),
-        "dup".as_ref(),
-        img.as_os_str(),
-    ]);
-    run(&[
-        "mount".as_ref(),
-        "-o".as_ref(),
-        "loop".as_ref(),
-        img.as_os_str(),
-        mnt.as_os_str(),
-    ]);
-    let got = dut_sys::data_profile(std::fs::File::open(&mnt).unwrap());
-    run(&["umount".as_ref(), mnt.as_os_str()]);
-    let (p, devices) = got.unwrap();
+fn dup_profile() {
+    let Some(d) = fixture() else { return };
+    let mut dup = d.into_os_string();
+    dup.push("-dup");
+    let (p, devices) = dut_sys::data_profile(std::fs::File::open(&dup).unwrap()).unwrap();
     assert_eq!((p, devices), (dut_sys::Profile::Dup, 1));
     assert_eq!(p.raw_ratio(devices), 2.0);
 }

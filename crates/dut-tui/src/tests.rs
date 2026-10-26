@@ -31,7 +31,7 @@ fn text(buf: &Buffer) -> String {
     out
 }
 
-fn render(app: &mut App, now: Instant, w: u16, h: u16) -> String {
+pub(crate) fn render(app: &mut App, now: Instant, w: u16, h: u16) -> String {
     let mut term = Terminal::new(TestBackend::new(w, h)).expect("terminal");
     term.draw(|f| view::draw(f, app, now)).expect("draw");
     text(term.backend().buffer())
@@ -316,7 +316,7 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
     assert!(matches!(app.overlay, crate::app::Overlay::None));
 }
 
-fn key(code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
+pub(crate) fn key(code: ratatui::crossterm::event::KeyCode) -> ratatui::crossterm::event::KeyEvent {
     ratatui::crossterm::event::KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE)
 }
 

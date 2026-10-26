@@ -52,10 +52,36 @@ fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
         return None;
     }
     if same_mount(path, &dir) == Some(true) {
-        Some(Refusal::TrashOtherSubvolume)
+        Some(Refusal::TrashOtherSubvolume(subvolume_root(path, item_dev)))
     } else {
         Some(Refusal::TrashCrossesFilesystems)
     }
+}
+
+/// The root of the btrfs subvolume holding `path`: its highest ancestor on the same device
+/// (every subvolume has its own `st_dev`).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn subvolume_root(path: &Path, dev: u64) -> std::path::PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let mut root = path;
+    while let Some(p) = root.parent()
+        && fs::symlink_metadata(p).is_ok_and(|m| m.dev() == dev)
+    {
+        root = p;
+    }
+    root.to_path_buf()
+}
+
+/// The uuid of the btrfs subvolume holding `path` (on device `dev`), in hex; `None` elsewhere.
+#[cfg(target_os = "linux")]
+pub(crate) fn subvolume_uuid(path: &Path, dev: u64) -> Option<String> {
+    let info = dut_sys::subvol_info(&subvolume_root(path, dev)).ok()??;
+    Some(hex::encode(info.uuid))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn subvolume_uuid(_path: &Path, _dev: u64) -> Option<String> {
+    None
 }
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]

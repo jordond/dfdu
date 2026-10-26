@@ -504,8 +504,15 @@ fn draw_confirm(
             Span::raw(" cancel"),
         ]),
     });
+    // Wide enough for the longest line (a long name, the "may free less" note), at least 60.
+    let width = lines
+        .iter()
+        .map(|l| l.width() + 3)
+        .max()
+        .unwrap_or(0)
+        .max(60);
     let r = area.centered(
-        Constraint::Length(60),
+        Constraint::Length(width.min(u16::MAX as usize) as u16),
         Constraint::Length(lines.len() as u16 + 2),
     );
     f.render_widget(Clear, r);

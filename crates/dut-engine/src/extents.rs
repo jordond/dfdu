@@ -5,17 +5,47 @@
 //! node's disk usage is then what deleting it frees, as long as nothing outside the scan
 //! references the data too.
 //!
-//! Physical ranges are split at every piece boundary, so partial sharing is exact. Compressed
-//! extents are keyed by their physical start alone: FIEMAP reports their uncompressed length,
-//! which is not a physical range.
+//! Physical ranges are split at every piece boundary, so partial sharing is exact. In exact mode
+//! (as root) shared extents are keyed by their disk address alone ("points"), with their size
+//! on disk.
 //!
 //! Only visible nodes count as references. A reference that becomes invisible (its subtree
 //! detached) is noticed when its node is freed; until then a home may sit one level too high,
 //! never on a node that does not contain it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{BuildHasherDefault, Hasher};
 
-use dut_tree::{Ix, NodeRef, Tree};
+use dut_tree::{Ix, NodeFlags, NodeRef, Tree};
+
+/// Multiply-rotate hashing for the table's integer keys (inode numbers, disk addresses): the
+/// default SipHash took a noticeable part of the applier's time per measured file.
+#[derive(Default, Clone, Copy)]
+struct IntHasher(u64);
+
+impl Hasher for IntHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for c in bytes.chunks(8) {
+            let mut b = [0u8; 8];
+            b[..c.len()].copy_from_slice(c);
+            self.write_u64(u64::from_le_bytes(b));
+        }
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0xf135_7aea_2e62_a9c5);
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(n.into());
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.write_u64(n as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.0.rotate_left(26)
+    }
+}
+
+type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
 /// `(dev, ino)` of a measured file. Hard links share one entry, positioned at the charged link.
 pub type Inode = (u64, u64);
@@ -33,9 +63,8 @@ pub struct Measurement {
     pub compressed: bool,
     /// Shared physical ranges `(start, end)`.
     pub ranges: Vec<(u64, u64)>,
-    /// Shared extents identified by their start: compressed extents `(physical start,
-    /// uncompressed length)` from FIEMAP, or every shared extent `(disk address, size on disk)`
-    /// in exact mode.
+    /// Shared extents identified by their start, `(disk address, size on disk)`: every shared
+    /// extent in exact mode. Counted once per address, at the largest size given.
     pub points: Vec<(u64, u64)>,
     /// From the extent tree (as root): sizes on disk are exact.
     pub exact: bool,
@@ -72,9 +101,13 @@ struct InodeRec {
 #[derive(Debug, Default)]
 pub struct ExtentTable {
     fs: HashMap<[u8; 16], Fs>,
+    /// The last filesystem looked up in `fs`.
+    last_fs: Option<([u8; 16], Fs)>,
     segs: BTreeMap<(Fs, u64), Seg>,
-    points: HashMap<(Fs, u64), Point>,
-    inodes: HashMap<Inode, InodeRec>,
+    points: IntMap<(Fs, u64), Point>,
+    /// Inodes with shared data, and hard links (whose measurement moves between links). Other
+    /// files hold all their data alone: their node has it, and nothing needs re-homing.
+    inodes: IntMap<Inode, InodeRec>,
 }
 
 impl ExtentTable {
@@ -99,13 +132,24 @@ impl ExtentTable {
         let Some(ix) = tree.resolve_visible(node) else {
             return;
         };
-        let next = self.fs.len() as Fs;
-        let fs = *self.fs.entry(m.fs).or_insert(next);
+        tree.set_measured(ix, m.excl, m.compressed);
+        if m.ranges.is_empty() && m.points.is_empty() && !tree.flags(ix).has(NodeFlags::HARDLINK) {
+            return;
+        }
+        let fs = match self.last_fs {
+            Some((id, fs)) if id == m.fs => fs,
+            _ => {
+                let next = self.fs.len() as Fs;
+                let fs = *self.fs.entry(m.fs).or_insert(next);
+                self.last_fs = Some((m.fs, fs));
+                fs
+            }
+        };
         let ranges = merge(m.ranges);
         let mut points = m.points;
         points.sort();
         points.dedup_by_key(|p| p.0);
-        tree.set_measured(ix, m.excl, m.compressed);
+        // Re-homing needs the inode's position, not its ranges: those are stored after.
         self.inodes.insert(
             inode,
             InodeRec {
@@ -113,14 +157,14 @@ impl ExtentTable {
                 pos: node,
                 excl: m.excl,
                 compressed: m.compressed,
-                ranges: ranges.clone(),
-                points: points.clone(),
+                ranges: Vec::new(),
+                points: Vec::new(),
             },
         );
-        for (a, b) in ranges {
+        for &(a, b) in &ranges {
             self.add_range(tree, fs, a, b, inode, ix);
         }
-        for (p, len) in points {
+        for &(p, len) in &points {
             let pt = self.points.entry((fs, p)).or_insert(Point {
                 refs: vec![],
                 home: None,
@@ -130,6 +174,9 @@ impl ExtentTable {
             pt.refs.push((inode, len));
             rehome_point(tree, &self.inodes, pt, Some(ix));
         }
+        let rec = self.inodes.get_mut(&inode).expect("inserted");
+        rec.ranges = ranges;
+        rec.points = points;
     }
 
     fn add_range(&mut self, tree: &mut Tree, fs: Fs, a: u64, b: u64, inode: Inode, at: Ix) {
@@ -392,7 +439,7 @@ fn merge(mut r: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 /// reference.
 fn rehome_seg(
     tree: &mut Tree,
-    inodes: &HashMap<Inode, InodeRec>,
+    inodes: &IntMap<Inode, InodeRec>,
     start: u64,
     seg: &mut Seg,
     added: Option<Ix>,
@@ -405,7 +452,7 @@ fn rehome_seg(
 
 fn rehome_point(
     tree: &mut Tree,
-    inodes: &HashMap<Inode, InodeRec>,
+    inodes: &IntMap<Inode, InodeRec>,
     pt: &mut Point,
     added: Option<Ix>,
 ) {
@@ -419,13 +466,13 @@ fn rehome_point(
 
 fn home_for(
     tree: &Tree,
-    inodes: &HashMap<Inode, InodeRec>,
+    inodes: &IntMap<Inode, InodeRec>,
     cur: Option<NodeRef>,
     refs: impl Iterator<Item = Inode>,
     added: Option<Ix>,
 ) -> Option<NodeRef> {
     let ix = match (added, cur.and_then(|h| tree.resolve_visible(h))) {
-        (Some(a), Some(h)) => lca_of(tree, &[h, a]),
+        (Some(a), Some(h)) => lca2(tree, h, a),
         (Some(a), None) if cur.is_none() => Some(a),
         _ => lca(tree, inodes, refs),
     };
@@ -460,13 +507,44 @@ fn move_home(
 /// Lowest common ancestor of the visible positions of `refs`.
 fn lca(
     tree: &Tree,
-    inodes: &HashMap<Inode, InodeRec>,
+    inodes: &IntMap<Inode, InodeRec>,
     refs: impl Iterator<Item = Inode>,
 ) -> Option<Ix> {
     let pos: Vec<Ix> = refs
         .filter_map(|r| inodes.get(&r).and_then(|rec| tree.resolve_visible(rec.pos)))
         .collect();
     lca_of(tree, &pos)
+}
+
+/// [`lca_of`] for two nodes, without allocating: walks the deeper one up to the other's depth,
+/// then both together.
+fn lca2(tree: &Tree, a: Ix, b: Ix) -> Option<Ix> {
+    let depth = |mut n: Ix| {
+        let mut d = 0usize;
+        while let Some(p) = tree.parent(n) {
+            d += 1;
+            n = p;
+        }
+        d
+    };
+    let (mut x, mut y) = (a, b);
+    let (mut dx, mut dy) = (depth(x), depth(y));
+    while dx > dy {
+        x = tree.parent(x)?;
+        dx -= 1;
+    }
+    while dy > dx {
+        y = tree.parent(y)?;
+        dy -= 1;
+    }
+    while x != y {
+        match (tree.parent(x), tree.parent(y)) {
+            (Some(px), Some(py)) => (x, y) = (px, py),
+            // Different roots: the rule for those is in `lca_of`.
+            _ => return lca_of(tree, &[a, b]),
+        }
+    }
+    Some(x)
 }
 
 /// Lowest common ancestor of nodes. Nodes under different visible roots have none; the data is

@@ -82,6 +82,11 @@ struct ItemRec {
     kind: String,
     size: u64,
     mtime: i64,
+    /// btrfs: the uuid of the subvolume holding the item, in intent records. Subvolume `st_dev`
+    /// numbers can change between mounts, so recovery matches the inode within this
+    /// subvolume (`docs/btrfs.md` §3.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subvol_uuid: Option<String>,
 }
 
 impl ItemRec {
@@ -96,6 +101,7 @@ impl ItemRec {
             kind: kind_str(id.kind).to_string(),
             size: id.apparent,
             mtime: id.mtime,
+            subvol_uuid: None,
         }
     }
 }
@@ -172,8 +178,12 @@ impl Journal {
             Mode::Trash => "trash",
             Mode::Permanent => "delete",
         };
+        let rec = ItemRec {
+            subvol_uuid: crate::verify::subvolume_uuid(&item.path, item.identity.dev),
+            ..ItemRec::of(plan, item)
+        };
         self.write(Record::Intent {
-            item: ItemRec::of(plan, item),
+            item: rec,
             mode: mode.into(),
         })?;
         self.sync()

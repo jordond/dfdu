@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Creates the btrfs fixture of docs/btrfs.md §4 on a loop-mounted image and prints its path.
+# Creates the btrfs fixture of docs/btrfs.md §4 on a loop-mounted image and prints its path;
+# also a small filesystem with the DUP data profile at <mountpoint>-dup.
 # Needs root (mkfs, mount). Usage: btrfs-fixture.sh <image> <mountpoint> [owner]
 # The owner (default: $SUDO_USER, else root) owns everything, so tests can run as that user.
 set -euo pipefail
@@ -8,9 +9,10 @@ img=$1
 mnt=$2
 owner=${3:-${SUDO_USER:-root}}
 
-if mountpoint -q "$mnt/mnt" 2>/dev/null; then umount "$mnt/mnt"; fi
-if mountpoint -q "$mnt" 2>/dev/null; then umount "$mnt"; fi
-rm -f "$img"
+for m in "$mnt/mnt" "$mnt" "$mnt-dup"; do
+    if mountpoint -q "$m" 2>/dev/null; then umount "$m"; fi
+done
+rm -f "$img" "$img-dup"
 truncate -s 2G "$img"
 mkfs.btrfs -q -f "$img"
 mkdir -p "$mnt"
@@ -29,6 +31,9 @@ fallocate -l 4M plain/prealloc.bin
 truncate -s 1G plain/sparse.bin
 mkdir plain/dir
 cp --reflink=always plain/random.bin plain/dir/copy.bin
+# Shared compressed extents: FIEMAP gives each the uncompressed length from its physical start,
+# so their ranges overlap the extents stored after them.
+cp --reflink=always plain/text.txt plain/dir/text-copy.txt
 # 8 MiB in 512 KiB extents, then 2 MiB rewritten at an unaligned offset: the extents at either
 # end of the rewrite stay allocated in full though only part of each is referenced ("bookend"
 # extents). FIEMAP sees the referenced parts only; the extent tree, as root, sees all of it.
@@ -62,4 +67,14 @@ btrfs filesystem sync "$mnt"
 # Quota groups, for the per-subvolume numbers shown as root.
 btrfs quota enable "$mnt"
 btrfs quota rescan -w "$mnt" >/dev/null
+
+# A second, small filesystem with the DUP data profile (every byte stored twice), next to the
+# fixture at "$mnt-dup", for the header that states the raw multiplier.
+truncate -s 256M "$img-dup"
+mkfs.btrfs -q -f -d dup -m dup "$img-dup"
+mkdir -p "$mnt-dup"
+mount -o loop "$img-dup" "$mnt-dup"
+head -c 1M /dev/urandom >"$mnt-dup/data.bin"
+chown -R "$owner" "$mnt-dup"
+sync
 echo "$mnt"

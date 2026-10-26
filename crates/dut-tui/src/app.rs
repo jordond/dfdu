@@ -113,7 +113,8 @@ pub struct App {
     sel_hint: Cell<usize>,
 }
 
-/// One line describing a finished delete plan.
+/// One line describing a finished delete plan. On btrfs the freed space shows up in the free
+/// space only after the transaction commits, and for snapshots after the cleaner ran (B11).
 pub fn delete_summary(d: &dut_engine::DeleteSummary) -> String {
     let mut parts = vec![format!(
         "deleted {} ({})",
@@ -130,7 +131,11 @@ pub fn delete_summary(d: &dut_engine::DeleteSummary) -> String {
             parts.push(format!("{n} {what}"));
         }
     }
-    parts.join(", ")
+    let mut s = parts.join(", ");
+    if d.btrfs {
+        s.push_str("; btrfs frees the space when it commits (snapshots: in the background)");
+    }
+    s
 }
 
 impl App {

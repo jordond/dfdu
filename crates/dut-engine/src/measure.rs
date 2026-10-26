@@ -60,6 +60,10 @@ pub fn spawn_measurers(n: usize, out: Sender<Vec<MeasureMsg>>) -> Sender<Measure
             .name(format!("dut-measure-{i}"))
             .spawn(move || {
                 let mut m = Measurer::default();
+                #[cfg(target_os = "linux")]
+                {
+                    m.privileged = dut_sys::is_privileged();
+                }
                 for r in rx {
                     let _ = out.send(m.batch(&r));
                 }
@@ -76,6 +80,9 @@ struct Measurer {
     reader: dut_sys::ExtentReader,
     #[cfg(target_os = "linux")]
     fsids: std::collections::HashMap<u64, [u8; 16]>,
+    /// Root: try the tree search for exact sizes.
+    #[cfg(target_os = "linux")]
+    privileged: bool,
 }
 
 impl Measurer {
@@ -94,9 +101,15 @@ impl Measurer {
     }
 }
 
-/// Turns a FIEMAP extent list into a measurement: unshared bytes, shared physical ranges, and
-/// shared compressed extents. Inline data lives in metadata and counts as 0, as in
-/// `btrfs filesystem du`; delayed allocations count as unshared.
+/// Turns a FIEMAP extent list into a measurement: unshared bytes and shared physical ranges,
+/// as `btrfs filesystem du` counts them. Inline data lives in metadata and counts as 0;
+/// delayed allocations count as unshared.
+///
+/// A compressed extent's FIEMAP length is its uncompressed length, so its range
+/// `[physical, physical + length)` reaches past its data on disk into the extents stored after
+/// it. Shared ranges are counted once where they overlap, so a run of shared compressed
+/// extents counts about the space it spans on disk: still an upper bound of its size, and far
+/// closer than the sum of uncompressed lengths.
 #[cfg(target_os = "linux")]
 pub fn from_extents(fs: [u8; 16], extents: &[dut_sys::Extent]) -> Measurement {
     use dut_sys::Extent;
@@ -113,15 +126,8 @@ pub fn from_extents(fs: [u8; 16], extents: &[dut_sys::Extent]) -> Measurement {
             m.excl += e.length;
             continue;
         }
-        let shared = f & Extent::SHARED != 0;
-        if f & Extent::ENCODED != 0 {
-            m.compressed = true;
-            if shared {
-                m.points.push((e.physical, e.length));
-            } else {
-                m.excl += e.length;
-            }
-        } else if shared {
+        m.compressed |= f & Extent::ENCODED != 0;
+        if f & Extent::SHARED != 0 {
             m.ranges.push((e.physical, e.physical + e.length));
         } else {
             m.excl += e.length;
@@ -229,7 +235,7 @@ impl Measurer {
         };
         // As root on btrfs the extent tree gives exact sizes; without the privilege (or on
         // another filesystem) the tree search fails and FIEMAP alone is used.
-        if dut_sys::is_privileged()
+        if self.privileged
             && let Ok(items) = self.reader.file_extents(&fd, f.inode.1)
         {
             let mut m = from_items(fs, &items, &ext);

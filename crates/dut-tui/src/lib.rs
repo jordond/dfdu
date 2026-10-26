@@ -243,6 +243,8 @@ fn spinners_visible(app: &App) -> bool {
 
 #[cfg(test)]
 mod blocked;
+#[cfg(all(test, target_os = "linux"))]
+mod btrfs_tests;
 #[cfg(test)]
 mod soak;
 #[cfg(test)]

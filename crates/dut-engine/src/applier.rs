@@ -253,6 +253,8 @@ pub struct DeleteSummary {
     pub refused: usize,
     pub failed: usize,
     pub aborted: usize,
+    /// Something was deleted on btrfs, which frees the space when the transaction commits.
+    pub btrfs: bool,
 }
 
 impl Status {
@@ -1464,6 +1466,7 @@ impl<B: Backend> Applier<B> {
                 let f = tree.flags(c);
                 let inode = tree.dev_ino(c);
                 if tree.kind(c) != Kind::File
+                    || f.has(NodeFlags::MEASURED)
                     || tree.raw_size(c).1 == 0
                     || !self.extent_devs.contains(&inode.0)
                     || (f.has(NodeFlags::HARDLINK) && !f.has(NodeFlags::CHARGED))
@@ -1567,7 +1570,11 @@ impl<B: Backend> Applier<B> {
             MeasureResult::Changed => {}
             MeasureResult::Failed(_) => m.status.unmeasured += 1,
         }
-        self.refresh_status(m);
+        // The part of `refresh_status` a result can change; the whole of it, once per result,
+        // took a tenth of the applier's time while measuring.
+        if self.measure_stack.is_empty() && self.measure_inflight == 0 {
+            m.status.measuring = None;
+        }
     }
 
     /// Keeps an inode's measurement on its charged link as hard-link charges move, and drops
@@ -1903,7 +1910,7 @@ impl<B: Backend> Applier<B> {
                             m.tree.set_deleting(ix, false);
                         }
                     }
-                    m.status.last_delete = Some(a.summary);
+                    m.status.last_delete = Some(DeleteSummary { btrfs, ..a.summary });
                 }
                 self.retry_deferred_rescans(m);
                 self.start_next_plan(m);

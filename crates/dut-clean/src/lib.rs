@@ -60,8 +60,8 @@ pub enum Refusal {
     /// Moving to the trash would copy the item to another filesystem (Linux home trash).
     TrashCrossesFilesystems,
     /// The item is in another btrfs subvolume than the trash; a rename between subvolumes is
-    /// not possible, so the trash would copy it.
-    TrashOtherSubvolume,
+    /// not possible, so the trash would copy it. Holds the root of the item's subvolume.
+    TrashOtherSubvolume(PathBuf),
     /// The deletion journal could not be written, so nothing is deleted.
     NoJournal,
 }
@@ -107,8 +107,13 @@ impl std::fmt::Display for Refusal {
             Refusal::TrashCrossesFilesystems => {
                 "refused for trash: the trash is on another filesystem (it would be copied)"
             }
-            Refusal::TrashOtherSubvolume => {
-                "refused for trash: the trash is in another btrfs subvolume (it would be copied)"
+            Refusal::TrashOtherSubvolume(sv) => {
+                return write!(
+                    f,
+                    "refused for trash: the item is in btrfs subvolume {}, the trash in another \
+                     (it would be copied)",
+                    sv.display()
+                );
             }
             Refusal::NoJournal => "refused: the deletion journal could not be written",
         })
