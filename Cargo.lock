@@ -598,7 +598,6 @@ dependencies = [
 name = "dfdu-scan"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "crossbeam-deque",
  "dfdu-sys",
  "dfdu-tree",
