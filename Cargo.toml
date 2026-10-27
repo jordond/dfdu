@@ -1,6 +1,17 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+default-members = [
+    "crates/dfdu",
+    "crates/dfdu-clean",
+    "crates/dfdu-engine",
+    "crates/dfdu-hangfs",
+    "crates/dfdu-scan",
+    "crates/dfdu-sim",
+    "crates/dfdu-sys",
+    "crates/dfdu-tree",
+    "crates/dfdu-tui",
+]
 
 [workspace.package]
 version = "0.1.0"
