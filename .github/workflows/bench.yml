@@ -1,0 +1,61 @@
+name: bench
+
+# Times the base and head builds on the same runner, so runner speed cancels out. The result
+# goes to the job summary; it is not a required check.
+on:
+  pull_request:
+    paths-ignore: ["**.md", docs/**, .github/renovate.json]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  bench:
+    name: Benchmark against base
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - name: Install hyperfine
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: hyperfine
+      - name: Build head and base
+        run: |
+          cargo build --release --locked -p dfdu -p dfdu-bench
+          cargo build --release --locked -p dfdu --manifest-path base/Cargo.toml
+      - name: Generate a 200k-entry tree
+        run: target/release/dfdu-bench gen "$RUNNER_TEMP/tree" --entries 200000
+      - name: Time warm scans
+        run: |
+          echo '### Warm scan, 200k entries' >> "$GITHUB_STEP_SUMMARY"
+          hyperfine -N --warmup 3 --runs 15 --export-markdown bench.md \
+            -n base "base/target/release/dfdu scan $RUNNER_TEMP/tree" \
+            -n head "target/release/dfdu scan $RUNNER_TEMP/tree"
+          cat bench.md >> "$GITHUB_STEP_SUMMARY"
