@@ -26,12 +26,17 @@ use crate::snapshot::{self, EntryData, Mark, Snapshot, Target, test_entry};
 use crate::theme::Theme;
 use crate::view;
 
-/// The frame as text, one line per row with trailing spaces removed.
+/// The frame as text, one line per row with trailing spaces removed. On Windows a path joined
+/// to the tests' Unix-style roots has `\` before its last components (`/r\proj`); it reads as
+/// `/` here so the frames and snapshots are the same on every platform.
 pub(crate) fn text(buf: &Buffer) -> String {
     let w = buf.area.width as usize;
     let mut out = String::new();
     for (i, cell) in buf.content.iter().enumerate() {
-        out.push_str(cell.symbol());
+        match cell.symbol() {
+            "\\" if cfg!(windows) => out.push('/'),
+            s => out.push_str(s),
+        }
         if (i + 1) % w == 0 {
             while out.ends_with(' ') {
                 out.pop();
@@ -579,12 +584,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     app.show_errors(list);
     let out = render(&mut app, t0, 100, 12);
     assert!(out.contains("2 not read"), "{out}");
-    // Paths are shown with the platform's separator.
-    let shown = std::path::Path::new("a").join("b").join("locked");
-    assert!(
-        out.contains(&format!("{}/  permission denied", shown.display())),
-        "{out}"
-    );
+    assert!(out.contains("a/b/locked/  permission denied"), "{out}");
     app.key(key(KeyCode::Enter), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::None));
     let mut target = app.target.clone();

@@ -562,7 +562,7 @@ impl Tree {
 
     /// Room for `n` more children of `ix`, so the children of a chunk are stored together. A
     /// directory's first chunk reserves exactly what it needs: most directories arrive in one
-    /// chunk. Later chunks add blocks at least as large as the list so far ([`KidArena`]).
+    /// chunk. Later chunks add blocks at least as large as the list so far (`KidArena`).
     pub fn reserve_children(&mut self, ix: Ix, n: usize) {
         let d = self.nodes[ix.0 as usize].dir;
         assert!(d != NONE, "children reserved for a non-directory");

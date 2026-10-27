@@ -287,7 +287,11 @@ mod tests {
         );
         assert_eq!(
             texts("/home/jo/dev/rust", "/home/jo/dev", home),
-            ["~/dev", "rust"]
+            // Joined as paths are, with `\` on Windows.
+            [
+                Path::new("~").join("dev").display().to_string(),
+                "rust".into()
+            ]
         );
         assert_eq!(
             texts("/home/joe/dev", "/home/joe", home),

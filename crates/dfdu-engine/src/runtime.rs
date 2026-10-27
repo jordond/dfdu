@@ -104,7 +104,7 @@ fn crash_details(m: &Model) -> String {
 /// The model of the engine started last, for a panic hook on another thread.
 static CRASH_MODEL: parking_lot::Mutex<Option<Weak<RwLock<Model>>>> = parking_lot::Mutex::new(None);
 
-/// [`crash_details`] of the engine started last, for a panic on a thread other than the
+/// `crash_details` of the engine started last, for a panic on a thread other than the
 /// applier (the UI); `None` if no engine is running. Waits at most 500 ms for the read lock: a
 /// thread that panics while holding it would wait behind the applier's pending write forever.
 pub fn crash_state() -> Option<String> {

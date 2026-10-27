@@ -598,7 +598,6 @@ dependencies = [
 name = "dfdu-scan"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "crossbeam-deque",
  "dfdu-sys",
  "dfdu-tree",
@@ -657,7 +656,6 @@ dependencies = [
  "insta",
  "nucleo-matcher",
  "ratatui",
- "serde",
  "tachyonfx",
  "tempfile",
  "terminal-colorsaurus",

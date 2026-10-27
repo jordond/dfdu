@@ -138,7 +138,7 @@ impl<'a> Cursor<'a> {
 }
 
 /// Parses the record at byte `pos` of `buf`, which holds what one `getattrlistbulk` call
-/// returned for [`BULK_COMMON`] and [`BULK_FILE`]. Returns the entry and the position of the
+/// returned for `BULK_COMMON` and `BULK_FILE`. Returns the entry and the position of the
 /// next record. A record that does not fit in `buf` or contradicts itself is `InvalidData`.
 pub fn parse_bulk_record(buf: &[u8], pos: usize) -> io::Result<(BulkEntry<'_>, usize)> {
     let len_bytes = buf

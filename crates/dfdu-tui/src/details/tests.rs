@@ -69,7 +69,8 @@ fn model() -> Model {
     dir(tree, proj, b"snap", 5, NodeFlags::RO_SUBVOL);
     tree.add_home(proj, 6_000, true);
     tree.dir_mut(proj).expect("dir").state = DirState::Partial;
-    tree.set_error(proj, ErrKind::Os(5));
+    // Not an `Os` code: its message is the platform's (EIO is "access is denied" on Windows).
+    tree.set_error(proj, ErrKind::Other);
     file(tree, root, b"notes.txt", 2_000, 20);
     m
 }
@@ -207,7 +208,7 @@ fn details_pane_shows_tree_facts() {
         "78.6 KiB on disk · 11 items",
         "72.8 KiB apparent · 72.8 KiB like du",
         "5.9 KiB also used outside the scan:",
-        "partly read: input/output error",
+        "partly read: could not be read",
         "1 error below",
         "largest by disk usage",
         "48.8 KiB  big.iso",

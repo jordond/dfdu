@@ -4,7 +4,7 @@ A disk usage browser for the terminal, written in Rust. It starts from what `ncd
 
 ## Trying it
 
-```
+```sh
 cargo run --release -- ~/some/dir          # interactive browser
 cargo run --release -- scan ~/some/dir     # headless summary
 cargo run --release -- --read-only /       # browse without the delete keys
@@ -20,8 +20,8 @@ Like `ncdu -x`, a scan stays on the filesystem of the directory it starts in (`-
 
 ## Development
 
-```
-cargo test --release                                    # everything, about a minute
+```sh
+cargo test --workspace --release                        # everything, about a minute
 DFDU_SIM_SEEDS=20000 cargo test --release -p dfdu-sim   # more simulation seeds
 DFDU_SIM_SEED=1234 cargo test --release -p dfdu-sim     # rerun one seed
 DFDU_SIM_TRACE=/sim/d0/f1 DFDU_SIM_SEED=1234 cargo test --release -p dfdu-sim -- --nocapture

@@ -606,7 +606,7 @@ impl App {
 
     /// Handles a key: the open overlay takes it first, then the filter input while it is
     /// edited, then the details pane while it has the focus, and otherwise the action bound to
-    /// it in [`keys::ACTIONS`].
+    /// it in `keys::ACTIONS`.
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
         if k.kind == KeyEventKind::Release {
             return Vec::new();

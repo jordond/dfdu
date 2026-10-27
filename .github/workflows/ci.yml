@@ -1,94 +1,365 @@
 name: ci
 
 on:
-  workflow_dispatch:
   push:
+    branches: [main]
   pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  lint:
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - &checkout
+        name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: rustfmt, clippy
-      - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
+          persist-credentials: false
+      - name: Install Rust stable with rustfmt
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-  test:
+  clippy:
+    name: Clippy (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --release --no-fail-fast
+      - *checkout
+      - name: Install Rust stable with clippy
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: clippy
+      - &cache
+        name: Restore build cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - *checkout
+      - &stable
+        name: Install Rust stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - *cache
+      - name: Build docs, warnings as errors
+        run: cargo doc --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - *checkout
+      - *stable
+      - *cache
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest
+      - name: Run tests
+        run: cargo nextest run --workspace --cargo-profile ci --profile ci --locked
+      - name: Run doc tests
+        run: cargo test --workspace --doc --profile ci --locked
+
+  coverage:
+    name: Test and coverage (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MIN_LINES: 85
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Install Rust stable with llvm-tools
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - *cache
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+      - name: Run tests with coverage
+        run: cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci
+      - name: Write coverage report, summary and PR comment
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
+        run: .github/scripts/coverage-report.sh "$MIN_LINES" "$BASE"
+      - &upload-section
+        name: Upload the PR comment section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-${{ github.job }}
+          path: ${{ github.job }}.md
+          retention-days: 1
+      - name: Require 85% line coverage
+        run: cargo llvm-cov report --summary-only --fail-under-lines "$MIN_LINES"
+      - name: Upload coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lcov
+          path: lcov.info
+          retention-days: 14
+
+  bench:
+    name: Benchmark against base
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - *checkout
+      - name: Check out base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - *stable
+      - name: Install hyperfine
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: hyperfine
+      - name: Time warm scans of base and head
+        run: .github/scripts/bench-base.sh base "$RUNNER_TEMP"
+      - *upload-section
+
+  pr-comment:
+    name: PR comment
+    needs: [coverage, bench]
+    if: >-
+      !cancelled() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download the comment sections
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pr-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/pr
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          cd "$RUNNER_TEMP/pr"
+          for part in coverage bench; do
+            if [[ -f $part.md ]]; then cat "$part.md"; else echo "No $part result: the job failed."; fi
+            echo
+          done > comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
 
   msrv:
+    name: MSRV
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95
-      - run: cargo check --all-targets
+      - *checkout
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version" || { echo "::error::No rust-version in Cargo.toml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - *cache
+      - name: Check the workspace builds on the MSRV
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" check --workspace --all-targets --all-features --locked
+
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check bans licenses sources
 
   simulation:
+    name: Simulation
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Simulation, 5000 seeds per suite
-        run: cargo test --release -p dfdu-sim
+      - *checkout
+      - *stable
+      - *cache
+      - name: Run simulation, 5000 seeds per suite
+        run: cargo test --profile ci --locked -p dfdu-sim
         env:
           DFDU_SIM_SEEDS: "5000"
 
   loom:
+    name: Loom
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: "--cfg loom"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --release -p dfdu-scan -p dfdu-engine --test loom
-        env:
-          RUSTFLAGS: "--cfg loom"
+      - *checkout
+      - *stable
+      - *cache
+      - name: Run loom model tests
+        run: cargo test --profile ci --locked -p dfdu-scan -p dfdu-engine --test loom
 
   fuse:
+    name: FUSE
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo modprobe fuse || true
-      - run: cargo test --release --no-run -p dfdu-hangfs -p dfdu-engine -p dfdu
-      - name: As root
+      - *checkout
+      - *stable
+      - *cache
+      - name: Load the fuse kernel module
+        run: sudo modprobe fuse || true
+      - name: Build tests
+        run: cargo test --profile ci --locked --no-run -p dfdu-hangfs -p dfdu-engine -p dfdu
+      - name: Run FUSE tests as root
         run: |
-          as_root() { sudo --preserve-env=DFDU_FUSE_REQUIRED env "PATH=$PATH" "HOME=$HOME" "$@"; }
-          as_root cargo test --release -p dfdu-hangfs --lib
-          as_root cargo test --release -p dfdu-engine -p dfdu --test fuse
+          cargo test --profile ci --locked -p dfdu-hangfs --lib
+          cargo test --profile ci --locked -p dfdu-engine -p dfdu --test fuse
         env:
           DFDU_FUSE_REQUIRED: "1"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_FUSE_REQUIRED,HOME
 
   btrfs:
+    name: Btrfs
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      # The runner context is not available in job-level env.
-      - run: echo "DFDU_BTRFS_DIR=$RUNNER_TEMP/btrfs" >> "$GITHUB_ENV"
-      - run: sudo apt-get update && sudo apt-get install -y btrfs-progs btrfs-compsize
-      - run: cargo test --release --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui
-      - name: Fixture
+      - *checkout
+      - *stable
+      - *cache
+      - name: Set the btrfs mount directory
+        run: echo "DFDU_BTRFS_DIR=$RUNNER_TEMP/btrfs" >> "$GITHUB_ENV"
+      - name: Install btrfs tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends btrfs-progs btrfs-compsize
+      - name: Build tests
+        run: cargo test --profile ci --locked --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui
+      - name: Create the btrfs fixture
         run: sudo scripts/btrfs-fixture.sh "$RUNNER_TEMP/btrfs.img" "$DFDU_BTRFS_DIR" "$(id -un)"
-      - name: Unprivileged
+      - name: Run btrfs tests unprivileged
         run: |
-          cargo test --release -p dfdu-sys -p dfdu-engine --test btrfs
-          cargo test --release -p dfdu-tui --lib btrfs_tests
-      - name: As root
+          cargo test --profile ci --locked -p dfdu-sys -p dfdu-engine --test btrfs
+          cargo test --profile ci --locked -p dfdu-tui --lib btrfs_tests
+      - name: Run btrfs tests as root
         run: |
-          as_root() { sudo --preserve-env=DFDU_BTRFS_DIR env "PATH=$PATH" "HOME=$HOME" "$@"; }
-          as_root cargo test --release -p dfdu-sys -p dfdu-engine --test btrfs
-          as_root cargo test --release -p dfdu-tui --lib btrfs_tests
-          as_root cargo test --release -p dfdu-clean --lib
+          cargo test --profile ci --locked -p dfdu-sys -p dfdu-engine --test btrfs
+          cargo test --profile ci --locked -p dfdu-tui --lib btrfs_tests
+          cargo test --profile ci --locked -p dfdu-clean --lib
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_BTRFS_DIR,HOME
+
+  zizmor:
+    name: Workflow security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - name: Audit workflows with zizmor
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          advanced-security: false
+
+  machete:
+    name: Unused dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-machete
+      - name: Find unused dependencies
+        run: cargo machete
+
+  binaries:
+    name: Binary (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *stable
+      - *cache
+      - name: Build dfdu
+        run: cargo build --release --locked -p dfdu
+      - name: Upload dfdu
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dfdu-${{ runner.os }}-${{ runner.arch }}
+          path: target/release/dfdu${{ runner.os == 'Windows' && '.exe' || '' }}
+          retention-days: 7
+
+  ci-success:
+    name: CI success
+    if: always()
+    needs:
+      [fmt, clippy, docs, test, coverage, msrv, deny, simulation, loom, fuse, btrfs, machete, binaries, zizmor]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

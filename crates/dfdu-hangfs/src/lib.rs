@@ -357,7 +357,7 @@ impl Filesystem for HangFs {
     }
 }
 
-/// A mounted [`HangFs`]; unmounted on drop.
+/// A mounted `HangFs`; unmounted on drop.
 pub struct Mounted {
     at: PathBuf,
     state: Arc<State>,

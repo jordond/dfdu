@@ -9,8 +9,8 @@
 //! share, so chunk tasks spread these calls over the workers as `statx` is on Linux. A file
 //! whose count is above one takes its sizes from that call too, as NTFS updates the directory
 //! entry only of the name a file was changed through. The file id and the volume serial number
-//! identify the file, so hard links are counted once as on Unix. Directories, symlinks and
-//! junctions need no call.
+//! identify the file, so hard links are counted once as on Unix. Directories take the same call
+//! for their allocation, which the enumeration reports as 0; symlinks and junctions need none.
 //!
 //! Reparse points whose tag is a name surrogate (symlinks, junctions, volume mount points) are
 //! links: listed with their own size and never entered, so a scan stays on its volume except
@@ -112,6 +112,18 @@ impl RawBlock<WinLoc> for WinRaw {
                     // Listed but not readable: counted from the listing, as a single link.
                     Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {}
                     Err(e) => meta = Err(ErrKind::from(&e)),
+                }
+            } else if kind == Kind::Dir && !st.recalls_on_open() {
+                // The listing reports 0 for a directory; its index takes clusters once it no
+                // longer fits in the MFT record. Unreadable: counted as listed.
+                let reparse = st.attributes & dfdu_tree::win_attr::REPARSE_POINT != 0;
+                if let Ok(l) = self
+                    .dir
+                    .links
+                    .query(self.dir.handle.as_handle(), name, reparse)
+                {
+                    st.alloc = l.alloc;
+                    meta = Ok(Meta::from_windows(&st));
                 }
             }
             let child = match &meta {

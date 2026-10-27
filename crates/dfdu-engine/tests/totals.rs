@@ -287,15 +287,27 @@ fn scan<B: Backend>(backend: B, root: &Path) -> HashMap<Vec<u8>, Totals> {
     ours
 }
 
-/// `du -s -B1 -x` of `root`, with extra arguments; `None` without GNU du.
+/// `du -s -B1 -x` of `root`, with extra arguments; `None` without GNU du. BSD du (macOS) takes
+/// `-B1` too but means something else, so `du` counts only if it is GNU; Homebrew's coreutils
+/// install it as `gdu`.
 #[cfg(unix)]
 fn du(root: &Path, extra: &[&str]) -> Option<u64> {
-    let out = std::process::Command::new("du")
+    let is_gnu = |bin: &&str| {
+        std::process::Command::new(bin)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("GNU coreutils"))
+    };
+    let bin = ["du", "gdu"].into_iter().find(is_gnu)?;
+    let out = std::process::Command::new(bin)
         .args(["-s", "-B1", "-x"])
         .args(extra)
         .arg(root)
         .output()
         .ok()?;
+    if !out.status.success() {
+        return None;
+    }
     String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
         .next()?
