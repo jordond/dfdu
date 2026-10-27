@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitTypeAll(chore)"
+  ],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "rangeStrategy": "bump",
+  "platformAutomerge": false,
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "Automerge minor and patch updates once every CI check, including the coverage gate, passes",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "0.x minor bumps are breaking under Cargo semver",
+      "matchManagers": ["cargo"],
+      "matchCurrentVersion": "/^0\\./",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
+    },
+    {
+      "description": "MSRV is bumped by hand",
+      "matchManagers": ["cargo"],
+      "matchDepNames": ["rust"],
+      "enabled": false
+    },
+    {
+      "groupName": "github actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"]
+    },
+    {
+      "groupName": "ratatui",
+      "matchPackageNames": ["ratatui", "tachyonfx"]
+    },
+    {
+      "groupName": "crossbeam",
+      "matchPackageNames": ["/^crossbeam-/"]
+    },
+    {
+      "groupName": "serde",
+      "matchPackageNames": ["serde", "serde_json", "toml"]
+    },
+    {
+      "groupName": "platform bindings",
+      "matchPackageNames": ["libc", "rustix", "windows-sys", "fuser"]
+    },
+    {
+      "groupName": "test tooling",
+      "matchPackageNames": ["insta", "tempfile", "loom"]
+    }
+  ]
+}

@@ -77,3 +77,11 @@ dbg_macro = "warn"
 panic = "unwind"
 lto = "thin"
 codegen-units = 1
+
+# Optimised test builds that keep debug assertions and overflow checks, without release's slow LTO.
+[profile.ci]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+lto = false
+codegen-units = 16
