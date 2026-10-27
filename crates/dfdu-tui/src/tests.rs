@@ -407,16 +407,19 @@ fn overlays_fit_a_small_terminal() {
     for overlay in [
         crate::app::Overlay::Help,
         crate::app::Overlay::Errors { list, cursor: 49 },
-        crate::app::Overlay::ConfirmDelete {
-            node,
-            name: "junk".into(),
-            size: 5 << 20,
-            shared_out: 1 << 20,
-            is_dir: true,
-            mode: dfdu_engine::Mode::Permanent,
-            typed: String::new(),
-            scanning: false,
-        },
+        crate::app::Overlay::ConfirmDelete(crate::confirm::Confirm::new(
+            vec![crate::confirm::Item {
+                node,
+                name: "junk".into(),
+                size: 5 << 20,
+                items: 1,
+                shared_out: 1 << 20,
+                is_dir: true,
+                scanning: false,
+                inside: false,
+            }],
+            dfdu_engine::Mode::Permanent,
+        )),
     ] {
         app.overlay = overlay;
         // Smaller than either dialog: the dialog is clamped to the screen.

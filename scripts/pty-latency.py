@@ -61,7 +61,8 @@ def run(dfdu, tree, rng):
     pid, fd = pty.fork()
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-        os.execv(dfdu, [dfdu, tree])
+        # A pseudo-terminal does not answer the background-colour query that `auto` sends.
+        os.execv(dfdu, [dfdu, "--theme", "ansi", tree])
     buf = bytearray()
     if read_until(fd, buf, 0, b"%", t0 + 30) < 0:
         raise SystemExit("no data frame")

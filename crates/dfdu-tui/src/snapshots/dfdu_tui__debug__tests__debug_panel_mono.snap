@@ -1,0 +1,24 @@
+---
+source: crates/dfdu-tui/src/debug.rs
+expression: out
+---
+ dfdu                                                                              ⠋ scanning 00:00
+ 0 items · 0 B                                                             sort: size ↓  disk usage
+  (empty)                                           ╭ Debug ───────────────────────────────────────╮
+                                                    │ sent 1.2M  received 1.2M  pending 310        │
+                                                    │ chunks 12.0k  closes 9.8k  entries 1.9M      │
+                                                    │ discarded job 7  cut 3  late 2               │
+                                                    │ corrupt 0  lost 0  duplicate 0               │
+                                                    │ transit 12.0 MiB / 64.0 MiB  peak 40.0 MiB   │
+                                                    │ tasks 12 (1 abandoned)  queued 3 + 40        │
+                                                    │ lock 400.0ms  100 slices  4.8M entries/s     │
+                                                    │ hold p50 <224µs  p99 <1.5ms  max <3.1ms      │
+                                                    │ over 2ms 1  wait p99 <32µs  max <5.1ms       │
+                                                    │ jobs 1 running  stall reports 1              │
+                                                    │ stalled dirs 1                               │
+                                                    │   /home/jo/nfs                               │
+                                                    │ ui draw 1.2ms  read 310µs                    │
+                                                    ╰──────────────────────────────────────────────╯
+
+
+ ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit

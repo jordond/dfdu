@@ -154,7 +154,6 @@ pub fn ansi256_to_16(i: u8) -> Color {
 }
 
 /// WCAG 2.1 relative luminance, 0 for black to 1 for white.
-#[cfg_attr(not(test), allow(dead_code, reason = "not used by `run` yet"))]
 pub fn relative_luminance(c: Rgb) -> f64 {
     let (r, g, b) = linear(c);
     0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -168,7 +167,6 @@ pub fn contrast(a: Rgb, b: Rgb) -> f64 {
 }
 
 /// Perceived lightness (CIE L*) scaled to 0..=1, where 0.5 is the perceptual middle grey.
-#[cfg_attr(not(test), allow(dead_code, reason = "not used by `run` yet"))]
 pub fn lightness(c: Rgb) -> f64 {
     const E: f64 = 216.0 / 24389.0;
     const K: f64 = 24389.0 / 27.0;

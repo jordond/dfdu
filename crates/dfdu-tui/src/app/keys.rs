@@ -343,14 +343,8 @@ fn toggle_size(app: &mut App, mode: SizeMode) {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::HashSet;
-    use std::time::Duration;
-
-    use dfdu_tree::Totals;
 
     use super::*;
-    use crate::snapshot::{EntryData, Mark, Snapshot, test_entry};
-    use crate::tests::render;
-    use crate::theme::Theme;
 
     const ALL: [Action; 31] = [
         Action::Quit,
@@ -473,60 +467,6 @@ pub(crate) mod tests {
         }
         for code in [c('z'), c('1'), KeyCode::F(2), KeyCode::Insert] {
             assert_eq!(action_for(&press(code)), None, "{code:?}");
-        }
-    }
-
-    fn mid_scan(app: &mut App, t0: Instant) {
-        let dir = |i, name: &str, size, mark| EntryData {
-            is_dir: true,
-            mark,
-            ..test_entry(i, name, size)
-        };
-        let gib = 1 << 30;
-        let entries = vec![
-            dir(0, "Library", 112 * gib, Mark::Scanning),
-            dir(1, "dev", 78 * gib, Mark::Scanning),
-            dir(2, "nfs", 0, Mark::Stalled),
-            test_entry(3, "notes.sqlite", 625 << 20),
-        ];
-        let total: u64 = entries.iter().map(|e| e.size).sum();
-        let totals = Totals {
-            alloc: total,
-            items: 1000,
-            ..Totals::default()
-        };
-        app.refresh(
-            Snapshot {
-                dir_path: "/home/jo".into(),
-                dir_node: Some(test_entry(99, "/home/jo", 0).node),
-                at_root: true,
-                dir_total: totals,
-                dir_mark: Some(Mark::Scanning),
-                root_total: totals,
-                entries,
-                busy: true,
-                stalled: 1,
-                version: 1,
-                ..Default::default()
-            },
-            t0,
-        );
-    }
-
-    /// Presses each of `keys` on a mid-scan view and checks that none of them returns an
-    /// effect, opens an overlay or changes the frame.
-    #[track_caller]
-    pub(crate) fn keys_change_nothing(keys: &[KeyEvent]) {
-        let t0 = Instant::now();
-        let at = t0 + Duration::from_secs(14);
-        let mut app = App::new(Theme::no_color(), t0);
-        mid_scan(&mut app, t0);
-        let before = render(&mut app, at, 100, 12);
-        for &k in keys {
-            assert!(app.key(k, t0).is_empty(), "{k:?}");
-            assert!(matches!(app.overlay, Overlay::None), "{k:?}");
-            app.reorder(t0);
-            assert_eq!(render(&mut app, at, 100, 12), before, "{k:?}");
         }
     }
 }

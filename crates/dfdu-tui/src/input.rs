@@ -1,10 +1,5 @@
 //! A single-line text input, for the filter, the palette and typed confirmations.
 
-#![allow(
-    dead_code,
-    reason = "used by the filter, the palette and the delete dialog"
-)]
-
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Style;
 use ratatui::text::Span;
@@ -37,6 +32,7 @@ impl LineInput {
     }
 
     /// The cursor, in characters from the start.
+    #[cfg(test)]
     pub fn cursor(&self) -> usize {
         self.cursor
     }

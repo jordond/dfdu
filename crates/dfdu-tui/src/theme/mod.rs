@@ -5,21 +5,16 @@
 
 mod builtin;
 mod color;
-#[allow(dead_code, reason = "not used by `run` yet")]
 mod detect;
-#[allow(dead_code, reason = "not used by `run` yet")]
 mod file;
 
 use humansize::{BINARY, format_size};
 use ratatui::style::{Modifier, Style};
 
 pub use color::{ColorLevel, ColorSpec, Rgb};
-#[allow(unused_imports, reason = "not used by `run` yet")]
 pub use detect::{
-    ColorDetection, choose_theme, detect_color_level, parse_color_flag, query_background,
-    should_query_background,
+    choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
 };
-#[allow(unused_imports, reason = "not used by `run` yet")]
 pub use file::{ThemeError, ThemeFile};
 
 /// A themable style. [`Token::name`] is its key in a theme file.

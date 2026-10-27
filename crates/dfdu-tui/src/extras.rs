@@ -15,12 +15,13 @@ pub struct Extras {
     pub debug: debug::Info,
 }
 
-/// Runs under the read lock; costs no walk of the directory or the tree.
-pub fn read(m: &Model, app: &App, budget: &Budget) -> Extras {
+/// Runs under the read lock; costs no walk of the directory or the tree. `counters` are the
+/// engine's own, read under the same lock ([`debug::Counters::of`]).
+pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Extras {
     Extras {
         marked: marks::read(m, app),
         details: details::read(m, app),
-        debug: debug::read(m, budget, app.debug.open),
+        debug: debug::read(m, budget, counters),
     }
 }
 

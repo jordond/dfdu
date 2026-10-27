@@ -230,6 +230,8 @@ pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
     pub dir_path: PathBuf,
+    /// Path of the scan root; `dir_path` is below it or equal to it.
+    pub root_path: PathBuf,
     pub dir_node: Option<NodeRef>,
     pub at_root: bool,
     pub dir_total: Totals,
@@ -370,6 +372,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     let rec = tree.dir(dir).expect("directory");
     snap.focus = Some((rec.job, rec.dir_id));
     snap.dir_path = tree.path_buf(dir);
+    snap.root_path = tree.path_buf(root);
     snap.dir_node = Some(tree.node_ref(dir));
     snap.at_root = dir == root;
     snap.dir_total = tree.total(dir);

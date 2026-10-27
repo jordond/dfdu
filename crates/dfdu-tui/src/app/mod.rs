@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command, Mode};
+use dfdu_engine::Command;
 use dfdu_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -47,19 +47,7 @@ pub enum Overlay {
         list: ErrorList,
         cursor: usize,
     },
-    ConfirmDelete {
-        node: NodeRef,
-        name: String,
-        size: u64,
-        /// Part of `size` that data outside the scan also uses.
-        shared_out: u64,
-        is_dir: bool,
-        mode: Mode,
-        /// What the user typed so far (permanent delete asks for the word "delete").
-        typed: String,
-        /// The directory is still being scanned; its size is a lower bound.
-        scanning: bool,
-    },
+    ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
 }
 
@@ -122,6 +110,8 @@ pub struct App {
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
     pub areas: Areas,
+    /// The user's home directory, shown as `~` in the breadcrumbs.
+    pub home: Option<PathBuf>,
     last_input: Instant,
     last_sort: Instant,
     sort_requested: bool,
@@ -189,6 +179,7 @@ impl App {
             mouse: mouse::Mouse::default(),
             extras: Extras::default(),
             areas: Areas::default(),
+            home: None,
             // No key pressed yet counts as idle.
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
             last_sort: now,

@@ -31,6 +31,7 @@ mod order;
 mod palette;
 mod picker;
 mod problems;
+mod setup;
 mod snapshot;
 mod theme;
 mod view;
@@ -44,14 +45,16 @@ use crossbeam_channel::{Receiver, select, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{DirId, JobId, JobOptions};
 use ratatui::Terminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::crossterm::execute;
 
 pub use app::{App, Effect, Overlay};
 pub use debug::summary as debug_summary;
 pub use picker::{DISK_TIMEOUT, Picked, Picker};
 pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
+pub use setup::{ThemeChoice, UiSettings, theme_dir};
 pub use snapshot::{SizeMode, Snapshot, Target, subvol_label};
-pub use theme::{Theme, human};
+pub use theme::{ColorLevel, Theme, ThemeError, ThemeFile, human, parse_color_flag};
 
 use extras::Read;
 
@@ -61,6 +64,8 @@ const DATA_FRAME: Duration = Duration::from_millis(100);
 const ERROR_LIST_MAX: usize = 10_000;
 /// Longest sleep when nothing is going on.
 const IDLE: Duration = Duration::from_secs(3600);
+/// How long the terminal gets to answer the background-colour query at start.
+const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
 
 pub struct RunOptions {
     /// Directory to browse; `None` shows the disk picker first.
@@ -68,6 +73,7 @@ pub struct RunOptions {
     /// Options of the scan (which mounts it descends into).
     pub job: JobOptions,
     pub engine: EngineOptions,
+    pub ui: UiSettings,
 }
 
 /// How the browser looks and behaves, decided before the loop starts.
@@ -78,23 +84,39 @@ pub struct UiOptions {
     pub mouse: bool,
     /// Start with the debug panel open.
     pub debug: bool,
+    /// The user's home directory, shown as `~`.
+    pub home: Option<PathBuf>,
 }
 
 impl UiOptions {
-    /// The theme from the environment (`NO_COLOR`), no mouse, no debug panel.
+    /// The theme from the environment (`NO_COLOR`), no mouse, no debug panel, no `~`.
     pub fn from_env() -> Self {
         UiOptions {
             theme: Theme::from_env(),
             mouse: false,
             debug: false,
+            home: None,
         }
     }
 }
 
 /// Opens the browser on `opts.path` (or a disk chosen in the picker) and returns when the user
-/// quits.
+/// quits. Before the alternate screen is entered, the colour level is detected and, when the
+/// theme depends on it, the terminal is asked for its background colour (waiting at most
+/// `BACKGROUND_QUERY` for terminals that do not answer).
 pub fn run(opts: RunOptions) -> io::Result<()> {
+    let ui = opts.ui;
+    let (theme, force_color) = setup::resolve_theme(
+        &ui,
+        |k| std::env::var_os(k),
+        || theme::query_background(BACKGROUND_QUERY),
+    );
+    if force_color {
+        // crossterm leaves out colours itself while `NO_COLOR` is set.
+        ratatui::crossterm::style::force_color_output(true);
+    }
     let mut terminal = ratatui::try_init()?;
+    let mouse = ui.mouse;
     // try_init installed a hook that restores the terminal on panic. Panic hooks also run for
     // panics that are caught, and worker and applier panics are caught and recorded by the
     // engine, so for those threads the terminal must be left alone.
@@ -102,21 +124,29 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     std::panic::set_hook(Box::new(move |info| {
         if !dfdu_engine::panic_is_caught_by_engine(std::thread::current().name()) {
             // ratatui's hook leaves raw mode and the alternate screen but does not show the
-            // cursor; the terminal's Drop would, but only if unwinding gets that far.
-            let _ = ratatui::crossterm::execute!(io::stdout(), ratatui::crossterm::cursor::Show);
+            // cursor or end mouse capture; the terminal's Drop would show the cursor, but only
+            // if unwinding gets that far.
+            let _ = execute!(io::stdout(), ratatui::crossterm::cursor::Show);
+            if mouse {
+                let _ = execute!(io::stdout(), DisableMouseCapture);
+            }
             restore(info);
         }
     }));
+    if mouse && let Err(e) = execute!(io::stdout(), EnableMouseCapture) {
+        setup::restore_terminal(mouse);
+        return Err(e);
+    }
     let path = match opts.path {
         Some(p) => p,
-        None => match picker::pick(&mut terminal, &Theme::from_env()) {
+        None => match picker::pick(&mut terminal, &theme) {
             Ok(picker::Picked::Scan(p)) => p,
             Ok(picker::Picked::Quit) => {
-                ratatui::restore();
+                setup::restore_terminal(mouse);
                 return Ok(());
             }
             Err(e) => {
-                ratatui::restore();
+                setup::restore_terminal(mouse);
                 return Err(e);
             }
         },
@@ -132,7 +162,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         opts: opts.job,
     });
     let (tx, input) = unbounded();
-    thread::Builder::new()
+    let spawned = thread::Builder::new()
         .name("dfdu-input".into())
         .spawn(move || {
             while let Ok(ev) = event::read() {
@@ -140,9 +170,28 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                     break;
                 }
             }
-        })?;
-    let result = event_loop(&mut terminal, &engine, input);
-    ratatui::restore();
+        });
+    let result = match spawned {
+        Ok(_) => event_loop_with(
+            &mut terminal,
+            &engine,
+            input,
+            UiOptions {
+                theme,
+                mouse,
+                debug: ui.debug_stats,
+                home: setup::home_dir(),
+            },
+        ),
+        Err(e) => Err(e),
+    };
+    setup::restore_terminal(mouse);
+    if ui.debug_stats {
+        let summary = debug_summary(&engine);
+        if !summary.is_empty() {
+            eprintln!("{}", summary.trim_end());
+        }
+    }
     engine.shutdown(Duration::from_millis(200));
     result
 }
@@ -178,6 +227,7 @@ where
     let inject_panic = std::env::var_os("DFDU_TEST_UI_PANIC").is_some();
     let start = Instant::now();
     let mut app = App::new(ui.theme, start);
+    app.home = ui.home;
     motion::start(&mut app);
     if ui.debug {
         debug::toggle(&mut app);
@@ -220,7 +270,8 @@ where
                     let (snap, extras, cost) = engine.read(|m| {
                         let t = Instant::now();
                         let snap = snapshot::build(m, &mut target, mode);
-                        let extras = extras::read(m, &app, engine.budget());
+                        let counters = debug::Counters::of(engine);
+                        let extras = extras::read(m, &app, engine.budget(), counters);
                         (snap, extras, t.elapsed())
                     });
                     if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
@@ -244,7 +295,8 @@ where
                 Read::Extras => {
                     let (extras, cost) = engine.read(|m| {
                         let t = Instant::now();
-                        let extras = extras::read(m, &app, engine.budget());
+                        let counters = debug::Counters::of(engine);
+                        let extras = extras::read(m, &app, engine.budget(), counters);
                         (extras, t.elapsed())
                     });
                     read_cost = cost;

@@ -1,5 +1,6 @@
+use std::ffi::OsStr;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, Timing};
 use dfdu_scan::{Backend, JobOptions, PortableBackend, native_backend};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
-use dfdu_tui::SizeMode;
+use dfdu_tui::{ColorLevel, SizeMode, Theme, ThemeChoice, ThemeFile, UiSettings};
 
 #[derive(Parser)]
 #[command(version, about, args_conflicts_with_subcommands = true)]
@@ -26,6 +27,65 @@ struct Cli {
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
+    /// Colour theme: auto, dark, light, ansi (the terminal's own 16 colours), mono, high-contrast,
+    /// or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto
+    /// asks the terminal for its background colour at start (up to 1 s if it does not answer)
+    /// and picks dark or light, or ansi when the colour is unknown.
+    #[arg(long, value_name = "THEME", default_value = "auto")]
+    theme: String,
+    /// Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given
+    /// here is used even when NO_COLOR is set.
+    #[arg(long, value_name = "WHEN", default_value = "auto", value_parser = color_flag)]
+    color: ColorFlag,
+    /// Do not capture the mouse (click to select, double-click to open, wheel to scroll). While
+    /// it is captured, most terminals select text with Shift held down.
+    #[arg(long)]
+    no_mouse: bool,
+    /// Start with the debug panel open, and print its numbers when the browser exits.
+    #[arg(long, hide = true)]
+    debug_stats: bool,
+}
+
+/// A `--color` value; `None` detects the level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ColorFlag(Option<ColorLevel>);
+
+fn color_flag(s: &str) -> Result<ColorFlag, String> {
+    dfdu_tui::parse_color_flag(s).map(ColorFlag)
+}
+
+/// The theme `--theme` names: `auto`, a built-in theme, or the theme file `NAME.toml` in
+/// `themes` (`None` when the platform has no configuration directory).
+fn theme_choice(name: &str, themes: Option<&Path>) -> Result<ThemeChoice, String> {
+    if let Some(choice) = ThemeChoice::builtin(name) {
+        return Ok(choice);
+    }
+    let builtin = format!("auto, {}", Theme::builtin_names().join(", "));
+    if Path::new(name).file_name() != Some(OsStr::new(name)) {
+        return Err(format!(
+            "not a built-in theme ({builtin}) or the name of a theme file"
+        ));
+    }
+    let Some(themes) = themes else {
+        return Err(format!(
+            "not a built-in theme ({builtin}), and there is no configuration directory for theme \
+             files"
+        ));
+    };
+    let path = themes.join(format!("{name}.toml"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "not a built-in theme ({builtin}), and there is no file {}",
+                path.display()
+            ));
+        }
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let mut file = ThemeFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.name.get_or_insert_with(|| name.to_owned());
+    Ok(ThemeChoice::File(file))
 }
 
 #[derive(Subcommand)]
@@ -195,12 +255,25 @@ fn main() -> ExitCode {
                     backend: BackendArg::Native,
                 });
             }
+            let theme = match theme_choice(&cli.theme, dfdu_tui::theme_dir().as_deref()) {
+                Ok(theme) => theme,
+                Err(e) => {
+                    eprintln!("dfdu: theme {}: {e}", cli.theme);
+                    return ExitCode::from(2);
+                }
+            };
             let opts = dfdu_tui::RunOptions {
                 path: (!cli.disks).then_some(path),
                 job: cli.mounts.job(),
                 engine: EngineOptions {
                     read_only: cli.read_only,
                     ..Default::default()
+                },
+                ui: UiSettings {
+                    theme,
+                    color: cli.color.0,
+                    mouse: !cli.no_mouse,
+                    debug_stats: cli.debug_stats,
                 },
             };
             match dfdu_tui::run(opts) {
@@ -575,4 +648,91 @@ fn print_debug_stats(m: &Model) {
         Timing::percentile(&t.wait, 0.99),
         Timing::max(&t.wait),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn theme_and_color_flags_parse() {
+        let cli = Cli::try_parse_from(["dfdu", "/x"]).expect("defaults");
+        assert_eq!(cli.theme, "auto");
+        assert_eq!(cli.color, ColorFlag(None));
+        assert!(!cli.no_mouse && !cli.debug_stats);
+
+        let cli = Cli::try_parse_from([
+            "dfdu",
+            "--theme",
+            "light",
+            "--color",
+            "256",
+            "--no-mouse",
+            "--debug-stats",
+            "/x",
+        ])
+        .expect("flags");
+        assert_eq!(cli.theme, "light");
+        assert_eq!(cli.color, ColorFlag(Some(ColorLevel::Ansi256)));
+        assert!(cli.no_mouse && cli.debug_stats);
+        assert_eq!(cli.path, Some(PathBuf::from("/x")));
+
+        for (value, level) in [
+            ("never", ColorLevel::None),
+            ("16", ColorLevel::Ansi16),
+            ("truecolor", ColorLevel::TrueColor),
+        ] {
+            let cli = Cli::try_parse_from(["dfdu", "--color", value]).expect(value);
+            assert_eq!(cli.color, ColorFlag(Some(level)));
+        }
+        assert!(Cli::try_parse_from(["dfdu", "--color", "always"]).is_err());
+        // Browser options are not options of `dfdu scan`.
+        assert!(Cli::try_parse_from(["dfdu", "--theme", "dark", "scan", "/x"]).is_err());
+    }
+
+    #[test]
+    fn bad_theme_file_is_reported() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let themes = tmp.path();
+        let write = |name: &str, text: &str| fs::write(themes.join(name), text).expect("write");
+        write("broken.toml", "base = \"sepia\"\n");
+        write("typo.toml", "[tokens]\nfg = \"#12345\"\n");
+        write("syntax.toml", "base = \n");
+        write(
+            "nord.toml",
+            "base = \"light\"\n[tokens]\nfg = \"#2e3440\"\n",
+        );
+        fs::create_dir(themes.join("dir.toml")).expect("mkdir");
+
+        let err = |name: &str| theme_choice(name, Some(themes)).expect_err(name);
+        let missing = err("missing");
+        assert!(missing.contains("not a built-in theme"), "{missing}");
+        assert!(missing.contains("missing.toml"), "{missing}");
+        let broken = err("broken");
+        assert!(
+            broken.contains("broken.toml") && broken.contains("sepia"),
+            "{broken}"
+        );
+        let typo = err("typo");
+        assert!(typo.contains("`fg`") && typo.contains("#12345"), "{typo}");
+        assert!(err("syntax").contains("syntax.toml"));
+        assert!(err("dir").contains("dir.toml"));
+        assert!(err("../nord").contains("not a built-in theme"));
+        assert!(theme_choice("nord", None).is_err());
+
+        match theme_choice("nord", Some(themes)) {
+            Ok(ThemeChoice::File(file)) => {
+                assert_eq!(file.name.as_deref(), Some("nord"));
+                assert_eq!(file.base(), "light");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            theme_choice("high-contrast", None),
+            Ok(ThemeChoice::Builtin("high-contrast"))
+        ));
+        assert!(matches!(theme_choice("auto", None), Ok(ThemeChoice::Auto)));
+    }
 }

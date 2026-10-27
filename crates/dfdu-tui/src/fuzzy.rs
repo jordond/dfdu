@@ -2,11 +2,6 @@
 //! query must match (in any order); a word with an upper-case letter matches case, others do
 //! not, and a word without accents also matches accented letters.
 
-#![allow(
-    dead_code,
-    reason = "used by the filter, the palette and the help search"
-)]
-
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -15,26 +10,39 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 #[derive(Clone, Debug, Default)]
 pub struct Fuzzy {
     atoms: Vec<Atom>,
+    /// Per atom, the case and normalization settings it matches with.
+    configs: Vec<(bool, bool)>,
     matcher: Matcher,
     chars: Vec<char>,
 }
 
 impl Fuzzy {
     pub fn new(query: &str) -> Self {
+        let atoms: Vec<Atom> = query
+            .split_whitespace()
+            .map(|w| {
+                Atom::new(
+                    w,
+                    CaseMatching::Smart,
+                    Normalization::Smart,
+                    AtomKind::Fuzzy,
+                    false,
+                )
+            })
+            .collect();
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        // Scoring sets the matcher up the way the atom matches.
+        let configs = atoms
+            .iter()
+            .map(|a| {
+                a.score(Utf32Str::Ascii(b""), &mut matcher);
+                (matcher.config.ignore_case, matcher.config.normalize)
+            })
+            .collect();
         Fuzzy {
-            atoms: query
-                .split_whitespace()
-                .map(|w| {
-                    Atom::new(
-                        w,
-                        CaseMatching::Smart,
-                        Normalization::Smart,
-                        AtomKind::Fuzzy,
-                        false,
-                    )
-                })
-                .collect(),
-            matcher: Matcher::new(Config::DEFAULT),
+            atoms,
+            configs,
+            matcher,
             chars: Vec::new(),
         }
     }
@@ -44,7 +52,9 @@ impl Fuzzy {
         self.atoms.is_empty()
     }
 
-    /// The score of `text` (higher is better), or `None` if it does not match.
+    /// The score of `text` (higher is better), or `None` if it does not match, as
+    /// [`Fuzzy::indices`] returns it.
+    #[cfg(test)]
     pub fn score(&mut self, text: &str) -> Option<u32> {
         let haystack = utf32(text, &mut self.chars);
         let mut total = 0;
@@ -54,8 +64,27 @@ impl Fuzzy {
         Some(total)
     }
 
-    /// Like [`Fuzzy::score`], and sets `out` to the indices of the matched characters of
-    /// `text` (counted in `char`s), sorted and without duplicates.
+    /// Whether `text` matches, as [`Fuzzy::indices`] decides it but faster: a greedy match that
+    /// nothing is scored for. It agrees with nucleo's scoring except for rare case-folding
+    /// cases, such as Greek final sigma (`σ` in the query, `ς` in the name), where it may
+    /// report a match that scoring does not find.
+    pub fn matches(&mut self, text: &str) -> bool {
+        let haystack = utf32(text, &mut self.chars);
+        self.atoms
+            .iter()
+            .zip(&self.configs)
+            .all(|(atom, &(case, norm))| {
+                self.matcher.config.ignore_case = case;
+                self.matcher.config.normalize = norm;
+                self.matcher
+                    .fuzzy_match_greedy(haystack, atom.needle_text())
+                    .is_some()
+            })
+    }
+
+    /// The score of `text` (higher is better), or `None` if it does not match. Sets `out` to
+    /// the indices of the matched characters of `text` (counted in `char`s), sorted and
+    /// without duplicates.
     pub fn indices(&mut self, text: &str, out: &mut Vec<u32>) -> Option<u32> {
         out.clear();
         let haystack = utf32(text, &mut self.chars);
@@ -133,11 +162,60 @@ mod tests {
     }
 
     #[test]
+    fn matches_agrees_with_score() {
+        let names = [
+            "sort by size",
+            "README.md",
+            "readme.md",
+            "Café",
+            "cafe\u{fffd}.txt",
+            "node_modules",
+            "n_o_d_e",
+            "日本語のファイル",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+            "",
+        ];
+        let queries = [
+            "s",
+            "srt sz",
+            "sz srt",
+            "README",
+            "readme",
+            "Readme",
+            "cafe",
+            "café",
+            "\u{fffd}",
+            "node",
+            "日本",
+            "ファ イル",
+            "ab",
+            "aab",
+            "ba",
+            "zz",
+        ];
+        for q in queries {
+            let mut f = Fuzzy::new(q);
+            for n in names {
+                assert_eq!(f.matches(n), f.score(n).is_some(), "{q:?} in {n:?}");
+            }
+        }
+        // The known exception, a case-folding quirk with a final sigma `ς` against `σ`:
+        // scoring finds no match here but the greedy one does, so the row shows without a
+        // highlight. If this fails, nucleo changed: drop the exception from the doc of
+        // `Fuzzy::matches`.
+        let mut f = Fuzzy::new("éσ");
+        assert!(f.matches("Éeς"));
+        assert_eq!(f.score("Éeς"), None);
+        assert_eq!(f.indices("Éeς", &mut Vec::new()), None);
+    }
+
+    #[test]
     fn empty_query_matches_everything() {
         for q in ["", "   "] {
             let mut f = Fuzzy::new(q);
             assert!(f.is_empty());
             assert_eq!(f.score("anything"), Some(0));
+            assert!(f.matches("anything"));
             assert_eq!(f.score(""), Some(0));
             let mut out = Vec::new();
             assert_eq!(f.indices("x", &mut out), Some(0));

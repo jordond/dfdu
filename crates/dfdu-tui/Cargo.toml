@@ -24,8 +24,8 @@ terminal-colorsaurus.workspace = true
 etcetera.workspace = true
 toml.workspace = true
 serde.workspace = true
+dunce.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 tempfile.workspace = true
-dunce.workspace = true

@@ -3,7 +3,7 @@
 use dfdu_scan::panic_message;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -22,20 +22,31 @@ use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 struct Inbox {
     tx: Sender<Batch>,
     budget: Arc<Budget>,
+    /// Messages sent so far, counted before they enter the channel: a reader that sees the
+    /// applier's count of messages received under the lock sees at least as many sent.
+    sent: Arc<AtomicU64>,
 }
 
 impl Inbox {
-    fn new(budget_bytes: usize) -> (Inbox, Receiver<Batch>, Arc<Budget>) {
+    fn new(budget_bytes: usize) -> (Inbox, Receiver<Batch>, Arc<Budget>, Arc<AtomicU64>) {
         let (tx, rx) = unbounded();
         let budget = Arc::new(Budget::new(budget_bytes));
+        let sent = Arc::new(AtomicU64::new(0));
         (
             Inbox {
                 tx,
                 budget: budget.clone(),
+                sent: sent.clone(),
             },
             rx,
             budget,
+            sent,
         )
+    }
+
+    fn push(&self, batch: Batch) {
+        self.sent.fetch_add(batch.msgs.len() as u64, Relaxed);
+        let _ = self.tx.send(batch);
     }
 }
 
@@ -44,7 +55,7 @@ impl Sink for Inbox {
         match self.budget.try_acquire(batch.bytes) {
             Some(n) => {
                 batch.bytes = n;
-                let _ = self.tx.send(batch);
+                self.push(batch);
                 Ok(())
             }
             None => Err(batch),
@@ -53,11 +64,11 @@ impl Sink for Inbox {
 
     fn send(&self, mut batch: Batch) {
         batch.bytes = self.budget.acquire(batch.bytes);
-        let _ = self.tx.send(batch);
+        self.push(batch);
     }
 
     fn send_control(&self, msg: ScanMsg) {
-        let _ = self.tx.send(Batch {
+        self.push(Batch {
             msgs: vec![msg],
             bytes: 0,
         });
@@ -195,6 +206,7 @@ pub struct Engine<B: Backend> {
     delete_abort: Arc<AtomicBool>,
     deleter: Option<JoinHandle<()>>,
     budget: Arc<Budget>,
+    sent: Arc<AtomicU64>,
 }
 
 /// Longest time the applier holds the write lock in one slice.
@@ -219,7 +231,7 @@ impl<B: Backend> Engine<B> {
             limits.pool_workers = opts.workers.max(1);
         }
         let shared = Arc::new(Shared::new(backend, limits));
-        let (inbox, inbox_rx, budget) = Inbox::new(opts.budget_bytes);
+        let (inbox, inbox_rx, budget, sent) = Inbox::new(opts.budget_bytes);
         let transit = budget.clone();
         let inbox = Arc::new(inbox);
         let model = Arc::new(RwLock::new(Model::default()));
@@ -293,6 +305,7 @@ impl<B: Backend> Engine<B> {
             delete_abort,
             deleter: Some(deleter_thread),
             budget: transit,
+            sent,
         }
     }
 
@@ -334,6 +347,13 @@ impl<B: Backend> Engine<B> {
     /// The byte budget on scanner data in transit to the applier.
     pub fn budget(&self) -> &Budget {
         &self.budget
+    }
+
+    /// Scanner messages sent to the applier so far. Those not yet in
+    /// [`Stats::messages`](crate::Stats::messages) are in transit; read under the lock, the
+    /// count is never below it.
+    pub fn sent_messages(&self) -> u64 {
+        self.sent.load(Relaxed)
     }
 
     /// Blocks until every command sent so far has been applied, no job is running and no

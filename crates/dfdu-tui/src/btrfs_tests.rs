@@ -141,7 +141,7 @@ fn data_used_outside_the_scan_may_free_less() {
     );
     select(&mut app, "a.bin", t);
     app.key(key(KeyCode::Char('D')), t);
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete { .. }));
+    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
     let dialog = render(&mut app, t, 160, 24);
     let want = format!(
         "May free less: {} of it is also used outside the scan.",
