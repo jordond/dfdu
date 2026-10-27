@@ -1,5 +1,5 @@
 //! The interactive browser. The run loop reads the engine model under the read lock only to copy
-//! a [`snapshot::Snapshot`] and the features' [`extras::Extras`], then draws from the copy.
+//! a [`snapshot::Snapshot`] and the features' `extras::Extras`, then draws from the copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
 //! `view`. Each feature has its own module with its state, keys and drawing: the overlays

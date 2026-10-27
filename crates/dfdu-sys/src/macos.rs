@@ -27,7 +27,7 @@ const _: () = {
 };
 
 /// Reads the next entries of the open directory `dir` into `buf` with `getattrlistbulk`,
-/// asking for [`BULK_COMMON`] and [`BULK_FILE`]. Returns the number of records written (parse
+/// asking for `BULK_COMMON` and `BULK_FILE`. Returns the number of records written (parse
 /// them with [`crate::parse_bulk_record`]); 0 at the end of the directory. Retries on `EINTR`.
 ///
 /// Each call continues where the previous one on the same descriptor stopped. Entries `.` and

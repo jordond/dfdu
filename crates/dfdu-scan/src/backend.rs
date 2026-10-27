@@ -156,7 +156,7 @@ fn mount_of(path: &Path) -> u64 {
 
 /// `std::fs` backend: one `stat` per entry, no OS-specific fast paths. On Windows, where std
 /// has no allocation size, file id or link count, each entry is opened for them instead
-/// ([`dfdu_sys::stat_path`]).
+/// (`dfdu_sys::stat_path`).
 #[derive(Default, Debug)]
 pub struct PortableBackend {
     /// Mount classes from the mount table; re-read when an unknown mount appears.
