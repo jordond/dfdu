@@ -584,12 +584,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     app.show_errors(list);
     let out = render(&mut app, t0, 100, 12);
     assert!(out.contains("2 not read"), "{out}");
-    // Paths are shown with the platform's separator.
-    let shown = std::path::Path::new("a").join("b").join("locked");
-    assert!(
-        out.contains(&format!("{}/  permission denied", shown.display())),
-        "{out}"
-    );
+    assert!(out.contains("a/b/locked/  permission denied"), "{out}");
     app.key(key(KeyCode::Enter), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::None));
     let mut target = app.target.clone();
