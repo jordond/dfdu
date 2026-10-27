@@ -4,3 +4,8 @@ retries = 2
 fail-fast = false
 failure-output = "immediate-final"
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Frame-timing tests measure gaps between frames; each runs with no other test beside it.
+[[profile.default.overrides]]
+filter = "binary_id(dfdu-tui::idle) | binary_id(dfdu-tui::idle_panels) | binary_id(dfdu-tui::latency)"
+threads-required = "num-cpus"
