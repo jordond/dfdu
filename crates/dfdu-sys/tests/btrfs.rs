@@ -128,9 +128,13 @@ fn file_extent_items_as_root() {
     let tiny = items("plain/tiny.txt");
     assert_eq!(tiny.len(), 1);
     assert_eq!(
-        (tiny[0].kind, tiny[0].disk_num_bytes),
+        (tiny[0].kind, tiny[0].num_bytes),
         (FileExtentKind::Inline, 5)
     );
+    // Under compress-force, newer kernels store even this item compressed, and larger.
+    if tiny[0].compression == 0 {
+        assert_eq!(tiny[0].disk_num_bytes, 5);
+    }
     let text = items("plain/text.txt");
     assert!(text.iter().all(|e| e.compression == 3), "zstd");
     let on_disk: u64 = text.iter().map(|e| e.disk_num_bytes).sum();
