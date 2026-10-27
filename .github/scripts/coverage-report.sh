@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # backticks in single quotes are Markdown fences
 # Writes lcov.info and the coverage summary from a finished `cargo llvm-cov --no-report` run.
-# With a base revision, also writes coverage-comment.md: workspace and changed-line coverage.
+# With a base revision, also writes coverage.md: workspace and changed-line coverage.
 # Usage: coverage-report.sh <min-line-percent> [base-rev]
 set -euo pipefail
 
@@ -29,4 +29,4 @@ lines=$(awk '/^TOTAL/ {print $10}' <<<"$table")
     echo
     printf '```\n%s\n```\n' "$table"
     echo '</details>'
-} >coverage-comment.md
+} >coverage.md
