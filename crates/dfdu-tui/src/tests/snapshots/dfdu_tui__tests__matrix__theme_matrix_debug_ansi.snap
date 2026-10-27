@@ -1,0 +1,39 @@
+---
+source: crates/dfdu-tui/src/tests/matrix.rs
+expression: "styled(&frame(state, theme(name, level)))"
+---
+ dfdu  /home/jo                                                                    ⠋ scanning 00:14
+L0 0-5 bold | 7-14 bold
+ 1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
+L1 26-32 fg=red | 75-99 fg=darkgray
+ ⠋ 112.0 GiB  ████████████████████████   46.4%  812.╭ Debug ───────────────────────────────────────╮
+L2 0-11 fg=darkgray reversed | 12-13 reversed | 14-37 fg=cyan reversed | 38-45 reversed | 46-51 fg=darkgray reversed | 53-59 bold
+ ⠙  78.0 GiB  ████████████████▊          32.3%    1.│ sent 0  received 0  pending 0                │
+L3 0-11 fg=darkgray | 14-37 fg=cyan | 46-51 fg=darkgray
+    51.0 GiB  ██████████▉                21.1%     2│ chunks 0  closes 0  entries 0                │
+L4 14-37 fg=cyan | 46-51 fg=darkgray
+   625.0 MiB  ▏                           0.3%      │ discarded job 0  cut 0  late 0               │
+L5 14-37 fg=cyan | 46-51 fg=darkgray
+ !       0 B                              0.0%      │ corrupt 0  lost 0  duplicate 0               │
+L6 0-1 fg=red | 2-11 fg=darkgray | 14-37 fg=cyan | 46-51 fg=darkgray
+ ~       0 B                              0.0%      │ transit 0 B / 0 B  peak 0 B                  │
+L7 0-1 fg=yellow | 2-11 fg=darkgray | 14-37 fg=cyan | 46-51 fg=darkgray
+                                                    │ tasks 0 (0 abandoned)  queued 0 + 0          │
+                                                    │ lock 0µs  0 slices  0 entries/s              │
+                                                    │ hold p50 <0µs  p99 <0µs  max <0µs            │
+                                                    │ over 2ms 0  wait p99 <0µs  max <0µs          │
+                                                    │ jobs 0 running  stall reports 0              │
+                                                    │ stalled dirs 0                               │
+                                                    │ ui draw 0µs  read 0µs                        │
+                                                    ╰──────────────────────────────────────────────╯
+
+
+
+
+
+ 1 directory is not responding: wait, or press x to skip it
+L21 0-58 fg=yellow
+
+L22 0-0 fg=darkgray
+ ↑↓ move  → open  ← up  s n C M sort  S re-sort  Space mark  / filter  ! errors  ? help  q quit
+L23 1-2 bold | 3-7 fg=darkgray | 10-10 bold | 11-15 fg=darkgray | 18-18 bold | 19-21 fg=darkgray | 24-30 bold | 31-35 fg=darkgray | 38-38 bold | 39-46 fg=darkgray | 49-53 bold | 54-58 fg=darkgray | 61-61 bold | 62-68 fg=darkgray | 71-71 bold | 72-78 fg=darkgray | 81-81 bold | 82-86 fg=darkgray | 89-89 bold | 90-94 fg=darkgray

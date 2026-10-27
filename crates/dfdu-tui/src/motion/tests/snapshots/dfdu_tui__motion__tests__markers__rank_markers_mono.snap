@@ -9,4 +9,4 @@ expression: frame
        200 B  ███▎               13.3%       1  b  ↓1
 
 
- ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? h
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  ? help  q quit

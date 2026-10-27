@@ -3,9 +3,10 @@
 //! A click selects a list row and a second click on it within [`DOUBLE_CLICK`] opens it; a click
 //! on the "new entries" row sorts, one on a breadcrumb goes to its directory, and one outside an
 //! open overlay closes it. The delete dialog ignores the mouse, so a stray click never confirms
-//! or cancels a delete. The wheel moves the selection, or scrolls the details pane. Pointer
-//! movement changes nothing and is not input: it draws no frame and does not hold off the
-//! automatic re-sort.
+//! or cancels a delete. The wheel moves the selection, or scrolls the details pane. Over the
+//! debug panel, which hides the rows below it, clicks and the wheel do nothing. Pointer movement
+//! changes nothing and is not input: it draws no frame and does not hold off the automatic
+//! re-sort.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -52,7 +53,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
         _ => return None,
     };
     app.note_input(now);
-    if !matches!(app.overlay, Overlay::None) {
+    if !matches!(app.overlay, Overlay::None) || over_debug(app, at) {
         return None;
     }
     let step = if up {
@@ -74,6 +75,10 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     Some(Vec::new())
 }
 
+fn over_debug(app: &App, at: Position) -> bool {
+    app.areas.debug.is_some_and(|r| r.contains(at))
+}
+
 fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     match app.overlay {
         Overlay::None => {}
@@ -83,6 +88,9 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
             app.overlay = Overlay::None;
             return Some(Vec::new());
         }
+    }
+    if over_debug(app, at) {
+        return None;
     }
     if let Some(c) = app.mouse.crumbs.iter().find(|c| c.area.contains(at)) {
         let (child, root) = (c.child.clone(), app.snap.root_path.clone());
@@ -214,6 +222,30 @@ mod tests {
         app.reorder(t0);
         assert_eq!(app.new_count, 0);
         assert_eq!(app.rows.len(), 2);
+    }
+
+    #[test]
+    fn clicks_and_wheel_over_the_debug_panel_change_nothing() {
+        let t0 = Instant::now();
+        let mut app = browser(t0);
+        crate::debug::toggle(&mut app);
+        render(&mut app, t0, 100, 20);
+        let panel = app.areas.debug.expect("debug panel");
+        let (x, y) = (panel.x + 2, TOP + 1);
+        assert!(panel.contains(Position::new(x, y)));
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+        ] {
+            assert!(event(&mut app, mouse(kind, x, y), t0).is_none(), "{kind:?}");
+        }
+        assert_eq!(selected(&app).as_deref(), Some("d0"));
+        assert_eq!(app.target.path, Path::new(""));
+        // Left of the panel, the same row takes the click.
+        event(&mut app, left(panel.x - 1, y), t0).expect("redraw");
+        assert_eq!(selected(&app).as_deref(), Some("d1"));
     }
 
     #[test]

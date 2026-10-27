@@ -2,7 +2,7 @@
 //! received.
 
 use std::fs;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
@@ -41,7 +41,16 @@ fn sent_counter_counts_messages() {
         std::thread::sleep(Duration::from_micros(200));
     }
     assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
-    let (received, sent) = engine.read(|m| (m.status.stats.messages, engine.sent_messages()));
+    // Idle does not wait for a message still in the channel (the watchdog's late
+    // `Quiescent`): wait until the applier has taken it.
+    let settle = Instant::now();
+    let (received, sent) = loop {
+        let (received, sent) = engine.read(|m| (m.status.stats.messages, engine.sent_messages()));
+        if sent == received || settle.elapsed() >= Duration::from_secs(5) {
+            break (received, sent);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
     assert!(received > 0);
     assert_eq!(sent, received, "after {samples} samples during the scan");
     engine.shutdown(Duration::from_millis(200));

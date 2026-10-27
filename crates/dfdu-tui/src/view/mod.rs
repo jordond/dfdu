@@ -27,6 +27,8 @@ pub struct Areas {
     pub footer: Rect,
     /// The open overlay.
     pub overlay: Option<Rect>,
+    /// The debug panel, over the list.
+    pub debug: Option<Rect>,
 }
 
 fn mmss(d: std::time::Duration) -> String {
@@ -56,6 +58,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         status,
         footer,
         overlay: None,
+        debug: None,
     };
     let frame = now.duration_since(app.started).as_millis() as u64 / 100;
 
@@ -73,14 +76,10 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     if let Some(pane) = pane {
         details::draw(f, app, pane);
     }
-    debug::draw(f, app, body);
+    app.areas.debug = debug::draw(f, app, body);
     app.areas.overlay = match &app.overlay {
         Overlay::None => None,
-        #[allow(
-            clippy::unneeded_struct_pattern,
-            reason = "matches whatever fields the variant has"
-        )]
-        Overlay::Help { .. } => Some(help::draw(f, app, area)),
+        Overlay::Help(_) => Some(help::draw(f, app, area)),
         Overlay::Errors { .. } => Some(error_list::draw(f, app, area)),
         Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),

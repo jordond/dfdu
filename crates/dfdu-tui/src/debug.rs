@@ -75,16 +75,18 @@ pub fn toggle(app: &mut App) {
 }
 
 /// Draws the panel in the top-right corner of `body` (the list and the details pane), over the
-/// list, if it is open and the terminal is large enough. It takes no keys.
-pub fn draw(f: &mut Frame, app: &App, body: Rect) {
+/// list, if it is open and the terminal is large enough, and returns where. It takes no keys.
+pub fn draw(f: &mut Frame, app: &App, body: Rect) -> Option<Rect> {
     let screen = f.area();
     if !app.debug.open || screen.width < MIN_AREA.0 || screen.height < MIN_AREA.1 {
-        return;
+        return None;
     }
     // The list starts where `body` does: this keeps the panel left of a details pane on the
-    // right, and lets it reach over a sheet below the list.
+    // right and above a sheet below the list.
+    let list = app.areas.list;
     let area = Rect {
-        width: app.areas.list.width.min(body.width),
+        width: list.width.min(body.width),
+        height: list.height.min(body.height),
         ..body
     };
     let lines = lines(
@@ -101,6 +103,7 @@ pub fn draw(f: &mut Frame, app: &App, body: Rect) {
         .border_style(app.theme.border)
         .title(Span::styled(" Debug ", app.theme.title));
     f.render_widget(Paragraph::new(lines).block(block), r);
+    Some(r)
 }
 
 /// Copies the counters; runs under the read lock. Read whether the panel is open or not (a copy
@@ -394,6 +397,20 @@ mod tests {
         let out = crate::tests::text(&buf);
         assert_eq!(buf[(pane.x - 1, pane.y)].symbol(), "╮", "{out}");
         assert_eq!(buf[(pane.x, pane.y)].symbol(), "╭", "{out}");
+    }
+
+    #[test]
+    fn panel_stays_above_the_details_sheet() {
+        let mut app = open_app(info(0), Theme::no_color());
+        let t0 = app.started;
+        crate::details::toggle(&mut app);
+        let out = render(&mut app, t0, 80, 24);
+        let (panel, sheet) = (
+            app.areas.debug.expect("debug panel"),
+            app.areas.details.expect("details sheet"),
+        );
+        assert_eq!(panel.bottom(), app.areas.list.bottom(), "{out}");
+        assert!(!panel.intersects(sheet), "{out}");
     }
 
     #[test]

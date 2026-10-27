@@ -25,4 +25,4 @@ expression: out
 │ largest by disk usage                                                        │
 ╰────────────────────────────────────────────────────────────────────── ↓ more ╯
 
- ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d D delete  ! errors
+ ↑↓ move  → open  ← up  Space mark  / filter  ! errors  ? help  q quit

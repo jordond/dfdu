@@ -234,17 +234,7 @@ pub fn read(m: &Model, app: &App) -> Marked {
                 break;
             }
             for i in names.remove(tree.name(c)).into_iter().flatten() {
-                // The identity check of `Target::resolve`: a new file or directory under the
-                // old name is not the marked one.
-                let same = items[i].target.ident.is_none_or(|id| {
-                    id.dev_ino == (0, 0)
-                        || id
-                            == Ident {
-                                dev_ino: tree.dev_ino(c),
-                                kind: tree.kind(c),
-                            }
-                });
-                ixs[i] = same.then_some(c);
+                ixs[i] = items[i].target.matches(tree, c).then_some(c);
             }
         }
     }

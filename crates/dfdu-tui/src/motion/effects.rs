@@ -1,6 +1,6 @@
 //! The effects on finished frames, with tachyonfx: the flash of moved rows and the fade of
 //! deleted ones. tachyonfx mixes colours in RGB and writes RGB colours into the cells, so the
-//! colour effects run only at TrueColor; at other levels a flash reverses the row.
+//! colour effects run only where [`rgb_effects`] says; elsewhere a flash reverses the row.
 
 use std::time::Duration;
 
@@ -12,10 +12,19 @@ use tachyonfx::{EffectTimer, Interpolation, ToRgbComponents, fx};
 use super::{FADE, FLASH};
 use crate::theme::{ColorLevel, Rgb, Theme};
 
-/// Flashes `area`, `elapsed` after the flash started: at TrueColor its background fades from
-/// a tint of the theme's accent back to its own colour, otherwise it is reversed throughout.
+/// True when the colour effects run: at TrueColor, on a background that is known (queried) or
+/// that the theme's RGB text colour was chosen for. A theme that leaves the text colour to the
+/// terminal (`ansi`, `high-contrast`) on an unknown background would be mixed towards a guess.
+pub(super) fn rgb_effects(theme: &Theme) -> bool {
+    theme.level() == ColorLevel::TrueColor
+        && (theme.background().is_some() || matches!(theme.fg.fg, Some(Color::Rgb(..))))
+}
+
+/// Flashes `area`, `elapsed` after the flash started: with [`rgb_effects`] its background fades
+/// from a tint of the theme's accent back to its own colour, otherwise it is reversed
+/// throughout.
 pub(super) fn flash(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Duration) {
-    if theme.level() != ColorLevel::TrueColor {
+    if !rgb_effects(theme) {
         for pos in area.positions() {
             if let Some(cell) = buf.cell_mut(pos) {
                 cell.modifier.toggle(Modifier::REVERSED);
@@ -38,10 +47,14 @@ pub(super) fn flash(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Durati
 }
 
 /// Fades the text of `area` halfway from the dim colour to the background, `elapsed` after the
-/// entry was deleted; the row then stays faded.
+/// entry was deleted; the row then stays faded. Only with [`rgb_effects`], and only when the
+/// theme has a dim or text colour: the terminal's own text colour is not known, and a fade
+/// from the background to itself would hide the row.
 pub(super) fn fade(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Duration) {
+    let Some(dim) = theme.dim.fg.or(theme.fg.fg).and_then(rgb) else {
+        return;
+    };
     let base = background(theme);
-    let dim = theme.dim.fg.or(theme.fg.fg).and_then(rgb).unwrap_or(base);
     let timer = EffectTimer::new(FADE, Interpolation::QuadOut);
     fx::fade_to_fg(color(mix(dim, base, 0.5)), timer).process(elapsed, buf, area);
 }

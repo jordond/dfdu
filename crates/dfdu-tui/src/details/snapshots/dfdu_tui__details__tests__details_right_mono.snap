@@ -21,4 +21,4 @@ expression: out
                                                                                 │ ▏            1000 B  d.txt           │
                                                                                 ╰────────────────────────────── ↓ more ╯
 
- ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d D delete  ! errors  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  ! errors  ? help  q quit

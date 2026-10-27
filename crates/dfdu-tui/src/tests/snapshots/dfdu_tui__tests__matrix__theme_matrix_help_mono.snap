@@ -1,0 +1,52 @@
+---
+source: crates/dfdu-tui/src/tests/matrix.rs
+expression: "styled(&frame(state, theme(name, level)))"
+---
+ dfdu  /home/jo                                                                    ⠋ scanning 00:14
+L0 0-5 bold | 7-14 bold
+ 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+L1 2-86 bold | 87-96 bold dim | 97-97 bold | 98-99 dim
+ ⠋┃ Navigate                                        Act                                          ┃
+L2 0-1 dim reversed | 2-11 bold | 51-54 bold | 97-97 bold
+ ⠙┃ ↑ k            move up                          r      rescan the selected directory         ┃
+L3 0-1 dim | 2-2 bold | 4-6 bold | 52-52 bold | 97-97 bold
+  ┃ ↓ j            move down                        x      skip directories that are not         ┃
+L4 2-2 bold | 4-6 bold | 52-52 bold | 97-97 bold
+  ┃ PgUp           page up                                 responding                            ┃
+L5 2-2 bold | 4-7 bold | 97-97 bold
+ !┃ PgDn           page down                        Space  mark or unmark, then move down        ┃
+L6 0-2 bold | 4-7 bold | 52-56 bold | 97-97 bold
+ ~┃ g Home         first entry                      :      clear all marks (in the palette)      ┃
+L7 0-2 bold | 4-9 bold | 52-52 dim | 97-97 bold
+  ┃ G End          last entry                       d      move to Trash                         ┃
+L8 2-2 bold | 4-8 bold | 52-52 bold | 97-97 bold
+  ┃ → l Enter      open directory                   D      delete permanently (type delete)      ┃
+L9 2-2 bold | 4-12 bold | 52-52 bold | 97-97 bold
+  ┃ ← h Backspace  parent directory                                                              ┃
+L10 2-2 bold | 4-16 bold | 97-97 bold
+  ┃                                                 Panels                                       ┃
+L11 2-2 bold | 51-57 bold | 97-97 bold
+  ┃ Sort                                            /         filter this directory              ┃
+L12 2-7 bold | 52-52 bold | 97-97 bold
+  ┃ s  sort by size (again: reverse)                i         details of the selected entry      ┃
+L13 2-2 bold | 4-4 bold | 52-52 bold | 97-97 bold
+  ┃ n  sort by name (again: reverse)                Tab       move focus between the list and    ┃
+L14 2-2 bold | 4-4 bold | 52-54 bold | 97-97 bold
+  ┃ C  sort by items (again: reverse)                         the details                        ┃
+L15 2-2 bold | 4-4 bold | 97-97 bold
+  ┃ M  sort by modification time (again:            !         list what could not be read, and   ┃
+L16 2-2 bold | 4-4 bold | 52-52 bold | 97-97 bold
+  ┃    reverse)                                               go to it                           ┃
+L17 2-2 bold | 97-97 bold
+  ┃ S  re-sort now                                  ? F1      keys                               ┃
+L18 2-2 bold | 4-4 bold | 52-55 bold | 97-97 bold
+  ┃                                                 : Ctrl-P  command palette                    ┃
+L19 2-2 bold | 52-59 bold | 97-97 bold
+  ┃ Display                                         F12       debug overlay                      ┃
+L20 2-10 bold | 52-54 bold | 97-97 bold
+ 1┃ a  toggle apparent size / disk usage                                                         ┃
+L21 0-2 bold | 4-4 bold | 97-97 bold
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
+L22 0-0 dim | 2-88 bold | 89-96 bold dim | 97-97 bold
+ ↑↓ scroll  PgUp PgDn page  / search  Esc close
+L23 1-2 bold | 3-9 dim | 12-20 bold | 21-25 dim | 28-28 bold | 29-35 dim | 38-40 bold | 41-46 dim

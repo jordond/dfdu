@@ -1,1 +1,2 @@
 crates/dfdu-tui/src/snapshots/*.snap text eol=lf
+crates/dfdu-tui/src/**/snapshots/*.snap text eol=lf

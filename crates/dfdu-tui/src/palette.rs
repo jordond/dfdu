@@ -168,7 +168,7 @@ fn run_entry(app: &mut App, run: Run, now: Instant) -> Vec<Effect> {
     match run {
         Run::Action(a) => keys::run(app, a, now),
         Run::Theme(name) => {
-            if let Some(theme) = Theme::named(&name, app.theme.level(), app.theme.background()) {
+            if let Some(theme) = Theme::named(&name, app.color_level, app.background) {
                 app.theme = theme;
             }
             Vec::new()
@@ -259,7 +259,7 @@ fn entry_line(app: &App, e: &Entry, indices: &[u32], width: usize) -> Line<'stat
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::style::Modifier;
+    use ratatui::style::{Color, Modifier};
 
     use super::*;
     use crate::app::keys::tests::press;
@@ -385,7 +385,7 @@ mod tests {
         typed(&mut app, "keys", t0);
         assert_eq!(labels(&app)[0], "keys");
         app.key(press(KeyCode::Enter), t0);
-        assert!(matches!(app.overlay, Overlay::Help));
+        assert!(matches!(app.overlay, Overlay::Help(_)));
         app.key(press(KeyCode::Esc), t0);
 
         app.key(press(KeyCode::Char(':')), t0);
@@ -429,6 +429,25 @@ mod tests {
         assert_eq!(style.bg, light.selected.bg);
         assert_eq!(style_at(&buf, "sort: size").fg, light.dim.fg);
         assert_ne!(light.dim.fg, dark.dim.fg);
+    }
+
+    #[test]
+    fn theme_after_mono_has_colours_again() {
+        let t0 = Instant::now();
+        let background = Some((0, 0, 0x20));
+        let dark = Theme::named("dark", ColorLevel::TrueColor, background).expect("dark");
+        let mut app = app_with(dark.clone(), t0);
+        for name in ["mono", "dark"] {
+            app.key(press(KeyCode::Char(':')), t0);
+            typed(&mut app, name, t0);
+            assert_eq!(labels(&app)[0], format!("Theme: {name}"));
+            app.key(press(KeyCode::Enter), t0);
+            assert_eq!(app.theme.name(), name);
+        }
+        assert_eq!(app.theme, dark);
+        let buf = render_buffer(&mut app, t0, 80, 8);
+        assert_eq!(style_at(&buf, "Library/").fg, dark.dir.fg);
+        assert!(matches!(dark.dir.fg, Some(Color::Rgb(..))), "{dark:?}");
     }
 
     #[test]

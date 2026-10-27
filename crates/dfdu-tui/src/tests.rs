@@ -6,6 +6,8 @@
 //! diff; `INSTA_UPDATE=always cargo test -p dfdu-tui` rewrites the snapshots, so a reviewer sees
 //! the change in the diff. With `CI` set, a missing snapshot fails instead of being written.
 
+mod matrix;
+
 use std::fs;
 use std::time::{Duration, Instant};
 
@@ -167,6 +169,13 @@ fn dir(i: u32, name: &str, size: u64, items: u64, mark: Mark) -> EntryData {
 /// A scan of a home directory 14 s in, with entries that are scanning, stalled and unreadable,
 /// drawn on 100x12.
 fn mid_scan(theme: Theme) -> Buffer {
+    let (mut app, now) = mid_scan_app(theme);
+    render_buffer(&mut app, now, 100, 12)
+}
+
+/// The browser on a scan of a home directory, with entries that are scanning, stalled and
+/// unreadable, and the time 14 s into the scan.
+pub(crate) fn mid_scan_app(theme: Theme) -> (App, Instant) {
     let t0 = Instant::now();
     let mut app = App::new(theme, t0);
     let root = test_entry(99, "/home/jo", 0);
@@ -209,7 +218,7 @@ fn mid_scan(theme: Theme) -> Buffer {
         ..Default::default()
     };
     app.refresh(snap, t0);
-    render_buffer(&mut app, t0 + Duration::from_secs(14), 100, 12)
+    (app, t0 + Duration::from_secs(14))
 }
 
 #[test]
@@ -405,7 +414,7 @@ fn overlays_fit_a_small_terminal() {
         kinds: vec![(dfdu_tree::ErrKind::PermissionDenied, 60)],
     };
     for overlay in [
-        crate::app::Overlay::Help,
+        crate::app::Overlay::Help(Default::default()),
         crate::app::Overlay::Errors { list, cursor: 49 },
         crate::app::Overlay::ConfirmDelete(crate::confirm::Confirm::new(
             vec![crate::confirm::Item {
@@ -426,7 +435,7 @@ fn overlays_fit_a_small_terminal() {
         let out = render(&mut app, t0, 40, 8);
         assert_eq!(out.lines().count(), 8, "{out}");
         let out = render(&mut app, t0, 100, 30);
-        assert!(out.contains('┌'), "{out}");
+        assert!(out.contains('┌') || out.contains('┏'), "{out}");
         if matches!(app.overlay, crate::app::Overlay::Errors { .. }) {
             // Scrolled to the cursor, with the count of what is not listed.
             assert!(out.contains("number/49/  permission denied"), "{out}");
@@ -435,8 +444,9 @@ fn overlays_fit_a_small_terminal() {
     }
 }
 
-#[test]
-fn shared_data_has_its_own_row_and_cannot_be_deleted() {
+/// A finished scan of `/r`: files `a` and `b` of 1000 bytes each, which hold 400 bytes alone
+/// and share 600 more, counted at the directory.
+pub(crate) fn shared_model() -> dfdu_engine::Model {
     use dfdu_tree::{Kind, Meta};
     let meta = |kind, size, ino| Meta {
         kind,
@@ -460,10 +470,15 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
         );
         let own = m.tree.own(f);
         m.tree.propagate_add(root, &own);
-        // Each file holds 400 bytes alone; 600 they share are counted at the directory.
         m.tree.set_measured(f, 400, false);
     }
     m.tree.add_home(root, 600, false);
+    m
+}
+
+#[test]
+fn shared_data_has_its_own_row_and_cannot_be_deleted() {
+    let m = shared_model();
     let mut target = Target::root();
     let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
     let shared: Vec<_> = snap.entries.iter().filter(|e| e.pseudo).collect();

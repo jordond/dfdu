@@ -1,0 +1,52 @@
+---
+source: crates/dfdu-tui/src/tests/matrix.rs
+expression: "styled(&frame(state, theme(name, level)))"
+---
+ dfdu  /home/jo                                                                    ⠋ scanning 00:14
+L0 0-5 fg=#1f2329 bold | 7-14 fg=#1f2329 bold
+ 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+L1 2-2 fg=#2a6f97 | 3-8 fg=#1f2329 bold | 9-86 fg=#2a6f97 | 87-96 fg=#6c7180 | 97-97 fg=#2a6f97 | 98-99 fg=#6c7180
+ ⠋┃ Navigate                                        Act                                          ┃
+L2 0-1 fg=#6c7180 bg=#d5dce8 bold | 2-2 fg=#2a6f97 | 3-11 fg=#1f2329 bold | 51-54 fg=#1f2329 bold | 97-97 fg=#2a6f97
+ ⠙┃ ↑ k            move up                          r      rescan the selected directory         ┃
+L3 0-1 fg=#6c7180 | 2-2 fg=#2a6f97 | 4-6 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ ↓ j            move down                        x      skip directories that are not         ┃
+L4 2-2 fg=#2a6f97 | 4-6 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ PgUp           page up                                 responding                            ┃
+L5 2-2 fg=#2a6f97 | 4-7 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+ !┃ PgDn           page down                        Space  mark or unmark, then move down        ┃
+L6 0-1 fg=#b3261e | 2-2 fg=#2a6f97 | 4-7 fg=#1b6b8c bold | 52-56 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+ ~┃ g Home         first entry                      :      clear all marks (in the palette)      ┃
+L7 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-9 fg=#1b6b8c bold | 52-52 fg=#6c7180 | 97-97 fg=#2a6f97
+  ┃ G End          last entry                       d      move to Trash                         ┃
+L8 2-2 fg=#2a6f97 | 4-8 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ → l Enter      open directory                   D      delete permanently (type delete)      ┃
+L9 2-2 fg=#2a6f97 | 4-12 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ ← h Backspace  parent directory                                                              ┃
+L10 2-2 fg=#2a6f97 | 4-16 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃                                                 Panels                                       ┃
+L11 2-2 fg=#2a6f97 | 51-57 fg=#1f2329 bold | 97-97 fg=#2a6f97
+  ┃ Sort                                            /         filter this directory              ┃
+L12 2-2 fg=#2a6f97 | 3-7 fg=#1f2329 bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ s  sort by size (again: reverse)                i         details of the selected entry      ┃
+L13 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ n  sort by name (again: reverse)                Tab       move focus between the list and    ┃
+L14 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-54 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ C  sort by items (again: reverse)                         the details                        ┃
+L15 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ M  sort by modification time (again:            !         list what could not be read, and   ┃
+L16 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃    reverse)                                               go to it                           ┃
+L17 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
+  ┃ S  re-sort now                                  ? F1      keys                               ┃
+L18 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-55 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃                                                 : Ctrl-P  command palette                    ┃
+L19 2-2 fg=#2a6f97 | 52-59 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ Display                                         F12       debug overlay                      ┃
+L20 2-2 fg=#2a6f97 | 3-10 fg=#1f2329 bold | 52-54 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+ 1┃ a  toggle apparent size / disk usage                                                         ┃
+L21 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
+L22 0-0 fg=#6c7180 | 2-88 fg=#2a6f97 | 89-96 fg=#6c7180 | 97-97 fg=#2a6f97
+ ↑↓ scroll  PgUp PgDn page  / search  Esc close
+L23 1-2 fg=#1b6b8c bold | 3-9 fg=#6c7180 | 12-20 fg=#1b6b8c bold | 21-25 fg=#6c7180 | 28-28 fg=#1b6b8c bold | 29-35 fg=#6c7180 | 38-40 fg=#1b6b8c bold | 41-46 fg=#6c7180

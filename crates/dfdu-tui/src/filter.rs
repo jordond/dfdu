@@ -119,6 +119,11 @@ impl Filter {
         c
     }
 
+    /// The query has words, so the entries that do not match it are hidden.
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
     /// Whether entry `index` (`e`) passes the filter; a lookup into what [`Filter::prepare`]
     /// computed.
     pub fn matches(&self, index: usize, _e: &EntryData) -> bool {
@@ -133,6 +138,7 @@ pub fn open(app: &mut App) {
     let text = f.input.text().to_owned();
     f.input.set(&text);
     f.counts = f.count(&app.snap.entries);
+    app.keep_exact_order();
 }
 
 /// True while the filter input takes the keys.
@@ -167,7 +173,7 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
 /// it hid is remembered, and one remembered comes back when it shows again.
 fn refilter(app: &mut App, now: Instant) {
     let before = selected_node(app);
-    app.request_sort();
+    app.request_refilter();
     app.reorder(now);
     let after = selected_node(app);
     let row_of = |app: &App, node| {
@@ -204,7 +210,7 @@ pub fn clear(app: &mut App) -> bool {
         return had;
     }
     f.input.clear();
-    app.request_sort();
+    app.request_refilter();
     if let Some((hidden, moved_to)) = app.filter.restore.take()
         && selected_node(app) == moved_to
         && let Some(e) = app.snap.entries.iter().find(|e| e.node == hidden)
@@ -489,7 +495,7 @@ pub(crate) mod tests {
         app.key(press(KeyCode::Enter), t0);
         // An open overlay takes Esc first.
         app.key(press(KeyCode::Char('?')), t0);
-        assert!(matches!(app.overlay, Overlay::Help));
+        assert!(matches!(app.overlay, Overlay::Help(_)));
         app.key(press(KeyCode::Esc), t0);
         app.reorder(t0);
         assert!(matches!(app.overlay, Overlay::None));
@@ -615,6 +621,112 @@ pub(crate) mod tests {
         assert_eq!(picked(&app), last);
     }
 
+    /// The rows an exact sort gives of the entries the filter and the hidden toggle show.
+    fn exact_rows(app: &App) -> Vec<usize> {
+        let mut o = crate::order::Order::default();
+        let visible = |i: usize, e: &EntryData| {
+            !e.ghost && !(app.hide_hidden && e.hidden()) && app.filter.matches(i, e)
+        };
+        o.sort_exact(&app.snap.entries, visible, app.sort);
+        o.rows().to_vec()
+    }
+
+    #[test]
+    fn filter_rows_are_those_of_an_exact_sort() {
+        let t0 = Instant::now();
+        let mut es = entries();
+        // Equal sizes, so the order of these comes from the tie-breaks.
+        es.push(test_entry(7, "dove", 9 << 30));
+        es.push(test_entry(8, "Dot", 9 << 30));
+        let mut app = app_with(Theme::no_color(), es.clone(), t0);
+        let steps: [&[KeyCode]; 7] = [
+            &[KeyCode::Char('/'), KeyCode::Char('o')],
+            &[KeyCode::Char('w')],
+            &[KeyCode::Backspace],
+            &[KeyCode::Backspace],
+            &[KeyCode::Char('d')],
+            &[KeyCode::Char('z')],
+            &[KeyCode::Esc],
+        ];
+        let mut seen = Vec::new();
+        for keys in steps {
+            for &k in keys {
+                app.key(press(k), t0);
+            }
+            app.reorder(t0);
+            assert_eq!(app.rows, exact_rows(&app), "after {keys:?}");
+            seen.push(app.rows.len());
+        }
+        assert_eq!(seen, [6, 1, 6, 9, 6, 0, 9]);
+
+        // During a scan, an entry that arrived since the last sort is sorted in with the rest.
+        typed(&mut app, "/do", t0);
+        es.push(test_entry(9, "docs", 10 << 30));
+        app.refresh(snap(es, 2), t0);
+        assert_eq!(app.new_count, 1);
+        typed(&mut app, "s", t0);
+        assert_eq!(names(&app), ["docs", "Downloads"]);
+        assert_eq!(app.rows, exact_rows(&app));
+        assert_eq!(app.new_count, 0);
+    }
+
+    #[test]
+    fn a_snapshot_before_the_cleared_filter_is_applied_is_sorted_in() {
+        let t0 = Instant::now();
+        let mut app = app_with(Theme::no_color(), entries(), t0);
+        typed(&mut app, "/d", t0);
+        app.key(press(KeyCode::Esc), t0);
+        // The scan's next snapshot arrives before the loop applies the cleared filter.
+        let mut es = entries();
+        es[6].size = 200 << 30;
+        es.push(test_entry(7, "zeta", 1 << 30));
+        app.refresh(snap(es, 2), t0);
+        app.reorder(t0);
+        assert_eq!(app.rows, exact_rows(&app));
+        assert_eq!(names(&app)[0], "build.log");
+        assert_eq!(app.rows.len(), 8);
+    }
+
+    #[test]
+    fn showing_hidden_files_before_the_cleared_filter_is_applied_shows_them() {
+        let t0 = Instant::now();
+        let mut app = app_with(Theme::no_color(), entries(), t0);
+        app.key(press(KeyCode::Char('e')), t0);
+        app.reorder(t0);
+        assert_eq!(app.rows.len(), 6);
+        typed(&mut app, "/d", t0);
+        app.key(press(KeyCode::Esc), t0);
+        app.key(press(KeyCode::Char('e')), t0);
+        app.reorder(t0);
+        assert_eq!(app.rows, exact_rows(&app));
+        assert_eq!(app.rows.len(), 7);
+    }
+
+    #[test]
+    fn filter_rows_after_an_automatic_sort_are_those_of_an_exact_sort() {
+        let t0 = Instant::now();
+        let es = |x: u64| vec![test_entry(0, "x", x), test_entry(1, "y", 1_001_000)];
+        let mut app = app_with(Theme::no_color(), es(1_000_000), t0);
+        assert_eq!(names(&app), ["y", "x"]);
+        // `x` overtakes `y` by less than 2%: the automatic sort keeps them where they are.
+        let later = t0 + Duration::from_secs(5);
+        app.refresh(snap(es(1_003_000), 2), later);
+        app.reorder(later);
+        assert_eq!(names(&app), ["y", "x"]);
+        app.key(press(KeyCode::Char('/')), later);
+        app.reorder(later);
+        assert_eq!(names(&app), ["y", "x"], "opening the filter moves nothing");
+        // Any change of the query gives the rows of an exact sort, like `S`.
+        typed(&mut app, " ", later);
+        assert_eq!(names(&app), ["x", "y"]);
+        typed(&mut app, "x", later);
+        assert_eq!(names(&app), ["x"]);
+        app.key(press(KeyCode::Backspace), later);
+        app.reorder(later);
+        assert_eq!(names(&app), ["x", "y"]);
+        assert_eq!(app.rows, exact_rows(&app));
+    }
+
     #[test]
     fn non_utf8_names_match_as_displayed() {
         let t0 = Instant::now();
@@ -694,14 +806,48 @@ pub(crate) mod tests {
         }
     }
 
+    /// Times the first keystrokes of a filter in a directory of `n` entries of different sizes
+    /// whose last sort was automatic, as when its scan finished, as the run loop handles them,
+    /// each with its frame: `/`, which keeps an exact sort of the entries, then `e`, which
+    /// prepares the filter and picks its rows from that sort.
+    fn first_keystroke_times(n: usize) {
+        let t0 = Instant::now();
+        let mut es = synthetic(n).entries;
+        for (i, e) in es.iter_mut().enumerate() {
+            e.size = (i as u64 * 7919) % 1_000_003;
+        }
+        let mut app = app_with(Theme::no_color(), es.clone(), t0);
+        let later = t0 + Duration::from_secs(5);
+        app.refresh(snap(es, 2), later);
+        render_buffer(&mut app, later, 100, 30);
+        let mut times = Vec::new();
+        for c in ['/', 'e'] {
+            let t = Instant::now();
+            app.key(press(KeyCode::Char(c)), later);
+            app.reorder(later);
+            render_buffer(&mut app, later, 100, 30);
+            times.push(t.elapsed());
+        }
+        let shown = app.rows.len();
+        println!(
+            "first filter keystrokes on {n} entries, each with its frame: {times:?}, {shown} rows"
+        );
+        assert!(shown > 0 && shown < n);
+        for t in times {
+            assert!(t < Duration::from_millis(50), "{t:?}");
+        }
+    }
+
     #[test]
     fn filtering_a_large_directory_is_fast() {
         prepare_times(100_000);
     }
 
     #[test]
-    #[ignore = "builds a million entries; run in release"]
+    #[ignore = "builds a million entries; run in release. On an M4 Max, release: prepare 21-23 \
+                ms; with the frame, `/` 32-34 ms and `e` 29-33 ms. Debug: `/` 0.59 s, `e` 0.48 s"]
     fn filtering_a_large_directory_is_fast_at_a_million_entries() {
+        first_keystroke_times(1_000_000);
         prepare_times(1_000_000);
     }
 }

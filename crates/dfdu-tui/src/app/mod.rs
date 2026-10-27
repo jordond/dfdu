@@ -22,7 +22,7 @@ use crate::motion::Motion;
 use crate::order::{Order, SortSpec};
 use crate::problems::ErrorList;
 use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
-use crate::theme::Theme;
+use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
 use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette};
 
@@ -41,7 +41,7 @@ pub enum Effect {
 #[derive(Clone, Debug)]
 pub enum Overlay {
     None,
-    Help,
+    Help(help::Help),
     /// What could not be read, with a cursor.
     Errors {
         list: ErrorList,
@@ -79,6 +79,11 @@ struct Cursor {
 
 pub struct App {
     pub theme: Theme,
+    /// The terminal's colour level, which a theme chosen in the palette is resolved for. It
+    /// can differ from the theme's own level: `mono` resolves without colours on any terminal.
+    pub color_level: ColorLevel,
+    /// The terminal's background colour, when it was queried.
+    pub background: Option<Rgb>,
     pub target: Target,
     pub snap: Snapshot,
     pub order: Order,
@@ -115,6 +120,8 @@ pub struct App {
     last_input: Instant,
     last_sort: Instant,
     sort_requested: bool,
+    /// The filter changed: its rows are needed before the next frame.
+    refilter_requested: bool,
     changed_since_sort: bool,
     /// The user moved the cursor in the current directory; re-sorts then follow the selected
     /// row instead of returning to the top.
@@ -122,6 +129,11 @@ pub struct App {
     cursors: HashMap<PathBuf, Cursor>,
     /// Row where [`App::selected_index`] last found the selection.
     sel_hint: Cell<usize>,
+}
+
+/// Whether `e` gets a row when no filter hides it.
+fn shown(hide_hidden: bool, e: &EntryData) -> bool {
+    !e.ghost && !(hide_hidden && e.hidden())
 }
 
 /// One line describing a finished delete plan. On btrfs the freed space shows up in the free
@@ -150,8 +162,12 @@ pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
 }
 
 impl App {
+    /// An empty browser drawn with `theme`, on a terminal with the theme's colour level and
+    /// background.
     pub fn new(theme: Theme, now: Instant) -> Self {
         App {
+            color_level: theme.level(),
+            background: theme.background(),
             theme,
             target: Target::root(),
             snap: Snapshot::default(),
@@ -184,6 +200,7 @@ impl App {
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
             last_sort: now,
             sort_requested: true,
+            refilter_requested: false,
             changed_since_sort: false,
             moved: false,
             cursors: HashMap::new(),
@@ -314,8 +331,9 @@ impl App {
         now: Instant,
     ) {
         let requested = std::mem::take(&mut self.sort_requested);
+        let refilter = std::mem::take(&mut self.refilter_requested);
         // `Some(automatic)` when the rows are sorted, `None` when new entries are synced.
-        let sorted = if dir_changed || requested {
+        let sorted = if dir_changed || requested || refilter {
             Some(false)
         } else if self.auto_sort_due(now)
             || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
@@ -330,12 +348,23 @@ impl App {
         self.filter.prepare(&self.snap, replaced);
         let entries = &self.snap.entries;
         let (hide, filter) = (self.hide_hidden, &self.filter);
-        let visible =
-            |i: usize, e: &EntryData| !e.ghost && !(hide && e.hidden()) && filter.matches(i, e);
+        let visible = |i: usize, e: &EntryData| shown(hide, e) && filter.matches(i, e);
         match sorted {
+            // Only the filter changed: its rows are picked from the kept exact sort of every
+            // entry it can show, in the order an exact sort of only those gives.
+            Some(false)
+                if refilter
+                    && !requested
+                    && !fresh
+                    && self.order.refilter(entries, visible, self.sort) => {}
             Some(false) => {
                 self.order = Order::default();
-                self.order.sort_exact(entries, visible, self.sort);
+                if filter.active() {
+                    self.order.sort_exact(entries, visible, self.sort);
+                } else {
+                    self.order
+                        .sort_exact_unfiltered(entries, visible, self.sort);
+                }
             }
             Some(true) => self.order.sort_auto(entries, visible, self.sort),
             None => self.order.sync(entries, visible, self.sort),
@@ -450,6 +479,19 @@ impl App {
     /// Asks for an exact sort before the next frame.
     pub(crate) fn request_sort(&mut self) {
         self.sort_requested = true;
+    }
+
+    /// Asks for the rows of a changed filter before the next frame: those an exact sort gives.
+    pub(crate) fn request_refilter(&mut self) {
+        self.refilter_requested = true;
+    }
+
+    /// Makes the order keep an exact sort of every entry the filter can show, unless it holds
+    /// one, so the keystrokes that change the filter only pick their rows from it.
+    pub(crate) fn keep_exact_order(&mut self) {
+        let hide = self.hide_hidden;
+        self.order
+            .keep_exact(&self.snap.entries, |_, e| shown(hide, e), self.sort);
     }
 
     /// Records user input at `now`: automatic re-sorts wait until the user is idle.
@@ -576,11 +618,7 @@ impl App {
         }
         match self.overlay {
             Overlay::None => {}
-            #[allow(
-                clippy::unneeded_struct_pattern,
-                reason = "matches whatever fields the variant has"
-            )]
-            Overlay::Help { .. } => return help::key(self, k),
+            Overlay::Help(_) => return help::key(self, k),
             Overlay::Errors { .. } => return error_list::key(self, k),
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),

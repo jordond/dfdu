@@ -72,14 +72,26 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     Some(dunce::canonicalize(&home).unwrap_or(home))
 }
 
-/// The theme `settings` ask for, resolved for the colour level detected from `env`, and
-/// whether colour was asked for although `NO_COLOR` is set. `query` asks the terminal for its
-/// background colour; it is called only when the answer can change the theme.
+/// The theme `settings` ask for and the terminal it was resolved for.
+#[derive(Debug)]
+pub(crate) struct Colors {
+    pub theme: Theme,
+    /// The colour level detected from the environment; `mono` itself has none.
+    pub level: ColorLevel,
+    /// The terminal's background colour, when it was queried.
+    pub background: Option<Rgb>,
+    /// Colour was asked for although `NO_COLOR` is set.
+    pub force_color: bool,
+}
+
+/// The theme `settings` ask for, resolved for the colour level detected from `env`. `query`
+/// asks the terminal for its background colour; it is called only when the answer can change
+/// the theme.
 pub(crate) fn resolve_theme(
     settings: &UiSettings,
     env: impl Fn(&str) -> Option<OsString>,
     query: impl FnOnce() -> Option<Rgb>,
-) -> (Theme, bool) {
+) -> Colors {
     let detected = theme::detect_color_level(settings.color, &env);
     let explicit = match &settings.theme {
         ThemeChoice::Auto => None,
@@ -98,7 +110,12 @@ pub(crate) fn resolve_theme(
             Theme::named(name, detected.level, background).expect("a built-in theme")
         }
     };
-    (theme, detected.overrides_no_color)
+    Colors {
+        theme,
+        level: detected.level,
+        background,
+        force_color: detected.overrides_no_color,
+    }
 }
 
 /// Leaves the browser's terminal state: mouse capture off (if it was turned on), then raw mode
@@ -148,9 +165,9 @@ mod tests {
     fn auto_theme_follows_the_queried_background() {
         let settings = UiSettings::default();
         let term = env(&[("TERM", "xterm-256color")]);
-        let (dark, _) = resolve_theme(&settings, &term, || Some((0x1e, 0x1e, 0x2e)));
-        let (light, _) = resolve_theme(&settings, &term, || Some((0xfd, 0xf6, 0xe3)));
-        let (unknown, _) = resolve_theme(&settings, &term, || None);
+        let dark = resolve_theme(&settings, &term, || Some((0x1e, 0x1e, 0x2e))).theme;
+        let light = resolve_theme(&settings, &term, || Some((0xfd, 0xf6, 0xe3))).theme;
+        let unknown = resolve_theme(&settings, &term, || None).theme;
         assert_eq!(
             (dark.name(), light.name(), unknown.name()),
             ("dark", "light", "ansi")
@@ -169,7 +186,7 @@ mod tests {
             theme: ThemeChoice::Builtin("light"),
             ..UiSettings::default()
         };
-        let (theme, _) = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), query);
+        let theme = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), query).theme;
         assert_eq!(
             (theme.name(), theme.level()),
             ("light", ColorLevel::TrueColor)
@@ -179,7 +196,7 @@ mod tests {
             theme: ThemeChoice::File(file),
             ..UiSettings::default()
         };
-        let (theme, _) = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), query);
+        let theme = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), query).theme;
         assert_eq!(theme.name(), "mine");
         assert!(!asked.get());
     }
@@ -187,16 +204,43 @@ mod tests {
     #[test]
     fn color_flag_wins_over_no_color() {
         let no_color = env(&[("NO_COLOR", "1"), ("TERM", "xterm-256color")]);
-        let (theme, forced) = resolve_theme(&UiSettings::default(), &no_color, || None);
-        assert_eq!((theme.name(), forced), ("mono", false));
+        let colors = resolve_theme(&UiSettings::default(), &no_color, || None);
+        assert_eq!(
+            (colors.theme.name(), colors.level, colors.force_color),
+            ("mono", ColorLevel::None, false)
+        );
         let settings = UiSettings {
             color: Some(ColorLevel::Ansi16),
             ..UiSettings::default()
         };
-        let (theme, forced) = resolve_theme(&settings, &no_color, || None);
+        let colors = resolve_theme(&settings, &no_color, || None);
         assert_eq!(
-            (theme.name(), theme.level(), forced),
+            (
+                colors.theme.name(),
+                colors.theme.level(),
+                colors.force_color
+            ),
             ("ansi", ColorLevel::Ansi16, true)
         );
+    }
+
+    #[test]
+    fn mono_keeps_the_terminal_colour_level() {
+        let settings = UiSettings {
+            theme: ThemeChoice::Builtin("mono"),
+            ..UiSettings::default()
+        };
+        let colors = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), || None);
+        assert_eq!(
+            (colors.theme.level(), colors.level),
+            (ColorLevel::None, ColorLevel::TrueColor)
+        );
+    }
+
+    #[test]
+    fn resolve_theme_keeps_the_queried_background() {
+        let term = env(&[("TERM", "xterm-256color")]);
+        let colors = resolve_theme(&UiSettings::default(), &term, || Some((0, 0, 0x20)));
+        assert_eq!(colors.background, Some((0, 0, 0x20)));
     }
 }

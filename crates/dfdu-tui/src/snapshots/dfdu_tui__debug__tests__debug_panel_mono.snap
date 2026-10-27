@@ -21,4 +21,4 @@ expression: out
                                                     ╰──────────────────────────────────────────────╯
 
 
- ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit

@@ -196,10 +196,15 @@ impl Target {
             return Some(ix);
         }
         let ix = find_path(tree, &self.path)?;
-        match self.ident {
-            Some(id) if id.dev_ino != (0, 0) && ident(tree, ix) != id => None,
-            _ => Some(ix),
-        }
+        self.matches(tree, ix).then_some(ix)
+    }
+
+    /// The identity check for a node found by path: `ix` has the target's kind and device and
+    /// inode numbers, so a new file or directory under the old name is not taken for it. A
+    /// target without an identity, or without device and inode numbers, passes.
+    pub fn matches(&self, tree: &Tree, ix: Ix) -> bool {
+        self.ident
+            .is_none_or(|id| id.dev_ino == (0, 0) || ident(tree, ix) == id)
     }
 }
 

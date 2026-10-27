@@ -1,0 +1,34 @@
+---
+source: crates/dfdu-tui/src/help.rs
+expression: frame
+---
+ dfdu  /r                                                                          ⠋ scanning 00:00
+ 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+  ┃ Navigate                                        Act                                          ┃
+  ┃ ↑ k            move up                          r      rescan the selected directory         ┃
+  ┃ ↓ j            move down                        x      skip directories that are not         ┃
+  ┃ PgUp           page up                                 responding                            ┃
+  ┃ PgDn           page down                        Space  mark or unmark, then move down        ┃
+  ┃ g Home         first entry                      :      clear all marks (in the palette)      ┃
+  ┃ G End          last entry                       d      move to Trash                         ┃
+  ┃ → l Enter      open directory                   D      delete permanently (type delete)      ┃
+  ┃ ← h Backspace  parent directory                                                              ┃
+  ┃                                                 Panels                                       ┃
+  ┃ Sort                                            /         filter this directory              ┃
+  ┃ s  sort by size (again: reverse)                i         details of the selected entry      ┃
+  ┃ n  sort by name (again: reverse)                Tab       move focus between the list and    ┃
+  ┃ C  sort by items (again: reverse)                         the details                        ┃
+  ┃ M  sort by modification time (again:            !         list what could not be read, and   ┃
+  ┃    reverse)                                               go to it                           ┃
+  ┃ S  re-sort now                                  ? F1      keys                               ┃
+  ┃                                                 : Ctrl-P  command palette                    ┃
+  ┃ Display                                         F12       debug overlay                      ┃
+  ┃ a  toggle apparent size / disk usage                                                         ┃
+  ┃ u  toggle disk usage like du (shared data       Global                                       ┃
+  ┃    once per file)                               Esc       close the overlay, or clear the    ┃
+  ┃ e  hide or show hidden files                              filter                             ┃
+  ┃                                                 q Ctrl-C  quit                               ┃
+  ┃                                                                                              ┃
+  ┃ Rows hold their order while you navigate; they re-sort 1.5 s after your last key, or when    ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
+ ↑↓ scroll  PgUp PgDn page  / search  Esc close

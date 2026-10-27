@@ -61,7 +61,8 @@ mod tests {
     fn extras_are_read_only_when_stale() {
         assert_eq!(plan(false, false), Read::Nothing);
         assert_eq!(plan(false, true), Read::Extras);
-        // A snapshot read brings the extras along: never a second read for them.
+        // A snapshot read brings the extras along; the loop reads them again only when the
+        // refresh moved the selection.
         assert_eq!(plan(true, false), Read::Full);
         assert_eq!(plan(true, true), Read::Full);
     }

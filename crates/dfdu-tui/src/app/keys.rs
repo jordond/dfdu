@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{App, Effect, Overlay};
 use crate::order::{SortKey, SortSpec};
 use crate::snapshot::SizeMode;
-use crate::{confirm, debug, details, filter, marks, palette};
+use crate::{confirm, debug, details, filter, help, marks, palette};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -63,9 +63,7 @@ pub struct ActionInfo {
     /// The keys that run it, separated by spaces: a single character, a name (`↑`, `PgUp`,
     /// `Enter`, `Space`, `F1`) or `Ctrl-` and a letter. Empty for actions without a key.
     pub keys: &'static str,
-    #[allow(dead_code, reason = "shown by the help overlay and the palette")]
     pub label: &'static str,
-    #[allow(dead_code, reason = "shown by the help overlay and the palette")]
     pub group: Group,
 }
 
@@ -233,6 +231,15 @@ fn parse(key: &str) -> Option<(KeyCode, bool)> {
     Some((code, false))
 }
 
+/// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
+pub fn first_key(a: Action) -> &'static str {
+    ACTIONS
+        .iter()
+        .find(|info| info.action == a)
+        .and_then(|info| info.keys.split_whitespace().next())
+        .unwrap_or("")
+}
+
 /// The action bound to `k`. A `Ctrl-` binding needs Ctrl; any other binding matches its key
 /// whatever the modifiers.
 pub fn action_for(k: &KeyEvent) -> Option<Action> {
@@ -299,7 +306,7 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         }
         Action::Trash => confirm::open(app, Mode::Trash),
         Action::DeletePermanent => confirm::open(app, Mode::Permanent),
-        Action::Help => app.overlay = Overlay::Help,
+        Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
             if !filter::clear(app) {
@@ -403,6 +410,13 @@ pub(crate) mod tests {
         assert_eq!(groups.len(), 6, "every group has an action");
         let keyless: Vec<_> = ACTIONS.iter().filter(|r| r.keys.is_empty()).collect();
         assert!(matches!(keyless[..], [r] if r.action == Action::ClearMarks));
+    }
+
+    #[test]
+    fn first_key_is_the_first_binding() {
+        assert_eq!(first_key(Action::Up), "↑");
+        assert_eq!(first_key(Action::Palette), ":");
+        assert_eq!(first_key(Action::ClearMarks), "");
     }
 
     #[test]

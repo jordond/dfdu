@@ -2,7 +2,7 @@
 //! caught up, no frame is flushed until a key arrives, and a key draws one frame. Animations
 //! are on, as in `dfdu`, and the frames they draw stop when they end.
 //!
-//! This drives the real run loop (`dfdu_tui::event_loop`) and the real engine, drawing to a
+//! This drives the real run loop (`dfdu_tui::event_loop_with`) and the real engine, drawing to a
 //! `TestBackend` wrapped in a backend that records every flush; ratatui flushes once per
 //! `Terminal::draw`.
 
@@ -15,11 +15,13 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
+use dfdu_tui::{ColorLevel, Theme, UiOptions};
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Position, Size};
+use ratatui::style::Color;
 
 /// How long without a frame counts as the loop having caught up with the finished scan. Longer
 /// than any of its timed wakes: the spinner while busy and the automatic re-sort
@@ -33,6 +35,8 @@ struct Frames {
     header: String,
     /// The text of each frame, lines separated by `\n`.
     screens: Vec<String>,
+    /// Whether each frame draws an RGB colour.
+    rgb: Vec<bool>,
 }
 
 /// Frames flushed so far. The lock is released before an assertion can fail, so a failure does
@@ -98,10 +102,13 @@ impl Backend for Recording {
             .map(line)
             .collect::<Vec<_>>()
             .join("\n");
+        let is_rgb = |c: Color| matches!(c, Color::Rgb(..));
+        let rgb = buf.content.iter().any(|c| is_rgb(c.fg) || is_rgb(c.bg));
         let mut f = self.frames.lock().expect("frames");
         f.at.push(Instant::now());
         f.header = header;
         f.screens.push(screen);
+        f.rgb.push(rgb);
         Ok(())
     }
 }
@@ -123,11 +130,16 @@ fn wait_quiet(frames: &Mutex<Frames>, start: Instant, what: &str) {
     }
 }
 
-/// Scans a small temporary tree with the run loop drawing it, waits until the scan is done and
-/// the loop has gone quiet, then hands the key sender and the recorded frames to `check`. The
-/// loop ends when `check` drops the sender, also when it panics. The largest entry is the file
-/// `big`, at the top of the list; the engine may delete.
+/// [`settled_with`] the theme from the environment, as `dfdu_tui::event_loop` runs.
 fn settled(check: impl FnOnce(Sender<Event>, &Mutex<Frames>)) {
+    settled_with(UiOptions::from_env(), check);
+}
+
+/// Scans a small temporary tree with the run loop drawing it with `ui`, waits until the scan is
+/// done and the loop has gone quiet, then hands the key sender and the recorded frames to
+/// `check`. The loop ends when `check` drops the sender, also when it panics. The largest entry
+/// is the file `big`, at the top of the list; the engine may delete.
+fn settled_with(ui: UiOptions, check: impl FnOnce(Sender<Event>, &Mutex<Frames>)) {
     let temp = dunce::canonicalize(std::env::temp_dir()).expect("temp");
     let tmp = tempfile::tempdir_in(&temp).expect("tempdir");
     let journal = tempfile::tempdir_in(&temp).expect("journal dir");
@@ -160,7 +172,7 @@ fn settled(check: impl FnOnce(Sender<Event>, &Mutex<Frames>)) {
     });
     thread::scope(|scope| {
         let (tx, rx) = unbounded();
-        let run = scope.spawn(|| dfdu_tui::event_loop(&mut terminal, &engine, rx));
+        let run = scope.spawn(|| dfdu_tui::event_loop_with(&mut terminal, &engine, rx, ui));
         // Not `Engine::wait_idle`: it takes wake-ups from the channel the loop waits on.
         let start = Instant::now();
         loop {
@@ -215,66 +227,123 @@ fn one_key_draws_one_frame() {
 
 #[test]
 fn no_frames_after_animations_finish() {
-    settled(|tx, frames| {
-        let before = count(frames);
+    settled(animations_finish);
+}
+
+/// At TrueColor, with a theme whose text colour is RGB, the deleted row also fades in colour,
+/// a frame at a time; those frames end too.
+#[test]
+fn no_frames_after_colour_animations_finish() {
+    let ui = UiOptions {
+        theme: Theme::named("dark", ColorLevel::TrueColor, None).expect("dark"),
+        color_level: ColorLevel::TrueColor,
+        ..UiOptions::from_env()
+    };
+    settled_with(ui, animations_finish);
+}
+
+/// A loop started with the colourless `mono` theme on a TrueColor terminal resolves a theme
+/// chosen in the palette at the terminal's colour level, not at mono's.
+#[test]
+fn palette_theme_after_mono_gets_the_terminal_colour_level() {
+    let ui = UiOptions {
+        theme: Theme::no_color(),
+        color_level: ColorLevel::TrueColor,
+        ..UiOptions::from_env()
+    };
+    settled_with(ui, |tx, frames| {
         assert!(
-            frames.lock().expect("frames").screens[before - 1].contains("  big"),
-            "big is not shown"
+            !frames.lock().expect("frames").rgb.iter().any(|&rgb| rgb),
+            "mono draws an RGB colour"
         );
-        // Delete the selected entry, `big`, for good: the placeholder stays in its row until
-        // the next re-sort, and then every other bar grows.
+        let before = count(frames);
         let press = |code| {
             let k = KeyEvent::new(code, KeyModifiers::NONE);
             tx.send(Event::Key(k)).expect("send key");
         };
-        press(KeyCode::Char('D'));
-        "delete".chars().for_each(|c| press(KeyCode::Char(c)));
+        press(KeyCode::Char(':'));
+        "dark".chars().for_each(|c| press(KeyCode::Char(c)));
         press(KeyCode::Enter);
         let sent = Instant::now();
-        let summary = loop {
+        loop {
             let f = frames.lock().expect("frames");
-            let found = f.screens[before..]
-                .iter()
-                .position(|s| s.contains("deleted 1 ("));
-            if let Some(i) = found {
-                break before + i;
+            if f.rgb[before..].iter().any(|&rgb| rgb) {
+                break;
             }
             let last = f.screens.last().cloned().unwrap_or_default();
             drop(f);
             assert!(
-                sent.elapsed() < Duration::from_secs(10),
-                "no delete summary:\n{last}"
+                sent.elapsed() < Duration::from_secs(2),
+                "no RGB colour after switching to dark:\n{last}"
             );
             thread::sleep(Duration::from_millis(10));
-        };
-        wait_quiet(frames, sent, "the delete");
-
-        let f = frames.lock().expect("frames");
-        let ghost = |i: usize| f.screens[i].contains("big  deleted");
-        let first_ghost = (before..f.at.len()).find(|&i| ghost(i));
-        let first_ghost = first_ghost.expect("no placeholder row for the deleted entry");
-        let shown = summary.max(first_ghost);
-        let resort = (shown..f.at.len())
-            .find(|&i| !ghost(i))
-            .expect("the placeholder stayed");
-        let (at, n) = (f.at.clone(), f.at.len());
-        drop(f);
-        let late = |from: usize, to: usize| {
-            (from..to)
-                .filter(|&i| at[i] > at[from] + Duration::from_secs(1))
-                .map(|i| at[i] - at[from])
-                .collect::<Vec<_>>()
-        };
-        let after_delete = late(shown, resort);
-        assert!(
-            after_delete.is_empty(),
-            "frames more than 1 s after the delete was shown: {after_delete:?}"
-        );
-        let after_resort = late(resort, n);
-        assert!(
-            after_resort.is_empty(),
-            "frames more than 1 s after the re-sort: {after_resort:?}"
-        );
+        }
         drop(tx);
     });
+}
+
+/// Deletes the entry at the top of a settled browser, then checks that the animations that
+/// brings (the placeholder, the re-sort that drops it, the bars that grow) draw nothing more
+/// than 1 s after each step.
+fn animations_finish(tx: Sender<Event>, frames: &Mutex<Frames>) {
+    let before = count(frames);
+    assert!(
+        frames.lock().expect("frames").screens[before - 1].contains("  big"),
+        "big is not shown"
+    );
+    // Delete the selected entry, `big`, for good: the placeholder stays in its row until
+    // the next re-sort, and then every other bar grows.
+    let press = |code| {
+        let k = KeyEvent::new(code, KeyModifiers::NONE);
+        tx.send(Event::Key(k)).expect("send key");
+    };
+    press(KeyCode::Char('D'));
+    "delete".chars().for_each(|c| press(KeyCode::Char(c)));
+    press(KeyCode::Enter);
+    let sent = Instant::now();
+    let summary = loop {
+        let f = frames.lock().expect("frames");
+        let found = f.screens[before..]
+            .iter()
+            .position(|s| s.contains("deleted 1 ("));
+        if let Some(i) = found {
+            break before + i;
+        }
+        let last = f.screens.last().cloned().unwrap_or_default();
+        drop(f);
+        assert!(
+            sent.elapsed() < Duration::from_secs(10),
+            "no delete summary:\n{last}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    wait_quiet(frames, sent, "the delete");
+
+    let f = frames.lock().expect("frames");
+    let ghost = |i: usize| f.screens[i].contains("big  deleted");
+    let first_ghost = (before..f.at.len()).find(|&i| ghost(i));
+    let first_ghost = first_ghost.expect("no placeholder row for the deleted entry");
+    let shown = summary.max(first_ghost);
+    let resort = (shown..f.at.len())
+        .find(|&i| !ghost(i))
+        .expect("the placeholder stayed");
+    let (at, n) = (f.at.clone(), f.at.len());
+    drop(f);
+    let late = |from: usize, to: usize| {
+        (from..to)
+            .filter(|&i| at[i] > at[from] + Duration::from_secs(1))
+            .map(|i| at[i] - at[from])
+            .collect::<Vec<_>>()
+    };
+    let after_delete = late(shown, resort);
+    assert!(
+        after_delete.is_empty(),
+        "frames more than 1 s after the delete was shown: {after_delete:?}"
+    );
+    let after_resort = late(resort, n);
+    assert!(
+        after_resort.is_empty(),
+        "frames more than 1 s after the re-sort: {after_resort:?}"
+    );
+    drop(tx);
 }

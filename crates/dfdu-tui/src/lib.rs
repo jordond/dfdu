@@ -80,6 +80,10 @@ pub struct RunOptions {
 #[derive(Clone, Debug)]
 pub struct UiOptions {
     pub theme: Theme,
+    /// The terminal's colour level, which a theme chosen in the palette is resolved for.
+    pub color_level: ColorLevel,
+    /// The terminal's background colour, when it was queried.
+    pub background: Option<theme::Rgb>,
     /// Mouse capture is on, so mouse events are handled.
     pub mouse: bool,
     /// Start with the debug panel open.
@@ -89,10 +93,14 @@ pub struct UiOptions {
 }
 
 impl UiOptions {
-    /// The theme from the environment (`NO_COLOR`), no mouse, no debug panel, no `~`.
+    /// The theme from the environment (`NO_COLOR`) at its own colour level, no mouse, no debug
+    /// panel, no `~`.
     pub fn from_env() -> Self {
+        let theme = Theme::from_env();
         UiOptions {
-            theme: Theme::from_env(),
+            color_level: theme.level(),
+            background: None,
+            theme,
             mouse: false,
             debug: false,
             home: None,
@@ -106,12 +114,13 @@ impl UiOptions {
 /// `BACKGROUND_QUERY` for terminals that do not answer).
 pub fn run(opts: RunOptions) -> io::Result<()> {
     let ui = opts.ui;
-    let (theme, force_color) = setup::resolve_theme(
+    let colors = setup::resolve_theme(
         &ui,
         |k| std::env::var_os(k),
         || theme::query_background(BACKGROUND_QUERY),
     );
-    if force_color {
+    let theme = colors.theme;
+    if colors.force_color {
         // crossterm leaves out colours itself while `NO_COLOR` is set.
         ratatui::crossterm::style::force_color_output(true);
     }
@@ -178,6 +187,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             input,
             UiOptions {
                 theme,
+                color_level: colors.level,
+                background: colors.background,
                 mouse,
                 debug: ui.debug_stats,
                 home: setup::home_dir(),
@@ -227,6 +238,8 @@ where
     let inject_panic = std::env::var_os("DFDU_TEST_UI_PANIC").is_some();
     let start = Instant::now();
     let mut app = App::new(ui.theme, start);
+    app.color_level = ui.color_level;
+    app.background = ui.background;
     app.home = ui.home;
     motion::start(&mut app);
     if ui.debug {
@@ -290,6 +303,15 @@ where
                     app.target = target;
                     app.refresh(snap, now);
                     extras::apply(&mut app, extras);
+                    // The refresh moved the selection (another directory, a rescan): read the
+                    // extras again for the entry this frame draws.
+                    if app.extras_stale() {
+                        let extras = engine.read(|m| {
+                            let counters = debug::Counters::of(engine);
+                            extras::read(m, &app, engine.budget(), counters)
+                        });
+                        extras::apply(&mut app, extras);
+                    }
                     data_dirty = false;
                 }
                 Read::Extras => {
@@ -335,8 +357,8 @@ where
             wake = wake.min(t.saturating_duration_since(now));
         }
         if app.extras_stale() {
-            // The frame just drawn changed what the extras are read for (a refresh moved the
-            // selection): read them again at once.
+            // Something after the last read changed what the extras are read for (such as a
+            // re-sort of the snapshot held that moved the selection): read them again at once.
             wake = Duration::ZERO;
         }
         select! {

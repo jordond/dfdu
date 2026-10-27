@@ -110,20 +110,32 @@ fn entry_line(
     };
     // The gutter cell takes the mark's style where the gutter sets none of its own.
     let gutter = marks::gutter(app, e);
+    // A size that can still grow, or is only a lower bound, is dim.
+    let size_style = match e.mark {
+        Mark::Scanning
+        | Mark::Rescanning
+        | Mark::Stalled
+        | Mark::Incomplete
+        | Mark::Error
+        | Mark::ErrorsInside => t.dim,
+        _ => Style::new(),
+    };
     let mut spans = vec![
         Span::styled(gutter.content, gstyle.patch(gutter.style)),
         Span::styled(glyph.to_string(), gstyle),
-        Span::raw(format!("{:>10}", human(e.size))),
+        Span::styled(format!("{:>10}", human(e.size)), size_style),
     ];
     if bw > 0 {
         let frac = motion::bar(app, e, e.size as f64 / max as f64);
         spans.push(Span::raw("  "));
         spans.push(Span::styled(bar(frac, bw), t.bar));
     }
-    spans.push(Span::raw(format!(
-        "  {:>5.1}%",
-        e.size as f64 * 100.0 / total as f64
-    )));
+    // A ghost's size is no longer part of the total: its share would be meaningless.
+    spans.push(Span::raw(if e.ghost {
+        " ".repeat(8)
+    } else {
+        format!("  {:>5.1}%", e.size as f64 * 100.0 / total as f64)
+    }));
     spans.push(Span::styled(format!("  {:>6}", count(e.items)), t.dim));
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let name_style = if e.is_dir { t.dir } else { Style::new() };
@@ -258,5 +270,36 @@ mod tests {
         app.key(key(KeyCode::Char('S')), t0);
         app.reorder(t0);
         assert_eq!(app.rows.len(), 1);
+    }
+
+    #[test]
+    fn ghost_rows_have_no_share() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let (gone, kept) = (test_entry(0, "gone", 4 << 20), test_entry(1, "kept", 1));
+        app.refresh(snap(vec![gone.clone(), kept.clone()], 1), t0);
+        // 4 MiB deleted beside 1 byte left: the total no longer counts the ghost.
+        let ghost = EntryData {
+            ghost: true,
+            pseudo: true,
+            ..gone
+        };
+        let mut s = snap(vec![ghost, kept], 2);
+        s.dir_total.alloc = 1;
+        app.refresh(s, t0);
+        assert_eq!(app.rows.len(), 2);
+        let out = crate::tests::render(&mut app, t0, 80, 6);
+        let row = |name: &str| {
+            out.lines()
+                .find(|l| l.contains(name))
+                .expect("row")
+                .to_string()
+        };
+        let (gone, kept) = (row("gone"), row("kept"));
+        assert!(!gone.contains('%'), "{out}");
+        assert!(kept.contains("100.0%"), "{out}");
+        // The columns after the share stay in place.
+        let column = |row: &str, name| row.split(name).next().map(|s| s.chars().count());
+        assert_eq!(column(&gone, "gone"), column(&kept, "kept"), "{out}");
     }
 }

@@ -17,5 +17,5 @@ L4 14-29 fg=cyan | 38-45 fg=darkgray | 46-47 fg=blue bold | 48-49 fg=cyan bold u
 L6 0-1 bold | 5-5 bold | 6-14 fg=darkgray
 
 L7 0-0 fg=darkgray
- ↑↓ move  → open  ← up  s n C M sort  a u size  r rescan  d trash  D delete  ? h
-L8 0-79 fg=darkgray
+ Enter keep  Esc clear  ↑↓ move
+L8 1-5 bold | 6-10 fg=darkgray | 13-15 bold | 16-21 fg=darkgray | 24-25 bold | 26-30 fg=darkgray

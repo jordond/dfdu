@@ -3,8 +3,10 @@
 //!
 //! Every animation ends: a bar stops easing within a sixteenth of a cell of its target, rank
 //! markers go after [`MARKERS`], the flash of moved rows after [`FLASH`] and the fade of a
-//! deleted row after [`FADE`]. The colour effects ([`effects`]) run only at TrueColor; at other
-//! colour levels moved rows flash reversed and deleted rows are only struck through.
+//! deleted row after [`FADE`]. The colour effects ([`effects`]) run only at TrueColor, on a
+//! background that is known or that the theme's RGB text colour was chosen for
+//! ([`effects::rgb_effects`]); otherwise moved rows flash reversed (except the selected one,
+//! which keeps its highlight) and deleted rows are only struck through.
 
 mod effects;
 #[cfg(test)]
@@ -20,7 +22,6 @@ use ratatui::text::Span;
 
 use crate::app::App;
 use crate::snapshot::{EntryData, Mark, SizeMode, Snapshot};
-use crate::theme::ColorLevel;
 
 /// Time between animation frames.
 const FRAME: Duration = Duration::from_millis(33);
@@ -335,11 +336,11 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     }
 
     // Colour effects change every frame; the reversed flash only when it starts and ends.
-    let truecolor = app.theme.level() == ColorLevel::TrueColor;
-    let fading = truecolor && m.ghosts.values().any(|&t| now < t + FADE);
-    let mut next = (easing || fading || (truecolor && m.flash_at.is_some())).then(|| now + FRAME);
+    let colours = effects::rgb_effects(&app.theme);
+    let fading = colours && m.ghosts.values().any(|&t| now < t + FADE);
+    let mut next = (easing || fading || (colours && m.flash_at.is_some())).then(|| now + FRAME);
     let ends = [
-        m.flash_at.filter(|_| !truecolor).map(|t| t + FLASH),
+        m.flash_at.filter(|_| !colours).map(|t| t + FLASH),
         m.marked_at.map(|t| t + MARKERS),
     ];
     for t in ends.into_iter().flatten() {
@@ -370,27 +371,30 @@ pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
 /// on the rows where [`frame`] last found them, except where an overlay covers them.
 pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
     let m = &app.motion;
-    let truecolor = app.theme.level() == ColorLevel::TrueColor;
+    let colours = effects::rgb_effects(&app.theme);
     let flash = m.flash_at.map(|t| now.saturating_duration_since(t));
-    if !m.on || (flash.is_none() && !(truecolor && !m.ghosts.is_empty())) {
+    if !m.on || (flash.is_none() && !(colours && !m.ghosts.is_empty())) {
         return;
     }
+    // Reversing the selected row would take its highlight off.
+    let keep = app.selected_entry().filter(|_| !colours).map(|e| e.node);
     let list = app.areas.list;
+    let covers = [app.areas.overlay, app.areas.debug];
     for (y, &i) in (list.top()..list.bottom()).zip(&m.shown) {
         let Some(e) = app.snap.entries.get(i) else {
             continue;
         };
-        let flashing = flash.filter(|_| m.markers.contains_key(&e.node));
+        let flashing = flash.filter(|_| m.markers.contains_key(&e.node) && keep != Some(e.node));
         let fading = m
             .ghosts
             .get(&e.node)
-            .filter(|_| truecolor && e.ghost)
+            .filter(|_| colours && e.ghost)
             .map(|&t| now.saturating_duration_since(t).min(FADE));
         if flashing.is_none() && fading.is_none() {
             continue;
         }
         let row = Rect::new(list.x, y, list.width, 1).intersection(buf.area);
-        for part in uncovered(row, app.areas.overlay) {
+        for part in uncovered(row, &covers) {
             if let Some(d) = flashing {
                 effects::flash(&app.theme, buf, part, d);
             }
@@ -401,21 +405,31 @@ pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
     }
 }
 
+/// The parts of `row` (one line high) that none of `covers` covers.
+fn uncovered(row: Rect, covers: &[Option<Rect>]) -> Vec<Rect> {
+    let mut parts = vec![row];
+    for &c in covers.iter().flatten() {
+        parts = parts.into_iter().flat_map(|p| beside(p, c)).collect();
+    }
+    parts
+}
+
 /// The parts of `row` (one line high) left and right of `cover`.
-fn uncovered(row: Rect, cover: Option<Rect>) -> impl Iterator<Item = Rect> {
-    let parts = match cover.filter(|c| c.intersects(row)) {
-        None => [Some(row), None],
-        Some(c) => [
-            Some(Rect {
-                width: c.x.saturating_sub(row.x).min(row.width),
+fn beside(row: Rect, cover: Rect) -> impl Iterator<Item = Rect> {
+    let parts = if cover.intersects(row) {
+        [
+            Rect {
+                width: cover.x.saturating_sub(row.x).min(row.width),
                 ..row
-            }),
-            Some(Rect {
-                x: c.right(),
-                width: row.right().saturating_sub(c.right()),
+            },
+            Rect {
+                x: cover.right(),
+                width: row.right().saturating_sub(cover.right()),
                 ..row
-            }),
-        ],
+            },
+        ]
+    } else {
+        [row, Rect::default()]
     };
-    parts.into_iter().flatten().filter(|r| !r.is_empty())
+    parts.into_iter().filter(|r| !r.is_empty())
 }
