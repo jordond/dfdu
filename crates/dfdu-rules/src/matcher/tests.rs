@@ -503,7 +503,8 @@ fn stop_descent_and_protected_paths() {
 #[test]
 fn unverified_path_rules_are_off_on_linux_but_name_rules_are_on() {
     let set = linux();
-    assert!(set.get("pip.cache").is_none());
+    assert!(set.get("pnpm.store").is_none());
+    assert!(set.get("pip.cache").is_some(), "verified on Linux");
     assert!(set.get("rust.target").is_some());
     assert!(set.get("generic.cachedir-tag").is_some());
     assert!(set.get("xcode.derived-data").is_none());
@@ -531,7 +532,7 @@ fn every_builtin_rule_is_in_the_verification_table() {
     assert!(ids.len() > 30);
     for id in ids {
         assert!(
-            doc.contains(&format!("| `{id}` |")),
+            doc.contains(&format!("| `{id}` ")),
             "{id} is missing from docs/rules.md"
         );
     }

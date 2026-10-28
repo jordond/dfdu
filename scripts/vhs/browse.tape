@@ -5,8 +5,8 @@ Output assets/screenshots/browse.gif
 
 Set Shell bash
 Set FontSize 15
-Set Width 1200
-Set Height 640
+Set Width 1440
+Set Height 900
 Set Padding 16
 Set TypingSpeed 60ms
 Set Theme "Builtin Dark"
