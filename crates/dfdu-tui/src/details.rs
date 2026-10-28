@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use dfdu_engine::Model;
-use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, Totals, Tree};
+use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, RuleIx, Safety, Totals, Tree};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -87,7 +87,7 @@ pub struct Matched {
     pub rule: String,
     pub category: &'static str,
     pub slot: usize,
-    pub safety: &'static str,
+    pub safety: Safety,
     /// The path of the match above, when it is not the entry itself.
     pub above: Option<PathBuf>,
     pub explanation: String,
@@ -106,8 +106,8 @@ fn matched(m: &Model, ix: Ix) -> Option<Matched> {
     Some(Matched {
         rule: r.name.clone(),
         category: cat.name,
-        slot: cat.colour as usize,
-        safety: dfdu_rules::Safety::ALL[c.safety as usize].as_str(),
+        slot: cat.color as usize,
+        safety: c.safety,
         above: (at != ix).then(|| m.tree.path_buf(at)),
         explanation: r.explanation.clone(),
         lost: r.lost.clone(),
@@ -124,12 +124,12 @@ fn categories(m: &Model, ix: Ix, mode: SizeMode) -> Vec<(&'static str, usize, u6
     };
     let tree = &m.tree;
     let mut by: Vec<(&'static str, usize, u64, u64)> = Vec::new();
-    let mut add = |cx: Ix, rule: u16| {
+    let mut add = |cx: Ix, rule: RuleIx| {
         let cat = rules.rule(rule).category();
         let size = mode.of(&tree.total(cx));
         match by.iter_mut().find(|b| b.0 == cat.name) {
             Some(b) => (b.2, b.3) = (b.2 + size, b.3 + 1),
-            None => by.push((cat.name, cat.colour as usize, size, 1)),
+            None => by.push((cat.name, cat.color as usize, size, 1)),
         }
     };
     if let Some((at, c)) = tree.class_in_effect(ix) {
@@ -283,7 +283,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let max = lines.len().saturating_sub(inner.height as usize);
     let scroll = app.details.scroll.min(max);
     if scroll < max {
-        block = block.title_bottom(Line::styled(" ↓ more ", t.dim).right_aligned());
+        block = block.title_bottom(Line::styled(" ↓ more ", t.fg_dim).right_aligned());
     }
     f.render_widget(
         Paragraph::new(lines)
@@ -537,18 +537,18 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
             ),
             _ => "nothing selected".to_string(),
         };
-        text(&mut out, &note, t.dim);
+        text(&mut out, &note, t.fg_dim);
         return out;
     };
     let plain = Style::new();
-    text(&mut out, &f.path.display().to_string(), t.dim);
+    text(&mut out, &f.path.display().to_string(), t.fg_dim);
     if f.is_dir {
         let style = match f.mark {
             Mark::None => plain,
-            Mark::ErrorsInside => t.dim,
+            Mark::ErrorsInside => t.fg_dim,
             Mark::Scanning | Mark::Rescanning => t.scan_active,
-            Mark::Error => t.error,
-            _ => t.warn,
+            Mark::Error => t.status_error,
+            _ => t.status_warn,
         };
         let head = format!(" {} · ", kind_name(f.kind));
         let s = state(f.mark);
@@ -582,52 +582,56 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         } else {
             format!("{} (was {})", crate::growth::describe(d, at), human(then))
         };
-        text(&mut out, &s, if d > 0 { t.warn } else { t.dim });
+        text(&mut out, &s, if d > 0 { t.status_warn } else { t.fg_dim });
     }
     if f.total.shared_out > 0 {
         let s = format!(
             "{} also used outside the scan: deleting it frees less",
             human(f.total.shared_out)
         );
-        text(&mut out, &s, t.warn);
+        text(&mut out, &s, t.status_warn);
     }
     if let Some(p) = &f.problem {
-        text(&mut out, p, t.error);
+        text(&mut out, p, t.status_error);
     }
     if f.errors_below > 0 {
         let s = format!("{} below", plural(f.errors_below, "error", "errors"));
-        text(&mut out, &s, t.error);
+        text(&mut out, &s, t.status_error);
     }
     if let Some(c) = &f.matched {
         out.push(Line::from(vec![
             Span::raw(" "),
             Span::styled(c.category.to_string(), t.cat[c.slot]),
-            Span::styled(format!(" · {}", c.safety), plain),
+            Span::styled(format!(" · {}", c.safety.as_str()), plain),
         ]));
         text(&mut out, &c.rule, t.title);
         if let Some(p) = &c.above {
-            text(&mut out, &format!("in {}", p.display()), t.dim);
+            text(&mut out, &format!("in {}", p.display()), t.fg_dim);
         }
         text(&mut out, &c.explanation, plain);
-        text(&mut out, &format!("lost: {}", c.lost), t.dim);
+        text(&mut out, &format!("lost: {}", c.lost), t.fg_dim);
         if let Some(d) = &c.degraded {
-            text(&mut out, d, t.warn);
+            text(&mut out, d, t.status_warn);
         }
         if c.flags & dfdu_tree::Class::VCS_TRACKED != 0 {
             text(
                 &mut out,
                 "version control tracks files in it: protected",
-                t.warn,
+                t.status_warn,
             );
         }
         if c.flags & dfdu_tree::Class::IN_USE != 0 {
-            text(&mut out, "a program that uses it was running", t.warn);
+            text(
+                &mut out,
+                "a program that uses it was running",
+                t.status_warn,
+            );
         }
         if c.flags & dfdu_tree::Class::VCS_UNKNOWN != 0 {
             text(
                 &mut out,
                 "git could not tell whether it tracks files in it: not recommended",
-                t.warn,
+                t.status_warn,
             );
         }
     }
@@ -638,7 +642,7 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
             out.push(Line::from(vec![
                 Span::raw(format!(" {:>10}  ", human(size))),
                 Span::styled(name.to_string(), t.cat[slot]),
-                Span::styled(format!(" · {n}"), t.dim),
+                Span::styled(format!(" · {n}"), t.fg_dim),
             ]));
         }
     }
@@ -649,7 +653,7 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 "largest children: not computed for {} entries",
                 count(*n as u64)
             );
-            text(&mut out, &s, t.dim);
+            text(&mut out, &s, t.fg_dim);
         }
         Largest::Listed(kids) if kids.is_empty() => {}
         Largest::Listed(kids) => {
@@ -663,7 +667,7 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 let style = if k.is_dir { t.dir } else { plain };
                 out.push(Line::from(vec![
                     Span::raw(" "),
-                    Span::styled(bar(k.size as f64 / total as f64, BAR), t.bar),
+                    Span::styled(bar(k.size as f64 / total as f64, BAR), t.bar_fill),
                     Span::raw(format!(" {:>10}  ", human(k.size))),
                     Span::styled(
                         format!("{}{}", k.name, if k.is_dir { "/" } else { "" }),
@@ -689,7 +693,7 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
             parts.push(plural(ro, "read-only subvolume", "read-only subvolumes"));
         }
         let s = format!("inside: {}; deletion stops at them", parts.join(", "));
-        text(&mut out, &s, t.warn);
+        text(&mut out, &s, t.status_warn);
     }
     out
 }

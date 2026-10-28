@@ -49,7 +49,7 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// What the tile colours show.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum Colour {
+pub enum ColorBy {
     /// Each top-level tile and everything inside it in its own colour.
     #[default]
     Folder,
@@ -60,12 +60,12 @@ pub enum Colour {
     Category,
 }
 
-impl Colour {
+impl ColorBy {
     fn label(self) -> &'static str {
         match self {
-            Colour::Folder => "top folder",
-            Colour::Age => "age",
-            Colour::Category => "category",
+            ColorBy::Folder => "top folder",
+            ColorBy::Age => "age",
+            ColorBy::Category => "category",
         }
     }
 }
@@ -76,7 +76,7 @@ pub struct Treemap {
     pub on: bool,
     /// Levels shown, [`MIN_DEPTH`] to [`MAX_DEPTH`].
     pub depth: u8,
-    pub colour: Colour,
+    pub color: ColorBy,
     /// The last frame drew the treemap (the view is on and the terminal is large enough).
     pub shown: bool,
     layout: Option<Layout>,
@@ -88,7 +88,7 @@ impl Default for Treemap {
         Treemap {
             on: false,
             depth: 2,
-            colour: Colour::default(),
+            color: ColorBy::default(),
             shown: false,
             layout: None,
             last_click: None,
@@ -472,14 +472,14 @@ pub fn deeper(app: &mut App, by: i8) {
     app.status = Some(format!("treemap depth {}", t.depth));
 }
 
-pub fn cycle_colour(app: &mut App) {
+pub fn cycle_color(app: &mut App) {
     let t = &mut app.treemap;
-    t.colour = match t.colour {
-        Colour::Folder => Colour::Age,
-        Colour::Age if app.snap.rules.is_some() => Colour::Category,
-        Colour::Age | Colour::Category => Colour::Folder,
+    t.color = match t.color {
+        ColorBy::Folder => ColorBy::Age,
+        ColorBy::Age if app.snap.rules.is_some() => ColorBy::Category,
+        ColorBy::Age | ColorBy::Category => ColorBy::Folder,
     };
-    app.status = Some(format!("treemap colour: {}", t.colour.label()));
+    app.status = Some(format!("treemap colour: {}", t.color.label()));
 }
 
 /// The top-level tile of the selection, as the last frame laid it out.
@@ -586,7 +586,7 @@ pub fn fits(area: Rect) -> bool {
     area.width >= MIN_WIDTH && area.height >= MIN_HEIGHT
 }
 
-/// Age bands for [`Colour::Age`]: their upper bound in days and name.
+/// Age bands for [`ColorBy::Age`]: their upper bound in days and name.
 const AGES: [(i64, &str); 4] = [
     (7, "week"),
     (90, "3 months"),
@@ -603,7 +603,7 @@ fn age_band(mtime: i64, now: i64) -> usize {
 
 fn age_style(app: &App, band: usize) -> Style {
     let t = &app.theme;
-    [t.ok, t.fg, t.warn, t.dim][band]
+    [t.status_ok, t.fg, t.status_warn, t.fg_dim][band]
 }
 
 fn now_secs() -> i64 {
@@ -642,7 +642,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     };
     if l.tiles.is_empty() {
         f.render_widget(
-            Paragraph::new(Line::styled("  (empty)", app.theme.dim)),
+            Paragraph::new(Line::styled("  (empty)", app.theme.fg_dim)),
             map,
         );
         return;
@@ -657,28 +657,28 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
 fn draw_legend(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let mut spans = vec![Span::styled(
-        format!(" colour: {}", app.treemap.colour.label()),
-        t.dim,
+        format!(" colour: {}", app.treemap.color.label()),
+        t.fg_dim,
     )];
-    if app.treemap.colour == Colour::Category {
-        spans.push(Span::styled("  ╱ cleanup candidate", t.dim));
+    if app.treemap.color == ColorBy::Category {
+        spans.push(Span::styled("  ╱ cleanup candidate", t.fg_dim));
     }
-    if app.treemap.colour == Colour::Age {
+    if app.treemap.color == ColorBy::Age {
         for (band, (_, name)) in AGES.iter().enumerate() {
             spans.push(Span::raw("  "));
             spans.push(Span::styled("■", age_style(app, band)));
-            spans.push(Span::styled(format!(" {name}"), t.dim));
+            spans.push(Span::styled(format!(" {name}"), t.fg_dim));
         }
     }
     spans.push(Span::styled(
         format!(
             "   {} colour  depth {} ({} {})",
-            keys::first_key(Action::TreemapColour),
+            keys::first_key(Action::TreemapColor),
             app.treemap.depth,
             keys::first_key(Action::TreemapDeeper),
             keys::first_key(Action::TreemapShallower),
         ),
-        t.dim,
+        t.fg_dim,
     ));
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -686,14 +686,14 @@ fn draw_legend(f: &mut Frame, app: &App, area: Rect) {
 fn tile_style(app: &App, tile: &Tile, today: i64) -> Style {
     let t = &app.theme;
     if tile.small > 0 {
-        return t.dim;
+        return t.fg_dim;
     }
-    match app.treemap.colour {
-        Colour::Folder => t.cat[tile.top % t.cat.len()],
-        Colour::Age => age_style(app, age_band(tile.mtime, today)),
-        Colour::Category => match (&app.snap.rules, tile.tag) {
+    match app.treemap.color {
+        ColorBy::Folder => t.cat[tile.top % t.cat.len()],
+        ColorBy::Age => age_style(app, age_band(tile.mtime, today)),
+        ColorBy::Category => match (&app.snap.rules, tile.tag) {
             (Some(rules), Some(tag)) => t.cat[tag.category(rules).1],
-            _ => t.dim,
+            _ => t.fg_dim,
         },
     }
 }
@@ -760,7 +760,7 @@ fn draw_tile(buf: &mut Buffer, app: &App, tile: &Tile, sel: Option<usize>, today
         // Cleanup candidates and what is in them are hatched, under the labels; a framed
         // tile's own tiles are.
         let candidate = tile.tag.is_some_and(|g| g.candidate());
-        if app.treemap.colour == Colour::Category && candidate && !tile.framed {
+        if app.treemap.color == ColorBy::Category && candidate && !tile.framed {
             // Below the label lines: name, size, category.
             for y in (inner.top() + 3).min(inner.bottom())..inner.bottom() {
                 for x in inner.left()..inner.right() {
@@ -793,23 +793,29 @@ fn draw_tile(buf: &mut Buffer, app: &App, tile: &Tile, sel: Option<usize>, today
         } else {
             buf.set_stringn(inner.x, inner.y, clip(&name, w), w, name_style);
             buf.set_stringn(inner.x, inner.y + 1, &size_text, w, app.theme.fg);
-            if app.treemap.colour == Colour::Age && tile.small == 0 && inner.height >= 3 {
+            if app.treemap.color == ColorBy::Age && tile.small == 0 && inner.height >= 3 {
                 let band = AGES[age_band(tile.mtime, today)].1;
-                buf.set_stringn(inner.x, inner.y + 2, format!("≤ {band}"), w, app.theme.dim);
+                buf.set_stringn(
+                    inner.x,
+                    inner.y + 2,
+                    format!("≤ {band}"),
+                    w,
+                    app.theme.fg_dim,
+                );
             }
-            if app.treemap.colour == Colour::Category
+            if app.treemap.color == ColorBy::Category
                 && inner.height >= 3
                 && let (Some(rules), Some(tag)) = (&app.snap.rules, tile.tag)
                 && !tag.inherited
             {
-                let safety = dfdu_rules::Safety::ALL[tag.class.safety as usize].as_str();
+                let safety = tag.class.safety.as_str();
                 let text = format!("{} · {safety}", tag.category(rules).0);
-                buf.set_stringn(inner.x, inner.y + 2, text, w, app.theme.dim);
+                buf.set_stringn(inner.x, inner.y + 2, text, w, app.theme.fg_dim);
             }
         }
     } else {
         // Too small for a frame: a shaded block with what fits of the name.
-        let fill = if selected { app.theme.selected } else { style };
+        let fill = if selected { app.theme.cursor } else { style };
         for y in r.top()..r.bottom() {
             buf.set_stringn(r.x, y, "░".repeat(r.width as usize), r.width as usize, fill);
         }

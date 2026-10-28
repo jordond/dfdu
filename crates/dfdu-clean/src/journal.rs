@@ -47,7 +47,9 @@ pub(crate) enum Record {
     Intent {
         #[serde(flatten)]
         item: ItemRec,
-        mode: String,
+        /// A mode this version does not know makes the record unreadable, like an unknown
+        /// record type.
+        mode: Mode,
         /// `stage`: where the item is renamed to, as `path_hex` is for the item.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stage_hex: Option<String>,
@@ -113,7 +115,8 @@ pub(crate) struct ItemRec {
     pub path_hex: String,
     pub dev: u64,
     pub ino: u64,
-    pub kind: String,
+    #[serde(with = "kind_name")]
+    pub kind: Kind,
     pub size: u64,
     pub mtime: i64,
     /// btrfs: the uuid of the subvolume holding the item, in intent records. Subvolume `st_dev`
@@ -131,7 +134,7 @@ impl ItemRec {
             path_hex: hex_path(&item.path),
             dev: id.dev,
             ino: id.ino,
-            kind: kind_str(id.kind).to_string(),
+            kind: id.kind,
             size: id.apparent,
             mtime: id.mtime,
             subvol_uuid: None,
@@ -155,21 +158,28 @@ pub(crate) fn path_of_hex(h: &str) -> Option<PathBuf> {
     Some(PathBuf::from(name_os(&b).into_owned()))
 }
 
-pub(crate) fn kind_of_str(s: &str) -> Kind {
-    match s {
-        "file" => Kind::File,
-        "dir" => Kind::Dir,
-        "symlink" => Kind::Symlink,
-        _ => Kind::Other,
-    }
-}
+/// An item's kind as the journal names it; a name this version does not know reads as
+/// [`Kind::Other`].
+mod kind_name {
+    use dfdu_tree::Kind;
+    use serde::{Deserialize, Deserializer, Serializer};
 
-fn kind_str(k: Kind) -> &'static str {
-    match k {
-        Kind::File => "file",
-        Kind::Dir => "dir",
-        Kind::Symlink => "symlink",
-        Kind::Other => "other",
+    pub fn serialize<S: Serializer>(k: &Kind, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match k {
+            Kind::File => "file",
+            Kind::Dir => "dir",
+            Kind::Symlink => "symlink",
+            Kind::Other => "other",
+        })
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Kind, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "file" => Kind::File,
+            "dir" => Kind::Dir,
+            "symlink" => Kind::Symlink,
+            _ => Kind::Other,
+        })
     }
 }
 
@@ -251,18 +261,13 @@ impl Journal {
         item: &PlanItem,
         stage: Option<&Path>,
     ) -> io::Result<()> {
-        let mode = match mode {
-            Mode::Trash => "trash",
-            Mode::Stage => "stage",
-            Mode::Permanent => "delete",
-        };
         let rec = ItemRec {
             subvol_uuid: crate::verify::subvolume_uuid(&item.path, item.identity.dev),
             ..ItemRec::of(plan, item)
         };
         self.write(Record::Intent {
             item: rec,
-            mode: mode.into(),
+            mode,
             stage_hex: stage.map(hex_path),
         })?;
         self.sync()
@@ -413,5 +418,55 @@ mod tests {
             crc32c::crc32c(rec.as_bytes())
         );
         assert_eq!(check_line(&newer), Some("session"));
+    }
+
+    fn line_of(rec: &str) -> String {
+        format!(
+            r#"{{"rec":{rec},"crc":"{:08x}"}}"#,
+            crc32c::crc32c(rec.as_bytes())
+        )
+    }
+
+    /// Intent records as earlier versions wrote them parse to the same mode and kind, and are
+    /// written byte for byte as before.
+    #[test]
+    fn intent_mode_and_kind_keep_their_journal_names() {
+        for (mode, name, kind, kind_name) in [
+            (Mode::Trash, "trash", Kind::File, "file"),
+            (Mode::Stage, "stage", Kind::Dir, "dir"),
+            (Mode::Permanent, "delete", Kind::Symlink, "symlink"),
+        ] {
+            let rec = format!(
+                r#"{{"t":"intent","plan":3,"path":"/x/a","path_hex":"2f782f61","dev":1,"ino":2,"kind":"{kind_name}","size":5,"mtime":6,"mode":"{name}","stage_hex":"2f73"}}"#
+            );
+            let line = line_of(&rec);
+            let Some(Record::Intent {
+                item,
+                mode: m,
+                stage_hex,
+            }) = parse_line(&line)
+            else {
+                panic!("not an intent: {line}");
+            };
+            assert_eq!(m, mode);
+            assert_eq!(m.journal_name(), name);
+            assert_eq!(item.kind, kind);
+            assert_eq!(stage_hex.as_deref(), Some("2f73"));
+            let again = Record::Intent {
+                item,
+                mode: m,
+                stage_hex,
+            };
+            assert_eq!(serde_json::to_string(&again).unwrap(), rec);
+        }
+        // A kind this version does not know is another kind; a mode it does not know makes the
+        // record unreadable.
+        let rec = r#"{"t":"done","plan":3,"path":"/x/a","path_hex":"2f782f61","dev":1,"ino":2,"kind":"fifo","size":5,"mtime":6}"#;
+        let Some(Record::Done { item }) = parse_line(&line_of(rec)) else {
+            panic!("not a done record");
+        };
+        assert_eq!(item.kind, Kind::Other);
+        let rec = r#"{"t":"intent","plan":3,"path":"/x/a","path_hex":"2f782f61","dev":1,"ino":2,"kind":"file","size":5,"mtime":6,"mode":"shred"}"#;
+        assert!(parse_line(&line_of(rec)).is_none());
     }
 }

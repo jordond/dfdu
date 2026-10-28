@@ -136,17 +136,18 @@ pub(crate) fn restore_from_trash(
     path: &Path,
     id: &Identity,
     trashed_at: i64,
-) -> Result<PathBuf, String> {
+) -> io::Result<PathBuf> {
     imp::restore(path, id, trashed_at)
 }
 
 /// Whether that item is in the trash; `Err` when the trash cannot be read.
-pub(crate) fn in_trash(path: &Path, id: &Identity, trashed_at: i64) -> Result<bool, String> {
+pub(crate) fn in_trash(path: &Path, id: &Identity, trashed_at: i64) -> io::Result<bool> {
     imp::find(path, id, trashed_at).map(|f| f.is_some())
 }
 
 #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
 mod imp {
+    use std::io;
     use std::path::{Path, PathBuf};
 
     use crate::Identity;
@@ -157,24 +158,28 @@ mod imp {
         path: &Path,
         _id: &Identity,
         trashed_at: i64,
-    ) -> Result<Option<trash::TrashItem>, String> {
+    ) -> io::Result<Option<trash::TrashItem>> {
         Ok(trash::os_limited::list()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| io::Error::other(e.to_string()))?
             .into_iter()
             .filter(|t| t.original_path() == path && t.time_deleted >= trashed_at - 1)
             .max_by_key(|t| t.time_deleted))
     }
 
     /// The `trash` crate refuses to replace anything.
-    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> Result<PathBuf, String> {
-        let found = find(path, id, trashed_at)?.ok_or("not found in the trash")?;
+    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> io::Result<PathBuf> {
+        let found = find(path, id, trashed_at)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not found in the trash"))?;
         match trash::os_limited::restore_all([found]) {
             Ok(()) => Ok(path.to_path_buf()),
-            Err(trash::Error::RestoreCollision { .. }) => Err(format!(
-                "something now exists at {}; restore it from the trash by hand",
-                path.display()
+            Err(trash::Error::RestoreCollision { .. }) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "something now exists at {}; restore it from the trash by hand",
+                    path.display()
+                ),
             )),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
 }
@@ -182,21 +187,23 @@ mod imp {
 #[cfg(target_os = "macos")]
 mod imp {
     use std::fs;
+    use std::io;
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
 
     use crate::Identity;
 
-    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> Result<PathBuf, String> {
-        let found = find(path, id, trashed_at)?.ok_or("not found in the Trash")?;
-        super::put_back(&found, path).map_err(|e| e.to_string())
+    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> io::Result<PathBuf> {
+        let found = find(path, id, trashed_at)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not found in the Trash"))?;
+        super::put_back(&found, path)
     }
 
     /// The macOS trash keeps no record of where an item came from that the system exposes, but
     /// moving to it is a rename on the item's volume (`~/.Trash`, or `.Trashes/<uid>` at the
     /// volume's root), so the item keeps its inode: it is found by `(dev, ino)`, which is never
     /// another file's.
-    pub fn find(path: &Path, id: &Identity, _trashed_at: i64) -> Result<Option<PathBuf>, String> {
+    pub fn find(path: &Path, id: &Identity, _trashed_at: i64) -> io::Result<Option<PathBuf>> {
         let mut dirs = vec![];
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(Path::new(&h).join(".Trash"));
@@ -212,7 +219,7 @@ mod imp {
             let rd = match fs::read_dir(&d) {
                 Ok(rd) => rd,
                 Err(e) => {
-                    denied |= e.kind() == std::io::ErrorKind::PermissionDenied;
+                    denied |= e.kind() == io::ErrorKind::PermissionDenied;
                     continue;
                 }
             };
@@ -225,7 +232,10 @@ mod imp {
         }
         if denied {
             // Reading the Trash needs Full Disk Access for the terminal.
-            Err("the Trash cannot be read here; use Put Back in the Finder".into())
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the Trash cannot be read here; use Put Back in the Finder",
+            ))
         } else {
             Ok(None)
         }
@@ -247,16 +257,23 @@ mod imp {
 
 #[cfg(not(any(windows, unix)))]
 mod imp {
+    use std::io;
     use std::path::{Path, PathBuf};
 
     use crate::Identity;
 
-    pub fn find(_path: &Path, _id: &Identity, _trashed_at: i64) -> Result<Option<()>, String> {
-        Err("the trash cannot be read here".into())
+    pub fn find(_path: &Path, _id: &Identity, _trashed_at: i64) -> io::Result<Option<()>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the trash cannot be read here",
+        ))
     }
 
-    pub fn restore(_path: &Path, _id: &Identity, _trashed_at: i64) -> Result<PathBuf, String> {
-        Err("undo from the trash is not supported here".into())
+    pub fn restore(_path: &Path, _id: &Identity, _trashed_at: i64) -> io::Result<PathBuf> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "undo from the trash is not supported here",
+        ))
     }
 }
 

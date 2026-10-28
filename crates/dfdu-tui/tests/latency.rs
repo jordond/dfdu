@@ -228,7 +228,7 @@ fn measure(tree: &Path, workers: Option<usize>, after: usize, seed: u64) -> Run 
     let start = Instant::now();
     let storage = dfdu_sys::storage(tree);
     let engine = Engine::start(
-        dfdu_scan::native_backend(storage),
+        dfdu_scan::native_backend(storage, false),
         EngineOptions {
             workers: workers.unwrap_or_else(|| dfdu_engine::workers_for(storage)),
             journal_dir: None,

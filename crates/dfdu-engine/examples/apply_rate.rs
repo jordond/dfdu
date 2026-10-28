@@ -53,13 +53,12 @@ fn start<B: Backend>(backend: B, root: &Path) -> (Arc<Shared<B>>, Applier<B>, Mo
     let shared = Arc::new(Shared::new(backend, Limits::default()));
     let mut applier = Applier::new(shared.clone());
     let mut model = Model::default();
-    applier.command(
+    applier.apply_command(
         &mut model,
         Command::Scan {
             path: root.to_path_buf(),
             opts: JobOptions::default(),
         },
-        1,
     );
     (shared, applier, model)
 }
@@ -164,7 +163,7 @@ fn engine<B: Backend>(backend: impl Fn() -> B, root: &Path, runs: usize, workers
             path: root.to_path_buf(),
             opts: JobOptions::default(),
         });
-        assert!(e.wait_idle(None), "scan failed");
+        assert!(e.wait_idle(None).is_idle(), "scan failed");
         let wall = t0.elapsed();
         e.read(|m| {
             let s = &m.status.stats;

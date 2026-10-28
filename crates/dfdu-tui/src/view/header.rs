@@ -81,16 +81,16 @@ fn breadcrumbs(
     let mut hits = Vec::new();
     let mut x = 0;
     if skip > 0 {
-        spans.push(Span::styled(COLLAPSED, t.dim));
-        spans.push(Span::styled(SEPARATOR, t.dim));
+        spans.push(Span::styled(COLLAPSED, t.fg_dim));
+        spans.push(Span::styled(SEPARATOR, t.fg_dim));
         x += collapsed + sep;
     }
     for (i, seg) in segs.iter().enumerate().skip(skip) {
         if i == last {
             spans.push(Span::styled(seg.text.clone(), t.title));
         } else {
-            spans.push(Span::styled(seg.text.clone(), t.dim));
-            spans.push(Span::styled(SEPARATOR, t.dim));
+            spans.push(Span::styled(seg.text.clone(), t.fg_dim));
+            spans.push(Span::styled(SEPARATOR, t.fg_dim));
             hits.push((x, widths[i], i));
         }
         x += widths[i] + sep;
@@ -135,7 +135,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
                 1 => "1 error".to_string(),
                 n => format!("{} errors", count(n)),
             },
-            t.error,
+            t.status_error,
         ));
     }
     if !s.types.is_empty() {
@@ -147,23 +147,23 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
                 human(app.size_mode.of(&d)),
                 count(d.items)
             ),
-            t.warn,
+            t.status_warn,
         ));
     }
     if s.incomplete {
-        info.push(Span::styled(" · incomplete", t.warn));
+        info.push(Span::styled(" · incomplete", t.status_warn));
     }
     if let Some((done, requested)) = s.measuring {
         let pct = (done * 100).checked_div(requested).unwrap_or(0);
         info.push(Span::styled(
             format!(" · measuring shared data {pct}%"),
-            t.dim,
+            t.fg_dim,
         ));
     }
     if s.unmeasured > 0 {
         info.push(Span::styled(
             format!(" · {} files not measured", count(s.unmeasured)),
-            t.warn,
+            t.status_warn,
         ));
     }
     if let Some((name, ratio)) = s.profile
@@ -171,13 +171,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     {
         info.push(Span::styled(
             format!(" · data stored {ratio:.1}× ({name})"),
-            t.dim,
+            t.fg_dim,
         ));
     }
     if s.compressed_upper_bound {
         info.push(Span::styled(
             " · compressed sizes are upper bounds (exact as root)",
-            t.dim,
+            t.fg_dim,
         ));
     }
     let key = match app.sort.key {
@@ -188,7 +188,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     };
     let arrow = if app.sort.desc { "↓" } else { "↑" };
     let mode = app.size_mode.label();
-    let right2 = vec![Span::styled(format!("sort: {key} {arrow}  {mode} "), t.dim)];
+    let right2 = vec![Span::styled(
+        format!("sort: {key} {arrow}  {mode} "),
+        t.fg_dim,
+    )];
     let line2 = spread(info, right2, area.width);
     f.render_widget(Paragraph::new(vec![line1, line2]), area);
     app.mouse.crumbs = hits
@@ -206,9 +209,8 @@ mod tests {
     use ratatui::buffer::Buffer;
 
     use super::*;
-    use crate::app::tests::snap;
     use crate::snapshot::Snapshot;
-    use crate::tests::{render_buffer, style_at, text};
+    use crate::tests::{render_buffer, snap_without_totals, style_at, text};
 
     fn texts(dir: &str, root: &str, home: Option<&str>) -> Vec<String> {
         segments(Path::new(dir), Path::new(root), home.map(Path::new))
@@ -225,7 +227,7 @@ mod tests {
             dir_path: dir.into(),
             root_path: root.into(),
             at_root: dir == root,
-            ..snap(Vec::new(), 1)
+            ..snap_without_totals(Vec::new(), 1)
         };
         app.refresh(below, t0);
         let buf = render_buffer(&mut app, t0, width, 8);
@@ -322,7 +324,7 @@ mod tests {
             dir_path: "/home/jo/dev".into(),
             root_path: "/home/jo".into(),
             at_root: false,
-            ..snap(Vec::new(), 1)
+            ..snap_without_totals(Vec::new(), 1)
         };
         app.refresh(below, t0);
         let first = first_line(&render_buffer(&mut app, t0, 80, 8));

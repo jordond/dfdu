@@ -3,18 +3,18 @@
 //! the same list.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Args;
-use dfdu_engine::{Engine, EngineOptions, Model};
+use dfdu_engine::{Engine, Model};
 use dfdu_rules::{Action, RuleSet, Safety};
-use dfdu_scan::classify::ClassOpts;
-use dfdu_scan::{Backend, NativeBackend, native_backend};
+use dfdu_scan::{Backend, NativeBackend};
 use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
 
 /// Exit code when `--fail-above` is exceeded.
 pub const EXIT_THRESHOLD: u8 = 4;
@@ -129,10 +129,7 @@ pub struct Item {
 
 impl Item {
     pub fn safety(&self) -> Safety {
-        Safety::ALL
-            .get(self.class.safety as usize)
-            .copied()
-            .unwrap_or(Safety::Protected)
+        self.class.safety
     }
 }
 
@@ -195,41 +192,16 @@ fn keep(rules: &RuleSet, f: &Filter, it: &Item, now: i64) -> bool {
 }
 
 /// Starts an engine that scans `path` with the rules, and waits for the scan and the guard
-/// checks of its matches; the scan's fatal error if it had one. With `journal` the engine can
-/// delete.
+/// checks of its matches; how long that took. With `journal` the engine can delete.
 pub fn scan(
     path: &Path,
     mounts: MountArgs,
     rules: Arc<RuleSet>,
     threads: Option<usize>,
     journal: bool,
-) -> Result<(Engine<NativeBackend>, Duration), String> {
-    mounts.backend(path);
-    let storage = dfdu_sys::storage(path);
-    let opts = EngineOptions {
-        workers: threads.unwrap_or_else(|| dfdu_engine::workers_for(storage)),
-        auto_abandon: Some(Duration::from_secs(30)),
-        read_only: !journal,
-        journal_dir: if journal {
-            dfdu_clean::default_journal_dir()
-        } else {
-            None
-        },
-        ..Default::default()
-    };
+) -> Result<(Engine<NativeBackend>, Duration), ExitCode> {
     let t0 = Instant::now();
-    let engine = Engine::start(native_backend(storage), opts);
-    let mut job = mounts.job();
-    job.class = Some(ClassOpts::for_root(rules, path));
-    engine.send(dfdu_engine::Command::Scan {
-        path: path.to_path_buf(),
-        opts: job,
-    });
-    engine.wait_idle(None);
-    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-        engine.shutdown(Duration::from_millis(200));
-        return Err(msg);
-    }
+    let engine = launch::scan(path, mounts, threads, Some(rules), journal)?;
     wait_checks(&engine, CHECK_WAIT);
     Ok((engine, t0.elapsed()))
 }
@@ -357,15 +329,11 @@ pub fn reclaimable(items: &[Item]) -> u64 {
         .sum()
 }
 
-pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> std::process::ExitCode {
-    use std::process::ExitCode;
+pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> ExitCode {
     let (engine, elapsed) = match scan(&args.path, args.mounts, rules.clone(), args.threads, false)
     {
         Ok(e) => e,
-        Err(msg) => {
-            eprintln!("dfdu: {msg}");
-            return ExitCode::from(1);
-        }
+        Err(code) => return code,
     };
     let now = now_secs();
     let code = engine.read(|m| {
@@ -408,12 +376,8 @@ pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> std::process::ExitCode {
         } else {
             table(&rules, &list, now, args.fail_above, exceeded)
         };
-        if let Err(e) = r {
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                return ExitCode::SUCCESS;
-            }
-            eprintln!("dfdu: writing the output: {e}");
-            return ExitCode::from(1);
+        if let Err(code) = written(r) {
+            return code;
         }
         if exceeded {
             ExitCode::from(EXIT_THRESHOLD)
@@ -423,7 +387,7 @@ pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> std::process::ExitCode {
             ExitCode::SUCCESS
         }
     });
-    engine.shutdown(Duration::from_millis(500));
+    engine.shutdown(launch::SHUTDOWN);
     code
 }
 

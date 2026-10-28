@@ -163,7 +163,7 @@ fn hung_network_mount_is_abandoned_and_the_rest_counted() {
                 }
             }
         });
-        if engine.wait_idle(Some(Duration::from_millis(5))) {
+        if engine.wait_idle(Some(Duration::from_millis(5))).is_idle() {
             break;
         }
         assert!(

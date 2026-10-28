@@ -194,14 +194,14 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     prompt.extend(p.input.spans(Style::new(), t.key));
     let mut lines = vec![Line::from(prompt)];
     if p.shown.is_empty() {
-        lines.push(Line::styled(" nothing matches", t.dim));
+        lines.push(Line::styled(" nothing matches", t.fg_dim));
     }
     let top = p.follow_cursor(rows);
     for (row, (i, indices)) in p.shown.iter().enumerate().skip(top).take(rows) {
         let e = &p.entries[*i];
         let mut line = entry_line(app, e, indices, inner);
         if row == p.cursor {
-            line = line.style(t.selected);
+            line = line.style(t.cursor);
         }
         lines.push(line);
     }
@@ -218,7 +218,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
 /// its group and keys on the right. A label that does not fit is cut with `…`.
 fn entry_line(app: &App, e: &Entry, indices: &[u32], width: usize) -> Line<'static> {
     let t = &app.theme;
-    let mut right = vec![Span::styled(e.group, t.dim)];
+    let mut right = vec![Span::styled(e.group, t.fg_dim)];
     if !e.keys.is_empty() {
         right.push(Span::raw("  "));
         right.push(Span::styled(e.keys, t.key));
@@ -237,7 +237,7 @@ fn entry_line(app: &App, e: &Entry, indices: &[u32], width: usize) -> Line<'stat
     let mut next = indices.iter().copied().peekable();
     for (i, ch) in e.label.chars().take(keep).enumerate() {
         let hit = next.next_if_eq(&(i as u32)).is_some();
-        let style = if hit { t.matched } else { Style::new() };
+        let style = if hit { t.r#match } else { Style::new() };
         match spans.last_mut() {
             Some(last) if last.style == style => {
                 last.content.to_mut().push(ch);
@@ -262,21 +262,13 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     use super::*;
-    use crate::app::keys::tests::press;
-    use crate::snapshot::{EntryData, SizeMode, test_entry};
-    use crate::tests::{render, render_buffer, style_at, text};
+    use crate::snapshot::SizeMode;
+    use crate::tests::{library_snap, press, render, render_buffer, style_at, text};
     use crate::theme::ColorLevel;
 
     fn app_with(theme: Theme, t0: Instant) -> App {
         let mut app = App::new(theme, t0);
-        let es = vec![
-            EntryData {
-                is_dir: true,
-                ..test_entry(0, "Library", 3 << 30)
-            },
-            test_entry(1, "notes.sqlite", 625 << 20),
-        ];
-        app.refresh(crate::filter::tests::snap(es, 1), t0);
+        app.refresh(library_snap(), t0);
         app
     }
 
@@ -426,13 +418,13 @@ mod tests {
         let buf = render_buffer(&mut app, t0, 80, 8);
         let style = style_at(&buf, "Library/");
         assert_eq!(style.fg, light.dir.fg);
-        assert_eq!(style.bg, light.selected.bg);
-        assert_eq!(style_at(&buf, "sort: size").fg, light.dim.fg);
-        assert_ne!(light.dim.fg, dark.dim.fg);
+        assert_eq!(style.bg, light.cursor.bg);
+        assert_eq!(style_at(&buf, "sort: size").fg, light.fg_dim.fg);
+        assert_ne!(light.fg_dim.fg, dark.fg_dim.fg);
     }
 
     #[test]
-    fn theme_after_mono_has_colours_again() {
+    fn theme_after_mono_has_colors_again() {
         let t0 = Instant::now();
         let background = Some((0, 0, 0x20));
         let dark = Theme::named("dark", ColorLevel::TrueColor, background).expect("dark");

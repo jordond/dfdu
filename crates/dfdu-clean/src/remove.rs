@@ -145,6 +145,7 @@ mod imp {
                 return Ok(());
             }
         }
+        #[cfg(not(target_os = "linux"))]
         let _ = ino;
         // Collected first: the directory is not modified while it is being read.
         let mut entries: Vec<(OsString, FileType)> = Vec::new();

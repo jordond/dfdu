@@ -9,11 +9,9 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 use dfdu_dupes::{Found, Options, Progress};
-use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::native_backend;
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js, report};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, report, written};
 
 #[derive(Args)]
 pub struct DupesArgs {
@@ -42,29 +40,12 @@ enum Format {
 }
 
 pub fn run(args: DupesArgs) -> ExitCode {
-    args.mounts.backend(&args.path);
-    let storage = dfdu_sys::storage(&args.path);
-    let spinning = dfdu_engine::workers_for(storage) <= 2;
-    let engine = Engine::start(
-        native_backend(storage),
-        EngineOptions {
-            workers: dfdu_engine::workers_for(storage),
-            auto_abandon: Some(Duration::from_secs(30)),
-            read_only: true,
-            journal_dir: None,
-            ..Default::default()
-        },
-    );
     let t0 = Instant::now();
-    engine.send(Command::Scan {
-        path: args.path.clone(),
-        opts: args.mounts.job(),
-    });
-    engine.wait_idle(None);
-    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-        eprintln!("dfdu: {msg}");
-        return ExitCode::from(1);
-    }
+    // Its own --threads are the threads reading files.
+    let engine = match launch::scan(&args.path, args.mounts, None, None, false) {
+        Ok(e) => e,
+        Err(code) => return code,
+    };
     let (cands, errors) = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
             return (Vec::new(), 0);
@@ -74,7 +55,8 @@ pub fn run(args: DupesArgs) -> ExitCode {
             m.tree.total(root).errors,
         )
     });
-    engine.shutdown(Duration::from_millis(200));
+    engine.shutdown(launch::SHUTDOWN);
+    let spinning = dfdu_engine::workers_for(dfdu_sys::storage(&args.path)) <= 2;
     let opts = Options {
         min_size: args.min_size,
         threads: args.threads.unwrap_or(if spinning { 1 } else { 4 }),
@@ -108,11 +90,8 @@ pub fn run(args: DupesArgs) -> ExitCode {
                 .and_then(|()| std::io::Write::write_all(w, b"\n"))
         }
     };
-    if let Err(e) = r.and_then(|()| std::io::Write::flush(w))
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        eprintln!("dfdu: writing the output: {e}");
-        return ExitCode::from(1);
+    if let Err(code) = written(r.and_then(|()| std::io::Write::flush(w))) {
+        return code;
     }
     if args.format == Format::Table {
         eprintln!(

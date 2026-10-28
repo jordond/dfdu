@@ -92,7 +92,7 @@ fn a_remote_scan_builds_the_local_tree() {
             path: root.clone(),
             opts: JobOptions::default(),
         });
-        assert!(local.wait_idle(Some(Duration::from_secs(30))));
+        assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
         let s = shape(&local);
         local.shutdown(Duration::from_secs(1));
         s
@@ -104,7 +104,7 @@ fn a_remote_scan_builds_the_local_tree() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(e.read(|m| m.status.fatal.clone()), None);
     assert_eq!(shape(&e), want);
 
@@ -120,7 +120,7 @@ fn a_remote_scan_builds_the_local_tree() {
         m.tree.node_ref(d1)
     });
     e.send(Command::Rescan { node });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(shape(&e), local_scan());
 
     // Without a journal on the agent, nothing is deleted.
@@ -128,7 +128,7 @@ fn a_remote_scan_builds_the_local_tree() {
         items: vec![node],
         mode: dfdu_engine::Mode::Permanent,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     assert!(root.join("d1/new").exists());
 
     e.shutdown(Duration::from_secs(1));
@@ -144,13 +144,13 @@ fn a_closed_link_is_reported() {
         // Says hello, reads the greeting, then hangs up.
         let mut up_w = up_w;
         let mut down_r = down_r;
-        let hello = dfdu_engine::wire::Up::Hello {
+        let hello = dfdu_engine::wire::FromAgent::Hello {
             min: dfdu_engine::wire::VERSION,
             max: dfdu_engine::wire::VERSION,
             tool: "fake".into(),
         };
         dfdu_engine::wire::write_frame(&mut up_w, &hello.encode()).unwrap();
-        let host = dfdu_engine::wire::Up::Host {
+        let host = dfdu_engine::wire::FromAgent::Host {
             measure_min: 0,
             privileged: false,
         };
@@ -174,7 +174,7 @@ fn a_closed_link_is_reported() {
         path: "/nowhere".into(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(10))));
+    assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
     let why = e.read(|m| m.status.disconnected.clone()).unwrap();
     assert!(why.contains("closed the link"), "{why}");
     assert_eq!(e.read(|m| m.status.fatal.clone()), None);
@@ -190,13 +190,13 @@ fn a_silent_agent_is_given_up() {
     let tmp = tempfile::tempdir().unwrap();
     let hello = tmp.path().join("hello");
     let mut frame = Vec::new();
-    let up = dfdu_engine::wire::Up::Hello {
+    let up = dfdu_engine::wire::FromAgent::Hello {
         min: dfdu_engine::wire::VERSION,
         max: dfdu_engine::wire::VERSION,
         tool: "silent".into(),
     };
     dfdu_engine::wire::write_frame(&mut frame, &up.encode()).unwrap();
-    let host = dfdu_engine::wire::Up::Host {
+    let host = dfdu_engine::wire::FromAgent::Host {
         measure_min: 0,
         privileged: false,
     };
@@ -221,7 +221,7 @@ fn a_silent_agent_is_given_up() {
         path: "/".into(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let why = e.read(|m| m.status.disconnected.clone()).unwrap();
     assert!(why.contains("no data for 10 s"), "{why}");
     assert!(e.read(|m| m.status.incomplete));
@@ -229,9 +229,18 @@ fn a_silent_agent_is_given_up() {
     e.shutdown(Duration::from_secs(1));
 }
 
-/// Every class in the tree once its guard checks ran: the node's path, the rule's id, safety,
-/// degrade condition and flags, and protection.
-fn classes(e: &Engine<PortableBackend>) -> Vec<(std::path::PathBuf, String, u8, u8, u8)> {
+/// A node's path, its rule's id, safety (`None` for a protected node), degrade condition and
+/// flags.
+type ClassRow = (
+    std::path::PathBuf,
+    String,
+    Option<dfdu_rules::Safety>,
+    u8,
+    u8,
+);
+
+/// Every class in the tree once its guard checks ran, and protection.
+fn classes(e: &Engine<PortableBackend>) -> Vec<ClassRow> {
     let t = std::time::Instant::now();
     while e.read(|m| {
         m.tree
@@ -253,7 +262,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<(std::path::PathBuf, String, u8, 
                 (
                     m.tree.path_buf(ix),
                     rules.rule(c.rule).id.clone(),
-                    c.safety,
+                    Some(c.safety),
                     c.degraded.map_or(0, |d| d as u8 + 1),
                     c.flags,
                 )
@@ -262,7 +271,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<(std::path::PathBuf, String, u8, 
         let mut stack: Vec<_> = m.tree.roots().collect();
         while let Some(ix) = stack.pop() {
             if m.tree.is_protected(ix) {
-                out.push((m.tree.path_buf(ix), "protected".into(), 0, 0, 0));
+                out.push((m.tree.path_buf(ix), "protected".into(), None, 0, 0));
             }
             stack.extend(m.tree.children(ix));
         }
@@ -328,7 +337,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
             ..JobOptions::default()
         },
     });
-    assert!(local.wait_idle(Some(Duration::from_secs(30))));
+    assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let want = classes(&local);
     assert!(want.len() >= 5, "{want:?}");
     let tracked = dfdu_tree::Class::CHECKED | dfdu_tree::Class::VCS_TRACKED;
@@ -353,7 +362,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
             ..JobOptions::default()
         },
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(e.read(|m| m.status.fatal.clone()), None);
     assert_eq!(classes(&e), want);
 
@@ -365,7 +374,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
             m.tree.node_ref(d.unwrap())
         });
         e.send(Command::Rescan { node });
-        assert!(e.wait_idle(Some(Duration::from_secs(30))));
+        assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     };
     w("old/package-lock.json", b"{}");
     rescan(&local);
@@ -381,7 +390,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
 /// incomplete, and nothing more is scanned.
 #[test]
 fn a_link_lost_mid_scan_keeps_what_arrived() {
-    use dfdu_engine::wire::{Up, read_frame, write_frame};
+    use dfdu_engine::wire::{FromAgent, read_frame, write_frame};
     let tmp = tempfile::tempdir().unwrap();
     let root = dunce::canonicalize(tmp.path()).unwrap().join("t");
     for i in 0..400 {
@@ -402,7 +411,7 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
         let mut buf = Vec::new();
         let mut chunks = 0;
         while chunks < 5 && read_frame(&mut r, &mut buf).unwrap() {
-            if let Ok(Up::Batch(msgs)) = Up::decode(&buf, None) {
+            if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&buf, None) {
                 chunks += msgs
                     .iter()
                     .filter(|m| matches!(m, dfdu_scan::ScanMsg::Chunk(_)))
@@ -428,7 +437,7 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     relay.join().unwrap();
     let (why, incomplete, items) = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
@@ -450,7 +459,7 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
     // Nothing more is scanned.
     let node = e.read(|m| m.tree.node_ref(m.tree.roots().next().unwrap()));
     e.send(Command::Rescan { node });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     let notice = e.read(|m| m.status.notices.last().cloned()).unwrap();
     assert!(notice.contains("nothing more is scanned"), "{notice}");
     e.shutdown(Duration::from_secs(1));
@@ -496,10 +505,10 @@ fn deletes_run_on_the_agent() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let delete = |items, mode| {
         e.send(Command::Delete { items, mode });
-        assert!(e.wait_idle(Some(Duration::from_secs(30))));
+        assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
         e.read(|m| m.status.last_delete.clone())
             .expect("a plan finished")
     };
@@ -533,7 +542,7 @@ fn deletes_run_on_the_agent() {
         assert!(t.elapsed() < Duration::from_secs(20));
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(fs::read(root.join("staged/c")).unwrap().len(), 3000);
     node(&e, "staged/c");
 
@@ -573,12 +582,12 @@ fn a_read_only_remote_engine_deletes_nothing() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     e.send(Command::Delete {
         items: vec![node(&e, "f")],
         mode: dfdu_engine::Mode::Permanent,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     assert!(root.join("f").exists());
     assert!(!base.join("ops").exists());
     e.shutdown(Duration::from_secs(1));
@@ -667,12 +676,12 @@ fn a_link_lost_during_a_delete_ends_the_plan() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     e.send(Command::Delete {
         items: vec![node(&e, "d")],
         mode: dfdu_engine::Mode::Permanent,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     relay.join().unwrap();
     let s = e
         .read(|m| m.status.last_delete.clone())
@@ -747,7 +756,7 @@ fn extents_are_measured_on_the_agent() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(local.wait_idle(Some(Duration::from_secs(30))));
+    assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let want = allocs(&local);
     let measured = local.read(|m| m.tree.total(m.tree.roots().next().unwrap()).alloc);
     local.shutdown(Duration::from_secs(1));
@@ -757,7 +766,7 @@ fn extents_are_measured_on_the_agent() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(allocs(&e), want);
     assert_eq!(e.read(|m| m.status.unmeasured), 0);
     e.shutdown(Duration::from_secs(1));
@@ -776,7 +785,7 @@ fn extents_are_measured_on_the_agent() {
             path: root.clone(),
             opts: JobOptions::default(),
         });
-        assert!(e.wait_idle(Some(Duration::from_secs(30))));
+        assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
         let t = e.read(|m| m.tree.total(m.tree.roots().next().unwrap()).alloc);
         e.shutdown(Duration::from_secs(1));
         t
@@ -793,7 +802,7 @@ fn extents_are_measured_on_the_agent() {
 /// measurement watchdog's minute.
 #[test]
 fn a_link_lost_while_measuring_leaves_files_unmeasured() {
-    use dfdu_engine::wire::{Up, read_frame, write_frame};
+    use dfdu_engine::wire::{FromAgent, read_frame, write_frame};
     let (_tmp, root, shares) = clones();
     if !shares {
         eprintln!("skipped: not on a filesystem sharing extents");
@@ -810,7 +819,7 @@ fn a_link_lost_while_measuring_leaves_files_unmeasured() {
         let (mut r, mut w) = (agent_r, up_w);
         let mut buf = Vec::new();
         while read_frame(&mut r, &mut buf).unwrap() {
-            if let Ok(Up::Measured(_)) = Up::decode(&buf, None) {
+            if let Ok(FromAgent::Measured(_)) = FromAgent::decode(&buf, None) {
                 break;
             }
             write_frame(&mut w, &buf).unwrap();
@@ -832,7 +841,7 @@ fn a_link_lost_while_measuring_leaves_files_unmeasured() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert!(t.elapsed() < Duration::from_secs(20));
     relay.join().unwrap();
     let (unmeasured, measuring) = e.read(|m| (m.status.unmeasured, m.status.measuring.clone()));
@@ -914,7 +923,7 @@ fn native_commands_run_on_the_agent() {
             ..JobOptions::default()
         },
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let junk = node(&e, "junk");
     let rule = e.read(|m| {
         let ix = m.tree.resolve_visible(junk).unwrap();
@@ -982,7 +991,7 @@ fn a_link_lost_during_a_native_command_ends_it() {
             ..JobOptions::default()
         },
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     e.send(Command::RunNative {
         id: 7,
         node: node(&e, "junk"),

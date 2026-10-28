@@ -10,7 +10,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::{Color, Modifier, Style};
 
-use super::{assert_cue, key, mid_scan_app, render_buffer, shared_model, style_at, styled, text};
+use super::{assert_cue, mid_scan_app, press, render_buffer, shared_model, style_at, styled, text};
 use crate::app::{App, Effect, Overlay};
 use crate::debug::Counters;
 use crate::snapshot::{self, EntryData, Mark, Target, test_entry};
@@ -75,13 +75,13 @@ fn mono() -> Theme {
     theme("mono", ColorLevel::None)
 }
 
-fn press(app: &mut App, now: Instant, codes: &[KeyCode]) -> Vec<Effect> {
-    codes.iter().flat_map(|&c| app.key(key(c), now)).collect()
+fn press_all(app: &mut App, now: Instant, codes: &[KeyCode]) -> Vec<Effect> {
+    codes.iter().flat_map(|&c| app.key(press(c), now)).collect()
 }
 
 fn typed(app: &mut App, now: Instant, s: &str) {
     for c in s.chars() {
-        assert!(app.key(key(KeyCode::Char(c)), now).is_empty());
+        assert!(app.key(press(KeyCode::Char(c)), now).is_empty());
     }
 }
 
@@ -112,7 +112,7 @@ fn finished_with_details(theme: Theme) -> (App, Instant) {
     let t0 = Instant::now();
     let mut app = App::new(theme, t0);
     app.refresh(snapshot::build(&m, &mut Target::root(), SizeMode::Disk), t0);
-    press(&mut app, t0, &[KeyCode::Down, KeyCode::Char('i')]);
+    press_all(&mut app, t0, &[KeyCode::Down, KeyCode::Char('i')]);
     let x = extras::read(&m, &app, &Budget::new(1 << 20), Counters::default());
     extras::apply(&mut app, x);
     (app, t0)
@@ -124,7 +124,7 @@ fn frame(state: State, theme: Theme) -> Buffer {
         let (mut app, now) = finished_with_details(theme);
         // The first frame lays the pane out, so that Tab can focus it.
         render_buffer(&mut app, now, WIDTH, HEIGHT);
-        press(&mut app, now, &[KeyCode::Tab]);
+        press_all(&mut app, now, &[KeyCode::Tab]);
         assert!(details::focused(&app), "the pane has the focus");
         assert!(!app.snap.busy && app.extras.details.facts.is_some());
         return render_buffer(&mut app, now, WIDTH, HEIGHT);
@@ -135,18 +135,18 @@ fn frame(state: State, theme: Theme) -> Buffer {
         State::MidScan | State::Details => {}
         // Library and .android marked, then the dialog for both.
         State::Delete => {
-            press(&mut app, now, &[c(' '), KeyCode::Down, c(' '), c('d')]);
+            press_all(&mut app, now, &[c(' '), KeyCode::Down, c(' '), c('d')]);
         }
         State::Filter => typed(&mut app, now, "/li"),
         State::Help => typed(&mut app, now, "?"),
         State::Palette => typed(&mut app, now, ":sort"),
         State::Errors => {
-            let fx = press(&mut app, now, &[c('!')]);
+            let fx = press_all(&mut app, now, &[c('!')]);
             assert!(matches!(fx[..], [Effect::ShowErrors]));
             app.show_errors(error_list());
         }
         State::Debug => {
-            press(&mut app, now, &[KeyCode::F(12)]);
+            press_all(&mut app, now, &[KeyCode::F(12)]);
         }
     }
     let reached = match state {
@@ -224,7 +224,7 @@ fn text_layer_is_identical_across_themes() {
 }
 
 #[test]
-fn mono_frames_have_no_colours() {
+fn mono_frames_have_no_colors() {
     let detected = detect_color_level(None, |k| (k == "NO_COLOR").then(|| "1".into()));
     assert_eq!(detected.level, ColorLevel::None);
     let chosen = choose_theme(None, detected.level, None);
@@ -319,7 +319,7 @@ fn every_mark_has_a_glyph() {
         })
         .collect();
     let mut app = App::new(mono(), t0);
-    app.refresh(crate::filter::tests::snap(es, 1), t0);
+    app.refresh(crate::tests::snap_with_totals(es, 1), t0);
     let buf = render_buffer(&mut app, t0, 140, 20);
     let mut seen = Vec::new();
     for (i, &mark) in MARKS.iter().enumerate() {
@@ -357,7 +357,7 @@ fn every_mark_has_a_glyph() {
     )));
 
     // A marked row starts with `●`, and so does the count of marks.
-    press(&mut app, t0, &[KeyCode::Char(' ')]);
+    press_all(&mut app, t0, &[KeyCode::Char(' ')]);
     let buf = render_buffer(&mut app, t0, 140, 20);
     let (_, row) = row_with(&buf, &format!("{first}/"));
     assert!(row.starts_with('●'), "{row}");
@@ -380,7 +380,7 @@ fn every_mark_has_a_glyph() {
     let (mut app, now) = finished_with_details(mono());
     let buf = render_buffer(&mut app, now, WIDTH, HEIGHT);
     assert!(text(&buf).contains('╭') && !text(&buf).contains('┏'));
-    press(&mut app, now, &[KeyCode::Tab]);
+    press_all(&mut app, now, &[KeyCode::Tab]);
     let buf = render_buffer(&mut app, now, WIDTH, HEIGHT);
     assert!(!text(&buf).contains('╭'));
     assert_cue(&buf, "┏", |s| s.add_modifier.contains(Modifier::BOLD));

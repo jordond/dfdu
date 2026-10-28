@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use dfdu_engine::{Command, DeleteSummary, Engine, EngineOptions, Mode};
+use dfdu_engine::{Command, Count, DeleteSummary, Engine, EngineOptions, Mode};
 use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_tree::NodeRef;
 use tempfile::TempDir;
@@ -55,7 +55,7 @@ fn scan<B: Backend>(e: &Engine<B>, root: &Path) {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
 }
 
 fn node<B: Backend>(e: &Engine<B>, rel: &str) -> NodeRef {
@@ -74,7 +74,7 @@ fn node<B: Backend>(e: &Engine<B>, rel: &str) -> NodeRef {
 
 fn delete<B: Backend>(e: &Engine<B>, items: Vec<NodeRef>, mode: Mode) -> DeleteSummary {
     e.send(Command::Delete { items, mode });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| m.status.last_delete.clone())
         .expect("a plan finished")
 }
@@ -234,7 +234,7 @@ fn refusals_with<B: Backend>(backend: fn() -> B) {
         items: vec![node(&e, "junk")],
         mode: Mode::Permanent,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     assert!(e.read(|m| m.status.last_delete.is_none()));
     assert!(root.join("junk").exists());
     e.shutdown(Duration::from_secs(1));
@@ -300,10 +300,16 @@ fn staged_items_are_deleted_on_commit() {
     assert_eq!(root_alloc(&e), before - junk);
     // Renamed aside, whole, in the staging directory beside the journals.
     assert_eq!(staged_files(state.path()), ["1-junk"]);
-    assert_eq!(e.read(|m| m.status.staged), (1, junk));
+    assert_eq!(
+        e.read(|m| m.status.staged),
+        Count {
+            items: 1,
+            bytes: junk
+        }
+    );
     assert!(e.read(|m| m.status.undo.as_ref().is_some_and(|u| u.items == 1)));
     e.send(Command::CommitStaged);
-    wait_for(&e, |m| m.status.staged.0 == 0);
+    wait_for(&e, |m| m.status.staged.items == 0);
     assert!(staged_files(state.path()).is_empty());
     assert!(
         e.read(|m| m.status.undo.is_none()),
@@ -366,7 +372,7 @@ fn staged_items_are_deleted_when_the_window_ends() {
         vec![node(&e, "junk"), node(&e, "file.bin")],
         Mode::Stage,
     );
-    wait_for(&e, |m| m.status.staged.0 == 0);
+    wait_for(&e, |m| m.status.staged.items == 0);
     assert!(staged_files(state.path()).is_empty());
     e.shutdown(Duration::from_secs(5));
 }
@@ -397,7 +403,7 @@ fn undo_puts_staged_items_back() {
     wait_for(&e, |m| {
         m.status.undoing.is_none() && m.status.undo.is_none()
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert!(root.join("junk/sub/c.bin").exists());
     assert_eq!(
         fs::read(root.join("file.bin.restored-1")).unwrap().len(),
@@ -405,7 +411,7 @@ fn undo_puts_staged_items_back() {
     );
     assert_eq!(fs::read(root.join("file.bin")).unwrap().len(), 10);
     assert!(staged_files(state.path()).is_empty());
-    assert_eq!(e.read(|m| m.status.staged), (0, 0));
+    assert_eq!(e.read(|m| m.status.staged), Count::default());
     // The rescans found everything: what was put back, and the new file.bin.
     assert!(root_alloc(&e) > before);
     node(&e, "junk/sub/c.bin");

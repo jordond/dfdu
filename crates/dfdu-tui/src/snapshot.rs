@@ -134,13 +134,13 @@ impl Tag {
     /// The short name of its category (`build` for `dev.build`) and the theme's colour slot.
     pub fn category(self, rules: &dfdu_rules::RuleSet) -> (&'static str, usize) {
         let c = rules.rule(self.class.rule).category();
-        (c.id.rsplit('.').next().unwrap_or(c.id), c.colour as usize)
+        (c.id.rsplit('.').next().unwrap_or(c.id), c.color as usize)
     }
 
     /// A match offered for cleanup without review: safe or regenerable (a match version
     /// control tracks is protected).
     pub fn candidate(self) -> bool {
-        self.class.safety <= dfdu_rules::Safety::Regenerable as u8
+        self.class.safety <= dfdu_rules::Safety::Regenerable
     }
 }
 
@@ -295,7 +295,7 @@ pub struct Snapshot {
     pub undo: Option<dfdu_engine::UndoInfo>,
     pub undoing: bool,
     /// Items staged and not deleted yet, and their size.
-    pub staged: (usize, u64),
+    pub staged: dfdu_engine::Count,
     /// The latest estimate of what a delete would free.
     pub estimate: Option<dfdu_engine::Estimate>,
     pub last_delete: Option<DeleteSummary>,
@@ -556,23 +556,9 @@ fn only_types(tree: &Tree, dir: Ix, types: &TypeFilter, mode: SizeMode, snap: &m
 /// An entry with a unique node reference, for tests that do not need a real tree.
 #[cfg(test)]
 pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
-    use dfdu_tree::Meta;
     let mut t = Tree::new();
-    let meta = Meta {
-        kind: Kind::Dir,
-        apparent: 0,
-        alloc: 0,
-        mtime: 0,
-        dev: 1,
-        ino: 1,
-        nlink: 1,
-        mount: 0,
-    };
-    let root = t.new_root(b"/", &meta, true);
-    let file = Meta {
-        kind: Kind::File,
-        ..meta
-    };
+    let root = t.new_root(b"/", &crate::tests::meta(Kind::Dir, 0, 1), true);
+    let file = crate::tests::meta(Kind::File, 0, 1);
     let mut last = root;
     for _ in 0..=i {
         last = t.add_file(root, b"x", &file, false, None);

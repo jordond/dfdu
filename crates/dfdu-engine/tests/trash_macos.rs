@@ -33,7 +33,7 @@ fn trash_and_undo() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let junk = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         let c = m.tree.children(r).find(|&c| m.tree.name(c) == b"junk");
@@ -43,7 +43,7 @@ fn trash_and_undo() {
         items: vec![junk],
         mode: Mode::Trash,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let s = e.read(|m| m.status.last_delete.clone()).unwrap();
     assert_eq!(s.deleted, 1, "{:?}", e.read(|m| m.status.notices.clone()));
     assert!(!root.join("junk").exists());
@@ -51,7 +51,7 @@ fn trash_and_undo() {
     while e.read(|m| m.status.undoing.is_some()) {
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert!(
         root.join("junk/x.bin").exists(),
         "{:?}",

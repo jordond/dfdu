@@ -236,9 +236,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     prompt.extend(p.input.spans(Style::new(), t.key));
     let mut lines = vec![Line::from(prompt)];
     if app.snap.breakdown.is_none() {
-        lines.push(Line::styled(" reading…", t.dim));
+        lines.push(Line::styled(" reading…", t.fg_dim));
     } else if rows.is_empty() {
-        lines.push(Line::styled(" nothing matches", t.dim));
+        lines.push(Line::styled(" nothing matches", t.fg_dim));
     }
     for (i, (row, tot)) in rows.iter().enumerate().skip(top).take(fit) {
         let mark = if chosen(&app.types, *row) {
@@ -261,10 +261,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         let mut line = Line::from(vec![
             Span::raw(left),
             Span::raw(" ".repeat(pad)),
-            Span::styled(right, t.dim),
+            Span::styled(right, t.fg_dim),
         ]);
         if i == cursor {
-            line = line.style(t.selected);
+            line = line.style(t.cursor);
         }
         lines.push(line);
     }
@@ -285,12 +285,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
 mod tests {
     use std::time::Instant;
 
-    use dfdu_tree::{Kind, Meta};
+    use dfdu_tree::Kind;
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
     use crate::snapshot::{self, Target};
-    use crate::tests::{key, render};
+    use crate::tests::{press, render};
     use crate::theme::Theme;
 
     /// `/r` with `films/a.mp4` (100), `films/notes.txt` (10), `music/c.flac` (50), `x.mkv`
@@ -299,16 +299,7 @@ mod tests {
         let mut ino = 0;
         let mut meta = |kind, size| {
             ino += 1;
-            Meta {
-                kind,
-                apparent: size,
-                alloc: size,
-                mtime: 0,
-                dev: 1,
-                ino,
-                nlink: 1,
-                mount: 0,
-            }
+            crate::tests::meta(kind, size, ino)
         };
         let mut m = dfdu_engine::Model::default();
         let t = &mut m.tree;
@@ -359,7 +350,7 @@ mod tests {
         assert_eq!(app.snap.entries.len(), 4);
         assert!(!stale(&app));
 
-        app.key(key(KeyCode::Char('t')), t0);
+        app.key(press(KeyCode::Char('t')), t0);
         assert!(stale(&app), "the picker needs the breakdown");
         read(&mut app, &m, t0);
         let out = render(&mut app, t0, 90, 20);
@@ -368,9 +359,9 @@ mod tests {
         assert!(out.contains("[ ] video"), "{out}");
         assert!(out.contains(".mkv"), "{out}");
         for c in "vid".chars() {
-            app.key(key(KeyCode::Char(c)), t0);
+            app.key(press(KeyCode::Char(c)), t0);
         }
-        app.key(key(KeyCode::Enter), t0);
+        app.key(press(KeyCode::Enter), t0);
         assert!(matches!(app.overlay, Overlay::None));
         assert_eq!(app.types.to_string(), "video");
         assert!(stale(&app));
@@ -386,24 +377,24 @@ mod tests {
         // Folders cannot be marked or deleted; files can.
         let films = app.rows.iter().position(|&i| app.snap.entries[i].is_dir);
         app.move_to(films.unwrap());
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.marks.is_empty());
         assert_eq!(app.status.as_deref(), Some(NO_FOLDERS));
-        app.key(key(KeyCode::Char('d')), t0);
+        app.key(press(KeyCode::Char('d')), t0);
         assert!(matches!(app.overlay, Overlay::None));
 
         // An extension added by typing it, then Esc clears everything.
-        app.key(key(KeyCode::Char('t')), t0);
+        app.key(press(KeyCode::Char('t')), t0);
         read(&mut app, &m, t0);
         for c in ".flac".chars() {
-            app.key(key(KeyCode::Char(c)), t0);
+            app.key(press(KeyCode::Char(c)), t0);
         }
-        app.key(key(KeyCode::Char(' ')), t0);
-        app.key(key(KeyCode::Esc), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Esc), t0);
         assert_eq!(app.types.to_string(), "video, .flac");
         read(&mut app, &m, t0);
         assert_eq!(app.snap.entries.len(), 3);
-        app.key(key(KeyCode::Esc), t0);
+        app.key(press(KeyCode::Esc), t0);
         assert!(app.types.is_empty());
         read(&mut app, &m, t0);
         assert_eq!(app.snap.entries.len(), 4);

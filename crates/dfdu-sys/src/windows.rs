@@ -34,6 +34,9 @@ use windows_sys::Win32::Foundation::{
     STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_NOT_IMPLEMENTED,
     STATUS_NOT_SUPPORTED, UNICODE_STRING,
 };
+use windows_sys::Win32::Security::{
+    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
@@ -47,6 +50,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, SYNCHRONIZE, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// `FILE_SUPPORTS_HARD_LINKS` in the file system flags.
 const FILE_SUPPORTS_HARD_LINKS: u32 = 0x0040_0000;
@@ -78,6 +82,33 @@ fn last_error_code() -> u32 {
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
+}
+
+/// Whether this process runs elevated (with an administrator's full token), so it may read
+/// what administrators may.
+pub fn is_privileged() -> bool {
+    let mut h: HANDLE = null_mut();
+    // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no closing; `h` is valid
+    // for writes.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut h) } == 0 {
+        return false;
+    }
+    // SAFETY: on success `h` is a new handle that nothing else owns; `OwnedHandle` closes it.
+    let token = unsafe { OwnedHandle::from_raw_handle(h) };
+    let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut len = 0u32;
+    // SAFETY: `elevation` is a `TOKEN_ELEVATION` valid for writes of the size passed; `len` is
+    // valid for writes.
+    let ok = unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenElevation,
+            (&raw mut elevation).cast::<c_void>(),
+            size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+    };
+    ok != 0 && elevation.TokenIsElevated != 0
 }
 
 /// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists: `MoveFileExW` without

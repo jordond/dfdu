@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
-use dfdu_tui::{ColorLevel, Theme, UiOptions};
+use dfdu_tui::{ColorLevel, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Theme, UiOptions};
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
@@ -24,9 +24,16 @@ use ratatui::layout::{Position, Size};
 use ratatui::style::Color;
 
 /// How long without a frame counts as the loop having caught up with the finished scan. Longer
-/// than any of its timed wakes: the spinner while busy and the automatic re-sort
-/// (`IDLE_BEFORE_SORT` and `MIN_SORT_INTERVAL` in the app).
-const QUIET: Duration = Duration::from_millis(2500);
+/// than any of its timed wakes: the spinner while busy and the automatic re-sort, which waits
+/// for the longer of [`IDLE_BEFORE_SORT`] and [`MIN_SORT_INTERVAL`].
+const QUIET: Duration = {
+    let resort = if IDLE_BEFORE_SORT.as_nanos() > MIN_SORT_INTERVAL.as_nanos() {
+        IDLE_BEFORE_SORT
+    } else {
+        MIN_SORT_INTERVAL
+    };
+    resort.saturating_add(Duration::from_millis(500))
+};
 
 #[derive(Default)]
 struct Frames {
@@ -158,7 +165,7 @@ fn settled_with(ui: UiOptions, check: impl FnOnce(Sender<Event>, &Mutex<Frames>)
     })
     .expect("terminal");
     let engine = Engine::start(
-        dfdu_scan::native_backend(dfdu_sys::storage(tmp.path())),
+        dfdu_scan::native_backend(dfdu_sys::storage(tmp.path()), false),
         EngineOptions {
             workers: 2,
             journal_dir: Some(journal.path().to_path_buf()),

@@ -71,13 +71,14 @@ impl Filter {
         }
         let fuzzy = self.fuzzy.get_mut();
         if self.input.text() != self.query {
-            // Every word only grew or was added: whatever matches now matched before.
+            // Every word only grew or was added: whatever matches now matched before. The new
+            // query has at least the words of the old one, so it is not empty either.
             let narrowed =
                 !replaced && !fuzzy.is_empty() && self.input.text().starts_with(&self.query);
             self.query = self.input.text().to_owned();
             *fuzzy = Fuzzy::new(&self.query);
             self.active = !fuzzy.is_empty();
-            if narrowed && !fuzzy.is_empty() {
+            if narrowed {
                 for (hit, e) in self.hits.iter_mut().zip(&snap.entries) {
                     *hit = *hit && fuzzy.matches(&String::from_utf8_lossy(&e.name));
                 }
@@ -87,9 +88,7 @@ impl Filter {
         } else if replaced {
             self.hits.clear();
         }
-        if !self.active {
-            self.hits.clear();
-        } else {
+        if self.active {
             self.hits.truncate(snap.entries.len());
             let from = self.hits.len();
             self.hits.extend(
@@ -97,6 +96,8 @@ impl Filter {
                     .iter()
                     .map(|e| fuzzy.matches(&String::from_utf8_lossy(&e.name))),
             );
+        } else {
+            self.hits.clear();
         }
         if self.active || self.editing {
             self.counts = self.count(&snap.entries);
@@ -242,17 +243,17 @@ pub fn line(app: &App) -> Option<Line<'static>> {
     let spans = if f.editing {
         let mut spans = vec![Span::styled(" /", t.key), Span::raw(" ")];
         spans.extend(f.input.spans(Style::new(), t.key));
-        spans.push(Span::styled(format!("   {shown} of {of}"), t.dim));
+        spans.push(Span::styled(format!("   {shown} of {of}"), t.fg_dim));
         spans
     } else {
         vec![
-            Span::styled(" filter: ", t.dim),
+            Span::styled(" filter: ", t.fg_dim),
             Span::raw(format!("\"{}\"", f.input.text())),
-            Span::styled(format!(" ({shown} of {of})   "), t.dim),
+            Span::styled(format!(" ({shown} of {of})   "), t.fg_dim),
             Span::styled("/", t.key),
-            Span::styled(" edit  ", t.dim),
+            Span::styled(" edit  ", t.fg_dim),
             Span::styled("Esc", t.key),
-            Span::styled(" clear", t.dim),
+            Span::styled(" clear", t.fg_dim),
         ]
     };
     Some(Line::from(spans))
@@ -268,7 +269,7 @@ pub fn name_spans(app: &App, _index: usize, name: String, style: Style) -> Vec<S
     if f.fuzzy.borrow_mut().indices(&name, &mut indices).is_none() || indices.is_empty() {
         return vec![Span::styled(name, style)];
     }
-    let matched = style.patch(app.theme.matched);
+    let matched = style.patch(app.theme.r#match);
     let mut spans = Vec::new();
     let mut run = String::new();
     let mut run_hit = false;
@@ -289,18 +290,18 @@ pub fn name_spans(app: &App, _index: usize, name: String, style: Style) -> Vec<S
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use std::time::Duration;
 
-    use dfdu_tree::Totals;
     use ratatui::crossterm::event::KeyModifiers;
     use ratatui::style::{Color, Modifier};
 
     use super::*;
     use crate::app::Overlay;
-    use crate::app::keys::tests::press;
     use crate::snapshot::{EntryData, test_entry};
-    use crate::tests::{assert_cue, render, render_buffer, style_at, styled, text};
+    use crate::tests::{
+        assert_cue, press, render, render_buffer, snap_with_totals, style_at, styled, text,
+    };
     use crate::theme::Theme;
 
     fn dir(i: u32, name: &str, size: u64) -> EntryData {
@@ -323,25 +324,9 @@ pub(crate) mod tests {
         ]
     }
 
-    /// A directory being scanned that holds `es`, with its totals.
-    pub(crate) fn snap(es: Vec<EntryData>, version: u64) -> Snapshot {
-        let size = es.iter().map(|e| e.size).sum();
-        let totals = Totals {
-            apparent: size,
-            alloc: size,
-            items: es.len() as u64 + 1,
-            ..Totals::default()
-        };
-        Snapshot {
-            dir_total: totals,
-            root_total: totals,
-            ..crate::app::tests::snap(es, version)
-        }
-    }
-
     fn app_with(theme: Theme, es: Vec<EntryData>, t0: Instant) -> App {
         let mut app = App::new(theme, t0);
-        app.refresh(snap(es, 1), t0);
+        app.refresh(snap_with_totals(es, 1), t0);
         app
     }
 
@@ -412,7 +397,7 @@ pub(crate) mod tests {
     fn inactive_filter_counts_nothing_until_opened() {
         let t0 = Instant::now();
         let mut f = Filter::default();
-        f.prepare(&snap(entries(), 1), true);
+        f.prepare(&snap_with_totals(entries(), 1), true);
         assert!(f.hits.is_empty());
         assert_eq!(f.counts.entries, 0);
 
@@ -432,7 +417,7 @@ pub(crate) mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         typed(&mut app, "/li", t0);
-        app.refresh(snap(entries(), 1), t0);
+        app.refresh(snap_with_totals(entries(), 1), t0);
         app.reorder(t0);
         assert!(editing(&app));
         assert_eq!(names(&app), ["Library", "notes.sqlite", "lib64"]);
@@ -440,7 +425,7 @@ pub(crate) mod tests {
 
         let other = Snapshot {
             dir_path: "/elsewhere".into(),
-            ..snap(entries(), 2)
+            ..snap_with_totals(entries(), 2)
         };
         app.refresh(other, t0);
         app.reorder(t0);
@@ -538,12 +523,12 @@ pub(crate) mod tests {
         es.push(test_entry(7, "linux", 1 << 40));
         es.push(test_entry(8, "zzz", 1 << 40));
         let at = t0 + Duration::from_millis(100);
-        app.refresh(snap(es.clone(), 2), at);
+        app.refresh(snap_with_totals(es.clone(), 2), at);
         assert_eq!((app.rows.len(), app.new_count), (3, 1));
         assert_eq!(app.new_largest, 1 << 40);
         es.push(test_entry(9, "lilo.conf", 5));
         es.push(test_entry(10, "other", 5));
-        app.refresh(snap(es, 3), at);
+        app.refresh(snap_with_totals(es, 3), at);
         assert_eq!((app.rows.len(), app.new_count), (3, 2));
         assert_eq!(
             line_text(&app).as_deref(),
@@ -662,7 +647,7 @@ pub(crate) mod tests {
         // During a scan, an entry that arrived since the last sort is sorted in with the rest.
         typed(&mut app, "/do", t0);
         es.push(test_entry(9, "docs", 10 << 30));
-        app.refresh(snap(es, 2), t0);
+        app.refresh(snap_with_totals(es, 2), t0);
         assert_eq!(app.new_count, 1);
         typed(&mut app, "s", t0);
         assert_eq!(names(&app), ["docs", "Downloads"]);
@@ -680,7 +665,7 @@ pub(crate) mod tests {
         let mut es = entries();
         es[6].size = 200 << 30;
         es.push(test_entry(7, "zeta", 1 << 30));
-        app.refresh(snap(es, 2), t0);
+        app.refresh(snap_with_totals(es, 2), t0);
         app.reorder(t0);
         assert_eq!(app.rows, exact_rows(&app));
         assert_eq!(names(&app)[0], "build.log");
@@ -710,7 +695,7 @@ pub(crate) mod tests {
         assert_eq!(names(&app), ["y", "x"]);
         // `x` overtakes `y` by less than 2%: the automatic sort keeps them where they are.
         let later = t0 + Duration::from_secs(5);
-        app.refresh(snap(es(1_003_000), 2), later);
+        app.refresh(snap_with_totals(es(1_003_000), 2), later);
         app.reorder(later);
         assert_eq!(names(&app), ["y", "x"]);
         app.key(press(KeyCode::Char('/')), later);
@@ -818,7 +803,7 @@ pub(crate) mod tests {
         }
         let mut app = app_with(Theme::no_color(), es.clone(), t0);
         let later = t0 + Duration::from_secs(5);
-        app.refresh(snap(es, 2), later);
+        app.refresh(snap_with_totals(es, 2), later);
         render_buffer(&mut app, later, 100, 30);
         let mut times = Vec::new();
         for c in ['/', 'e'] {

@@ -59,10 +59,7 @@ fn hits_stat(
         .iter()
         .find(|n| n.trim_end_matches('/') == name)
         .unwrap_or_else(|| panic!("{name} is not in {}", l.path));
-    let inside: Vec<u16> = inside
-        .iter()
-        .map(|id| set.rules().iter().position(|r| r.id == *id).expect(id) as u16)
-        .collect();
+    let inside: Vec<_> = inside.iter().map(|id| set.index(id).expect(id)).collect();
     let sibling = |n: &[u8]| l.has(n);
     let c = Candidate {
         parent: l.path.as_bytes(),
@@ -88,7 +85,7 @@ fn hits_stat(
 /// Whether rule `id` holds for an entry whose own listing has `children`; `tag` is the first
 /// bytes of its CACHEDIR.TAG, if it has one.
 fn inside_ok(set: &RuleSet, id: &str, name: &str, children: &[&str], tag: Option<&str>) -> bool {
-    let i = set.rules().iter().position(|r| r.id == id).expect(id) as u16;
+    let i = set.index(id).expect(id);
     let child = |n: &[u8]| children.iter().any(|c| c.as_bytes() == n);
     let marker = |file: &[u8], len: usize| {
         (file == b"CACHEDIR.TAG")
@@ -202,11 +199,7 @@ fn node_modules_drops_to_review_without_a_lockfile() {
 #[test]
 fn siblings_in_other_blocks_leave_the_hit_open() {
     let set = linux();
-    let node = set
-        .rules()
-        .iter()
-        .position(|r| r.id == "node.node_modules")
-        .unwrap() as u16;
+    let node = set.index("node.node_modules").unwrap();
     let block = Listing {
         path: "/home/u/dev/site",
         names: &["node_modules/"],

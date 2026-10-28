@@ -24,6 +24,7 @@ pub mod sync;
 #[cfg(windows)]
 mod windows;
 
+pub use backend::Forward;
 pub use backend::{Backend, Block, BlockEntry, DirStream, PortableBackend, Raw, RawBlock};
 pub use budget::Budget;
 pub use dfdu_sys::{FsClass, Storage};
@@ -46,27 +47,27 @@ pub type NativeBackend = WindowsBackend;
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub type NativeBackend = PortableBackend;
 
-static MFT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Makes [`native_backend`] list NTFS volumes from their master file tables
-/// ([`WindowsBackend::with_mft`]); ignored on other systems. Set once at startup, from the
-/// command line.
-pub fn use_mft(on: bool) {
-    MFT.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The native backend set up for data on `storage` ([`dfdu_sys::storage`]).
-pub fn native_backend(storage: dfdu_sys::Storage) -> NativeBackend {
+/// The native backend set up for data on `storage` ([`dfdu_sys::storage`]). With `mft`, NTFS
+/// volumes are listed from their master file tables ([`WindowsBackend::with_mft`]); `mft` is
+/// ignored on other systems.
+pub fn native_backend(storage: dfdu_sys::Storage, mft: bool) -> NativeBackend {
     #[cfg(target_os = "linux")]
-    return LinuxBackend::for_storage(storage);
-    #[cfg(windows)]
-    if MFT.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = storage;
-        return WindowsBackend::with_mft();
+    {
+        let _ = mft;
+        LinuxBackend::for_storage(storage)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
     {
         let _ = storage;
+        if mft {
+            WindowsBackend::with_mft()
+        } else {
+            WindowsBackend::default()
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (storage, mft);
         NativeBackend::default()
     }
 }

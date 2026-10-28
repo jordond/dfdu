@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-tui"
-description = "Terminal browser for disk-usage-tui"
+description = "Terminal browser for dfdu"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

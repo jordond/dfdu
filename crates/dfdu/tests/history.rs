@@ -147,3 +147,19 @@ fn diff_against_history_and_files() {
     let o = dfdu(&state, &["diff", r, "--cross-mounts"]);
     assert_eq!(o.status.code(), Some(1));
 }
+
+/// Piped `dfdu PATH --no-history` scans without recording, like `dfdu scan PATH --no-history`.
+#[test]
+fn piped_browse_honours_no_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let root = base.join("tree");
+    let state = base.join("state");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("f"), vec![1u8; 10_000]).unwrap();
+    let r = root.to_str().unwrap();
+    ok(dfdu(&state, &[r, "--no-history"]));
+    assert_eq!(ok(dfdu(&state, &["history"])).trim(), "no scans recorded");
+    ok(dfdu(&state, &[r]));
+    assert_eq!(ok(dfdu(&state, &["history", r])).lines().count(), 1);
+}

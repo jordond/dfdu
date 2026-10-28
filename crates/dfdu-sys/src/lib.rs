@@ -43,6 +43,18 @@ mod usn;
 #[cfg(windows)]
 pub use usn::{UsnChanges, usn_changes_since, usn_position};
 
+/// Whether this process runs as root, so it may read every directory, delete read-only btrfs
+/// snapshots and read extent trees.
+#[cfg(unix)]
+pub fn is_privileged() -> bool {
+    rustix::process::geteuid().is_root()
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn is_privileged() -> bool {
+    false
+}
+
 /// A btrfs subvolume root, as `BTRFS_IOC_GET_SUBVOL_INFO` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubvolInfo {
@@ -229,6 +241,14 @@ fn unescape(field: &[u8]) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn privileged_matches_effective_uid() {
+        let out = std::process::Command::new("id").arg("-u").output().unwrap();
+        let root = String::from_utf8_lossy(&out.stdout).trim() == "0";
+        assert_eq!(is_privileged(), root);
+    }
 
     #[test]
     fn mountinfo_lines() {

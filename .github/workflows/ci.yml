@@ -288,11 +288,11 @@ jobs:
       - name: Run btrfs tests unprivileged
         run: |
           cargo test --profile ci --locked -p dfdu-sys -p dfdu-engine --test btrfs
-          cargo test --profile ci --locked -p dfdu-tui --lib btrfs_tests
+          cargo test --profile ci --locked -p dfdu-tui --lib tests::btrfs::
       - name: Run btrfs tests as root
         run: |
           cargo test --profile ci --locked -p dfdu-sys -p dfdu-engine --test btrfs
-          cargo test --profile ci --locked -p dfdu-tui --lib btrfs_tests
+          cargo test --profile ci --locked -p dfdu-tui --lib tests::btrfs::
           cargo test --profile ci --locked -p dfdu-store --test resume btrfs
           cargo test --profile ci --locked -p dfdu-clean --lib
         env:

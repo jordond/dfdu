@@ -57,7 +57,7 @@ fn inner_trash() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let junk = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         m.tree.node_ref(
@@ -71,7 +71,7 @@ fn inner_trash() {
         items: vec![junk],
         mode: Mode::Trash,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let s = e.read(|m| m.status.last_delete.clone()).unwrap();
     assert_eq!(
         s.deleted,
@@ -86,11 +86,11 @@ fn inner_trash() {
     );
     // Undo takes it back out, by its original path and deletion time.
     e.send(Command::Undo { plan: s.plan });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     while e.read(|m| m.status.undoing.is_some()) {
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert!(
         root.join("junk/x.bin").exists(),
         "{:?}",

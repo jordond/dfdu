@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use fixedbitset::FixedBitSet;
 
 use crate::pages::{KidArena, Kids, NameArena, Pages};
-use crate::{ErrKind, Kind, Meta, Totals, name_os};
+use crate::{Class, ErrKind, Kind, Meta, Totals, name_os};
 
 const NONE: u32 = u32::MAX;
 
@@ -82,36 +82,6 @@ impl NodeFlags {
     }
     fn set(&mut self, f: u16, on: bool) {
         if on { self.0 |= f } else { self.0 &= !f }
-    }
-}
-
-/// The rule a node matched (`dfdu-rules`): its index in the scan's rule set, and the safety
-/// level and `degrade` condition that hold for this node.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Class {
-    pub rule: u16,
-    /// A `dfdu_rules::Safety`, as its number.
-    pub safety: u8,
-    pub degraded: Option<u16>,
-    /// What the classifier pool found (`Class::CHECKED` and the others).
-    pub flags: u8,
-}
-
-impl Class {
-    /// Queued for the classifier pool's checks.
-    pub const QUEUED: u8 = 1;
-    /// The pool's checks ran.
-    pub const CHECKED: u8 = 2;
-    /// Version control tracks files in it, so it is protected.
-    pub const VCS_TRACKED: u8 = 4;
-    /// A process the rule names (`guard.not_running`) was running when checked.
-    pub const IN_USE: u8 = 8;
-    /// `guard.not_vcs_tracked` asked, but git could not tell (not installed, an error, a
-    /// repository it refuses): never recommended or cleaned.
-    pub const VCS_UNKNOWN: u8 = 16;
-
-    pub fn has(self, flag: u8) -> bool {
-        self.flags & flag != 0
     }
 }
 
@@ -1069,12 +1039,12 @@ impl Tree {
         self.bump();
     }
 
-    /// Marks a directory changed without changing totals (state changes the UI should see).
     /// Marks the tree changed, for readers comparing versions, without changing a node.
     pub fn bump_version(&mut self) {
         self.bump();
     }
 
+    /// Marks a directory changed without changing totals (state changes the UI should see).
     pub fn touch(&mut self, ix: Ix) {
         let v = self.bump();
         if let Some(d) = self.dir_mut(ix) {
@@ -1374,8 +1344,8 @@ mod tests {
         let d = t.add_dir(root, b"target", &dir_meta());
         let f = add_file(&mut t, d, "f", 1);
         let class = Class {
-            rule: 3,
-            safety: 1,
+            rule: crate::RuleIx(3),
+            safety: crate::Safety::Regenerable,
             degraded: None,
             flags: 0,
         };

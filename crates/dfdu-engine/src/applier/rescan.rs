@@ -1,0 +1,345 @@
+//! Rescans of visible directories, and resuming a tree loaded from a file.
+
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+
+use dfdu_scan::classify::ClassOpts;
+use dfdu_scan::{Backend, JobId, JobOptions};
+use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Pages, Tree};
+
+use super::{Applier, Job, JobKind, JobPhase, Model, meta_of};
+use crate::links::VISIBLE;
+
+/// What a rescan of directory `ix` classifies against: the rules decided above it, whether it
+/// is protected, and its own hits, from its parent's listing as the tree has it. `job` is what
+/// the job that scanned `ix` classified against, and `job_root` that job's root.
+fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> ClassOpts {
+    let rules = job.rules.clone();
+    // The rule path: the job root's, then the names below it.
+    let mut names = Vec::new();
+    let mut cur = Some(ix);
+    while let Some(i) = cur
+        && Some(i) != job_root
+    {
+        names.push(tree.name(i));
+        cur = tree.parent(i);
+    }
+    let path_of = |names: &[&[u8]]| {
+        let mut p = job.path.clone();
+        for n in names.iter().rev() {
+            if !p.ends_with(b"/") {
+                p.push(b'/');
+            }
+            p.extend_from_slice(n);
+        }
+        p
+    };
+    let path = if cur.is_some() {
+        path_of(&names)
+    } else {
+        dfdu_rules::rule_path(&tree.path_buf(ix))
+    };
+    let mut inside = Vec::new();
+    let mut cur = tree.parent(ix);
+    while let Some(p) = cur {
+        inside.extend(tree.class(p).map(|c| c.rule));
+        cur = tree.parent(p);
+    }
+    inside.reverse();
+    let protection = |i: Ix| {
+        if tree.is_protected(i) {
+            dfdu_rules::protected::State::On
+        } else {
+            dfdu_rules::protected::State::Off
+        }
+    };
+    let mut chain = Vec::new();
+    if let Some(p) = tree.parent(ix) {
+        let cut = path.iter().rposition(|&b| b == b'/').unwrap_or(0);
+        let parent = if cut == 0 {
+            b"/".to_vec()
+        } else {
+            path[..cut].to_vec()
+        };
+        let sibling = |n: &[u8]| tree.children(p).any(|c| tree.name(c) == n);
+        let v = rules.classify(&dfdu_rules::Candidate {
+            parent: &parent,
+            name: tree.name(ix),
+            is_dir: true,
+            sibling: &sibling,
+            inside: &inside,
+            protection: protection(p),
+            partial: false,
+            stat: None,
+            link: None,
+        });
+        if let dfdu_rules::Verdict::Hits(h) = v {
+            chain = h;
+        }
+    }
+    ClassOpts {
+        rules,
+        path,
+        inside,
+        protection: protection(ix),
+        chain,
+    }
+}
+
+/// More changed directories than this and a resume rescans the whole tree.
+const MAX_RESUME_RESCANS: usize = 10_000;
+
+/// The directories of the tree at `root` that `paths` (relative to it) name, or the nearest
+/// existing ancestor of one not in the tree.
+fn changed_dirs(tree: &Tree, root: Ix, paths: &[PathBuf]) -> Vec<Ix> {
+    let mut out = Vec::new();
+    for p in paths {
+        let mut at = root;
+        for c in p.components() {
+            let std::path::Component::Normal(n) = c else {
+                continue;
+            };
+            let n = dfdu_tree::name_bytes(n);
+            match tree
+                .children(at)
+                .find(|&k| tree.dir(k).is_some() && tree.name(k) == &n[..])
+            {
+                Some(k) => at = k,
+                None => break,
+            }
+        }
+        out.push(at);
+    }
+    out
+}
+
+/// `dirs` without duplicates and without those below another of them.
+fn topmost(tree: &Tree, mut dirs: Vec<Ix>) -> Vec<Ix> {
+    dirs.sort_unstable_by_key(|d| d.0);
+    dirs.dedup();
+    let set: HashSet<Ix> = dirs.iter().copied().collect();
+    dirs.retain(|&d| {
+        let mut cur = tree.parent(d);
+        while let Some(p) = cur {
+            if set.contains(&p) {
+                return false;
+            }
+            cur = tree.parent(p);
+        }
+        true
+    });
+    dirs
+}
+
+impl<B: Backend> Applier<B> {
+    /// Rescans `node` with the options of the job that scanned it, or `given`.
+    pub(super) fn rescan(&mut self, m: &mut Model, node: NodeRef, given: Option<JobOptions>) {
+        let Some(ix) = m.tree.resolve_visible(node) else {
+            m.status.notice("rescan: that directory is gone".into());
+            return;
+        };
+        match m.tree.dir(ix) {
+            None => {
+                m.status.notice("rescan: not a directory".into());
+                return;
+            }
+            Some(_) if m.tree.flags(ix).has(NodeFlags::DUP_MOUNT) => {
+                m.status
+                    .notice("rescan: that directory is counted at another mount of it".into());
+                return;
+            }
+            Some(_) if m.tree.flags(ix).has(NodeFlags::KERNEL) => {
+                m.status
+                    .notice("rescan: that is a kernel filesystem, which is never scanned".into());
+                return;
+            }
+            Some(_) if m.tree.flags(ix).has(NodeFlags::NETWORK) => {
+                m.status.notice(
+                    "rescan: that is a network filesystem; start dfdu with --network to scan it"
+                        .into(),
+                );
+                return;
+            }
+            Some(d) if d.state == DirState::Skipped => {
+                m.status
+                    .notice("rescan: that directory is on another filesystem".into());
+                return;
+            }
+            Some(_) => {}
+        }
+        // Overlap with deletes and other rescans.
+        if self.plan_overlaps(&m.tree, ix) {
+            m.status.notice(
+                "rescan: a delete in this directory is in progress; rescan after it completes"
+                    .into(),
+            );
+            return;
+        }
+        let mut cancel = Vec::new();
+        for j in self
+            .jobs
+            .values()
+            .filter(|j| j.kind == JobKind::Rescan && j.swap_pending())
+        {
+            let Some(t) = m.tree.resolve_visible(j.target) else {
+                continue;
+            };
+            if t == ix || Self::is_ancestor(&m.tree, t, ix) {
+                m.status
+                    .notice("rescan: already rescanning this directory or a parent".into());
+                return;
+            }
+            if Self::is_ancestor(&m.tree, ix, t) {
+                cancel.push(j.id.0);
+            }
+        }
+        for id in cancel {
+            self.cancel(id);
+        }
+        self.cut(m, ix, DirState::Superseded);
+        let id = self.next_job;
+        self.next_job += 1;
+        let path = m.tree.path_buf(ix);
+        let shadow = m.tree.new_root(
+            m.tree.name(ix).to_vec().as_slice(),
+            &meta_of(&m.tree, ix),
+            false,
+        );
+        // Whether the directory is a mount root depends on its parent, which the rescan keeps.
+        if m.tree.flags(ix).has(NodeFlags::MOUNT_ROOT) {
+            m.tree.set_flag(shadow, NodeFlags::MOUNT_ROOT, true);
+        }
+        let owner_id = m.tree.dir(ix).expect("dir").job;
+        let owner = self.jobs.get(&owner_id);
+        let owner_root = owner.and_then(|j| m.tree.resolve(j.root));
+        let resumed = given.is_some();
+        let mut opts = given
+            .or_else(|| owner.map(|j| j.opts.clone()))
+            .or_else(|| self.retired.get(&owner_id).cloned())
+            .unwrap_or_default();
+        // Duplicate mounts are judged against the whole visible tree, not just this part.
+        let mut top = ix;
+        while let Some(p) = m.tree.parent(top) {
+            top = p;
+        }
+        opts.scope = Some(m.tree.path_buf(top));
+        if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
+            m.rules = Some(c.rules.clone());
+            m.tree
+                .set_protection(shadow, c.protection.protected(), false);
+        } else if let Some(c) = &mut opts.class {
+            *c = rescan_class(&m.tree, ix, owner_root, c);
+            let f = m.tree.flags(ix);
+            m.tree.set_protection(
+                shadow,
+                f.has(NodeFlags::PROTECTED),
+                f.has(NodeFlags::EXCEPTED),
+            );
+        }
+        self.start(m, id, JobKind::Rescan, ix, shadow, id, path, opts);
+    }
+
+    /// Takes over a tree loaded from a snapshot when the volume's change journal says which
+    /// directories changed since (`changed`, relative to the root): the tree is classified as
+    /// it stands, held by a finished job with `opts`, and only the topmost changed directories
+    /// are rescanned, each with its subtree. A changed root, or too many changes, rescan it all.
+    pub(super) fn resume_changed(
+        &mut self,
+        m: &mut Model,
+        node: NodeRef,
+        opts: JobOptions,
+        changed: &[PathBuf],
+    ) {
+        let Some(root) = m
+            .tree
+            .resolve_visible(node)
+            .filter(|&r| m.tree.dir(r).is_some() && m.tree.parent(r).is_none())
+        else {
+            return self.rescan(m, node, Some(opts));
+        };
+        let mut targets = changed_dirs(&m.tree, root, changed);
+        if targets.len() > MAX_RESUME_RESCANS || targets.contains(&root) {
+            return self.rescan(m, node, Some(opts));
+        }
+        let id = self.next_job;
+        self.next_job += 1;
+        // Other volumes mounted below keep their own journals: their mount roots are rescanned.
+        // So are btrfs subvolumes below (another device, no mount): each has a tree, and a
+        // generation, of its own.
+        let mut mounts = Vec::new();
+        let mut own = |tree: &mut Tree, ix: Ix| {
+            if let Some(d) = tree.dir_mut(ix) {
+                d.job = id;
+                d.dir_id = 0;
+            }
+            let other_dev = || {
+                tree.parent(ix)
+                    .is_some_and(|p| tree.dev_ino(p).0 != tree.dev_ino(ix).0)
+            };
+            if ix != root
+                && (tree.flags(ix).has(NodeFlags::MOUNT_ROOT) || other_dev())
+                && tree.dir(ix).is_some_and(|d| d.state != DirState::Skipped)
+            {
+                mounts.push(ix);
+            }
+        };
+        match &opts.class {
+            Some(c) => {
+                m.rules = Some(c.rules.clone());
+                m.tree.set_protection(root, c.protection.protected(), false);
+                crate::reclassify::classify_loaded(
+                    &mut m.tree,
+                    root,
+                    c,
+                    &self.scan.backend,
+                    &mut own,
+                );
+            }
+            None => {
+                let mut stack = vec![root];
+                while let Some(ix) = stack.pop() {
+                    own(&mut m.tree, ix);
+                    stack.extend(m.tree.children(ix).filter(|&c| m.tree.dir(c).is_some()));
+                }
+            }
+        }
+        // Snapshots keep no measured extents: the loaded files are measured again where files
+        // can share them (rescanned parts are measured when their rescans end).
+        let mut devs = vec![root];
+        devs.extend(mounts.iter().copied());
+        for ix in devs {
+            let dev = m.tree.dev_ino(ix).0;
+            if !self.extent_devs.contains(&dev) {
+                let loc = self.scan.backend.loc_from_path(&m.tree.path_buf(ix));
+                if self.scan.backend.shares_extents(&loc) {
+                    self.extent_devs.insert(dev);
+                }
+            }
+        }
+        self.start_measure(m, node);
+        targets.extend(mounts);
+        let targets = topmost(&m.tree, targets);
+        self.jobs.insert(
+            id,
+            Job {
+                id: JobId(id),
+                kind: JobKind::Initial,
+                target: node,
+                root: node,
+                scope: VISIBLE,
+                opts,
+                map: Pages::default(),
+                held_close: HashMap::new(),
+                stalled: HashMap::new(),
+                submitted_seq: 0,
+                phase: JobPhase::Done,
+            },
+        );
+        m.tree.bump_version();
+        self.queue_checks(m);
+        for t in targets {
+            let r = m.tree.node_ref(t);
+            self.rescan(m, r, None);
+        }
+    }
+}

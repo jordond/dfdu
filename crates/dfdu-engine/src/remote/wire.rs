@@ -3,17 +3,17 @@
 //!
 //! A frame is a little-endian `u32` payload length, the payload's CRC32C as a little-endian
 //! `u32`, then the payload; payloads over [`MAX_FRAME`] are refused. A payload is one message,
-//! [`Up`] from the agent or [`Down`] to it, its first byte the message's tag. Integers are
-//! LEB128 varints (signed ones zigzag-encoded), byte strings a varint length and the bytes.
+//! [`FromAgent`] or [`ToAgent`], its first byte the message's tag. Integers are LEB128 varints
+//! (signed ones zigzag-encoded), byte strings a varint length and the bytes.
 //!
 //! The agent's messages are checked as they are read: every name span lies inside its chunk's
 //! names, every mark names an entry of its chunk, every class a rule the local side has, so a
 //! bad agent or a corrupted link gives an error, never a panic or a wrong tree.
 //!
-//! Classification runs on the agent, with the local side's rules: [`Down::Rules`] carries
+//! Classification runs on the agent, with the local side's rules: [`ToAgent::Rules`] carries
 //! their text, the agent builds them for its own platform and environment and answers with
-//! [`Up::Rules`], from which the local side builds the same set. Both number the rules alike
-//! (checked by [`RuleSet::fingerprint`]), so classes travel as rule numbers.
+//! [`FromAgent::Rules`], from which the local side builds the same set. Both number the rules
+//! alike (checked by [`RuleSet::fingerprint`]), so classes travel as rule numbers.
 
 use std::io::{self, Read, Write};
 
@@ -26,7 +26,7 @@ use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use dfdu_clean::inside::{Listing, Listings};
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal};
 use dfdu_rules::protected::State;
-use dfdu_rules::{Hit, Inside, RuleSet, Safety};
+use dfdu_rules::{Hit, Inside, RuleIx, RuleSet, Safety};
 use dfdu_tree::{Class, ErrKind, Kind, Meta, NodeRef, Subvol};
 
 use dfdu_scan::{
@@ -126,16 +126,16 @@ pub fn read_frame(r: &mut impl Read, buf: &mut Vec<u8>) -> Result<bool, WireErro
     Ok(true)
 }
 
-/// From the agent.
+/// A message from the agent.
 #[derive(Clone, Debug)]
-pub enum Up {
+pub enum FromAgent {
     /// First message: the versions the agent speaks and its program version.
     Hello { min: u32, max: u32, tool: String },
     /// Scanner messages, in the order the agent's scanner sent them.
     Batch(Vec<ScanMsg>),
     /// Nothing to send for a while; the link is alive.
     Heartbeat,
-    /// The answer to [`Down::Rules`]: what the agent built the rules for (its platform and
+    /// The answer to [`ToAgent::Rules`]: what the agent built the rules for (its platform and
     /// the variables they read, so the local side can build the same set), their
     /// fingerprint, and what the scan root classifies against.
     Rules {
@@ -144,9 +144,9 @@ pub enum Up {
         fingerprint: u64,
         root: WireClass,
     },
-    /// A job started ([`Down::StartJob`]), with its submitted sequence number.
+    /// A job started ([`ToAgent::StartJob`]), with its submitted sequence number.
     Started { job: JobId, seq: u64 },
-    /// The answer to [`Down::Abandon`]: whether no worker was still inside the directory.
+    /// The answer to [`ToAgent::Abandon`]: whether no worker was still inside the directory.
     Abandoned {
         job: JobId,
         dir: DirId,
@@ -154,34 +154,34 @@ pub enum Up {
     },
     /// The agent cannot go on.
     Fatal(String),
-    /// From the agent's deleter ([`Down::Delete`]).
+    /// From the agent's deleter ([`ToAgent::Delete`]).
     Deleter(DeleterMsg),
-    /// The answers to a [`Down::Check`].
+    /// The answers to a [`ToAgent::Check`].
     Checked(Vec<CheckMsg>),
     /// Sent once the version is agreed: the smallest allocation worth measuring on the agent's
     /// host (1 MiB on macOS, where each file costs a lookup), 0 when it cannot measure; and
     /// whether it runs as root (read-only btrfs snapshots can be deleted).
     Host { measure_min: u64, privileged: bool },
-    /// The answers to one [`Down::Measure`] request.
+    /// The answers to one [`ToAgent::Measure`] request.
     Measured(Vec<MeasureMsg>),
 }
 
-/// To the agent.
+/// A message to the agent.
 #[derive(Clone, Debug)]
-pub enum Down {
+pub enum ToAgent {
     /// First message: the version chosen.
     Hello {
         version: u32,
     },
     /// The rules to classify with: rule files in load order, `None` naming the built-in pack
     /// (the text is still sent, so both sides have the same one). The agent answers with
-    /// [`Up::Rules`], resolving `root` (a path on its host) as a scan root.
+    /// [`FromAgent::Rules`], resolving `root` (a path on its host) as a scan root.
     Rules {
         files: Vec<(Option<String>, String)>,
         root: Vec<u8>,
     },
     /// Scan `root` (a path on the agent's host) as job `job`, classifying against `class`
-    /// with the rules of [`Down::Rules`].
+    /// with the rules of [`ToAgent::Rules`].
     StartJob {
         job: JobId,
         root: Vec<u8>,
@@ -216,7 +216,7 @@ pub enum Down {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WireClass {
     pub path: Vec<u8>,
-    pub inside: Vec<u16>,
+    pub inside: Vec<RuleIx>,
     pub protection: State,
     pub chain: Vec<Hit>,
 }
@@ -249,10 +249,10 @@ impl WireClass {
 }
 
 /// Whether `rule` is one of `rules` and `degraded` one of its conditions.
-fn known(rules: &RuleSet, rule: u16, degraded: Option<u16>) -> bool {
+fn known(rules: &RuleSet, rule: RuleIx, degraded: Option<u16>) -> bool {
     rules
         .rules()
-        .get(rule as usize)
+        .get(usize::from(rule.0))
         .is_some_and(|r| degraded.is_none_or(|d| (d as usize) < r.degrade.len()))
 }
 
@@ -280,6 +280,12 @@ impl Enc {
     }
     fn bool(&mut self, b: bool) {
         self.u8(b as u8);
+    }
+    fn rule(&mut self, r: RuleIx) {
+        self.var(r.0.into());
+    }
+    fn safety(&mut self, s: Safety) {
+        self.u8(s as u8);
     }
 }
 
@@ -326,6 +332,12 @@ impl<'a> Dec<'a> {
     }
     fn u16(&mut self) -> R<u16> {
         u16::try_from(self.var()?).or(bad("u16 out of range"))
+    }
+    fn rule(&mut self) -> R<RuleIx> {
+        self.u16().map(RuleIx)
+    }
+    fn safety(&mut self) -> R<Safety> {
+        Safety::from_u8(self.u8()?).ok_or(WireError::Malformed("safety"))
     }
     fn zig(&mut self) -> R<i64> {
         let v = self.var()?;
@@ -443,8 +455,8 @@ fn dec_err(d: &mut Dec) -> R<ErrKind> {
 }
 
 fn enc_class(e: &mut Enc, c: &Class) {
-    e.var(c.rule.into());
-    e.u8(c.safety);
+    e.rule(c.rule);
+    e.safety(c.safety);
     match c.degraded {
         Some(r) => {
             e.u8(1);
@@ -457,8 +469,8 @@ fn enc_class(e: &mut Enc, c: &Class) {
 
 /// A class naming one of `rules` rules; none are known without rules.
 fn dec_class(d: &mut Dec, rules: Option<&RuleSet>) -> R<Class> {
-    let rule = d.u16()?;
-    let safety = d.u8()?;
+    let rule = d.rule()?;
+    let safety = d.safety()?;
     let degraded = match d.u8()? {
         0 => None,
         1 => Some(d.u16()?),
@@ -466,9 +478,6 @@ fn dec_class(d: &mut Dec, rules: Option<&RuleSet>) -> R<Class> {
     };
     if !rules.is_some_and(|r| known(r, rule, degraded)) {
         return bad("class of an unknown rule");
-    }
-    if safety as usize >= Safety::ALL.len() {
-        return bad("safety");
     }
     Ok(Class {
         rule,
@@ -482,13 +491,13 @@ fn enc_wclass(e: &mut Enc, c: &WireClass) {
     e.bytes(&c.path);
     e.var(c.inside.len() as u64);
     for &r in &c.inside {
-        e.var(r.into());
+        e.rule(r);
     }
     e.u8(c.protection as u8);
     e.var(c.chain.len() as u64);
     for h in &c.chain {
-        e.var(h.rule.into());
-        e.u8(h.safety as u8);
+        e.rule(h.rule);
+        e.safety(h.safety);
         match h.degraded {
             Some(r) => {
                 e.u8(1);
@@ -507,7 +516,7 @@ fn dec_wclass(d: &mut Dec, rules: Option<&RuleSet>) -> R<WireClass> {
     let n = d.count(1)?;
     let mut inside = Vec::with_capacity(n);
     for _ in 0..n {
-        inside.push(d.u16()?);
+        inside.push(d.rule()?);
     }
     let protection = match d.u8()? {
         0 => State::Off,
@@ -518,10 +527,8 @@ fn dec_wclass(d: &mut Dec, rules: Option<&RuleSet>) -> R<WireClass> {
     let n = d.count(5)?;
     let mut chain = Vec::with_capacity(n);
     for _ in 0..n {
-        let rule = d.u16()?;
-        let safety = *Safety::ALL
-            .get(d.u8()? as usize)
-            .ok_or(WireError::Malformed("safety"))?;
+        let rule = d.rule()?;
+        let safety = d.safety()?;
         let degraded = match d.u8()? {
             0 => None,
             1 => Some(d.u16()?),
@@ -943,25 +950,25 @@ fn dec_msg(d: &mut Dec, rules: Option<&RuleSet>) -> R<ScanMsg> {
     })
 }
 
-impl Up {
+impl FromAgent {
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Enc::default();
         match self {
-            Up::Hello { min, max, tool } => {
+            FromAgent::Hello { min, max, tool } => {
                 e.u8(0);
                 e.var((*min).into());
                 e.var((*max).into());
                 e.bytes(tool.as_bytes());
             }
-            Up::Batch(msgs) => {
+            FromAgent::Batch(msgs) => {
                 e.u8(1);
                 e.var(msgs.len() as u64);
                 for m in msgs {
                     enc_msg(&mut e, m);
                 }
             }
-            Up::Heartbeat => e.u8(2),
-            Up::Rules {
+            FromAgent::Heartbeat => e.u8(2),
+            FromAgent::Rules {
                 platform,
                 vars,
                 fingerprint,
@@ -977,33 +984,33 @@ impl Up {
                 e.var(*fingerprint);
                 enc_wclass(&mut e, root);
             }
-            Up::Started { job, seq } => {
+            FromAgent::Started { job, seq } => {
                 e.u8(3);
                 e.var(job.0.into());
                 e.var(*seq);
             }
-            Up::Abandoned { job, dir, complete } => {
+            FromAgent::Abandoned { job, dir, complete } => {
                 e.u8(4);
                 e.var(job.0.into());
                 e.var(dir.0.into());
                 e.bool(*complete);
             }
-            Up::Fatal(s) => {
+            FromAgent::Fatal(s) => {
                 e.u8(5);
                 e.bytes(s.as_bytes());
             }
-            Up::Deleter(m) => {
+            FromAgent::Deleter(m) => {
                 e.u8(7);
                 enc_del_msg(&mut e, m);
             }
-            Up::Checked(msgs) => {
+            FromAgent::Checked(msgs) => {
                 e.u8(8);
                 e.var(msgs.len() as u64);
                 for m in msgs {
                     enc_check_msg(&mut e, m);
                 }
             }
-            Up::Host {
+            FromAgent::Host {
                 measure_min,
                 privileged,
             } => {
@@ -1011,7 +1018,7 @@ impl Up {
                 e.var(*measure_min);
                 e.bool(*privileged);
             }
-            Up::Measured(msgs) => {
+            FromAgent::Measured(msgs) => {
                 e.u8(10);
                 e.var(msgs.len() as u64);
                 for m in msgs {
@@ -1023,12 +1030,12 @@ impl Up {
     }
 
     /// Decodes a payload; classes must name one of the local side's `rules`, and there are
-    /// none without them. [`Up::Rules`]'s root is not checked: the local side checks it
+    /// none without them. [`FromAgent::Rules`]'s root is not checked: the local side checks it
     /// against the set it then builds.
-    pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<Up> {
+    pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<FromAgent> {
         let mut d = Dec::new(buf);
         let up = match d.u8()? {
-            0 => Up::Hello {
+            0 => FromAgent::Hello {
                 min: d.u32()?,
                 max: d.u32()?,
                 tool: String::from_utf8_lossy(d.bytes()?).into_owned(),
@@ -1039,29 +1046,29 @@ impl Up {
                 for _ in 0..n {
                     msgs.push(dec_msg(&mut d, rules)?);
                 }
-                Up::Batch(msgs)
+                FromAgent::Batch(msgs)
             }
-            2 => Up::Heartbeat,
-            3 => Up::Started {
+            2 => FromAgent::Heartbeat,
+            3 => FromAgent::Started {
                 job: JobId(d.u32()?),
                 seq: d.var()?,
             },
-            4 => Up::Abandoned {
+            4 => FromAgent::Abandoned {
                 job: JobId(d.u32()?),
                 dir: DirId(d.u32()?),
                 complete: d.bool()?,
             },
-            5 => Up::Fatal(String::from_utf8_lossy(d.bytes()?).into_owned()),
-            7 => Up::Deleter(dec_del_msg(&mut d)?),
+            5 => FromAgent::Fatal(String::from_utf8_lossy(d.bytes()?).into_owned()),
+            7 => FromAgent::Deleter(dec_del_msg(&mut d)?),
             8 => {
                 let n = d.count(3)?;
                 let mut msgs = Vec::with_capacity(n);
                 for _ in 0..n {
                     msgs.push(dec_check_msg(&mut d)?);
                 }
-                Up::Checked(msgs)
+                FromAgent::Checked(msgs)
             }
-            9 => Up::Host {
+            9 => FromAgent::Host {
                 measure_min: d.var()?,
                 privileged: d.bool()?,
             },
@@ -1071,7 +1078,7 @@ impl Up {
                 for _ in 0..n {
                     msgs.push(dec_measure_msg(&mut d)?);
                 }
-                Up::Measured(msgs)
+                FromAgent::Measured(msgs)
             }
             6 => {
                 let platform = d.text()?;
@@ -1080,7 +1087,7 @@ impl Up {
                 for _ in 0..n {
                     vars.push((d.text()?, d.text()?));
                 }
-                Up::Rules {
+                FromAgent::Rules {
                     platform,
                     vars,
                     fingerprint: d.var()?,
@@ -1094,15 +1101,15 @@ impl Up {
     }
 }
 
-impl Down {
+impl ToAgent {
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Enc::default();
         match self {
-            Down::Hello { version } => {
+            ToAgent::Hello { version } => {
                 e.u8(0);
                 e.var((*version).into());
             }
-            Down::Rules { files, root } => {
+            ToAgent::Rules { files, root } => {
                 e.u8(5);
                 e.var(files.len() as u64);
                 for (name, text) in files {
@@ -1117,7 +1124,7 @@ impl Down {
                 }
                 e.bytes(root);
             }
-            Down::StartJob {
+            ToAgent::StartJob {
                 job,
                 root,
                 cross_mounts,
@@ -1137,11 +1144,11 @@ impl Down {
                     None => e.u8(0),
                 }
             }
-            Down::EndJob { job } => {
+            ToAgent::EndJob { job } => {
                 e.u8(2);
                 e.var(job.0.into());
             }
-            Down::StopDirs { job, dirs } => {
+            ToAgent::StopDirs { job, dirs } => {
                 e.u8(3);
                 e.var(job.0.into());
                 e.var(dirs.len() as u64);
@@ -1149,24 +1156,24 @@ impl Down {
                     e.var(d.0.into());
                 }
             }
-            Down::Abandon { job, dir } => {
+            ToAgent::Abandon { job, dir } => {
                 e.u8(4);
                 e.var(job.0.into());
                 e.var(dir.0.into());
             }
-            Down::Delete(r) => {
+            ToAgent::Delete(r) => {
                 e.u8(6);
                 enc_del_req(&mut e, r);
             }
-            Down::AbortDelete => e.u8(7),
-            Down::Check(reqs) => {
+            ToAgent::AbortDelete => e.u8(7),
+            ToAgent::Check(reqs) => {
                 e.u8(8);
                 e.var(reqs.len() as u64);
                 for r in reqs {
                     enc_check_req(&mut e, r);
                 }
             }
-            Down::Measure(reqs) => {
+            ToAgent::Measure(reqs) => {
                 e.u8(9);
                 e.var(reqs.len() as u64);
                 for r in reqs {
@@ -1179,11 +1186,11 @@ impl Down {
 
     /// Decodes a payload; a job's class must name the agent's `rules`, and there is none
     /// without them.
-    pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<Down> {
+    pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<ToAgent> {
         let mut d = Dec::new(buf);
         let down = match d.u8()? {
-            0 => Down::Hello { version: d.u32()? },
-            1 => Down::StartJob {
+            0 => ToAgent::Hello { version: d.u32()? },
+            1 => ToAgent::StartJob {
                 job: JobId(d.u32()?),
                 root: d.bytes()?.to_vec(),
                 cross_mounts: d.bool()?,
@@ -1195,7 +1202,7 @@ impl Down {
                     _ => return bad("class"),
                 },
             },
-            2 => Down::EndJob {
+            2 => ToAgent::EndJob {
                 job: JobId(d.u32()?),
             },
             3 => {
@@ -1205,21 +1212,21 @@ impl Down {
                 for _ in 0..n {
                     dirs.push(DirId(d.u32()?));
                 }
-                Down::StopDirs { job, dirs }
+                ToAgent::StopDirs { job, dirs }
             }
-            4 => Down::Abandon {
+            4 => ToAgent::Abandon {
                 job: JobId(d.u32()?),
                 dir: DirId(d.u32()?),
             },
-            6 => Down::Delete(dec_del_req(&mut d, rules)?),
-            7 => Down::AbortDelete,
+            6 => ToAgent::Delete(dec_del_req(&mut d, rules)?),
+            7 => ToAgent::AbortDelete,
             8 => {
                 let n = d.count(2)?;
                 let mut reqs = Vec::with_capacity(n);
                 for _ in 0..n {
                     reqs.push(dec_check_req(&mut d, rules)?);
                 }
-                Down::Check(reqs)
+                ToAgent::Check(reqs)
             }
             9 => {
                 let n = d.count(3)?;
@@ -1227,7 +1234,7 @@ impl Down {
                 for _ in 0..n {
                     reqs.push(dec_measure_req(&mut d)?);
                 }
-                Down::Measure(reqs)
+                ToAgent::Measure(reqs)
             }
             5 => {
                 let n = d.count(2)?;
@@ -1240,7 +1247,7 @@ impl Down {
                     };
                     files.push((name, d.text()?));
                 }
-                Down::Rules {
+                ToAgent::Rules {
                     files,
                     root: d.bytes()?.to_vec(),
                 }
@@ -1263,7 +1270,7 @@ fn enc_check_req(e: &mut Enc, r: &CheckReq) {
         } => {
             e.u8(0);
             e.var(node.to_bits());
-            e.var((*rule).into());
+            e.rule(*rule);
             enc_path(e, path);
             e.bool(*vcs);
             e.var(processes.len() as u64);
@@ -1274,7 +1281,7 @@ fn enc_check_req(e: &mut Enc, r: &CheckReq) {
         // The agent builds the command from its own rules.
         CheckReq::NativeSize { rule, .. } => {
             e.u8(1);
-            e.var((*rule).into());
+            e.rule(*rule);
         }
     }
 }
@@ -1283,7 +1290,7 @@ fn dec_check_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<CheckReq> {
     match d.u8()? {
         0 => {
             let node = NodeRef::from_bits(d.var()?);
-            let rule = d.u16()?;
+            let rule = d.rule()?;
             let path = dec_path(d)?;
             let vcs = d.bool()?;
             let n = d.count(1)?;
@@ -1300,9 +1307,9 @@ fn dec_check_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<CheckReq> {
             })
         }
         1 => {
-            let rule = d.u16()?;
+            let rule = d.rule()?;
             match rules
-                .and_then(|r| r.rules().get(rule as usize))
+                .and_then(|r| r.rules().get(usize::from(rule.0)))
                 .and_then(|r| r.native.as_ref())
                 .filter(|n| !n.size_command.is_empty())
             {
@@ -1328,7 +1335,7 @@ fn enc_check_msg(e: &mut Enc, m: &CheckMsg) {
         } => {
             e.u8(0);
             e.var(node.to_bits());
-            e.var((*rule).into());
+            e.rule(*rule);
             e.u8(match tracked {
                 None => 0,
                 Some(false) => 1,
@@ -1344,7 +1351,7 @@ fn enc_check_msg(e: &mut Enc, m: &CheckMsg) {
         }
         CheckMsg::NativeSize { rule, result } => {
             e.u8(1);
-            e.var((*rule).into());
+            e.rule(*rule);
             enc_result(e, result, |e, n| e.var(*n));
         }
     }
@@ -1354,7 +1361,7 @@ fn dec_check_msg(d: &mut Dec) -> R<CheckMsg> {
     Ok(match d.u8()? {
         0 => CheckMsg::Guards {
             node: NodeRef::from_bits(d.var()?),
-            rule: d.u16()?,
+            rule: d.rule()?,
             tracked: match d.u8()? {
                 0 => None,
                 1 => Some(false),
@@ -1368,7 +1375,7 @@ fn dec_check_msg(d: &mut Dec) -> R<CheckMsg> {
             },
         },
         1 => CheckMsg::NativeSize {
-            rule: d.u16()?,
+            rule: d.rule()?,
             result: dec_result(d, |d| d.var())?,
         },
         _ => return bad("check answer"),
@@ -1580,7 +1587,7 @@ fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
             Some(r) => {
                 e.u8(3);
                 e.var(n.id);
-                e.var(r.rule.into());
+                e.rule(r.rule);
                 match r.variant {
                     None => e.u8(0),
                     Some(v) => {
@@ -1654,7 +1661,7 @@ fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq> {
         2 => DeleterReq::Commit,
         3 => {
             let id = d.var()?;
-            let rule = d.u16()?;
+            let rule = d.rule()?;
             let variant = match d.u8()? {
                 0 => None,
                 1 => Some(d.u16()?),
@@ -1872,12 +1879,14 @@ mod tests {
         .0
     }
 
-    fn rules() -> (RuleSet, u16) {
+    fn rules() -> (RuleSet, RuleIx) {
         let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
         let set = dfdu_rules::builtin(&env).0;
-        let nm = set.rules().iter().position(|r| r.id == "node.node_modules");
-        let nm = nm.or_else(|| set.rules().iter().position(|r| !r.degrade.is_empty()));
-        (set, nm.unwrap() as u16)
+        let nm = set.index("node.node_modules").or_else(|| {
+            let i = set.rules().iter().position(|r| !r.degrade.is_empty())?;
+            Some(RuleIx(i as u16))
+        });
+        (set, nm.unwrap())
     }
 
     fn meta(kind: Kind, n: u64) -> Meta {
@@ -1893,7 +1902,7 @@ mod tests {
         }
     }
 
-    fn sample() -> Vec<Up> {
+    fn sample() -> Vec<FromAgent> {
         let rule = rules().1;
         let names = b"one\xfftwosub".to_vec();
         let chunk = Chunk {
@@ -1940,7 +1949,7 @@ mod tests {
                     Entry::Subdir(0),
                     Mark::Class(Class {
                         rule,
-                        safety: 2,
+                        safety: Safety::Review,
                         degraded: Some(0),
                         flags: 0,
                     }),
@@ -1950,12 +1959,12 @@ mod tests {
             status: ChunkStatus::Panicked("boom".into()),
         };
         vec![
-            Up::Hello {
+            FromAgent::Hello {
                 min: 1,
                 max: 1,
                 tool: "dfdu 0.1.0".into(),
             },
-            Up::Batch(vec![
+            FromAgent::Batch(vec![
                 ScanMsg::Chunk(chunk),
                 ScanMsg::Close {
                     job: JobId(2),
@@ -1969,8 +1978,8 @@ mod tests {
                     classes: vec![(
                         DirId(40),
                         Class {
-                            rule: 0,
-                            safety: 1,
+                            rule: RuleIx(0),
+                            safety: Safety::Regenerable,
                             degraded: None,
                             flags: 0,
                         },
@@ -1984,18 +1993,18 @@ mod tests {
                     submitted_seq: u64::MAX,
                 },
             ]),
-            Up::Heartbeat,
-            Up::Started {
+            FromAgent::Heartbeat,
+            FromAgent::Started {
                 job: JobId(2),
                 seq: 17,
             },
-            Up::Abandoned {
+            FromAgent::Abandoned {
                 job: JobId(2),
                 dir: DirId(5),
                 complete: false,
             },
-            Up::Fatal("gone".into()),
-            Up::Deleter(DeleterMsg::Item {
+            FromAgent::Fatal("gone".into()),
+            FromAgent::Deleter(DeleterMsg::Item {
                 plan: 3,
                 node: NodeRef::from_bits(u64::MAX - 9),
                 bytes: 4096,
@@ -2005,29 +2014,29 @@ mod tests {
                     msg: "denied".into(),
                 },
             }),
-            Up::Deleter(DeleterMsg::Item {
+            FromAgent::Deleter(DeleterMsg::Item {
                 plan: 3,
                 node: NodeRef::from_bits(1),
                 bytes: 0,
                 result: DeleteResult::Refused(Refusal::TrashOtherSubvolume("/sv".into())),
             }),
-            Up::Deleter(DeleterMsg::Done {
+            FromAgent::Deleter(DeleterMsg::Done {
                 plan: 3,
                 btrfs: true,
             }),
-            Up::Deleter(DeleterMsg::Restored {
+            FromAgent::Deleter(DeleterMsg::Restored {
                 plan: 3,
                 original: "/a/\u{e9}".into(),
                 staged: true,
                 bytes: 9,
                 result: Ok("/a/\u{e9}.restored-1".into()),
             }),
-            Up::Deleter(DeleterMsg::Committed {
+            FromAgent::Deleter(DeleterMsg::Committed {
                 plan: 3,
                 bytes: 9,
                 result: Err("busy".into()),
             }),
-            Up::Checked(vec![
+            FromAgent::Checked(vec![
                 CheckMsg::Guards {
                     node: NodeRef::from_bits(5),
                     rule,
@@ -2045,21 +2054,21 @@ mod tests {
                     result: Ok(1 << 40),
                 },
             ]),
-            Up::Deleter(DeleterMsg::Unfinished {
+            FromAgent::Deleter(DeleterMsg::Unfinished {
                 items: vec!["x".into()],
                 notes: vec![],
             }),
-            Up::Rules {
+            FromAgent::Rules {
                 platform: "linux".into(),
                 vars: vec![("HOME".into(), "/home/u".into())],
                 fingerprint: u64::MAX - 3,
                 root: class(rule),
             },
-            Up::Host {
+            FromAgent::Host {
                 measure_min: 1 << 20,
                 privileged: true,
             },
-            Up::Measured(vec![
+            FromAgent::Measured(vec![
                 MeasureMsg {
                     round: 3,
                     node: NodeRef::from_bits(42 << 32 | 3),
@@ -2138,10 +2147,10 @@ mod tests {
         }
     }
 
-    fn class(rule: u16) -> WireClass {
+    fn class(rule: RuleIx) -> WireClass {
         WireClass {
             path: b"/home/u/\xffproj".to_vec(),
-            inside: vec![0, rule],
+            inside: vec![RuleIx(0), rule],
             protection: State::Sticky,
             chain: vec![Hit {
                 rule,
@@ -2159,57 +2168,57 @@ mod tests {
         let (set, rule) = rules();
         for up in sample() {
             let bytes = up.encode();
-            let back = Up::decode(&bytes, Some(&set)).unwrap();
+            let back = FromAgent::decode(&bytes, Some(&set)).unwrap();
             assert_eq!(back.encode(), bytes, "{up:?}");
         }
         let downs = [
-            Down::Hello { version: 1 },
-            Down::Rules {
+            ToAgent::Hello { version: 1 },
+            ToAgent::Rules {
                 files: vec![
                     (None, "[[rule]]".into()),
                     (Some("/home/u/.config/dfdu/rules/a.toml".into()), "".into()),
                 ],
                 root: b"/srv/\xffdata".to_vec(),
             },
-            Down::StartJob {
+            ToAgent::StartJob {
                 job: JobId(1),
                 root: b"/srv/\xffdata".to_vec(),
                 cross_mounts: true,
                 network: false,
                 class: None,
             },
-            Down::StartJob {
+            ToAgent::StartJob {
                 job: JobId(1),
                 root: b"/".to_vec(),
                 cross_mounts: false,
                 network: true,
                 class: Some(class(rule)),
             },
-            Down::Delete(DeleterReq::Plan(plan())),
-            Down::Delete(DeleterReq::Undo { plan: 7 }),
-            Down::Delete(DeleterReq::Commit),
-            Down::AbortDelete,
-            Down::Check(vec![CheckReq::Guards {
+            ToAgent::Delete(DeleterReq::Plan(plan())),
+            ToAgent::Delete(DeleterReq::Undo { plan: 7 }),
+            ToAgent::Delete(DeleterReq::Commit),
+            ToAgent::AbortDelete,
+            ToAgent::Check(vec![CheckReq::Guards {
                 node: NodeRef::from_bits(9),
                 rule,
                 path: "/srv/web/node_modules".into(),
                 vcs: true,
                 processes: vec!["node".into(), "".into()],
             }]),
-            Down::Measure(vec![measure_req()]),
-            Down::EndJob { job: JobId(1) },
-            Down::StopDirs {
+            ToAgent::Measure(vec![measure_req()]),
+            ToAgent::EndJob { job: JobId(1) },
+            ToAgent::StopDirs {
                 job: JobId(1),
                 dirs: vec![DirId(3), DirId(u32::MAX)],
             },
-            Down::Abandon {
+            ToAgent::Abandon {
                 job: JobId(1),
                 dir: DirId(3),
             },
         ];
         for d in downs {
             let bytes = d.encode();
-            assert_eq!(Down::decode(&bytes, Some(&set)).unwrap().encode(), bytes);
+            assert_eq!(ToAgent::decode(&bytes, Some(&set)).unwrap().encode(), bytes);
         }
         // Native commands and sizes go as their rule; the agent builds them from its rules.
         // (Docker's rule, with variants and a size command, is for macOS and Windows.)
@@ -2226,39 +2235,40 @@ mod tests {
                     .as_ref()
                     .is_some_and(|n| !n.variants.is_empty() && !n.size_command.is_empty())
             })
-            .unwrap() as u16;
+            .map(|i| RuleIx(i as u16))
+            .unwrap();
         let path = std::path::Path::new("/srv/\u{e9}t\u{e9}");
         for (variant, dry_run) in [(None, false), (None, true), (Some(0), false)] {
             let want = crate::applier::native_req(&set, docker, variant, path, dry_run, 5)
                 .expect("the rule has the command");
-            let d = Down::Delete(DeleterReq::Native(want.clone()));
-            let Down::Delete(DeleterReq::Native(got)) =
-                Down::decode(&d.encode(), Some(&set)).unwrap()
+            let d = ToAgent::Delete(DeleterReq::Native(want.clone()));
+            let ToAgent::Delete(DeleterReq::Native(got)) =
+                ToAgent::decode(&d.encode(), Some(&set)).unwrap()
             else {
                 panic!("not a native command");
             };
             assert_eq!(got, want);
-            assert!(Down::decode(&d.encode(), None).is_err());
-            assert!(Down::decode(&d.encode(), Some(&few_rules())).is_err());
+            assert!(ToAgent::decode(&d.encode(), None).is_err());
+            assert!(ToAgent::decode(&d.encode(), Some(&few_rules())).is_err());
         }
         // A variant the rule does not have, a relative path, or no rule at all are refused.
         let mut bad = crate::applier::native_req(&set, docker, None, path, false, 5).unwrap();
         bad.rule.as_mut().unwrap().variant = Some(99);
-        let bytes = Down::Delete(DeleterReq::Native(bad.clone())).encode();
-        assert!(Down::decode(&bytes, Some(&set)).is_err());
+        let bytes = ToAgent::Delete(DeleterReq::Native(bad.clone())).encode();
+        assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
         bad.rule.as_mut().unwrap().variant = None;
         bad.rule.as_mut().unwrap().path = "srv".into();
-        let bytes = Down::Delete(DeleterReq::Native(bad.clone())).encode();
-        assert!(Down::decode(&bytes, Some(&set)).is_err());
+        let bytes = ToAgent::Delete(DeleterReq::Native(bad.clone())).encode();
+        assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
         bad.rule = None;
-        let bytes = Down::Delete(DeleterReq::Native(bad)).encode();
-        assert!(Down::decode(&bytes, Some(&set)).is_err());
-        let size = Down::Check(vec![CheckReq::NativeSize {
+        let bytes = ToAgent::Delete(DeleterReq::Native(bad)).encode();
+        assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
+        let size = ToAgent::Check(vec![CheckReq::NativeSize {
             rule: docker,
             check: vec![],
             command: vec!["anything".into()],
         }]);
-        let Down::Check(got) = Down::decode(&size.encode(), Some(&set)).unwrap() else {
+        let ToAgent::Check(got) = ToAgent::decode(&size.encode(), Some(&set)).unwrap() else {
             panic!("not a check");
         };
         let n = set.rule(docker).native.as_ref().unwrap();
@@ -2266,28 +2276,59 @@ mod tests {
             matches!(&got[..], [CheckReq::NativeSize { rule, check, command }]
             if *rule == docker && *check == n.check && *command == n.size_command)
         );
-        let plain = set.rules().iter().position(|r| r.native.is_none()).unwrap() as u16;
-        let none = Down::Check(vec![CheckReq::NativeSize {
+        let plain = set.rules().iter().position(|r| r.native.is_none()).unwrap();
+        let plain = RuleIx(plain as u16);
+        let none = ToAgent::Check(vec![CheckReq::NativeSize {
             rule: plain,
             check: vec![],
             command: vec![],
         }]);
-        assert!(Down::decode(&none.encode(), Some(&set)).is_err());
+        assert!(ToAgent::decode(&none.encode(), Some(&set)).is_err());
         // A class before the rules, or naming a rule the agent does not have, is refused.
-        let job = Down::StartJob {
+        let job = ToAgent::StartJob {
             job: JobId(1),
             root: b"/".to_vec(),
             cross_mounts: false,
             network: false,
             class: Some(class(rule)),
         };
-        assert!(Down::decode(&job.encode(), None).is_err());
+        assert!(ToAgent::decode(&job.encode(), None).is_err());
         let few = dfdu_rules::load_from(
             &dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[]),
             &[],
         )
         .0;
-        assert!(Down::decode(&job.encode(), Some(&few)).is_err());
+        assert!(ToAgent::decode(&job.encode(), Some(&few)).is_err());
+    }
+
+    /// A class is written as the rule's index (a varint), the safety level's number, the
+    /// `degrade` condition and the flags; a safety number past the last level is refused.
+    #[test]
+    fn class_layout() {
+        let c = Class {
+            rule: RuleIx(300),
+            safety: Safety::Review,
+            degraded: Some(1),
+            flags: Class::CHECKED,
+        };
+        let mut e = Enc::default();
+        enc_class(&mut e, &c);
+        assert_eq!(e.0, [0xac, 0x02, 2, 1, 1, 2]);
+        let (set, rule) = rules();
+        let mut e = Enc::default();
+        enc_class(
+            &mut e,
+            &Class {
+                rule,
+                degraded: None,
+                ..c
+            },
+        );
+        let back = dec_class(&mut Dec::new(&e.0), Some(&set)).unwrap();
+        assert_eq!((back.rule, back.safety), (rule, Safety::Review));
+        let safety_at = e.0.len() - 3;
+        e.0[safety_at] = Safety::ALL.len() as u8;
+        assert!(dec_class(&mut Dec::new(&e.0), Some(&set)).is_err());
     }
 
     /// Frames carry their payload; a flipped bit is a checksum error, a cut frame an error,
@@ -2303,7 +2344,7 @@ mod tests {
         let mut n = 0;
         let set = rules().0;
         while read_frame(&mut r, &mut buf).unwrap() {
-            Up::decode(&buf, Some(&set)).unwrap();
+            FromAgent::decode(&buf, Some(&set)).unwrap();
             n += 1;
         }
         assert_eq!(n, sample().len());
@@ -2333,12 +2374,12 @@ mod tests {
         for up in sample() {
             let bytes = up.encode();
             for cut in 0..bytes.len() {
-                assert!(Up::decode(&bytes[..cut], Some(&set)).is_err());
+                assert!(FromAgent::decode(&bytes[..cut], Some(&set)).is_err());
             }
             for i in 0..bytes.len() * 8 {
                 let mut b = bytes.clone();
                 b[i / 8] ^= 1 << (i % 8);
-                if let Ok(Up::Batch(msgs)) = Up::decode(&b, Some(&set)) {
+                if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&b, Some(&set)) {
                     for m in msgs {
                         if let ScanMsg::Chunk(c) = m {
                             for f in &c.files {
@@ -2354,39 +2395,39 @@ mod tests {
         }
         // Classes of rules the local side does not have are refused, and any without rules.
         let batch = &sample()[1];
-        assert!(Up::decode(&batch.encode(), None).is_err());
+        assert!(FromAgent::decode(&batch.encode(), None).is_err());
         let few = dfdu_rules::load_from(
             &dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[]),
             &[],
         )
         .0;
-        assert!(Up::decode(&batch.encode(), Some(&few)).is_err());
+        assert!(FromAgent::decode(&batch.encode(), Some(&few)).is_err());
         for d in [
-            Down::Rules {
+            ToAgent::Rules {
                 files: vec![(Some("a".into()), "x".into())],
                 root: b"/".to_vec(),
             },
-            Down::Delete(DeleterReq::Plan(plan())),
-            Down::Measure(vec![measure_req()]),
+            ToAgent::Delete(DeleterReq::Plan(plan())),
+            ToAgent::Measure(vec![measure_req()]),
         ] {
             let bytes = d.encode();
             for cut in 0..bytes.len() {
-                assert!(Down::decode(&bytes[..cut], Some(&set)).is_err());
+                assert!(ToAgent::decode(&bytes[..cut], Some(&set)).is_err());
             }
         }
         // A measured name is opened relative to its directory: no paths.
         for name in [&b"a/b"[..], b"..", b".", b""] {
             let mut r = measure_req();
             r.files[1].name = name.to_vec();
-            assert!(Down::decode(&Down::Measure(vec![r]).encode(), None).is_err());
+            assert!(ToAgent::decode(&ToAgent::Measure(vec![r]).encode(), None).is_err());
         }
         // A shared range cannot end before it starts.
         let mut m = sample().pop().unwrap();
-        if let Up::Measured(msgs) = &mut m
+        if let FromAgent::Measured(msgs) = &mut m
             && let MeasureResult::Measured(me) = &mut msgs[0].result
         {
             me.ranges[0] = (9, 8);
         }
-        assert!(Up::decode(&m.encode(), None).is_err());
+        assert!(FromAgent::decode(&m.encode(), None).is_err());
     }
 }

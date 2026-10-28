@@ -146,7 +146,7 @@ fn names_that_are_not_utf8_survive() {
 
 #[test]
 fn compressed_input() {
-    let mut w = crate::zstd_writer(vec![]).unwrap();
+    let mut w = crate::ZstdWriter::new(vec![]);
     // Several frames.
     for chunk in NCDU.chunks(100) {
         std::io::Write::write_all(&mut w, chunk).unwrap();
@@ -158,6 +158,25 @@ fn compressed_input() {
         dump(&im.tree, im.root),
         dump(&import_bytes(NCDU).tree, import_bytes(NCDU).root)
     );
+}
+
+#[test]
+fn zstd_flush_reaches_the_sink() {
+    use std::io::{Read, Write};
+    let mut w = crate::ZstdWriter::new(vec![]);
+    w.write_all(b"first ").unwrap();
+    w.flush().unwrap();
+    assert!(w.buf.is_empty());
+    let flushed = w.inner.len();
+    assert!(flushed > 0);
+    w.write_all(b"second").unwrap();
+    let z = w.finish().unwrap();
+    assert!(z.len() > flushed);
+    let mut out = String::new();
+    crate::ZstdReader::new(&z[..])
+        .read_to_string(&mut out)
+        .unwrap();
+    assert_eq!(out, "first second");
 }
 
 #[test]

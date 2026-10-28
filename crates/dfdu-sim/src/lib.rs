@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 
-use dfdu_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
+use dfdu_clean::{DeleterMsg, Plan, Refusal};
 use dfdu_engine::{
-    Applier, CheckMsg, CheckReq, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model,
+    Applier, CheckMsg, CheckReq, Command, DeleteResult, MeasureMsg, MeasureReq, MeasureResult,
+    Measurement, Mode, Model,
 };
 use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
 use dfdu_scan::classify::ClassOpts;
@@ -1399,8 +1400,7 @@ impl Sim {
             log: Vec::new(),
             record: false,
         };
-        let now = sim.clock.now();
-        sim.applier.command(
+        sim.applier.apply_command(
             &mut sim.model,
             Command::Scan {
                 path: PathBuf::from(ROOT_NAME),
@@ -1417,7 +1417,6 @@ impl Sim {
                     ..JobOptions::default()
                 },
             },
-            now,
         );
         sim
     }
@@ -1550,8 +1549,7 @@ impl Sim {
     }
 
     pub fn command(&mut self, cmd: Command) -> Result<(), String> {
-        let now = self.clock.now();
-        self.applier.command(&mut self.model, cmd, now);
+        self.applier.apply_command(&mut self.model, cmd);
         self.plans
             .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
         self.check(" after a command")
@@ -1874,9 +1872,8 @@ impl Sim {
                         self.recoveries += 1;
                         self.report.recoveries += 1;
                         let r = self.model.tree.node_ref(ix);
-                        let now = self.clock.now();
                         self.applier
-                            .command(&mut self.model, Command::Rescan { node: r }, now);
+                            .apply_command(&mut self.model, Command::Rescan { node: r });
                     }
                     Some(_) => {
                         return Err(self.fail("incomplete directories remain after 100 rescans"));
@@ -2106,7 +2103,7 @@ fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, Str
         ROOT,
         root,
         ROOT_NAME.as_bytes().to_vec(),
-        Vec::<u16>::new(),
+        Vec::<dfdu_rules::RuleIx>::new(),
         State::Off,
         None::<Class>,
     )];
@@ -2182,7 +2179,7 @@ fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, Str
                         };
                         ok.then_some(Class {
                             rule: h.rule,
-                            safety: h.safety as u8,
+                            safety: h.safety,
                             degraded: h.degraded,
                             flags: 0,
                         })
@@ -2293,7 +2290,7 @@ fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u64), String
                 show()
             ));
         }
-        if t && c.safety != dfdu_rules::Safety::Protected as u8 {
+        if t && c.safety != dfdu_rules::Safety::Protected {
             return Err(format!("{}: git-tracked but not protected", show()));
         }
         tracked += t as u64;

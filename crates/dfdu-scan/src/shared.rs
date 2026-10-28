@@ -753,14 +753,23 @@ pub enum StepResult {
     WaitingBudget,
 }
 
+/// A block a listing task is stat'ing itself.
+struct InlineBlock<L> {
+    raw: Raw<L>,
+    seq: u32,
+    /// More blocks follow this one.
+    more: bool,
+    /// The block is the whole listing.
+    whole: bool,
+}
+
 struct Running<B: Backend> {
     task: Task<B::Loc>,
     job: Arc<JobState>,
     stream: Option<B::Stream>,
-    /// A block this listing task is stat'ing itself: its seq and whether more blocks follow.
     /// Kept across "not ready" returns, and set while stat'ing so a panic there costs only
-    /// this block. The last flag is set when the block is the whole listing.
-    inline: Option<(Raw<B::Loc>, u32, bool, bool)>,
+    /// this block.
+    inline: Option<InlineBlock<B::Loc>>,
     seq: u32,
     /// Entries read so far; a read error before any entry means the directory failed.
     entries: usize,
@@ -833,13 +842,13 @@ impl<B: Backend> Worker<B> {
             self.finish_part(&mut ob, &r.task, &work.parts, class, work.seq + 1, now);
             return;
         }
-        if let Some((_, seq, more, _)) = r.inline.take() {
-            let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(msg));
+        if let Some(block) = r.inline.take() {
+            let chunk = empty_chunk(&r.task, block.seq, ChunkStatus::Panicked(msg));
             r.panicked += 1;
             self.slot.outbox.lock().push(ScanMsg::Chunk(chunk), now);
             let status = Self::ended_status(&r);
             self.running = Some(r);
-            if !more {
+            if !block.more {
                 self.finish_listing(status, clock);
             }
             return;
@@ -1024,133 +1033,149 @@ impl<B: Backend> Worker<B> {
     }
 
     fn step_inner(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
-        let Some(r) = self.running.as_mut() else {
-            let Some(task) = self.take_task(sh) else {
-                let mut ob = self.slot.outbox.lock();
-                if !ob.is_empty() {
-                    sh.flush_locked(&mut ob, sink, self.blocking);
-                }
-                return StepResult::Idle;
-            };
-            let job = sh.job(task.job);
-            let live = job
-                .as_ref()
-                .is_some_and(|j| !j.ended.load(SeqCst) && !j.stopped(task.dir));
-            match (job, live) {
-                (Some(job), true) => {
-                    let mut task = task;
-                    let class = match (&task.chunk, task.class.take(), &job.opts.class) {
-                        (Some(work), _, _) => work.class.clone(),
-                        (None, Some(tc), Some(opts)) => {
-                            Some(Arc::new(Listing::new(opts.rules.clone(), task.dir, *tc)))
-                        }
-                        _ => None,
-                    };
-                    self.running = Some(Running {
-                        task,
-                        job,
-                        stream: None,
-                        inline: None,
-                        seq: 0,
-                        entries: 0,
-                        panicked: 0,
-                        read_error: None,
-                        parts: None,
-                        class,
-                    });
-                }
-                _ => {
-                    let mut ob = self.slot.outbox.lock();
-                    let now = clock.now();
-                    match &task.chunk {
-                        // Still one chunk message, so the directory's count is right.
-                        Some(work) => {
-                            let chunk = empty_chunk(&task, work.seq, ChunkStatus::Cancelled);
-                            ob.push(ScanMsg::Chunk(chunk), now);
-                            work.parts.cancelled.fetch_add(1, SeqCst);
-                            let class = work.class.as_deref();
-                            self.finish_part(&mut ob, &task, &work.parts, class, work.seq + 1, now);
-                        }
-                        None => {
-                            ob.push(
-                                ScanMsg::Close {
-                                    job: task.job,
-                                    dir: task.dir,
-                                    chunks: 0,
-                                    status: ListingStatus::Cancelled,
-                                    classes: Vec::new(),
-                                },
-                                now,
-                            );
-                            self.end_part(&mut ob, &task, LISTING_PART);
-                        }
-                    }
-                }
-            }
-            return StepResult::Progress;
+        let Some(r) = self.running.as_ref() else {
+            return self.start_task(sh, sink, clock);
         };
-
         if r.task.chunk.is_some() {
             return self.chunk_step(sh, clock);
         }
-
         if r.stream.is_none() {
-            self.slot.begin_syscall(clock.now());
-            let opened = if r.task.is_root {
-                sh.backend.stat_root(&r.task.loc).and_then(|m| {
-                    r.task.dev = m.dev;
-                    r.task.mount = m.mount;
-                    (r.task.storage, r.task.gate) = sh.gate_for(m.mount, m.dev, true);
-                    r.job.mount_roots.lock().insert((m.dev, m.ino));
-                    sh.backend
-                        .open(&r.task.loc, r.task.storage)
-                        .map(|s| (s, Some(m)))
-                })
-            } else {
-                sh.backend
-                    .open(&r.task.loc, r.task.storage)
-                    .map(|s| (s, None))
-            };
-            // Part of opening, under the same stall watch. A failed probe only loses the record.
-            let probe = match &opened {
-                Ok(_) if r.task.probe_subvol => Some(Probe {
-                    subvol: sh.backend.subvolume(&r.task.loc).ok().flatten(),
-                    shares_extents: sh.backend.shares_extents(&r.task.loc),
-                    profile: if r.task.is_root {
-                        sh.backend.data_profile(&r.task.loc)
-                    } else {
-                        None
-                    },
-                }),
-                _ => None,
-            };
-            self.slot.syscall_since.store(0, SeqCst);
-            match opened {
-                Ok((stream, root_meta)) => {
-                    r.stream = Some(stream);
-                    if root_meta.is_some() || probe.is_some() {
-                        // The root's own stat and the probe travel in the first chunk.
-                        let mut c = empty_chunk(&r.task, r.seq, ChunkStatus::Ok);
-                        c.root_meta = root_meta;
-                        c.probe = probe.map(Box::new);
-                        r.seq += 1;
-                        self.slot.outbox.lock().push(ScanMsg::Chunk(c), clock.now());
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    self.slot.begin_syscall(clock.now());
-                    return StepResult::Blocked;
-                }
-                Err(e) => self.finish_listing(ListingStatus::Failed(ErrKind::from(&e)), clock),
-            }
-            return StepResult::Progress;
+            return self.open_step(sh, clock);
         }
-
         // A block being stat'ed is finished first, like a blocking call that has begun.
         if r.inline.is_some() {
             return self.inline_step(sh, clock);
         }
+        self.read_step(sh, clock)
+    }
 
+    /// Takes the next task and starts it, or turns it away if its job ended or its directory
+    /// was stopped. With no task, flushes the outbox.
+    fn start_task(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
+        let Some(mut task) = self.take_task(sh) else {
+            let mut ob = self.slot.outbox.lock();
+            if !ob.is_empty() {
+                sh.flush_locked(&mut ob, sink, self.blocking);
+            }
+            return StepResult::Idle;
+        };
+        let job = sh
+            .job(task.job)
+            .filter(|j| !j.ended.load(SeqCst) && !j.stopped(task.dir));
+        let Some(job) = job else {
+            self.cancel_task(&task, clock);
+            return StepResult::Progress;
+        };
+        let class = match (&task.chunk, task.class.take(), &job.opts.class) {
+            (Some(work), _, _) => work.class.clone(),
+            (None, Some(tc), Some(opts)) => {
+                Some(Arc::new(Listing::new(opts.rules.clone(), task.dir, *tc)))
+            }
+            _ => None,
+        };
+        self.running = Some(Running {
+            task,
+            job,
+            stream: None,
+            inline: None,
+            seq: 0,
+            entries: 0,
+            panicked: 0,
+            read_error: None,
+            parts: None,
+            class,
+        });
+        StepResult::Progress
+    }
+
+    /// Ends a task that will not run: a chunk task still sends its one chunk, so the
+    /// directory's count is right; a listing task closes its directory as cancelled.
+    fn cancel_task(&self, task: &Task<B::Loc>, clock: &dyn Clock) {
+        let mut ob = self.slot.outbox.lock();
+        let now = clock.now();
+        match &task.chunk {
+            Some(work) => {
+                let chunk = empty_chunk(task, work.seq, ChunkStatus::Cancelled);
+                ob.push(ScanMsg::Chunk(chunk), now);
+                work.parts.cancelled.fetch_add(1, SeqCst);
+                let class = work.class.as_deref();
+                self.finish_part(&mut ob, task, &work.parts, class, work.seq + 1, now);
+            }
+            None => {
+                ob.push(
+                    ScanMsg::Close {
+                        job: task.job,
+                        dir: task.dir,
+                        chunks: 0,
+                        status: ListingStatus::Cancelled,
+                        classes: Vec::new(),
+                    },
+                    now,
+                );
+                self.end_part(&mut ob, task, LISTING_PART);
+            }
+        }
+    }
+
+    /// Opens the listing task's directory. A job root is stat'ed first and gets its mount's
+    /// limit here.
+    fn open_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
+        let r = self.running.as_mut().expect("running");
+        self.slot.begin_syscall(clock.now());
+        let opened = if r.task.is_root {
+            sh.backend.stat_root(&r.task.loc).and_then(|m| {
+                r.task.dev = m.dev;
+                r.task.mount = m.mount;
+                (r.task.storage, r.task.gate) = sh.gate_for(m.mount, m.dev, true);
+                r.job.mount_roots.lock().insert((m.dev, m.ino));
+                sh.backend
+                    .open(&r.task.loc, r.task.storage)
+                    .map(|s| (s, Some(m)))
+            })
+        } else {
+            sh.backend
+                .open(&r.task.loc, r.task.storage)
+                .map(|s| (s, None))
+        };
+        // Part of opening, under the same stall watch. A failed probe only loses the record.
+        let probe = match &opened {
+            Ok(_) if r.task.probe_subvol => Some(Probe {
+                subvol: sh.backend.subvolume(&r.task.loc).ok().flatten(),
+                shares_extents: sh.backend.shares_extents(&r.task.loc),
+                profile: if r.task.is_root {
+                    sh.backend.data_profile(&r.task.loc)
+                } else {
+                    None
+                },
+            }),
+            _ => None,
+        };
+        self.slot.syscall_since.store(0, SeqCst);
+        match opened {
+            Ok((stream, root_meta)) => {
+                r.stream = Some(stream);
+                if root_meta.is_some() || probe.is_some() {
+                    // The root's own stat and the probe travel in the first chunk.
+                    let mut c = empty_chunk(&r.task, r.seq, ChunkStatus::Ok);
+                    c.root_meta = root_meta;
+                    c.probe = probe.map(Box::new);
+                    r.seq += 1;
+                    self.slot.outbox.lock().push(ScanMsg::Chunk(c), clock.now());
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                self.slot.begin_syscall(clock.now());
+                return StepResult::Blocked;
+            }
+            Err(e) => self.finish_listing(ListingStatus::Failed(ErrKind::from(&e)), clock),
+        }
+        StepResult::Progress
+    }
+
+    /// Reads the next block of the open directory, and hands it to a chunk task or stats it
+    /// here. A stopped listing ends with what it has read.
+    fn read_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
+        let r = self.running.as_mut().expect("running");
         if r.job.ended.load(SeqCst) || r.job.stopped(r.task.dir) {
             let status = if r.entries == 0 {
                 ListingStatus::Cancelled
@@ -1210,56 +1235,67 @@ impl<B: Backend> Worker<B> {
             .map_or(credit, |p| credit - p.in_flight().min(credit));
         if more && free > 0 {
             // More blocks follow: another worker can stat this one.
-            let parts = r
-                .parts
-                .get_or_insert_with(|| Arc::new(DirParts::new()))
-                .clone();
-            parts.unfinished.fetch_add(1, SeqCst);
-            let task = Task {
-                job: r.task.job,
-                dir: r.task.dir,
-                loc: r.task.loc.clone(),
-                focus_epoch: r.task.focus_epoch,
-                is_root: false,
-                dev: r.task.dev,
-                mount: r.task.mount,
-                probe_subvol: false,
-                chunk: Some(Box::new(ChunkWork {
-                    raw,
-                    seq,
-                    parts,
-                    class: r.class.clone(),
-                })),
-                gate: r.task.gate.clone(),
-                storage: r.task.storage,
-                class: None,
-            };
-            let mut ob = self.slot.outbox.lock();
-            sh.outstanding.fetch_add(1, SeqCst);
-            sh.submitted_seq.fetch_add(1, SeqCst);
-            sh.chunk_tasks.fetch_add(1, SeqCst);
-            ob.tasks.push(task);
-            ob.has_chunk_task = true;
+            self.push_chunk_task(sh, raw, seq);
             return StepResult::Progress;
         }
-        r.inline = Some((raw, seq, more, whole));
+        r.inline = Some(InlineBlock {
+            raw,
+            seq,
+            more,
+            whole,
+        });
         self.inline_step(sh, clock)
+    }
+
+    /// Makes block `seq` of the listing a chunk task on the outbox's private stack.
+    fn push_chunk_task(&mut self, sh: &Shared<B>, raw: Raw<B::Loc>, seq: u32) {
+        let r = self.running.as_mut().expect("running");
+        let parts = r
+            .parts
+            .get_or_insert_with(|| Arc::new(DirParts::new()))
+            .clone();
+        parts.unfinished.fetch_add(1, SeqCst);
+        let task = Task {
+            job: r.task.job,
+            dir: r.task.dir,
+            loc: r.task.loc.clone(),
+            focus_epoch: r.task.focus_epoch,
+            is_root: false,
+            dev: r.task.dev,
+            mount: r.task.mount,
+            probe_subvol: false,
+            chunk: Some(Box::new(ChunkWork {
+                raw,
+                seq,
+                parts,
+                class: r.class.clone(),
+            })),
+            gate: r.task.gate.clone(),
+            storage: r.task.storage,
+            class: None,
+        };
+        let mut ob = self.slot.outbox.lock();
+        sh.outstanding.fetch_add(1, SeqCst);
+        sh.submitted_seq.fetch_add(1, SeqCst);
+        sh.chunk_tasks.fetch_add(1, SeqCst);
+        ob.tasks.push(task);
+        ob.has_chunk_task = true;
     }
 
     /// The listing task stats a block itself.
     fn inline_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
         let r = self.running.as_mut().expect("running");
-        let (raw, ..) = r.inline.as_mut().expect("inline block");
+        let block = r.inline.as_mut().expect("inline block");
         self.slot.begin_syscall(clock.now());
-        let res = raw.stat(&mut self.block);
+        let res = block.raw.stat(&mut self.block);
         if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
             return StepResult::Blocked;
         }
         self.slot.syscall_since.store(0, SeqCst);
-        let (_, seq, more, whole) = r.inline.take().expect("inline block");
+        let block = r.inline.take().expect("inline block");
         if let Err(e) = res {
             // Only "not ready" is expected; anything else loses the block, as a panic would.
-            let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(e.to_string()));
+            let chunk = empty_chunk(&r.task, block.seq, ChunkStatus::Panicked(e.to_string()));
             r.panicked += 1;
             self.block.clear();
             self.slot
@@ -1267,9 +1303,9 @@ impl<B: Backend> Worker<B> {
                 .lock()
                 .push(ScanMsg::Chunk(chunk), clock.now());
         } else {
-            self.emit_block(sh, seq, whole, clock);
+            self.emit_block(sh, block.seq, block.whole, clock);
         }
-        if !more {
+        if !block.more {
             let status = Self::ended_status(self.running.as_ref().expect("running"));
             self.finish_listing(status, clock);
         }

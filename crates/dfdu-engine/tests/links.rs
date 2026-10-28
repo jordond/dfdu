@@ -96,7 +96,7 @@ fn check(inodes: usize, profiles: usize) {
     );
 
     let e = Engine::start(
-        dfdu_scan::native_backend(dfdu_sys::storage(tmp.path())),
+        dfdu_scan::native_backend(dfdu_sys::storage(tmp.path()), false),
         // The tree is checked once at the end: checking after every slice would cost more than
         // the scan and hide the applier's own lock hold times.
         EngineOptions {
@@ -109,7 +109,7 @@ fn check(inodes: usize, profiles: usize) {
         path: tmp.path().to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(600))));
+    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let timing = |e: &Engine<_>| e.read(|m| m.status.timing.clone());
     let t_scan = timing(&e);
     eprintln!(
@@ -141,7 +141,7 @@ fn check(inodes: usize, profiles: usize) {
         std::thread::sleep(Duration::from_millis(1));
     }
     let (job_done, t_job) = (t.elapsed(), timing(&e));
-    assert!(e.wait_idle(Some(Duration::from_secs(600))));
+    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let settled = t.elapsed();
     let t_end = timing(&e);
     eprintln!(

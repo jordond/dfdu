@@ -114,7 +114,7 @@ fn estimate_matches_freed_space() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let items = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         m.tree
@@ -127,7 +127,7 @@ fn estimate_matches_freed_space() {
         id: 7,
         items: items.clone(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     let est = e.read(|m| m.status.estimate.clone()).unwrap();
     assert_eq!((est.id, est.items, est.scanning), (7, 2, false));
     assert!(est.linked_out >= 800_000, "{est:?}");
@@ -137,7 +137,7 @@ fn estimate_matches_freed_space() {
         items,
         mode: Mode::Permanent,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert_eq!(e.read(|m| m.status.last_delete.clone()).unwrap().deleted, 2);
     rustix::fs::sync();
     // HFS+ returns blocks when its journal is flushed; give it a moment.

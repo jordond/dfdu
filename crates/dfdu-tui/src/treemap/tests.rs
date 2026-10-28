@@ -1,29 +1,15 @@
 use std::time::Instant;
 
 use dfdu_engine::Model;
-use dfdu_tree::{DirState, Ix, Kind, Meta};
+use dfdu_tree::{DirState, Ix, Kind};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 
 use super::*;
-use crate::app::tests::snap;
 use crate::extras;
 use crate::snapshot::{self, EntryData, test_entry};
-use crate::tests::{key, render, render_buffer, styled};
+use crate::tests::{meta, press, render, render_buffer, snap_without_totals, styled};
 use crate::theme::Theme;
-
-fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-    Meta {
-        kind,
-        apparent: size,
-        alloc: size,
-        mtime: 0,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
-    }
-}
 
 pub(crate) struct Fixture {
     pub(crate) m: Model,
@@ -102,7 +88,7 @@ pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
 
 fn treemap_app(m: &Model, now: Instant) -> App {
     let mut app = App::new(Theme::no_color(), now);
-    app.key(key(KeyCode::Char('2')), now);
+    app.key(press(KeyCode::Char('2')), now);
     sync(&mut app, m, now);
     app
 }
@@ -132,7 +118,7 @@ fn read_finds_the_levels_below_the_largest_directories() {
     // Depth 2 reads one level below the top only.
     assert!(kids.items[0].kids.is_none());
 
-    app.key(key(KeyCode::Char('+')), t0);
+    app.key(press(KeyCode::Char('+')), t0);
     assert!(app.extras_stale());
     sync(&mut app, &fx.m, t0);
     let big = app
@@ -166,7 +152,7 @@ fn read_skips_hidden_entries_when_they_are_hidden_and_keeps_the_rest_total() {
     assert_eq!(shown + kids.rest.1, fx.m.tree.total(Ix(d.0)).alloc);
     assert_eq!(kids.rest.0, 11);
 
-    app.key(key(KeyCode::Char('e')), t0);
+    app.key(press(KeyCode::Char('e')), t0);
     sync(&mut app, &fx.m, t0);
     let kids = &app.extras.treemap.below[&node];
     assert!(kids.items.iter().all(|k| k.name[0] != b'.'));
@@ -212,12 +198,12 @@ fn draws_nested_tiles() {
 }
 
 #[test]
-fn draws_three_levels_in_colour() {
+fn draws_three_levels_in_color() {
     let fx = tree();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     app.theme = Theme::ansi16();
-    app.key(key(KeyCode::Char('+')), t0);
+    app.key(press(KeyCode::Char('+')), t0);
     sync(&mut app, &fx.m, t0);
     insta::assert_snapshot!(
         "treemap_depth3_ansi16",
@@ -226,11 +212,11 @@ fn draws_three_levels_in_colour() {
 }
 
 #[test]
-fn age_colour_has_a_legend_and_text() {
+fn age_color_has_a_legend_and_text() {
     let fx = tree();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    app.key(key(KeyCode::Char('p')), t0);
+    app.key(press(KeyCode::Char('p')), t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("colour: age"), "{frame}");
     assert!(frame.contains("■ week"), "{frame}");
@@ -247,7 +233,7 @@ fn small_terminals_get_the_list() {
     assert!(!app.treemap.shown);
     assert!(!frame.contains("colour:"), "{frame}");
     // Arrows move the list rows then.
-    app.key(key(KeyCode::Down), t0);
+    app.key(press(KeyCode::Down), t0);
     assert_eq!(selected(&app), "mid");
     render(&mut app, t0, 60, 17);
     assert!(app.treemap.shown);
@@ -336,20 +322,20 @@ fn arrows_move_between_tiles_and_enter_zooms() {
     let (big, mid) = (rect("big"), rect("mid"));
     // `big` is the largest tile: on the left, the others to its right.
     assert!(mid.x >= big.right(), "{big:?} {mid:?}");
-    app.key(key(KeyCode::Char('l')), t0);
+    app.key(press(KeyCode::Char('l')), t0);
     let right_of_big = selected(&app);
     assert_ne!(right_of_big, "big");
-    app.key(key(KeyCode::Left), t0);
+    app.key(press(KeyCode::Left), t0);
     assert_eq!(selected(&app), "big");
     // Nothing further left: the selection stays.
-    app.key(key(KeyCode::Char('h')), t0);
+    app.key(press(KeyCode::Char('h')), t0);
     assert_eq!(selected(&app), "big");
 
-    app.key(key(KeyCode::Enter), t0);
+    app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &fx.m, t0);
     assert!(app.snap.dir_path.ends_with("big"));
     render(&mut app, t0, 100, 30);
-    app.key(key(KeyCode::Char('<')), t0);
+    app.key(press(KeyCode::Char('<')), t0);
     sync(&mut app, &fx.m, t0);
     assert_eq!(app.snap.dir_path, std::path::Path::new("/r"));
 }
@@ -386,22 +372,22 @@ fn click_selects_a_tile_and_a_second_click_zooms_in() {
 fn tiles_hold_still_until_the_next_sort() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.key(key(KeyCode::Char('2')), t0);
+    app.key(press(KeyCode::Char('2')), t0);
     let mut es: Vec<EntryData> = (0..6)
         .map(|i| test_entry(i, &format!("e{i}"), 6000 - i as u64 * 900))
         .collect();
-    app.refresh(snap(es.clone(), 1), t0);
+    app.refresh(snap_without_totals(es.clone(), 1), t0);
     render(&mut app, t0, 100, 30);
     let before: Vec<Rect> = layout_rects(&app);
     // e5 grows past everything, inside the idle window: no re-sort, no new layout.
     es[5].size = 50_000;
-    app.refresh(snap(es.clone(), 2), t0);
+    app.refresh(snap_without_totals(es.clone(), 2), t0);
     let frame = render(&mut app, t0, 100, 30);
     assert_eq!(layout_rects(&app), before);
     // The label shows the live size.
     assert!(frame.contains("48.8 KiB"), "{frame}");
     // A re-sort lays out again.
-    app.key(key(KeyCode::Char('S')), t0);
+    app.key(press(KeyCode::Char('S')), t0);
     app.reorder(t0);
     render(&mut app, t0, 100, 30);
     assert_ne!(layout_rects(&app), before);
@@ -417,7 +403,7 @@ fn marked_tiles_say_so() {
     let fx = tree();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    app.key(key(KeyCode::Char(' ')), t0);
+    app.key(press(KeyCode::Char(' ')), t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("✓ big/"), "{frame}");
 }
@@ -439,11 +425,11 @@ fn the_selected_tile_has_a_heavy_frame() {
 fn ten_thousand_rows_lay_out_quickly() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.key(key(KeyCode::Char('2')), t0);
+    app.key(press(KeyCode::Char('2')), t0);
     let es: Vec<EntryData> = (0..10_000u32)
         .map(|i| test_entry(i, &format!("entry-{i}"), 1 + (i as u64 * 7919) % 100_000))
         .collect();
-    app.refresh(snap(es, 1), t0);
+    app.refresh(snap_without_totals(es, 1), t0);
     let area = Rect::new(0, 3, 200, 54);
     let mut best = Duration::MAX;
     for _ in 0..5 {
@@ -461,11 +447,7 @@ pub(crate) fn classified() -> Fixture {
     let mut fx = tree();
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
     let rules = dfdu_rules::builtin(&env).0;
-    let rule = rules
-        .rules()
-        .iter()
-        .position(|r| r.id == "rust.target")
-        .unwrap() as u16;
+    let rule = rules.index("rust.target").unwrap();
     fx.m.rules = Some(Arc::new(rules));
     let root = fx.m.tree.roots().next().unwrap();
     let big =
@@ -475,7 +457,7 @@ pub(crate) fn classified() -> Fixture {
             .unwrap();
     let class = dfdu_tree::Class {
         rule,
-        safety: dfdu_rules::Safety::Regenerable as u8,
+        safety: dfdu_rules::Safety::Regenerable,
         degraded: None,
         flags: 0,
     };
@@ -491,14 +473,9 @@ pub(crate) fn classified() -> Fixture {
             .find(|&c| fx.m.tree.name(c) == b"m0")
             .unwrap();
     let rules = fx.m.rules.as_ref().unwrap();
-    let cache = rules
-        .rules()
-        .iter()
-        .position(|r| r.id == "generic.cachedir-tag")
-        .unwrap();
     let class = dfdu_tree::Class {
-        rule: cache as u16,
-        safety: dfdu_rules::Safety::Safe as u8,
+        rule: rules.index("generic.cachedir-tag").unwrap(),
+        safety: dfdu_rules::Safety::Safe,
         ..class
     };
     fx.m.tree.set_class(m0, Some(class));
@@ -506,12 +483,12 @@ pub(crate) fn classified() -> Fixture {
 }
 
 #[test]
-fn category_colour_hatches_cleanup_candidates() {
+fn category_color_hatches_cleanup_candidates() {
     let fx = classified();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     for _ in 0..2 {
-        app.key(key(KeyCode::Char('p')), t0);
+        app.key(press(KeyCode::Char('p')), t0);
     }
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("colour: category"), "{frame}");
@@ -535,7 +512,7 @@ fn list_and_details_show_the_category() {
     assert!(frame.contains("Rust build output (target/)"), "{frame}");
     insta::assert_snapshot!("list_category_120x24", frame);
     // `mid` has a match inside: its details break it down by category.
-    app.key(key(KeyCode::Down), t0);
+    app.key(press(KeyCode::Down), t0);
     sync(&mut app, &fx.m, t0);
     let frame = render(&mut app, t0, 120, 24);
     assert!(frame.contains("by category"), "{frame}");

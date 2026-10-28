@@ -3,17 +3,16 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use clap::Args;
-use dfdu_engine::{Command, Engine, EngineOptions, Model};
-use dfdu_scan::{JobOptions, native_backend};
+use dfdu_engine::{EngineOptions, Model};
+use dfdu_scan::JobOptions;
 use dfdu_store::history::{self, Change, History, Record, SizeMap, Sizes};
 use dfdu_tree::Ix;
 use serde_json::{Map, Value, json};
 
 use crate::report::{ReportFormat, age_arg, now_secs, size_arg};
-use crate::{EXIT_PARTIAL, MountArgs, json as js};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
 
 /// The key under which scans are compared ([`history::options_key`]).
 pub fn options_key(job: &JobOptions, measured: bool) -> String {
@@ -125,13 +124,10 @@ pub fn list(args: HistoryArgs) -> ExitCode {
         }
         w.flush()
     })();
-    if let Err(e) = r
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        eprintln!("dfdu: writing the output: {e}");
-        return ExitCode::from(1);
+    match written(r) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => code,
     }
-    ExitCode::SUCCESS
 }
 
 #[derive(Args)]
@@ -181,7 +177,7 @@ fn side_json(s: &Side) -> Value {
 
 /// A file's tree as a side, every directory to `depth` levels (all sizes kept).
 fn file_side(path: &Path, depth: usize) -> Result<(Side, PathBuf), ExitCode> {
-    let im = crate::read_export(path)?;
+    let im = crate::transfer::read_export(path)?;
     let root = im.tree.path_buf(im.root);
     let sizes = history::rows_to(&im.tree, im.root, depth, u64::MAX, usize::MAX);
     Ok((
@@ -226,11 +222,8 @@ pub fn diff(args: DiffArgs) -> ExitCode {
     } else {
         print_table(&old, &new, &root, total.as_ref(), &shown)
     };
-    if let Err(e) = r
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        eprintln!("dfdu: writing the output: {e}");
-        return ExitCode::from(1);
+    if let Err(code) = written(r) {
+        return code;
     }
     if partial {
         ExitCode::from(EXIT_PARTIAL)
@@ -249,32 +242,14 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
         .cloned()
         .unwrap_or_else(|| PathBuf::from("."));
     let h = open()?;
-    args.mounts.backend(&path);
-    let storage = dfdu_sys::storage(&path);
-    let opts = EngineOptions {
-        workers: args
-            .threads
-            .unwrap_or_else(|| dfdu_engine::workers_for(storage)),
-        auto_abandon: Some(Duration::from_secs(30)),
-        journal_dir: None,
-        read_only: true,
-        ..Default::default()
-    };
-    let measured = opts.measure_workers > 0;
+    let key = options_key(
+        &args.mounts.job(),
+        EngineOptions::default().measure_workers > 0,
+    );
     let started = now_secs();
-    let engine = Engine::start(native_backend(storage), opts);
-    let mut job = args.mounts.job();
-    let key = options_key(&job, measured);
     // The matches of the rules are kept in the history at any depth.
-    job.class = crate::RuleArgs::default()
-        .load()
-        .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
-    engine.send(Command::Scan { path, opts: job });
-    engine.wait_idle(None);
-    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-        eprintln!("dfdu: {msg}");
-        return Err(ExitCode::from(1));
-    }
+    let rules = crate::RuleArgs::default().load();
+    let engine = launch::scan(&path, args.mounts, args.threads, rules, false)?;
     let out = engine.read(|m| {
         let root_ix = m.tree.roots().next()?;
         let root = m.tree.path_buf(root_ix);
@@ -291,7 +266,7 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
         record(m, root_ix, &key, started);
         Some((root, base, new, partial))
     });
-    engine.shutdown(Duration::from_millis(500));
+    engine.shutdown(launch::SHUTDOWN);
     let Some((root, base, new, partial)) = out else {
         return Err(ExitCode::from(1));
     };

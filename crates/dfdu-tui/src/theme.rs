@@ -1,7 +1,7 @@
-//! Semantic styles. Widgets use tokens (`dim`, `dir`, `warn`, ...), never literal colours. A
-//! theme gives each token a colour per colour level and modifiers; it is resolved once for the
-//! terminal's level into plain `Style`s. Every colour cue also has a glyph or text, so `mono`
-//! (`NO_COLOR`) keeps the modifiers and drops every colour.
+//! Semantic styles. Widgets use tokens (`fg.dim`, `dir`, `status.warn`, ...), never literal
+//! colours. A theme gives each token a colour per colour level and modifiers; it is resolved once
+//! for the terminal's level into plain `Style`s. Every colour cue also has a glyph or text, so
+//! `mono` (`NO_COLOR`) keeps the modifiers and drops every colour.
 
 mod builtin;
 mod color;
@@ -235,37 +235,30 @@ impl Spec {
 /// Every token's value, indexed by `Token as usize`.
 pub type Palette = [Spec; Token::COUNT];
 
-/// A theme resolved for one colour level. The fields are the tokens' styles.
+/// A theme resolved for one colour level. Each field is the style of the token of the same
+/// name, with `_` for `.` (`fg_dim` is `fg.dim`); docs/themes.md says what each is used for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub fg: Style,
-    /// `fg.dim`: secondary text such as incomplete sizes and hints.
-    pub dim: Style,
+    pub fg_dim: Style,
     pub bg: Style,
     pub border: Style,
     pub border_focus: Style,
     pub header: Style,
     pub title: Style,
-    /// `cursor`: the selected row.
-    pub selected: Style,
+    pub cursor: Style,
     pub mark: Style,
     pub dir: Style,
     pub key: Style,
-    /// `bar.fill`.
-    pub bar: Style,
+    pub bar_fill: Style,
     pub bar_empty: Style,
-    /// Size text of items that take a large share of their parent.
     pub size_big: Style,
     pub scan_active: Style,
     pub scan_done: Style,
-    /// `status.error`.
-    pub error: Style,
-    /// `status.warn`.
-    pub warn: Style,
-    /// `status.ok`.
-    pub ok: Style,
-    /// `match`: fuzzy-match highlight.
-    pub matched: Style,
+    pub status_error: Style,
+    pub status_warn: Style,
+    pub status_ok: Style,
+    pub r#match: Style,
     /// Indexed by `Category as usize`.
     pub cat: [Style; 8],
     /// Indexed by `Safety as usize`.
@@ -284,14 +277,6 @@ impl Theme {
     /// The theme without colours (`mono`).
     pub fn no_color() -> Self {
         Self::builtin("mono", ColorLevel::None, None)
-    }
-
-    /// `NO_COLOR` set to any non-empty value turns colour off (no-color.org).
-    pub fn from_env() -> Self {
-        match std::env::var_os("NO_COLOR") {
-            Some(v) if !v.is_empty() => Self::no_color(),
-            _ => Self::ansi16(),
-        }
     }
 
     /// The names [`Theme::named`] accepts.
@@ -336,25 +321,25 @@ impl Theme {
         };
         Theme {
             fg: style(Token::Fg),
-            dim: style(Token::FgDim),
+            fg_dim: style(Token::FgDim),
             bg: style(Token::Bg),
             border: style(Token::Border),
             border_focus: style(Token::BorderFocus),
             header: style(Token::Header),
             title: style(Token::Title),
-            selected: style(Token::Cursor),
+            cursor: style(Token::Cursor),
             mark: style(Token::Mark),
             dir: style(Token::Dir),
             key: style(Token::Key),
-            bar: style(Token::BarFill),
+            bar_fill: style(Token::BarFill),
             bar_empty: style(Token::BarEmpty),
             size_big: style(Token::SizeBig),
             scan_active: style(Token::ScanActive),
             scan_done: style(Token::ScanDone),
-            error: style(Token::StatusError),
-            warn: style(Token::StatusWarn),
-            ok: style(Token::StatusOk),
-            matched: style(Token::Match),
+            status_error: style(Token::StatusError),
+            status_warn: style(Token::StatusWarn),
+            status_ok: style(Token::StatusOk),
+            r#match: style(Token::Match),
             cat: Category::ALL.map(|c| style(c.token())),
             safety: Safety::ALL.map(|s| style(s.token())),
             name,
@@ -364,28 +349,29 @@ impl Theme {
     }
 
     /// The style of `token`.
+    #[cfg(test)]
     pub fn style(&self, token: Token) -> Style {
         match token {
             Token::Fg => self.fg,
-            Token::FgDim => self.dim,
+            Token::FgDim => self.fg_dim,
             Token::Bg => self.bg,
             Token::Border => self.border,
             Token::BorderFocus => self.border_focus,
             Token::Header => self.header,
             Token::Title => self.title,
-            Token::Cursor => self.selected,
+            Token::Cursor => self.cursor,
             Token::Mark => self.mark,
             Token::Dir => self.dir,
             Token::Key => self.key,
-            Token::BarFill => self.bar,
+            Token::BarFill => self.bar_fill,
             Token::BarEmpty => self.bar_empty,
             Token::SizeBig => self.size_big,
             Token::ScanActive => self.scan_active,
             Token::ScanDone => self.scan_done,
-            Token::StatusError => self.error,
-            Token::StatusWarn => self.warn,
-            Token::StatusOk => self.ok,
-            Token::Match => self.matched,
+            Token::StatusError => self.status_error,
+            Token::StatusWarn => self.status_warn,
+            Token::StatusOk => self.status_ok,
+            Token::Match => self.r#match,
             Token::CatCache => self.cat[Category::Cache as usize],
             Token::CatBuild => self.cat[Category::Build as usize],
             Token::CatVm => self.cat[Category::Vm as usize],
@@ -506,19 +492,19 @@ mod tests {
     }
 
     #[test]
-    fn legacy_styles_keep_their_values() {
+    fn builtin_styles_keep_their_values() {
         use ratatui::style::Color;
         let t = Theme::ansi16();
         assert_eq!(t.title, Style::new().add_modifier(Modifier::BOLD));
-        assert_eq!(t.dim, Style::new().fg(Color::DarkGray));
-        assert_eq!(t.bar, Style::new().fg(Color::Cyan));
+        assert_eq!(t.fg_dim, Style::new().fg(Color::DarkGray));
+        assert_eq!(t.bar_fill, Style::new().fg(Color::Cyan));
         assert_eq!(
             t.dir,
             Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD)
         );
-        assert_eq!(t.selected, Style::new().add_modifier(Modifier::REVERSED));
-        assert_eq!(t.warn, Style::new().fg(Color::Yellow));
-        assert_eq!(t.error, Style::new().fg(Color::Red));
+        assert_eq!(t.cursor, Style::new().add_modifier(Modifier::REVERSED));
+        assert_eq!(t.status_warn, Style::new().fg(Color::Yellow));
+        assert_eq!(t.status_error, Style::new().fg(Color::Red));
         assert_eq!(t.key, Style::new().add_modifier(Modifier::BOLD));
         assert_eq!(
             (t.name(), t.level(), t.background()),
@@ -527,12 +513,12 @@ mod tests {
 
         let m = Theme::no_color();
         assert_eq!(m.title, Style::new().add_modifier(Modifier::BOLD));
-        assert_eq!(m.dim, Style::new().add_modifier(Modifier::DIM));
-        assert_eq!(m.bar, Style::new());
+        assert_eq!(m.fg_dim, Style::new().add_modifier(Modifier::DIM));
+        assert_eq!(m.bar_fill, Style::new());
         assert_eq!(m.dir, Style::new().add_modifier(Modifier::BOLD));
-        assert_eq!(m.selected, Style::new().add_modifier(Modifier::REVERSED));
-        assert_eq!(m.warn, Style::new().add_modifier(Modifier::BOLD));
-        assert_eq!(m.error, Style::new().add_modifier(Modifier::BOLD));
+        assert_eq!(m.cursor, Style::new().add_modifier(Modifier::REVERSED));
+        assert_eq!(m.status_warn, Style::new().add_modifier(Modifier::BOLD));
+        assert_eq!(m.status_error, Style::new().add_modifier(Modifier::BOLD));
         assert_eq!(m.key, Style::new().add_modifier(Modifier::BOLD));
         assert_eq!((m.name(), m.level()), ("mono", ColorLevel::None));
     }
@@ -567,8 +553,8 @@ mod tests {
         for t in Token::ALL {
             assert_eq!(theme.style(t).fg, Some(Color::Indexed(t as u8)), "{t:?}");
         }
-        assert_eq!(theme.selected, theme.style(Token::Cursor));
-        assert_eq!(theme.matched, theme.style(Token::Match));
+        assert_eq!(theme.cursor, theme.style(Token::Cursor));
+        assert_eq!(theme.r#match, theme.style(Token::Match));
         assert_eq!(
             theme.cat[Category::Media as usize],
             theme.style(Token::CatMedia)

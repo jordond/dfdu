@@ -138,6 +138,9 @@ pub fn write_crash_report(dir: &std::path::Path, report: &str) -> Option<PathBuf
     Some(path)
 }
 
+/// How an engine runs. [`Default`] reads nothing from the environment: no journal (deletion is
+/// refused), no crash reports and no invariant checks. The commands start from
+/// [`EngineOptions::from_env`].
 #[derive(Clone, Debug)]
 pub struct EngineOptions {
     /// Worker threads, chosen for the scan root's storage ([`workers_for`]). A scan that enters
@@ -204,15 +207,45 @@ impl Default for EngineOptions {
             budget_bytes: 64 * 1024 * 1024,
             limits: Limits::default(),
             auto_abandon: None,
-            check_invariants: std::env::var_os("DFDU_CHECK").is_some(),
-            journal_dir: dfdu_clean::default_journal_dir(),
+            check_invariants: false,
+            journal_dir: None,
             read_only: false,
             imported: false,
             stage_window: dfdu_clean::STAGE_UNDO_WINDOW,
-            crash_dir: default_crash_dir(),
+            crash_dir: None,
             measure_workers: default_measurers(),
             classifiers: 2,
         }
+    }
+}
+
+impl EngineOptions {
+    /// The defaults, with the deletion journal and crash reports in the user's state directory
+    /// and invariant checks on when `DFDU_CHECK` is set.
+    pub fn from_env() -> Self {
+        EngineOptions {
+            check_invariants: std::env::var_os("DFDU_CHECK").is_some(),
+            journal_dir: dfdu_clean::default_journal_dir(),
+            crash_dir: default_crash_dir(),
+            ..EngineOptions::default()
+        }
+    }
+}
+
+/// How [`Engine::wait_idle`] ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WaitIdle {
+    /// Every command sent was applied and nothing is left to do.
+    Idle,
+    /// The timeout passed first.
+    TimedOut,
+    /// The engine stopped on this fatal error.
+    Fatal(String),
+}
+
+impl WaitIdle {
+    pub fn is_idle(&self) -> bool {
+        *self == WaitIdle::Idle
     }
 }
 
@@ -221,7 +254,7 @@ pub struct Engine<B: Backend> {
     shared: Arc<Shared<B>>,
     cmd_tx: Sender<Command>,
     commands_sent: AtomicU64,
-    wake_rx: Receiver<()>,
+    changes_rx: Receiver<()>,
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
     pool: Option<Pool>,
@@ -288,7 +321,7 @@ impl<B: Backend> Engine<B> {
         let model = Arc::new(RwLock::new(Model::default()));
         *CRASH_MODEL.lock() = Some(Arc::downgrade(&model));
         let (cmd_tx, cmd_rx) = unbounded::<Command>();
-        let (wake_tx, wake_rx) = bounded::<()>(1);
+        let (wake_tx, changes_rx) = bounded::<()>(1);
         let stop = Arc::new(AtomicBool::new(false));
 
         let (link, reader, remote_min, privileged) = match remote {
@@ -407,7 +440,7 @@ impl<B: Backend> Engine<B> {
             shared,
             cmd_tx,
             commands_sent: AtomicU64::new(0),
-            wake_rx,
+            changes_rx,
             stop,
             applier: Some(applier),
             pool,
@@ -454,8 +487,8 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Receives a message whenever the model changed.
-    pub fn wake(&self) -> &Receiver<()> {
-        &self.wake_rx
+    pub fn changes(&self) -> &Receiver<()> {
+        &self.changes_rx
     }
 
     pub fn scanner(&self) -> &Shared<B> {
@@ -475,37 +508,39 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Blocks until every command sent so far has been applied, no job is running and no
-    /// incremental work is pending, or `timeout` passes.
-    pub fn wait_idle(&self, timeout: Option<Duration>) -> bool {
+    /// incremental work is pending, until `timeout` passes, or until the engine stops on a
+    /// fatal error (an engine that stopped is never idle).
+    pub fn wait_idle(&self, timeout: Option<Duration>) -> WaitIdle {
         let deadline = timeout.map(|t| Instant::now() + t);
         loop {
             let sent = self.commands_sent.load(SeqCst);
             let (idle, fatal) = self.read(|m| {
                 (
                     m.status.commands_applied >= sent && !m.status.busy(),
-                    m.status.fatal.is_some(),
+                    m.status.fatal.clone(),
                 )
             });
-            if idle {
-                return true;
+            if let Some(msg) = fatal {
+                return WaitIdle::Fatal(msg);
             }
-            if fatal {
-                return false;
+            if idle {
+                return WaitIdle::Idle;
             }
             let wait = deadline.map_or(Duration::from_millis(100), |d| {
                 d.saturating_duration_since(Instant::now())
                     .min(Duration::from_millis(100))
             });
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                return false;
+                return WaitIdle::TimedOut;
             }
-            let _ = self.wake_rx.recv_timeout(wait);
+            let _ = self.changes_rx.recv_timeout(wait);
         }
     }
 
-    /// Cancels everything and stops the threads, waiting at most `wait` for workers. Threads
-    /// stuck in a filesystem call are left behind.
+    /// Cancels everything and stops the threads. The applier is joined; the workers and
+    /// the deleter share what is left of `wait`, counted from the call. Threads stuck in a filesystem call are left behind.
     pub fn shutdown(mut self, wait: Duration) {
+        let deadline = Instant::now() + wait;
         self.send(Command::CancelAll);
         self.stop.store(true, SeqCst);
         let _ = self.cmd_tx.send(Command::CancelAll);
@@ -513,16 +548,16 @@ impl<B: Backend> Engine<B> {
             let _ = a.join();
         }
         if let Some(p) = self.pool.take() {
-            p.stop(wait);
+            p.stop(deadline.saturating_duration_since(Instant::now()));
         }
         if let Some(l) = self.link.take() {
             l.close();
         }
         // The applier held the deleter's plan channel; with it gone the deleter finishes its
-        // current item, syncs and closes the journal, and exits. Wait for that, within `wait`.
+        // current item, syncs and closes the journal, and exits. Wait for that, in what is left
+        // of `wait`.
         self.delete_abort.store(true, SeqCst);
         if let Some(d) = self.deleter.take() {
-            let deadline = Instant::now() + wait;
             while !d.is_finished() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(1));
             }
@@ -624,7 +659,7 @@ fn applier_loop<B: Backend>(
             cmds.push_back(c);
         }
         for c in cmds.drain(..) {
-            applier.command(&mut g, c, now);
+            applier.apply_command(&mut g, c);
         }
         dels.extend(del_rx.try_iter());
         for d in dels.drain(..) {
@@ -711,5 +746,18 @@ fn applier_loop<B: Backend>(
         if changed {
             let _ = wake_tx.try_send(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EngineOptions;
+
+    #[test]
+    fn default_options_read_nothing_from_the_environment() {
+        let opts = EngineOptions::default();
+        assert_eq!(opts.journal_dir, None);
+        assert_eq!(opts.crash_dir, None);
+        assert!(!opts.check_invariants);
     }
 }

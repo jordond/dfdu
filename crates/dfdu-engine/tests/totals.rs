@@ -277,7 +277,7 @@ fn scan<B: Backend>(backend: B, root: &Path) -> HashMap<Vec<u8>, Totals> {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let ours = e.read(|m| {
         let mut out = HashMap::new();
         walk(&m.tree, m.tree.roots().next().unwrap(), &mut out);

@@ -2,7 +2,7 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::style::{Color, Modifier};
 
 use super::*;
-use crate::tests::{key, style_at, styled};
+use crate::tests::{press, style_at, styled};
 
 fn has_rgb(buf: &Buffer) -> bool {
     buf.content.iter().any(|c| {
@@ -14,7 +14,7 @@ fn has_rgb(buf: &Buffer) -> bool {
 
 /// Themes, and whether the colour effects run for them: only at TrueColor, on a background that
 /// is known or that the theme's RGB text colour was chosen for.
-fn colour_themes() -> [(Theme, bool); 8] {
+fn color_themes() -> [(Theme, bool); 8] {
     let truecolor = |name, background| {
         Theme::named(name, ColorLevel::TrueColor, background).expect("built-in theme")
     };
@@ -32,14 +32,14 @@ fn colour_themes() -> [(Theme, bool); 8] {
 }
 
 #[test]
-fn delete_fade_only_colours_at_truecolor() {
-    for (theme, truecolor) in colour_themes() {
+fn delete_fade_only_colors_at_truecolor() {
+    for (theme, truecolor) in color_themes() {
         let name = theme.name().to_owned();
         assert_eq!(effects::rgb_effects(&theme), truecolor, "{name}");
         // A theme with neither a dim nor a text colour has nothing to fade from: the row keeps
         // the terminal's text colour, which the background never hides.
-        let fades = truecolor && theme.dim.fg.or(theme.fg.fg).is_some();
-        let dim = theme.dim.fg;
+        let fades = truecolor && theme.fg_dim.fg.or(theme.fg.fg).is_some();
+        let dim = theme.fg_dim.fg;
         let hidden = theme.background().map(|(r, g, b)| Color::Rgb(r, g, b));
         let t0 = Instant::now();
         let mut app = animated(theme, t0);
@@ -47,10 +47,10 @@ fn delete_fade_only_colours_at_truecolor() {
             mark: Mark::Deleting,
             ..test_entry(1, "b", 200)
         };
-        app.refresh(snap(vec![test_entry(0, "a", 300), b], 1), t0);
+        app.refresh(snap_with_alloc(vec![test_entry(0, "a", 300), b], 1), t0);
         render_buffer(&mut app, t0, W, H);
         let t1 = t0 + ms(100);
-        app.refresh(snap(vec![test_entry(0, "a", 300)], 2), t1);
+        app.refresh(snap_with_alloc(vec![test_entry(0, "a", 300)], 2), t1);
         let mut fgs = Vec::new();
         for n in 0..=6 {
             let buf = render_buffer(&mut app, t1 + ms(n * 50), W, H);
@@ -101,20 +101,20 @@ fn flashes_are_rate_limited() {
     let mut flashes = Vec::new();
 
     let t1 = t0 + Duration::from_secs(3);
-    app.refresh(snap(es.clone(), 2), t1);
+    app.refresh(snap_with_alloc(es.clone(), 2), t1);
     let t2 = t1 + Duration::from_secs(2);
     note_flashes(&mut app, t1, t2, &mut flashes);
     assert_eq!(flashes, [t1]);
 
     // The next automatic re-sort, 2 s later.
     es[1].size = 5000;
-    app.refresh(snap(es.clone(), 3), t2);
+    app.refresh(snap_with_alloc(es.clone(), 3), t2);
     assert_eq!(names(&app), ["b", "c", "a"]);
     let t3 = t2 + ms(100);
     note_flashes(&mut app, t2, t3, &mut flashes);
     // The scan finishes 100 ms later: a re-sort at once, with markers but no flash.
     es[0].size = 9000;
-    let mut done = snap(es, 4);
+    let mut done = snap_with_alloc(es, 4);
     done.busy = false;
     app.refresh(done, t3);
     assert_eq!(names(&app), ["a", "b", "c"]);
@@ -124,15 +124,15 @@ fn flashes_are_rate_limited() {
 }
 
 #[test]
-fn flash_colours_only_at_truecolor() {
-    for (theme, truecolor) in colour_themes() {
+fn flash_colors_only_at_truecolor() {
+    for (theme, truecolor) in color_themes() {
         let name = theme.name().to_owned();
-        let highlight = theme.selected.add_modifier.contains(Modifier::REVERSED);
+        let highlight = theme.cursor.add_modifier.contains(Modifier::REVERSED);
         let t0 = Instant::now();
         let mut app = animated(theme, t0);
         let es = resort_fixture(&mut app, t0);
         let t1 = t0 + Duration::from_secs(3);
-        app.refresh(snap(es, 2), t1);
+        app.refresh(snap_with_alloc(es, 2), t1);
         assert_eq!(names(&app), ["c", "a", "b"]);
         assert_eq!(app.selected_index(), Some(0), "the top row stays selected");
         let buf = render_buffer(&mut app, t1, W, H);
@@ -160,7 +160,7 @@ fn flash_colours_only_at_truecolor() {
 fn effects_skip_the_overlay() {
     effects_skip(
         |app, t| {
-            app.key(key(KeyCode::Char('?')), t);
+            app.key(press(KeyCode::Char('?')), t);
         },
         |app| app.areas.overlay,
     );
@@ -193,10 +193,10 @@ fn effects_skip(open: impl Fn(&mut App, Instant), cover: impl Fn(&App) -> Option
         if on {
             start(&mut app);
         }
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_with_alloc(es.clone(), 1), t0);
         render_buffer(&mut app, t0, w, h);
         let t1 = t0 + Duration::from_secs(3);
-        app.refresh(snap(reversed.clone(), 2), t1);
+        app.refresh(snap_with_alloc(reversed.clone(), 2), t1);
         open(&mut app, t1);
         frames.push(render_buffer(&mut app, t1, w, h));
         if on {

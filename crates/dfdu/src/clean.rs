@@ -10,15 +10,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Args;
-use dfdu_clean::Mode;
-use dfdu_engine::{Command, Engine, Model};
+use dfdu_engine::{Command, Engine, Mode, Model, WaitIdle};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::Backend;
 use dfdu_tree::{Class, NodeRef};
 use serde_json::{Map, Value, json};
 
 use crate::report::{self, Filter, Item};
-use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, json as js};
+use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, json as js, launch, written};
 
 #[derive(Args)]
 pub struct CleanArgs {
@@ -217,10 +216,7 @@ pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
     let (engine, _) = match report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)
     {
         Ok(e) => e,
-        Err(msg) => {
-            eprintln!("dfdu: {msg}");
-            return ExitCode::from(1);
-        }
+        Err(code) => return code,
     };
     let now = report::now_secs();
     let (root, complete, items) = engine.read(|m| {
@@ -247,11 +243,8 @@ pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
         } else {
             print_table(&rules, &args, &items, &outcomes)
         };
-        if let Err(e) = r
-            && e.kind() != std::io::ErrorKind::BrokenPipe
-        {
-            eprintln!("dfdu: writing the output: {e}");
-            return ExitCode::from(1);
+        if let Err(code) = written(r) {
+            return code;
         }
         if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
             ExitCode::from(EXIT_DELETE_FAILED)
@@ -261,7 +254,7 @@ pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
             ExitCode::SUCCESS
         }
     });
-    engine.shutdown(Duration::from_millis(500));
+    engine.shutdown(launch::SHUTDOWN);
     code
 }
 
@@ -288,9 +281,9 @@ fn execute<B: Backend>(
             mode,
         });
         let summary = loop {
-            engine.wait_idle(None);
+            let stopped = matches!(engine.wait_idle(None), WaitIdle::Fatal(_));
             let s = engine.read(|m| m.status.last_delete.clone());
-            if s.as_ref().map(|d| d.plan) != before || engine.read(|m| m.status.fatal.is_some()) {
+            if s.as_ref().map(|d| d.plan) != before || stopped {
                 break s;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -310,7 +303,7 @@ fn execute<B: Backend>(
         });
         if mode == Mode::Stage {
             engine.send(Command::CommitStaged);
-            while engine.read(|m| m.status.staged.0 > 0 && m.status.fatal.is_none()) {
+            while engine.read(|m| m.status.staged.items > 0 && m.status.fatal.is_none()) {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }

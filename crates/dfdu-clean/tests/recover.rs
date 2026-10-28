@@ -162,7 +162,8 @@ fn killed_during_a_staged_delete() {
     );
     assert!(r.items[0].describe().contains("partly deleted"));
     let e = r.restore(0).unwrap_err();
-    assert!(e.contains("only be finished"), "{e}");
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(e.to_string().contains("only be finished"), "{e}");
     r.finish(0).unwrap();
     assert!(!staged[0].exists());
     assert!(!root.join("junk").exists());

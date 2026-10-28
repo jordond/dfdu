@@ -41,10 +41,10 @@ impl fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Compresses what is written to it with zstd, as a series of frames of [`ZSTD_FRAME`] bytes
-/// each (zstd readers read concatenated frames as one stream). Encoding into memory frame by
-/// frame keeps write errors as errors: the encoder panics on them. Call
-/// [`ZstdWriter::finish`] at the end.
+/// Compresses what is written to it with zstd, as a series of frames of at most [`ZSTD_FRAME`]
+/// bytes each (zstd readers read concatenated frames as one stream). Encoding into memory frame
+/// by frame keeps write errors as errors: the encoder panics on them. `flush` ends the current
+/// frame early. Call [`ZstdWriter::finish`] at the end.
 pub struct ZstdWriter<W: io::Write> {
     inner: W,
     buf: Vec<u8>,
@@ -53,14 +53,14 @@ pub struct ZstdWriter<W: io::Write> {
 /// Uncompressed bytes per zstd frame.
 pub const ZSTD_FRAME: usize = 1 << 20;
 
-pub fn zstd_writer<W: io::Write>(w: W) -> io::Result<ZstdWriter<W>> {
-    Ok(ZstdWriter {
-        inner: w,
-        buf: Vec::with_capacity(ZSTD_FRAME),
-    })
-}
-
 impl<W: io::Write> ZstdWriter<W> {
+    pub fn new(w: W) -> Self {
+        ZstdWriter {
+            inner: w,
+            buf: Vec::with_capacity(ZSTD_FRAME),
+        }
+    }
+
     fn frame(&mut self) -> io::Result<()> {
         if !self.buf.is_empty() {
             let z = ruzstd::encoding::compress_to_vec(
@@ -92,7 +92,8 @@ impl<W: io::Write> io::Write for ZstdWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self.frame()?;
+        self.inner.flush()
     }
 }
 

@@ -337,11 +337,11 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     }
 
     // Colour effects change every frame; the reversed flash only when it starts and ends.
-    let colours = effects::rgb_effects(&app.theme);
-    let fading = colours && m.ghosts.values().any(|&t| now < t + FADE);
-    let mut next = (easing || fading || (colours && m.flash_at.is_some())).then(|| now + FRAME);
+    let rgb = effects::rgb_effects(&app.theme);
+    let fading = rgb && m.ghosts.values().any(|&t| now < t + FADE);
+    let mut next = (easing || fading || (rgb && m.flash_at.is_some())).then(|| now + FRAME);
     let ends = [
-        m.flash_at.filter(|_| !colours).map(|t| t + FLASH),
+        m.flash_at.filter(|_| !rgb).map(|t| t + FLASH),
         m.marked_at.map(|t| t + MARKERS),
     ];
     for t in ends.into_iter().flatten() {
@@ -364,7 +364,7 @@ pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
     let arrow = if d > 0 { '↑' } else { '↓' };
     Some(Span::styled(
         format!("  {arrow}{}", d.unsigned_abs().min(99)),
-        app.theme.dim,
+        app.theme.fg_dim,
     ))
 }
 
@@ -372,13 +372,13 @@ pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
 /// on the rows where [`frame`] last found them, except where an overlay covers them.
 pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
     let m = &app.motion;
-    let colours = effects::rgb_effects(&app.theme);
+    let rgb = effects::rgb_effects(&app.theme);
     let flash = m.flash_at.map(|t| now.saturating_duration_since(t));
-    if !m.on || (flash.is_none() && !(colours && !m.ghosts.is_empty())) {
+    if !m.on || (flash.is_none() && !(rgb && !m.ghosts.is_empty())) {
         return;
     }
     // Reversing the selected row would take its highlight off.
-    let keep = app.selected_entry().filter(|_| !colours).map(|e| e.node);
+    let keep = app.selected_entry().filter(|_| !rgb).map(|e| e.node);
     let list = app.areas.list;
     let covers = [app.areas.overlay, app.areas.debug];
     for (y, &i) in (list.top()..list.bottom()).zip(&m.shown) {
@@ -389,7 +389,7 @@ pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
         let fading = m
             .ghosts
             .get(&e.node)
-            .filter(|_| colours && e.ghost)
+            .filter(|_| rgb && e.ghost)
             .map(|&t| now.saturating_duration_since(t).min(FADE));
         if flashing.is_none() && fading.is_none() {
             continue;

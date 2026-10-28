@@ -92,7 +92,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::Errors { .. } => Some(error_list::draw(f, app, area)),
         Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
-        Overlay::Types(_) => Some(crate::types::draw(f, app, area)),
+        Overlay::Types(_) => Some(crate::type_filter::draw(f, app, area)),
     };
     motion::post_process(app, f.buffer_mut(), now);
 }

@@ -158,8 +158,8 @@ pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
     if targets.is_empty() {
         return Vec::new();
     }
-    if app.marks.is_empty() && targets[0].is_dir && crate::types::active(app) {
-        app.status = Some(crate::types::NO_FOLDERS.into());
+    if app.marks.is_empty() && targets[0].is_dir && crate::type_filter::active(app) {
+        app.status = Some(crate::type_filter::NO_FOLDERS.into());
         return Vec::new();
     }
     let mut c = Confirm::new(targets, mode);
@@ -248,7 +248,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             )),
         ],
         Mode::Permanent => vec![
-            Line::styled(format!(" Permanently delete {what}?"), t.error),
+            Line::styled(format!(" Permanently delete {what}?"), t.status_error),
             Line::raw(" This cannot be undone."),
         ],
     };
@@ -259,7 +259,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             } else {
                 format!(" {}", human(one.size))
             },
-            t.dim,
+            t.fg_dim,
         ));
     } else {
         for it in c.targets.iter().take(SHOWN) {
@@ -269,16 +269,16 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
                 it.label()
             ))];
             if it.inside {
-                spans.push(Span::styled("  inside another marked item", t.dim));
+                spans.push(Span::styled("  inside another marked item", t.fg_dim));
             } else if it.scanning {
-                spans.push(Span::styled("  still scanning: at least this", t.dim));
+                spans.push(Span::styled("  still scanning: at least this", t.fg_dim));
             }
             lines.push(Line::from(spans));
         }
         if c.targets.len() > SHOWN {
             lines.push(Line::styled(
                 format!(" {:>10}  and {} more", "", c.targets.len() - SHOWN),
-                t.dim,
+                t.fg_dim,
             ));
         }
         let mut total = vec![Span::raw(format!(
@@ -287,7 +287,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             count(c.items)
         ))];
         if c.scanning() {
-            total.push(Span::styled("  still scanning: at least this", t.dim));
+            total.push(Span::styled("  still scanning: at least this", t.fg_dim));
         }
         lines.push(Line::from(total));
     }
@@ -315,9 +315,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             lines.push(Line::styled(
                 s,
                 if e.linked_out + e.shared_out > 0 {
-                    t.warn
+                    t.status_warn
                 } else {
-                    t.dim
+                    t.fg_dim
                 },
             ));
         }
@@ -326,7 +326,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
                 " May free less: {} of it is also used outside the scan.",
                 human(c.shared_out)
             ),
-            t.warn,
+            t.status_warn,
         )),
         None => {}
     }
@@ -357,7 +357,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
                 human(LARGE)
             )
         };
-        lines.push(Line::styled(why, t.dim));
+        lines.push(Line::styled(why, t.fg_dim));
     }
     lines.push(if c.typing {
         let mut spans = vec![
@@ -405,9 +405,8 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::app::tests::snap;
     use crate::snapshot::{Snapshot, test_entry};
-    use crate::tests::{key, render};
+    use crate::tests::{press, render, snap_without_totals};
     use crate::theme::Theme;
 
     fn dialog(app: &App) -> &Confirm {
@@ -419,7 +418,7 @@ mod tests {
 
     fn type_word(app: &mut App, t: Instant) {
         for c in WORD.chars() {
-            assert!(app.key(key(KeyCode::Char(c)), t).is_empty());
+            assert!(app.key(press(KeyCode::Char(c)), t).is_empty());
         }
     }
 
@@ -429,9 +428,9 @@ mod tests {
         let es = (0..12)
             .map(|i| test_entry(i, &format!("e{i:02}"), (i as u64 + 1) << 20))
             .collect();
-        app.refresh(snap(es, 1), t);
+        app.refresh(snap_without_totals(es, 1), t);
         for _ in 0..12 {
-            app.key(key(KeyCode::Char(' ')), t);
+            app.key(press(KeyCode::Char(' ')), t);
         }
         assert_eq!(app.marks.items().len(), 12);
         app
@@ -441,8 +440,8 @@ mod tests {
     fn trash_delete_sends_a_plan_after_y() {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t0);
-        let fx = app.key(key(KeyCode::Char('d')), t0);
+        app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t0);
+        let fx = app.key(press(KeyCode::Char('d')), t0);
         assert!(
             matches!(
                 fx.as_slice(),
@@ -458,7 +457,7 @@ mod tests {
                 ..
             })
         ));
-        let fx = app.key(key(KeyCode::Char('y')), t0);
+        let fx = app.key(press(KeyCode::Char('y')), t0);
         assert!(matches!(
             fx.as_slice(),
             [Effect::Send(Command::Delete {
@@ -473,16 +472,16 @@ mod tests {
     fn permanent_delete_needs_the_word_delete() {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t0);
-        app.key(key(KeyCode::Char('D')), t0);
+        app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t0);
+        app.key(press(KeyCode::Char('D')), t0);
         // 'y' alone does nothing for a permanent delete.
-        assert!(app.key(key(KeyCode::Char('y')), t0).is_empty());
-        app.key(key(KeyCode::Backspace), t0);
+        assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
+        app.key(press(KeyCode::Backspace), t0);
         for c in "delet".chars() {
-            assert!(app.key(key(KeyCode::Char(c)), t0).is_empty());
+            assert!(app.key(press(KeyCode::Char(c)), t0).is_empty());
         }
         assert!(
-            app.key(key(KeyCode::Enter), t0).is_empty(),
+            app.key(press(KeyCode::Enter), t0).is_empty(),
             "incomplete word must not delete"
         );
         assert!(matches!(app.overlay, Overlay::None));
@@ -490,9 +489,9 @@ mod tests {
             app.status.as_deref(),
             Some("not deleted: type delete to confirm")
         );
-        app.key(key(KeyCode::Char('D')), t0);
+        app.key(press(KeyCode::Char('D')), t0);
         type_word(&mut app, t0);
-        let fx = app.key(key(KeyCode::Enter), t0);
+        let fx = app.key(press(KeyCode::Enter), t0);
         assert!(matches!(
             fx.as_slice(),
             [Effect::Send(Command::Delete {
@@ -506,7 +505,7 @@ mod tests {
     fn dialog_lists_targets_and_more() {
         let t = Instant::now();
         let mut app = twelve_marked(t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char('d')), t);
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("Move 12 entries to the Trash?"), "{out}");
         // The eight largest are listed, largest first.
@@ -533,9 +532,9 @@ mod tests {
     fn shows_the_engine_estimate() {
         let t = Instant::now();
         let mut app = App::new(Theme::no_color(), t);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t);
-        app.key(key(KeyCode::Char('d')), t);
-        let mut s = snap(vec![test_entry(0, "a", 10)], 2);
+        app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t);
+        app.key(press(KeyCode::Char('d')), t);
+        let mut s = snap_without_totals(vec![test_entry(0, "a", 10)], 2);
         s.estimate = Some(dfdu_engine::Estimate {
             id: 1,
             bytes: 3 << 20,
@@ -554,9 +553,9 @@ mod tests {
     fn s_switches_to_staging() {
         let t = Instant::now();
         let mut app = App::new(Theme::no_color(), t);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t);
-        app.key(key(KeyCode::Char('d')), t);
-        assert!(app.key(key(KeyCode::Char('s')), t).is_empty());
+        app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t);
+        app.key(press(KeyCode::Char('d')), t);
+        assert!(app.key(press(KeyCode::Char('s')), t).is_empty());
         assert_eq!(
             (dialog(&app).mode, dialog(&app).typing),
             (Mode::Stage, false)
@@ -565,7 +564,7 @@ mod tests {
         assert!(out.contains("Stage a for deletion?"), "{out}");
         assert!(out.contains("U puts it back"), "{out}");
         assert!(out.contains("s the Trash"), "{out}");
-        let fx = app.key(key(KeyCode::Char('y')), t);
+        let fx = app.key(press(KeyCode::Char('y')), t);
         assert!(
             matches!(
                 fx.as_slice(),
@@ -582,9 +581,9 @@ mod tests {
     fn p_switches_method() {
         let t = Instant::now();
         let mut app = App::new(Theme::no_color(), t);
-        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t);
-        app.key(key(KeyCode::Char('d')), t);
-        assert!(app.key(key(KeyCode::Char('p')), t).is_empty());
+        app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t);
+        app.key(press(KeyCode::Char('d')), t);
+        assert!(app.key(press(KeyCode::Char('p')), t).is_empty());
         assert_eq!(
             (dialog(&app).mode, dialog(&app).typing),
             (Mode::Permanent, true)
@@ -593,16 +592,16 @@ mod tests {
         assert!(out.contains("Permanently delete a?"), "{out}");
         assert!(out.contains("p move to the Trash  s stage"), "{out}");
         // Permanent now: 'y' is only typed.
-        assert!(app.key(key(KeyCode::Char('y')), t).is_empty());
+        assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
         assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
         // Back to the Trash: the typed text is dropped and 'y' confirms again.
-        app.key(key(KeyCode::Char('p')), t);
+        app.key(press(KeyCode::Char('p')), t);
         assert_eq!(
             (dialog(&app).mode, dialog(&app).typing),
             (Mode::Trash, false)
         );
         assert!(dialog(&app).typed.is_empty());
-        let fx = app.key(key(KeyCode::Char('y')), t);
+        let fx = app.key(press(KeyCode::Char('y')), t);
         assert!(matches!(
             fx.as_slice(),
             [Effect::Send(Command::Delete {
@@ -611,10 +610,10 @@ mod tests {
             })]
         ));
         // From D, p goes to the Trash.
-        app.key(key(KeyCode::Char('D')), t);
-        app.key(key(KeyCode::Char('p')), t);
+        app.key(press(KeyCode::Char('D')), t);
+        app.key(press(KeyCode::Char('p')), t);
         assert_eq!(dialog(&app).mode, Mode::Trash);
-        assert!(app.key(key(KeyCode::Char('n')), t).is_empty());
+        assert!(app.key(press(KeyCode::Char('n')), t).is_empty());
         assert!(matches!(app.overlay, Overlay::None));
     }
 
@@ -624,7 +623,7 @@ mod tests {
         let gib = 1 << 30;
         let mut app = App::new(Theme::no_color(), t);
         app.refresh(
-            snap(
+            snap_without_totals(
                 vec![
                     test_entry(0, "big", 50 * gib),
                     test_entry(1, "less", 49 * gib),
@@ -633,7 +632,7 @@ mod tests {
             ),
             t,
         );
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char('d')), t);
         assert!(dialog(&app).typing);
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("Move big to the Trash?"), "{out}");
@@ -642,11 +641,11 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("type delete and Enter"), "{out}");
-        assert!(app.key(key(KeyCode::Char('y')), t).is_empty());
+        assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
         assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
-        app.key(key(KeyCode::Backspace), t);
+        app.key(press(KeyCode::Backspace), t);
         type_word(&mut app, t);
-        let fx = app.key(key(KeyCode::Enter), t);
+        let fx = app.key(press(KeyCode::Enter), t);
         assert!(matches!(
             fx.as_slice(),
             [Effect::Send(Command::Delete {
@@ -655,15 +654,15 @@ mod tests {
             })]
         ));
         // Just under the threshold, 'y' is enough.
-        app.key(key(KeyCode::Down), t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Down), t);
+        app.key(press(KeyCode::Char('d')), t);
         assert!(!dialog(&app).typing);
-        assert_eq!(app.key(key(KeyCode::Char('y')), t).len(), 1);
+        assert_eq!(app.key(press(KeyCode::Char('y')), t).len(), 1);
         // Marked entries count together.
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Up), t);
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Up), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char('d')), t);
         assert!(dialog(&app).typing);
     }
 
@@ -676,8 +675,11 @@ mod tests {
             mark: Mark::Scanning,
             ..test_entry(0, "growing", 40 << 30)
         };
-        app.refresh(snap(vec![scanning, test_entry(1, "done", 10)], 1), t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.refresh(
+            snap_without_totals(vec![scanning, test_entry(1, "done", 10)], 1),
+            t,
+        );
+        app.key(press(KeyCode::Char('d')), t);
         assert!(dialog(&app).typing);
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("at least 40.0 GiB (still scanning)"), "{out}");
@@ -685,10 +687,10 @@ mod tests {
             out.contains("Still scanning, may be 50.0 GiB or more: confirm by typing the word."),
             "{out}"
         );
-        assert!(app.key(key(KeyCode::Char('y')), t).is_empty());
-        app.key(key(KeyCode::Backspace), t);
+        assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
+        app.key(press(KeyCode::Backspace), t);
         type_word(&mut app, t);
-        let fx = app.key(key(KeyCode::Enter), t);
+        let fx = app.key(press(KeyCode::Enter), t);
         assert!(matches!(
             fx.as_slice(),
             [Effect::Send(Command::Delete {
@@ -698,16 +700,16 @@ mod tests {
         ));
         // Marked together with a finished entry, it still needs the word; the finished one
         // alone does not.
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char('d')), t);
         assert!(dialog(&app).typing);
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("Move 2 entries to the Trash?"), "{out}");
         assert!(out.contains("Still scanning, may be"), "{out}");
-        app.key(key(KeyCode::Esc), t);
+        app.key(press(KeyCode::Esc), t);
         crate::marks::clear(&mut app);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char('d')), t);
         assert!(!dialog(&app).typing);
     }
 
@@ -720,13 +722,16 @@ mod tests {
             ..test_entry(0, "a", 5000)
         };
         let (b, c) = (test_entry(1, "b", 300), test_entry(2, "c", 200));
-        app.refresh(snap(vec![a.clone(), b.clone(), c.clone()], 1), t);
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Char(' ')), t);
+        app.refresh(
+            snap_without_totals(vec![a.clone(), b.clone(), c.clone()], 1),
+            t,
+        );
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char(' ')), t);
         // Into a/, and mark x there.
-        app.key(key(KeyCode::Up), t);
-        app.key(key(KeyCode::Up), t);
-        app.key(key(KeyCode::Enter), t);
+        app.key(press(KeyCode::Up), t);
+        app.key(press(KeyCode::Up), t);
+        app.key(press(KeyCode::Enter), t);
         let x = test_entry(3, "x", 4000);
         app.refresh(
             Snapshot {
@@ -738,8 +743,8 @@ mod tests {
             },
             t,
         );
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char('d')), t);
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("Move 2 entries to the Trash?"), "{out}");
         // Seen from a/, the others are shown by their full path.
@@ -750,7 +755,7 @@ mod tests {
             out.contains(&format!("{}  total · 2 items", human(5300))),
             "{out}"
         );
-        let fx = app.key(key(KeyCode::Char('y')), t);
+        let fx = app.key(press(KeyCode::Char('y')), t);
         let [Effect::Send(Command::Delete { items, mode })] = fx.as_slice() else {
             panic!("expected one delete: {fx:?}");
         };
@@ -765,7 +770,7 @@ mod tests {
         let t = Instant::now();
         let mut app = twelve_marked(t);
         for k in ['d', 'D'] {
-            app.key(key(KeyCode::Char(k)), t);
+            app.key(press(KeyCode::Char(k)), t);
             // Smaller than the dialog: the dialog is clamped to the screen.
             let out = render(&mut app, t, 40, 8);
             assert_eq!(out.lines().count(), 8, "{out}");
@@ -773,7 +778,7 @@ mod tests {
             let out = render(&mut app, t, 100, 30);
             assert!(out.contains('┌') && out.contains('┘'), "{out}");
             assert!(out.contains("and 4 more"), "{out}");
-            app.key(key(KeyCode::Esc), t);
+            app.key(press(KeyCode::Esc), t);
             assert!(matches!(app.overlay, Overlay::None));
         }
     }

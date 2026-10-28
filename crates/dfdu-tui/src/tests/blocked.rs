@@ -13,7 +13,6 @@
 //! so the scan is running when the UI blocks whatever the machine's load, and it finishes while
 //! the UI is still blocked.
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -24,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::unbounded;
 use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::{Backend, FsClass, JobOptions, NativeBackend};
-use dfdu_tree::{Meta, Subvol, Totals};
+use dfdu_scan::{Backend, Forward, JobOptions, NativeBackend};
+use dfdu_tree::Totals;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::Event;
 use ratatui::layout::Rect;
@@ -106,38 +105,24 @@ struct Held {
     opens: AtomicUsize,
 }
 
-impl Backend for Held {
-    type Loc = <NativeBackend as Backend>::Loc;
+impl Forward for Held {
+    type Inner = NativeBackend;
     type Stream = <NativeBackend as Backend>::Stream;
 
-    fn loc_from_path(&self, path: &Path) -> Self::Loc {
-        self.inner.loc_from_path(path)
+    fn inner(&self) -> &NativeBackend {
+        &self.inner
     }
-    fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
-        self.inner.stat_root(loc)
-    }
-    fn open(&self, loc: &Self::Loc, storage: dfdu_sys::Storage) -> io::Result<Self::Stream> {
+    fn open(
+        &self,
+        loc: &<NativeBackend as Backend>::Loc,
+        storage: dfdu_sys::Storage,
+    ) -> io::Result<Self::Stream> {
         if self.opens.fetch_add(1, SeqCst) == 1
             && let Some(h) = &self.hold
         {
             h.wait();
         }
         self.inner.open(loc, storage)
-    }
-    fn subvolume(&self, loc: &Self::Loc) -> io::Result<Option<Subvol>> {
-        self.inner.subvolume(loc)
-    }
-    fn shares_extents(&self, loc: &Self::Loc) -> bool {
-        self.inner.shares_extents(loc)
-    }
-    fn data_profile(&self, loc: &Self::Loc) -> Option<(&'static str, f64)> {
-        self.inner.data_profile(loc)
-    }
-    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
-        self.inner.duplicate_mounts(scope)
-    }
-    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
-        self.inner.mount_class(mount, dev)
     }
 }
 
@@ -186,7 +171,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
     let hold = (ui == Ui::BlockedInDraw).then(|| Arc::new(Hold::default()));
     let engine = Arc::new(Engine::start(
         Held {
-            inner: dfdu_scan::native_backend(storage),
+            inner: dfdu_scan::native_backend(storage, false),
             hold: hold.clone(),
             opens: AtomicUsize::new(0),
         },
@@ -204,7 +189,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
             let backend = CrosstermBackend::new(GatedWriter(g));
             let viewport = Viewport::Fixed(Rect::new(0, 0, 120, 40));
             let mut terminal = Terminal::with_options(backend, TerminalOptions { viewport })?;
-            super::event_loop(&mut terminal, &*e, input)
+            crate::event_loop(&mut terminal, &*e, input)
         }
         Ui::BlockedHoldingLock => {
             let _ = go_rx.recv();
@@ -254,7 +239,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
             g.set(false);
         })
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(300))));
+    assert!(engine.wait_idle(Some(Duration::from_secs(300))).is_idle());
     let took = t0.elapsed();
     if ui == Ui::BlockedInDraw {
         assert!(

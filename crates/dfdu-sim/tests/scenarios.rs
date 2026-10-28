@@ -6,7 +6,7 @@
 
 use dfdu_scan::{ChunkStatus, DirId, JobId, ListingStatus, ScanMsg, StepResult};
 use dfdu_sim::{Fault, Sim, SimConfig, Spec, SpecBuilder, quiet_injected_panics};
-use dfdu_tree::{Class, DirState, Ix};
+use dfdu_tree::{Class, DirState, Ix, Safety};
 
 /// Seeds for the random tail of each scenario.
 const SEEDS: u64 = 20;
@@ -1249,7 +1249,7 @@ fn close_classes(sim: &Sim, id: (JobId, DirId)) -> Vec<(DirId, Class)> {
         .collect()
 }
 
-fn rule_of(sim: &Sim, path: &str) -> Option<(String, u8)> {
+fn rule_of(sim: &Sim, path: &str) -> Option<(String, Safety)> {
     let c = sim.model.tree.class(find(sim, path))?;
     let rules = sim.model.rules.as_ref().expect("rules");
     Some((rules.rule(c.rule).id.clone(), c.safety))
@@ -1293,10 +1293,13 @@ fn markers_in_other_chunks_subdirectories_first() {
         assert!(close_classes(sim, t).is_empty() && close_classes(sim, n).is_empty());
         let got: Vec<DirId> = close_classes(sim, w).iter().map(|c| c.0).collect();
         assert_eq!(got, [t.1, n.1]);
-        assert_eq!(rule_of(sim, "w/target"), Some(("rust.target".into(), 1)));
+        assert_eq!(
+            rule_of(sim, "w/target"),
+            Some(("rust.target".into(), Safety::Regenerable))
+        );
         assert_eq!(
             rule_of(sim, "w/node_modules"),
-            Some(("node.node_modules".into(), 1))
+            Some(("node.node_modules".into(), Safety::Regenerable))
         );
     });
 }
@@ -1327,10 +1330,13 @@ fn markers_in_other_chunks_parent_first() {
         assert!(close_classes(sim, w).is_empty());
         assert_eq!(close_classes(sim, t).len(), 1);
         assert_eq!(close_classes(sim, n).len(), 1);
-        assert_eq!(rule_of(sim, "w/target"), Some(("rust.target".into(), 1)));
+        assert_eq!(
+            rule_of(sim, "w/target"),
+            Some(("rust.target".into(), Safety::Regenerable))
+        );
         assert_eq!(
             rule_of(sim, "w/node_modules"),
-            Some(("node.node_modules".into(), 1))
+            Some(("node.node_modules".into(), Safety::Regenerable))
         );
     });
 }

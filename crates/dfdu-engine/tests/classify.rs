@@ -66,7 +66,10 @@ fn scan_with<T>(
             ..JobOptions::default()
         },
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     let out = engine.read(f);
     engine.shutdown(Duration::from_millis(200));
     out
@@ -88,8 +91,7 @@ fn find(m: &Model, path: &str) -> Ix {
 fn class(m: &Model, path: &str) -> Option<String> {
     let c = m.tree.class(find(m, path))?;
     let rules = m.rules.as_ref().expect("rules");
-    let safety = ["safe", "regenerable", "review", "manual", "protected"][c.safety as usize];
-    Some(format!("{} {safety}", rules.rule(c.rule).id))
+    Some(format!("{} {}", rules.rule(c.rule).id, c.safety.as_str()))
 }
 
 /// A project tree with one of each kind of match, padded with `pad` files per directory so
@@ -250,7 +252,10 @@ fn a_protected_node_is_not_deleted() {
             ..JobOptions::default()
         },
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     let git = engine.read(|m| {
         let g = find(m, ".git");
         assert!(m.tree.is_protected(g));
@@ -260,7 +265,7 @@ fn a_protected_node_is_not_deleted() {
         items: vec![git],
         mode: dfdu_engine::Mode::Permanent,
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(10))));
+    assert!(engine.wait_idle(Some(Duration::from_secs(10))).is_idle());
     engine.read(|m| {
         assert!(m.status.last_delete.is_none());
         assert!(
@@ -311,7 +316,10 @@ fn a_git_tracked_target_is_protected() {
             ..JobOptions::default()
         },
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     let checked = |m: &Model| {
         m.tree
             .classes()
@@ -332,10 +340,10 @@ fn a_git_tracked_target_is_protected() {
     engine.read(|m| {
         let vendored = m.tree.class(find(m, "vendored/target")).unwrap();
         assert!(vendored.has(Class::VCS_TRACKED));
-        assert_eq!(vendored.safety, dfdu_rules::Safety::Protected as u8);
+        assert_eq!(vendored.safety, dfdu_rules::Safety::Protected);
         let own = m.tree.class(find(m, "rust/target")).unwrap();
         assert!(own.has(Class::CHECKED) && !own.has(Class::VCS_TRACKED));
-        assert_eq!(own.safety, dfdu_rules::Safety::Regenerable as u8);
+        assert_eq!(own.safety, dfdu_rules::Safety::Regenerable);
     });
     engine.shutdown(Duration::from_millis(200));
 }
@@ -365,7 +373,10 @@ fn a_target_git_cannot_answer_for_is_flagged() {
             ..JobOptions::default()
         },
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     let t0 = std::time::Instant::now();
     while !engine.read(|m| {
         m.tree
@@ -438,7 +449,10 @@ not_modified_days = 30
             ..JobOptions::default()
         },
     });
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     let got = engine.read(|m| ["big-old.bin", "big-new.bin", "small-old.bin"].map(|n| class(m, n)));
     engine.shutdown(Duration::from_millis(200));
     assert_eq!(got, [Some("test.big-old review".to_string()), None, None]);

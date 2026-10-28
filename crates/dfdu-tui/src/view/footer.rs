@@ -19,7 +19,10 @@ pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
         if n == 1 { "y is" } else { "ies are" },
         if n == 1 { "it" } else { "them" }
     );
-    f.render_widget(Paragraph::new(Line::styled(text, app.theme.warn)), area);
+    f.render_widget(
+        Paragraph::new(Line::styled(text, app.theme.status_warn)),
+        area,
+    );
 }
 
 /// Delete progress, else the last status message or engine notice; what is marked on the right.
@@ -39,8 +42,8 @@ pub fn status(f: &mut Frame, app: &App, area: Rect) {
             vec![marked, Span::raw(" ")],
             area.width,
         )
-        .style(app.theme.dim),
-        None => Line::styled(format!(" {msg}"), app.theme.dim),
+        .style(app.theme.fg_dim),
+        None => Line::styled(format!(" {msg}"), app.theme.fg_dim),
     };
     f.render_widget(Paragraph::new(line), area);
 }
@@ -173,7 +176,7 @@ fn context(app: &App) -> Vec<Hint> {
             hint("Enter", "zoom in", 3),
             hint("Backspace", "zoom out", 4),
             hint("+ -", "depth", 6),
-            hint(first_key(Action::TreemapColour), "colour", 7),
+            hint(first_key(Action::TreemapColor), "colour", 7),
             hint(first_key(Action::ToggleMark), "mark", 6),
             hint(first_key(Action::Trash), "trash", 5),
             hint(first_key(Action::ViewList), "list", 3),
@@ -245,7 +248,7 @@ fn line(app: &App, width: u16) -> Line<'static> {
             spans.push(Span::raw("  "));
         }
         spans.push(Span::styled(h.keys.clone(), t.key));
-        spans.push(Span::styled(format!(" {}", h.label), t.dim));
+        spans.push(Span::styled(format!(" {}", h.label), t.fg_dim));
     }
     Line::from(spans)
 }
@@ -262,21 +265,12 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::app::keys::tests::press;
-    use crate::snapshot::{EntryData, test_entry};
-    use crate::tests::render;
+    use crate::tests::{library_snap, press, render};
     use crate::theme::Theme;
 
     fn app(busy: bool, errors: u64, t0: Instant) -> App {
         let mut app = App::new(Theme::no_color(), t0);
-        let es = vec![
-            EntryData {
-                is_dir: true,
-                ..test_entry(0, "Library", 3 << 30)
-            },
-            test_entry(1, "notes.sqlite", 625 << 20),
-        ];
-        let mut snap = crate::filter::tests::snap(es, 1);
+        let mut snap = library_snap();
         snap.busy = busy;
         snap.root_total.errors = errors;
         app.refresh(snap, t0);

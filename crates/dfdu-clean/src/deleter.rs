@@ -44,6 +44,8 @@ struct Kept {
 struct State {
     journal_dir: Option<PathBuf>,
     journal: Option<Journal>,
+    /// Why the journal could not be created, when it could not.
+    journal_err: Option<(ErrKind, String)>,
     stager: Option<Stager>,
     out: Sender<DeleterMsg>,
     kept: Vec<Kept>,
@@ -69,21 +71,23 @@ pub fn spawn_deleter(
             let mut st = State {
                 journal_dir,
                 journal: None,
+                journal_err: None,
                 stager: None,
                 out,
                 kept: Vec::new(),
                 window,
             };
-            if let Some(r) = st
-                .journal_dir
-                .as_deref()
-                .and_then(|d| recover::scan(d).ok())
-                && !(r.items.is_empty() && r.notes.is_empty())
-            {
-                let _ = st.out.send(DeleterMsg::Unfinished {
-                    items: r.items.iter().map(recover::Unfinished::describe).collect(),
-                    notes: r.notes.clone(),
-                });
+            if let Some(d) = st.journal_dir.as_deref() {
+                let (items, notes) = match recover::scan(d) {
+                    Ok(r) => (
+                        r.items.iter().map(recover::Unfinished::describe).collect(),
+                        r.notes,
+                    ),
+                    Err(e) => (vec![], vec![format!("{}: {e}", d.display())]),
+                };
+                if !(items.is_empty() && notes.is_empty()) {
+                    let _ = st.out.send(DeleterMsg::Unfinished { items, notes });
+                }
             }
             loop {
                 let next = st
@@ -112,7 +116,7 @@ pub fn spawn_deleter(
                     Some(DeleterReq::Undo { plan }) => st.undo(plan),
                     Some(DeleterReq::Native(req)) => {
                         ab.store(false, SeqCst);
-                        st.native(&req, &ab);
+                        st.run_native(&req, &ab);
                     }
                     Some(DeleterReq::Commit) => st.commit(None),
                 }
@@ -131,19 +135,38 @@ pub fn spawn_deleter(
 
 impl State {
     fn open_journal(&mut self) {
-        if self.journal.is_none() {
-            self.journal = self
-                .journal_dir
-                .as_deref()
-                .and_then(|d| Journal::create(d).ok());
-            if let Some(j) = &self.journal {
-                let base = self
-                    .journal_dir
-                    .as_deref()
-                    .and_then(Path::parent)
-                    .map(|p| p.join("stage"));
+        if self.journal.is_some() {
+            return;
+        }
+        let Some(dir) = self.journal_dir.as_deref() else {
+            return;
+        };
+        match Journal::create(dir) {
+            Ok(j) => {
+                let base = dir.parent().map(|p| p.join("stage"));
                 self.stager = Some(Stager::new(j.session(), base));
+                self.journal = Some(j);
+                self.journal_err = None;
             }
+            Err(e) => {
+                self.journal_err = Some((
+                    ErrKind::from(&e),
+                    format!("the deletion journal could not be written: {e}"),
+                ));
+            }
+        }
+    }
+
+    /// What an item gets when there is no journal: refused without a journal directory, failed
+    /// with the cause when the journal could not be created.
+    fn no_journal(&self) -> DeleteResult {
+        match &self.journal_err {
+            Some((err, msg)) => DeleteResult::Failed {
+                partial: false,
+                err: *err,
+                msg: msg.clone(),
+            },
+            None => DeleteResult::Refused(Refusal::NoJournal),
         }
     }
 
@@ -169,7 +192,7 @@ impl State {
                         }
                         r
                     }
-                    _ => DeleteResult::Refused(Refusal::NoJournal),
+                    _ => self.no_journal(),
                 }
             };
             btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path);
@@ -191,13 +214,13 @@ impl State {
 
     /// Runs a native command. The real one is journalled like a delete: nothing runs without
     /// its record.
-    fn native(&mut self, req: &crate::NativeReq, ab: &AtomicBool) {
+    fn run_native(&mut self, req: &crate::NativeReq, ab: &AtomicBool) {
         let result = if req.dry_run {
             crate::native::run(req, ab, &self.out)
         } else {
             self.open_journal();
             match self.journal.as_mut() {
-                None => Err(Refusal::NoJournal.to_string()),
+                None => Err(self.no_journal().to_string()),
                 Some(j) => match j.native(req) {
                     Err(e) => Err(format!("journal: {e}")),
                     Ok(()) => {
@@ -255,11 +278,23 @@ impl State {
         self.kept = keep;
         for k in mine {
             let result = match &k.staged {
-                Some(s) => crate::stage::put_back(s, &k.item.path).map_err(|e| e.to_string()),
+                Some(s) => crate::stage::put_back(s, &k.item.path),
                 None => crate::stage::restore_from_trash(&k.item.path, &k.item.identity, k.at),
-            };
-            if let (Ok(to), Some(j)) = (&result, self.journal.as_mut()) {
-                let _ = j.restored(plan, &k.item, to);
+            }
+            .map_err(|e| e.to_string());
+            // The item is back either way; a lost record only makes a later recovery list it
+            // as still staged, so the user is told rather than the undo reported as failed.
+            if let (Ok(to), Some(j)) = (&result, self.journal.as_mut())
+                && let Err(e) = j.restored(plan, &k.item, to)
+            {
+                let _ = self.out.send(DeleterMsg::Unfinished {
+                    items: vec![],
+                    notes: vec![format!(
+                        "{} was restored to {}, but the journal could not record it: {e}",
+                        k.item.path.display(),
+                        to.display()
+                    )],
+                });
             }
             let _ = self.out.send(DeleterMsg::Restored {
                 plan,
@@ -280,12 +315,14 @@ fn now_secs() -> i64 {
 }
 
 /// Whether the deleted item's directory is on btrfs.
+#[cfg(target_os = "linux")]
 fn on_btrfs(path: &Path) -> bool {
-    #[cfg(target_os = "linux")]
-    if let Some(p) = path.parent() {
-        return dfdu_sys::is_btrfs(p).unwrap_or(false);
-    }
-    let _ = path;
+    path.parent()
+        .is_some_and(|p| dfdu_sys::is_btrfs(p).unwrap_or(false))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn on_btrfs(_path: &Path) -> bool {
     false
 }
 
@@ -385,4 +422,105 @@ mod fault {
 
     #[cfg(not(feature = "fault-injection"))]
     pub fn commit_hang(_staged: &Path) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::Receiver;
+
+    fn plan_of(path: PathBuf, scan_root: PathBuf) -> Plan {
+        let mut tree = dfdu_tree::Tree::new();
+        let meta = dfdu_tree::Meta {
+            kind: Kind::File,
+            apparent: 1,
+            alloc: 0,
+            mtime: 0,
+            dev: 0,
+            ino: 0,
+            nlink: 1,
+            mount: 0,
+        };
+        let root = tree.new_root(b"/x", &meta, false);
+        Plan {
+            id: 1,
+            mode: Mode::Permanent,
+            scan_root,
+            items: vec![PlanItem {
+                node: tree.node_ref(root),
+                path,
+                identity: Identity {
+                    dev: 0,
+                    ino: 0,
+                    kind: Kind::File,
+                    apparent: 1,
+                    mtime: 0,
+                },
+                bytes: 1,
+                inside: Default::default(),
+            }],
+        }
+    }
+
+    /// The messages up to the plan's `Done`: its item results and any journal notes.
+    fn run(
+        rx: &Receiver<DeleterMsg>,
+        h: &DeleterHandle,
+        plan: Plan,
+    ) -> (Vec<DeleteResult>, Vec<String>) {
+        h.reqs.send(DeleterReq::Plan(plan)).unwrap();
+        let (mut results, mut notes) = (vec![], vec![]);
+        loop {
+            match rx.recv_timeout(Duration::from_secs(30)).unwrap() {
+                DeleterMsg::Item { result, .. } => results.push(result),
+                DeleterMsg::Unfinished { notes: n, .. } => notes.extend(n),
+                DeleterMsg::Done { .. } => return (results, notes),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn without_a_journal_nothing_is_deleted_and_the_cause_is_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
+        let victim = root.join("victim");
+        fs::write(&victim, b"x").unwrap();
+
+        // No journal directory at all: refused.
+        let (tx, rx) = unbounded();
+        let h = spawn_deleter(None, Duration::from_secs(60), tx);
+        let (results, notes) = run(&rx, &h, plan_of(victim.clone(), root.clone()));
+        assert_eq!(results, [DeleteResult::Refused(Refusal::NoJournal)]);
+        assert!(notes.is_empty(), "{notes:?}");
+        drop(h);
+
+        // A journal directory that cannot be read or created (a file is in its place): the
+        // startup scan's error is a note, and the item fails with why.
+        let blocked = root.join("ops");
+        fs::write(&blocked, b"").unwrap();
+        let (tx, rx) = unbounded();
+        let h = spawn_deleter(Some(blocked.clone()), Duration::from_secs(60), tx);
+        let (results, notes) = run(&rx, &h, plan_of(victim.clone(), root.clone()));
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].starts_with(&blocked.display().to_string()),
+            "{notes:?}"
+        );
+        let [
+            DeleteResult::Failed {
+                partial: false,
+                msg,
+                ..
+            },
+        ] = &results[..]
+        else {
+            panic!("{results:?}");
+        };
+        assert!(
+            msg.starts_with("the deletion journal could not be written: "),
+            "{msg}"
+        );
+        assert!(victim.exists());
+    }
 }

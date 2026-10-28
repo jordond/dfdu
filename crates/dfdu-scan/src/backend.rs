@@ -103,6 +103,9 @@ pub trait DirStream: Send {
     ) -> io::Result<(Raw<Self::Loc>, bool)>;
 }
 
+/// Filesystem access for the scanner. A wrapper that changes one behaviour of another backend
+/// implements [`Forward`] instead, which forwards every other method. A method added here must
+/// also be forwarded in the `Forward` impl below.
 pub trait Backend: Send + Sync + 'static {
     type Loc: Send + Clone + std::fmt::Debug + 'static;
     type Stream: DirStream<Loc = Self::Loc>;
@@ -158,6 +161,63 @@ pub trait Backend: Send + Sync + 'static {
     /// sysfs, without touching the mount. Called once per mount.
     fn mount_storage(&self, _mount: u64, _dev: u64) -> dfdu_sys::Storage {
         dfdu_sys::Storage::Unknown
+    }
+}
+
+/// A backend that wraps another and changes how directories are opened (to delay, gate or
+/// panic in tests and test hooks). Every other [`Backend`] method goes to [`Forward::inner`],
+/// so a wrapper cannot leave one at its default by leaving it out.
+pub trait Forward: Send + Sync + 'static {
+    type Inner: Backend;
+    type Stream: DirStream<Loc = <Self::Inner as Backend>::Loc>;
+
+    fn inner(&self) -> &Self::Inner;
+    /// [`Backend::open`] of the wrapper.
+    fn open(
+        &self,
+        loc: &<Self::Inner as Backend>::Loc,
+        storage: dfdu_sys::Storage,
+    ) -> io::Result<Self::Stream>;
+}
+
+// Every method is written out, defaults included: one left out would give the trait default
+// instead of the wrapped backend's answer.
+impl<W: Forward> Backend for W {
+    type Loc = <W::Inner as Backend>::Loc;
+    type Stream = W::Stream;
+
+    fn loc_from_path(&self, path: &Path) -> Self::Loc {
+        self.inner().loc_from_path(path)
+    }
+    fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
+        self.inner().stat_root(loc)
+    }
+    fn open(&self, loc: &Self::Loc, storage: dfdu_sys::Storage) -> io::Result<W::Stream> {
+        Forward::open(self, loc, storage)
+    }
+    fn subvolume(&self, loc: &Self::Loc) -> io::Result<Option<Subvol>> {
+        self.inner().subvolume(loc)
+    }
+    fn shares_extents(&self, loc: &Self::Loc) -> bool {
+        self.inner().shares_extents(loc)
+    }
+    fn data_profile(&self, loc: &Self::Loc) -> Option<(&'static str, f64)> {
+        self.inner().data_profile(loc)
+    }
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        self.inner().read_prefix(dir, name, len)
+    }
+    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
+        self.inner().link_target_missing(dir, name)
+    }
+    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
+        self.inner().duplicate_mounts(scope)
+    }
+    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
+        self.inner().mount_class(mount, dev)
+    }
+    fn mount_storage(&self, mount: u64, dev: u64) -> dfdu_sys::Storage {
+        self.inner().mount_storage(mount, dev)
     }
 }
 
@@ -441,4 +501,93 @@ pub(crate) fn read_prefix_at(dir: &Path, name: &[u8], len: usize) -> Option<Vec<
     let mut buf = Vec::with_capacity(len);
     f.take(len as u64).read_to_end(&mut buf).ok()?;
     Some(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Answers every defaulted method with something other than its default.
+    struct Answers;
+
+    impl Backend for Answers {
+        type Loc = PathBuf;
+        type Stream = PortableStream;
+
+        fn loc_from_path(&self, path: &Path) -> PathBuf {
+            path.join("answers")
+        }
+        fn stat_root(&self, _loc: &PathBuf) -> io::Result<Meta> {
+            Err(io::Error::other("stat_root"))
+        }
+        fn open(&self, _loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<PortableStream> {
+            Err(io::Error::other("inner open"))
+        }
+        fn subvolume(&self, _loc: &PathBuf) -> io::Result<Option<Subvol>> {
+            Err(io::Error::other("subvolume"))
+        }
+        fn shares_extents(&self, _loc: &PathBuf) -> bool {
+            true
+        }
+        fn data_profile(&self, _loc: &PathBuf) -> Option<(&'static str, f64)> {
+            Some(("raid1", 2.0))
+        }
+        fn read_prefix(&self, _dir: &PathBuf, name: &[u8], len: usize) -> Option<Vec<u8>> {
+            Some(name[..len].to_vec())
+        }
+        fn link_target_missing(&self, _dir: &PathBuf, _name: &[u8]) -> bool {
+            true
+        }
+        fn duplicate_mounts(&self, _scope: &Path) -> Option<HashSet<u64>> {
+            Some(HashSet::from([7]))
+        }
+        fn mount_class(&self, _mount: u64, _dev: u64) -> Option<FsClass> {
+            Some(FsClass::Network)
+        }
+        fn mount_storage(&self, _mount: u64, _dev: u64) -> dfdu_sys::Storage {
+            dfdu_sys::Storage::Rotational
+        }
+    }
+
+    struct Wrapped(Answers);
+
+    impl Forward for Wrapped {
+        type Inner = Answers;
+        type Stream = PortableStream;
+
+        fn inner(&self) -> &Answers {
+            &self.0
+        }
+        fn open(&self, _loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<PortableStream> {
+            Err(io::Error::other("wrapper open"))
+        }
+    }
+
+    fn err<T>(r: io::Result<T>) -> String {
+        r.err().expect("an error").to_string()
+    }
+
+    #[test]
+    fn forward_answers_like_the_inner_backend_except_open() {
+        let b = Wrapped(Answers);
+        let dir = PathBuf::from("/d");
+        let unknown = dfdu_sys::Storage::Unknown;
+        assert_eq!(
+            b.loc_from_path(Path::new("/d")),
+            PathBuf::from("/d/answers")
+        );
+        assert_eq!(err(b.stat_root(&dir)), "stat_root");
+        assert_eq!(err(Backend::open(&b, &dir, unknown)), "wrapper open");
+        assert_eq!(err(b.subvolume(&dir)), "subvolume");
+        assert!(b.shares_extents(&dir));
+        assert_eq!(b.data_profile(&dir), Some(("raid1", 2.0)));
+        assert_eq!(
+            b.read_prefix(&dir, b"CACHEDIR.TAG", 5),
+            Some(b"CACHE".to_vec())
+        );
+        assert!(b.link_target_missing(&dir, b"link"));
+        assert_eq!(b.duplicate_mounts(&dir), Some(HashSet::from([7])));
+        assert_eq!(b.mount_class(1, 2), Some(FsClass::Network));
+        assert_eq!(b.mount_storage(1, 2), dfdu_sys::Storage::Rotational);
+    }
 }

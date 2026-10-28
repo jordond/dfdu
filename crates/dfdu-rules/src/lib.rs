@@ -15,6 +15,7 @@ pub mod protected;
 pub mod schema;
 pub mod vars;
 
+pub use dfdu_tree::{RuleIx, Safety};
 pub use glob::{Glob, GlobError};
 pub use load::{LoadError, builtin, load, load_from, sources};
 pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Stat, Verdict, stem};
@@ -56,54 +57,6 @@ impl Platform {
     }
 }
 
-/// What deleting loses. Ordered from least to most to lose,
-/// so a runtime condition may only move a rule to a greater level.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum Safety {
-    /// Pure cache, rebuilt transparently.
-    Safe,
-    /// Rebuilt on demand at a real cost (download, compile).
-    Regenerable,
-    /// May hold user work or state; shown with what is inside.
-    Review,
-    /// Reported only, or removed with the owner's own tool.
-    Manual,
-    /// Never offered for deletion.
-    Protected,
-}
-
-impl Safety {
-    /// Every level, in order: `ALL[s as usize] == s`.
-    pub const ALL: [Safety; 5] = [
-        Safety::Safe,
-        Safety::Regenerable,
-        Safety::Review,
-        Safety::Manual,
-        Safety::Protected,
-    ];
-
-    pub fn parse(s: &str) -> Option<Safety> {
-        Some(match s {
-            "safe" => Safety::Safe,
-            "regenerable" => Safety::Regenerable,
-            "review" => Safety::Review,
-            "manual" => Safety::Manual,
-            "protected" => Safety::Protected,
-            _ => return None,
-        })
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Safety::Safe => "safe",
-            Safety::Regenerable => "regenerable",
-            Safety::Review => "review",
-            Safety::Manual => "manual",
-            Safety::Protected => "protected",
-        }
-    }
-}
-
 /// How a match is cleaned up.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Action {
@@ -137,7 +90,7 @@ pub enum Kind {
 
 /// The theme's colour slots for categories (`cat.*` tokens), in their order.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Colour {
+pub enum CategoryColor {
     Cache,
     Build,
     Vm,
@@ -153,64 +106,92 @@ pub enum Colour {
 pub struct Category {
     pub id: &'static str,
     pub name: &'static str,
-    pub colour: Colour,
+    pub color: CategoryColor,
 }
 
-const fn cat(id: &'static str, name: &'static str, colour: Colour) -> Category {
-    Category { id, name, colour }
+const fn cat(id: &'static str, name: &'static str, color: CategoryColor) -> Category {
+    Category { id, name, color }
 }
 
 /// Every category. A rule's `category` must be one of these ids. The index is the category's
 /// number ([`category_index`]); 0 is never used, so a node can store 0 for "none".
 pub const CATEGORIES: &[Category] = &[
-    cat("", "", Colour::Other),
-    cat("dev.build", "Project build output", Colour::Build),
-    cat("dev.deps", "Project dependencies", Colour::Build),
-    cat("dev.pkgcache", "Package manager caches", Colour::Cache),
-    cat("dev.xcode", "Xcode and Apple simulators", Colour::Toolchain),
-    cat("dev.android", "Android SDK and emulators", Colour::Vm),
+    cat("", "", CategoryColor::Other),
+    cat("dev.build", "Project build output", CategoryColor::Build),
+    cat("dev.deps", "Project dependencies", CategoryColor::Build),
+    cat(
+        "dev.pkgcache",
+        "Package manager caches",
+        CategoryColor::Cache,
+    ),
+    cat(
+        "dev.xcode",
+        "Xcode and Apple simulators",
+        CategoryColor::Toolchain,
+    ),
+    cat(
+        "dev.android",
+        "Android SDK and emulators",
+        CategoryColor::Vm,
+    ),
     cat(
         "dev.toolchains",
         "Toolchains and runtimes",
-        Colour::Toolchain,
+        CategoryColor::Toolchain,
     ),
-    cat("dev.containers", "Containers and VMs", Colour::Container),
-    cat("dev.ide", "IDE and editor caches", Colour::Cache),
-    cat("dev.nix", "Nix", Colour::Toolchain),
-    cat("sys.cache", "OS and user caches", Colour::Cache),
-    cat("sys.logs", "Logs", Colour::Other),
-    cat("sys.crash", "Crash reports and dumps", Colour::Other),
-    cat("sys.trash", "Trash", Colour::Download),
-    cat("sys.updates", "OS update leftovers", Colour::Download),
-    cat("sys.snapshots", "Snapshots", Colour::Other),
-    cat("app.browser", "Browser caches", Colour::Cache),
-    cat("app.chat", "Chat and meeting apps", Colour::Cache),
-    cat("app.media", "Media apps", Colour::Media),
-    cat("app.games", "Games", Colour::Media),
-    cat("app.mail", "Mail", Colour::Other),
-    cat("app.mobile", "Mobile device data", Colour::Vm),
+    cat(
+        "dev.containers",
+        "Containers and VMs",
+        CategoryColor::Container,
+    ),
+    cat("dev.ide", "IDE and editor caches", CategoryColor::Cache),
+    cat("dev.nix", "Nix", CategoryColor::Toolchain),
+    cat("sys.cache", "OS and user caches", CategoryColor::Cache),
+    cat("sys.logs", "Logs", CategoryColor::Other),
+    cat("sys.crash", "Crash reports and dumps", CategoryColor::Other),
+    cat("sys.trash", "Trash", CategoryColor::Download),
+    cat(
+        "sys.updates",
+        "OS update leftovers",
+        CategoryColor::Download,
+    ),
+    cat("sys.snapshots", "Snapshots", CategoryColor::Other),
+    cat("app.browser", "Browser caches", CategoryColor::Cache),
+    cat("app.chat", "Chat and meeting apps", CategoryColor::Cache),
+    cat("app.media", "Media apps", CategoryColor::Media),
+    cat("app.games", "Games", CategoryColor::Media),
+    cat("app.mail", "Mail", CategoryColor::Other),
+    cat("app.mobile", "Mobile device data", CategoryColor::Vm),
     cat(
         "content.large-old",
         "Large, not recently used files",
-        Colour::Other,
+        CategoryColor::Other,
     ),
-    cat("content.duplicates", "Duplicate files", Colour::Other),
+    cat(
+        "content.duplicates",
+        "Duplicate files",
+        CategoryColor::Other,
+    ),
     cat(
         "content.installers",
         "Installers and disk images",
-        Colour::Download,
+        CategoryColor::Download,
     ),
-    cat("content.media", "Large video files", Colour::Media),
+    cat("content.media", "Large video files", CategoryColor::Media),
     cat(
         "content.extracted",
         "Archives already extracted",
-        Colour::Download,
+        CategoryColor::Download,
     ),
-    cat("content.empty", "Empty files and folders", Colour::Other),
+    cat(
+        "content.empty",
+        "Empty files and folders",
+        CategoryColor::Other,
+    ),
     cat(
         "content.broken-links",
         "Broken symbolic links",
-        Colour::Other,
+        CategoryColor::Other,
     ),
 ];
 
@@ -306,6 +287,20 @@ impl Rule {
     /// Whether some condition can only be checked once the candidate's own listing is known.
     pub fn looks_inside(&self) -> bool {
         !self.child.is_empty() || self.markers.iter().any(|m| m.required) || self.empty
+    }
+}
+
+/// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
+/// the deletion-time protection check both read paths through this.
+pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
+    let b = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
+    if cfg!(windows) {
+        let b = b.strip_prefix(br"\\?\").map(<[u8]>::to_vec).unwrap_or(b);
+        b.into_iter()
+            .map(|c| if c == b'\\' { b'/' } else { c })
+            .collect()
+    } else {
+        b
     }
 }
 

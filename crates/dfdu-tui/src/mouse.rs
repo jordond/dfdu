@@ -149,10 +149,8 @@ mod tests {
 
     use super::*;
     use crate::ErrorList;
-    use crate::app::keys::tests::press;
-    use crate::app::tests::snap;
     use crate::snapshot::{EntryData, Snapshot, test_entry};
-    use crate::tests::render;
+    use crate::tests::{press, render, snap_without_totals};
     use crate::theme::Theme;
 
     /// The list's first row is on this screen line, below the two header lines.
@@ -184,7 +182,7 @@ mod tests {
         let entries = (0..10)
             .map(|i| dir(i, &format!("d{i}"), 1000 - i as u64 * 10))
             .collect();
-        app.refresh(snap(entries, 1), t0);
+        app.refresh(snap_without_totals(entries, 1), t0);
         render(&mut app, t0, 80, 12);
         app
     }
@@ -218,9 +216,9 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut entries = vec![dir(0, "a", 10)];
-        app.refresh(snap(entries.clone(), 1), t0);
+        app.refresh(snap_without_totals(entries.clone(), 1), t0);
         entries.push(dir(1, "b", 99));
-        app.refresh(snap(entries, 2), t0);
+        app.refresh(snap_without_totals(entries, 2), t0);
         render(&mut app, t0, 80, 12);
         assert_eq!(app.new_count, 1);
         event(&mut app, left(10, TOP + 1), t0).expect("redraw");
@@ -333,9 +331,9 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut entries = vec![dir(0, "a", 10)];
-        app.refresh(snap(entries.clone(), 1), t0);
+        app.refresh(snap_without_totals(entries.clone(), 1), t0);
         entries.push(dir(1, "b", 99));
-        app.refresh(snap(entries, 2), t0);
+        app.refresh(snap_without_totals(entries, 2), t0);
         render(&mut app, t0, 80, 12);
         let due = app.next_sort_at().expect("a re-sort is pending");
         let later = t0 + Duration::from_secs(1);
@@ -391,7 +389,7 @@ mod tests {
             dir_path: "/r/a/b".into(),
             root_path: "/r".into(),
             at_root: false,
-            ..snap(vec![dir(0, "c", 10)], 1)
+            ..snap_without_totals(vec![dir(0, "c", 10)], 1)
         };
         app.refresh(below, t0);
         render(&mut app, t0, 80, 12);

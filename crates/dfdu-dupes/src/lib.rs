@@ -431,8 +431,8 @@ pub fn hex(hash: &[u8; 32]) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Whether `path` is the file the candidate describes (its length and inode), for a caller
-/// about to act on it.
+/// Whether the file at the candidate's path is still the one it describes (its length and
+/// inode), for a caller about to act on it.
 pub fn still_same(c: &Candidate) -> bool {
     open_checked(c).is_some()
 }

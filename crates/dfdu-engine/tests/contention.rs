@@ -52,7 +52,7 @@ fn scan(root: &std::path::Path, contend: bool) -> (dfdu_tree::Totals, Duration) 
         opts: JobOptions::default(),
     });
     assert!(
-        e.wait_idle(Some(Duration::from_secs(120))),
+        e.wait_idle(Some(Duration::from_secs(120))).is_idle(),
         "scan did not finish under contention"
     );
     let took = t0.elapsed();
@@ -89,6 +89,9 @@ fn slow_reader_does_not_change_or_stop_the_scan() {
     eprintln!("scan under read-lock contention took {took:?}");
 }
 
+/// How long the applier waits on its channels before it takes a slice with nothing to do.
+const IDLE_WAIT: Duration = Duration::from_millis(50);
+
 /// An engine with nothing to do waits on its channels instead of taking the write lock, also
 /// with extent measurement off (macOS and Windows), where the measurers' channel is closed and
 /// so always ready.
@@ -105,12 +108,17 @@ fn idle_engine_does_not_spin() {
                 ..Default::default()
             },
         );
+        // Start-up slices are not counted: from here on, an idle applier takes the lock once
+        // per `IDLE_WAIT`, however long the host keeps the test asleep.
+        let before = e.read(|m| m.status.timing.slices);
+        let t0 = Instant::now();
         std::thread::sleep(Duration::from_millis(300));
-        let slices = e.read(|m| m.status.timing.slices);
-        // One slice per 50 ms wait, and a few for start-up.
+        let slices = e.read(|m| m.status.timing.slices) - before;
+        let elapsed = t0.elapsed();
+        let allowed = (elapsed.as_millis() / IDLE_WAIT.as_millis()) as u64 + 3;
         assert!(
-            slices < 30,
-            "{slices} slices with {measure_workers} measurers"
+            slices <= allowed,
+            "{slices} slices in {elapsed:?} with {measure_workers} measurers"
         );
         e.shutdown(Duration::from_secs(1));
     }

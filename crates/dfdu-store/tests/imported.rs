@@ -42,7 +42,7 @@ fn imported_scans_are_read_only() {
     ] {
         e.send(cmd);
     }
-    assert!(e.wait_idle(Some(Duration::from_secs(5))));
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.read(|m| {
         assert_eq!(m.tree.roots().count(), 1);
         assert_eq!(m.tree.total(m.tree.roots().next().unwrap()), total);

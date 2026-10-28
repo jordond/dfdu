@@ -1,5 +1,5 @@
 ---
-source: crates/dfdu-tui/src/tests.rs
+source: crates/dfdu-tui/src/tests/frames.rs
 expression: out
 ---
  dfdu  choose a disk to scan

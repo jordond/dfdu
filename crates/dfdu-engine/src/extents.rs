@@ -47,7 +47,7 @@ impl Hasher for IntHasher {
 
 type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
-/// `(dev, ino)` of a measured file. Hard links share one entry, positioned at the charged link.
+/// `(dev, ino)` of a measured file. Hard links share one entry, counted at the charged link.
 pub type Inode = (u64, u64);
 type Fs = u32;
 
@@ -91,7 +91,7 @@ struct Point {
 #[derive(Debug)]
 struct InodeRec {
     fs: Fs,
-    pos: NodeRef,
+    counted_at: NodeRef,
     excl: u64,
     compressed: bool,
     ranges: Vec<(u64, u64)>,
@@ -112,15 +112,15 @@ pub struct ExtentTable {
 
 impl ExtentTable {
     /// The node an inode's measurement is counted at.
-    pub fn pos(&self, inode: Inode) -> Option<NodeRef> {
-        self.inodes.get(&inode).map(|r| r.pos)
+    pub fn counted_at(&self, inode: Inode) -> Option<NodeRef> {
+        self.inodes.get(&inode).map(|r| r.counted_at)
     }
 
     /// Records the measurement of the file at `node`. A measurement for an inode already
     /// counted at another live node is ignored; one counted at a dead node is replaced.
     pub fn measure(&mut self, tree: &mut Tree, inode: Inode, node: NodeRef, m: Measurement) {
         if let Some(r) = self.inodes.get(&inode) {
-            if tree.resolve_visible(r.pos).is_some() {
+            if tree.resolve_visible(r.counted_at).is_some() {
                 return;
             }
             self.remove(tree, inode);
@@ -145,12 +145,12 @@ impl ExtentTable {
         let mut points = m.points;
         points.sort();
         points.dedup_by_key(|p| p.0);
-        // Re-homing needs the inode's position, not its ranges: those are stored after.
+        // Re-homing needs the node the inode is counted at, not its ranges: those are stored after.
         self.inodes.insert(
             inode,
             InodeRec {
                 fs,
-                pos: node,
+                counted_at: node,
                 excl: m.excl,
                 compressed: m.compressed,
                 ranges: Vec::new(),
@@ -279,10 +279,10 @@ impl ExtentTable {
         let Some(rec) = self.inodes.get_mut(&inode) else {
             return;
         };
-        if rec.pos == node {
+        if rec.counted_at == node {
             return;
         }
-        rec.pos = node;
+        rec.counted_at = node;
         let (fs, excl, compressed) = (rec.fs, rec.excl, rec.compressed);
         let (ranges, points) = (rec.ranges.clone(), rec.points.clone());
         if let Some(ix) = tree.resolve(node) {
@@ -314,7 +314,7 @@ impl ExtentTable {
         };
         let mut out = format!(
             "{inode:?} at {} excl {} ranges {:?} points {:?}",
-            path(rec.pos),
+            path(rec.counted_at),
             rec.excl,
             rec.ranges,
             rec.points
@@ -336,10 +336,10 @@ impl ExtentTable {
     /// Checks that every measured inode is counted at a visible node.
     pub fn check_settled(&self, tree: &Tree) -> Result<(), String> {
         for (k, r) in &self.inodes {
-            if tree.resolve_visible(r.pos).is_none() {
+            if tree.resolve_visible(r.counted_at).is_none() {
                 return Err(format!(
                     "inode {k:?} is counted at a node that is not visible ({})",
-                    if tree.resolve(r.pos).is_some() {
+                    if tree.resolve(r.counted_at).is_some() {
                         "detached"
                     } else {
                         "freed"
@@ -364,7 +364,7 @@ impl ExtentTable {
                     let stale = seg.refs.iter().any(|r| {
                         self.inodes
                             .get(r)
-                            .is_some_and(|rec| tree.resolve_visible(rec.pos).is_none())
+                            .is_some_and(|rec| tree.resolve_visible(rec.counted_at).is_none())
                     });
                     if !stale {
                         let path = |ix: Ix| String::from_utf8_lossy(&tree.path(ix)).into_owned();
@@ -372,11 +372,11 @@ impl ExtentTable {
                             .refs
                             .iter()
                             .map(|r| match self.inodes.get(r) {
-                                Some(rec) => match tree.resolve(rec.pos) {
+                                Some(rec) => match tree.resolve(rec.counted_at) {
                                     Some(ix) => format!(
                                         "{r:?} at {} visible {}",
                                         path(ix),
-                                        tree.resolve_visible(rec.pos).is_some()
+                                        tree.resolve_visible(rec.counted_at).is_some()
                                     ),
                                     None => format!("{r:?} at a freed node"),
                                 },
@@ -495,16 +495,20 @@ fn move_home(
     *out = new_out && new.is_some();
 }
 
-/// Lowest common ancestor of the visible positions of `refs`.
+/// Lowest common ancestor of the visible nodes `refs` are counted at.
 fn lca(
     tree: &Tree,
     inodes: &IntMap<Inode, InodeRec>,
     refs: impl Iterator<Item = Inode>,
 ) -> Option<Ix> {
-    let pos: Vec<Ix> = refs
-        .filter_map(|r| inodes.get(&r).and_then(|rec| tree.resolve_visible(rec.pos)))
+    let at: Vec<Ix> = refs
+        .filter_map(|r| {
+            inodes
+                .get(&r)
+                .and_then(|rec| tree.resolve_visible(rec.counted_at))
+        })
         .collect();
-    lca_of(tree, &pos)
+    lca_of(tree, &at)
 }
 
 /// [`lca_of`] for two nodes, without allocating: walks the deeper one up to the other's depth,

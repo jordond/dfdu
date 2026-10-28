@@ -1,5 +1,5 @@
 ---
-source: crates/dfdu-tui/src/tests.rs
+source: crates/dfdu-tui/src/tests/frames.rs
 expression: "text(&mid_scan(Theme::no_color()))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14

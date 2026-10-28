@@ -20,10 +20,6 @@ pub fn mount_table() -> io::Result<Vec<crate::MountEntry>> {
     Err(io::ErrorKind::Unsupported.into())
 }
 
-pub fn is_privileged() -> bool {
-    false
-}
-
 #[cfg(not(target_os = "macos"))]
 pub fn shares_extents(_path: &Path) -> io::Result<bool> {
     Ok(false)

@@ -52,7 +52,7 @@ fn scan(root: &Path) -> (Vec<u8>, Totals) {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let out = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         let mut out = vec![];
@@ -142,7 +142,7 @@ fn ncdu_and_dfdu_agree() {
         (c.apparent, c.alloc, c.items),
         (n.apparent, n.alloc, n.items)
     );
-    let mut w = dfdu_store::zstd_writer(fs::File::create(&mine).unwrap()).unwrap();
+    let mut w = dfdu_store::ZstdWriter::new(fs::File::create(&mine).unwrap());
     std::io::Write::write_all(&mut w, &ours).unwrap();
     w.finish().unwrap();
     let ok = Proc::new("ncdu")

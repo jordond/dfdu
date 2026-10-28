@@ -3,36 +3,30 @@ use std::io;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 
-use dfdu_rules::Env;
 use dfdu_rules::protected::Protected;
+use dfdu_rules::{Env, rule_path};
 
 use dfdu_tree::{ErrKind, Kind, Meta};
 
 use crate::{DeleteResult, Mode, PlanItem, Refusal};
 
-/// Paths never deleted, whatever a plan or rule says: filesystem roots, top-level system
-/// directories, the kernel filesystems, the user's home directory itself, and everything at or
-/// below a protected path or name of `dfdu_rules::protected`.
-/// Files tracked by version control are protected by the classifier, in the tree.
+/// Paths never deleted, whatever a plan or rule says: filesystem roots, top-level directories,
+/// the user's home directory itself, and everything at or below a protected path or name of
+/// `dfdu_rules::protected`, with its exceptions, so the tree
+/// and this check agree on what may be deleted. Files tracked by version control are protected
+/// by the classifier, in the tree.
 pub fn is_protected(path: &Path) -> bool {
-    static RULES: LazyLock<Protected> = LazyLock::new(|| Protected::new(&Env::current()));
-    fixed_protected(path) || RULES.covers(&rule_path(path))
+    // One snapshot of the environment for the protected paths and the home directory.
+    static RULES: LazyLock<(Protected, Option<String>)> = LazyLock::new(|| {
+        let env = Env::current();
+        (Protected::new(&env), env.home())
+    });
+    protected_by(&RULES.0, RULES.1.as_deref(), path)
 }
 
-/// The path as rules see it: bytes with `/` between names (Windows paths without `\\?\`).
-fn rule_path(path: &Path) -> Vec<u8> {
-    let b = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
-    if cfg!(windows) {
-        let b = b.strip_prefix(br"\\?\").map(<[u8]>::to_vec).unwrap_or(b);
-        b.into_iter()
-            .map(|c| if c == b'\\' { b'/' } else { c })
-            .collect()
-    } else {
-        b
-    }
-}
-
-fn fixed_protected(path: &Path) -> bool {
+/// [`is_protected`] for the protected paths `rules` and the home directory `home` (as
+/// [`Env::home`] gives it).
+fn protected_by(rules: &Protected, home: Option<&str>, path: &Path) -> bool {
     let normal = path
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
@@ -41,19 +35,10 @@ fn fixed_protected(path: &Path) -> bool {
         // "/", "/usr", "C:\", "C:\Windows" and the like.
         return true;
     }
-    for p in [
-        "/proc", "/sys", "/dev", "/System", "/usr", "/bin", "/sbin", "/etc", "/boot",
-    ] {
-        if path.starts_with(p) {
-            return true;
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
-        && path == Path::new(&home)
-    {
-        return true;
-    }
-    false
+    let p = rule_path(path);
+    // The home directory is excepted from the protection of the directory holding it (so
+    // what is below it can be deleted), but is never deleted itself.
+    home.is_some_and(|h| p == h.as_bytes()) || rules.covers(&p)
 }
 
 /// Linux: the freedesktop home trash is on the filesystem of `$XDG_DATA_HOME`. The `trash`
@@ -117,12 +102,16 @@ fn trash_refusal(_path: &Path, _item_dev: u64) -> Option<Refusal> {
 }
 
 /// Whether two paths are on the same mount, when the system can tell (Linux mount ids).
+#[cfg(target_os = "linux")]
 fn same_mount(a: &Path, b: &Path) -> Option<bool> {
-    #[cfg(target_os = "linux")]
-    if let (Ok(Some(x)), Ok(Some(y))) = (dfdu_sys::mount_id(a), dfdu_sys::mount_id(b)) {
-        return Some(x == y);
+    match (dfdu_sys::mount_id(a), dfdu_sys::mount_id(b)) {
+        (Ok(Some(x)), Ok(Some(y))) => Some(x == y),
+        _ => None,
     }
-    let _ = (a, b);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn same_mount(_a: &Path, _b: &Path) -> Option<bool> {
     None
 }
 
@@ -256,4 +245,48 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         return Err(DeleteResult::Refused(r));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dfdu_rules::Platform;
+
+    fn check(platform: Platform, home: &str) -> impl Fn(&str) -> bool {
+        let env = Env::with(platform, &[("HOME", home)]);
+        let rules = Protected::new(&env);
+        let home = env.home();
+        move |p| protected_by(&rules, home.as_deref(), Path::new(p))
+    }
+
+    /// Deletion refuses what the tree marks protected, with the same exceptions, and also
+    /// top-level directories and the home directory itself.
+    #[test]
+    fn protected_paths_follow_the_rules_and_their_exceptions() {
+        let mac = check(Platform::MacOs, "/Users/u");
+        assert!(mac("/"));
+        assert!(mac("/usr"));
+        assert!(mac("/usr/bin/true"));
+        assert!(mac("/System/Library/x"));
+        assert!(mac("/dev/fd/3"));
+        assert!(mac("/etc/hosts"));
+        // `/usr/local` is excepted from `/usr` on macOS (Homebrew, global npm packages).
+        assert!(!mac("/usr/local/lib/node_modules"));
+        assert!(!mac("/usr/local/Cellar/x"));
+        assert!(mac("/Users/u"));
+        assert!(!mac("/Users/u/Library/Caches/pip"));
+        assert!(mac("/Users/u/.ssh/config"));
+        assert!(mac("/Users/other/Library/Caches"));
+
+        let linux = check(Platform::Linux, "/home/u");
+        assert!(linux("/usr/local/lib/node_modules"));
+        assert!(linux("/proc/1/fd"));
+        assert!(linux("/sys/fs/cgroup"));
+        assert!(linux("/dev/shm/x"));
+        assert!(linux("/etc/hosts"));
+        assert!(linux("/boot/efi"));
+        assert!(linux("/home/u"));
+        assert!(!linux("/home/u/.cache/pip"));
+        assert!(!linux("/var/cache/apt"));
+    }
 }

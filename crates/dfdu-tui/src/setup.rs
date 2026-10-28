@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn mono_keeps_the_terminal_colour_level() {
+    fn mono_keeps_the_terminal_color_level() {
         let settings = UiSettings {
             theme: ThemeChoice::Builtin("mono"),
             ..UiSettings::default()

@@ -15,6 +15,7 @@ mod verify;
 use std::path::PathBuf;
 
 use dfdu_tree::{ErrKind, Kind, NodeRef};
+use serde::{Deserialize, Serialize};
 
 pub use deleter::{DeleterHandle, STAGE_UNDO_WINDOW, spawn_deleter};
 pub use journal::{Journal, check_line, default_journal_dir};
@@ -33,16 +34,28 @@ pub struct Identity {
     pub mtime: i64,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// How a plan deletes. Journal intent records name it `trash`, `stage` or `delete`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Mode {
     Trash,
     /// Renamed into a staging directory on the item's filesystem, which takes no time, and
     /// deleted in the background once the undo window has passed.
     Stage,
+    #[serde(rename = "delete")]
     Permanent,
 }
 
 impl Mode {
+    /// Its name in the journal.
+    pub(crate) fn journal_name(self) -> &'static str {
+        match self {
+            Mode::Trash => "trash",
+            Mode::Stage => "stage",
+            Mode::Permanent => "delete",
+        }
+    }
+
     /// Whether the session can put an item back.
     pub fn undoable(self) -> bool {
         matches!(self, Mode::Trash | Mode::Stage)
@@ -97,7 +110,8 @@ pub enum Refusal {
     /// The item is in another btrfs subvolume than the trash; a rename between subvolumes is
     /// not possible, so the trash would copy it. Holds the root of the item's subvolume.
     TrashOtherSubvolume(PathBuf),
-    /// The deletion journal could not be written, so nothing is deleted.
+    /// There is no directory for the deletion journal, so nothing is deleted. When the journal
+    /// cannot be created there, each item fails with the cause instead.
     NoJournal,
 }
 
@@ -136,8 +150,8 @@ pub enum DeleterMsg {
         bytes: u64,
         result: Result<(), String>,
     },
-    /// An undo put an item back at `path` (its original path, or `<name>.restored-<n>` next to
-    /// it when something else is there now), or could not.
+    /// An undo put an item back at the path in `result` (`original`, or `<name>.restored-<n>`
+    /// next to it when something else is there now), or could not.
     Restored {
         plan: u64,
         original: PathBuf,
@@ -160,8 +174,8 @@ pub enum DeleterMsg {
         result: Result<(), String>,
     },
     /// What exited sessions left unfinished, found when the deleter starts
-    /// ([`recover::Unfinished::describe`]), and notes on damaged journals. Nothing is done
-    /// with them here.
+    /// ([`recover::Unfinished::describe`]), and notes on damaged or unreadable journals and
+    /// on journal records that could not be written. Nothing is done with them here.
     Unfinished {
         items: Vec<String>,
         notes: Vec<String>,

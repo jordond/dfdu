@@ -53,7 +53,7 @@ pub enum Action {
     ViewDupes,
     TreemapDeeper,
     TreemapShallower,
-    TreemapColour,
+    TreemapColor,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -151,7 +151,7 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Display,
     ),
     row(
-        Action::TreemapColour,
+        Action::TreemapColor,
         "p",
         "treemap: colour by top folder or age",
         Group::Display,
@@ -374,14 +374,14 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
-            if !filter::clear(app) && !crate::types::clear(app) {
+            if !filter::clear(app) && !crate::type_filter::clear(app) {
                 app.overlay = Overlay::None;
             }
         }
         Action::ToggleMark => marks::toggle(app),
         Action::ClearMarks => marks::clear(app),
         Action::Filter => filter::open(app),
-        Action::Types => crate::types::open(app),
+        Action::Types => crate::type_filter::open(app),
         Action::Details => details::toggle(app),
         Action::FocusDetails => details::focus(app),
         Action::Palette => palette::open(app),
@@ -403,7 +403,7 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::ViewDupes => fx.extend(crate::dupes::show(app, true)),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
-        Action::TreemapColour => treemap::cycle_colour(app),
+        Action::TreemapColor => treemap::cycle_color(app),
     }
     fx
 }
@@ -432,10 +432,11 @@ fn toggle_size(app: &mut App, mode: SizeMode) {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use crate::tests::press;
 
     const ALL: [Action; 40] = [
         Action::Quit,
@@ -477,12 +478,8 @@ pub(crate) mod tests {
         Action::ViewDupes,
         Action::TreemapDeeper,
         Action::TreemapShallower,
-        Action::TreemapColour,
+        Action::TreemapColor,
     ];
-
-    pub(crate) fn press(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
 
     #[test]
     fn every_action_has_one_registry_row() {
@@ -561,7 +558,7 @@ pub(crate) mod tests {
         assert_eq!(action_for(&ctrl_j), Some(Action::Down));
         let ctrl_p = KeyEvent::new(c('p'), KeyModifiers::CONTROL);
         assert_eq!(action_for(&ctrl_p), Some(Action::Palette));
-        assert_eq!(action_for(&press(c('p'))), Some(Action::TreemapColour));
+        assert_eq!(action_for(&press(c('p'))), Some(Action::TreemapColor));
         for (code, want) in [
             (c(' '), Action::ToggleMark),
             (c('/'), Action::Filter),

@@ -70,11 +70,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             if e.is_dir {
                 path.push('/');
             }
-            let style = if i == cursor {
-                t.selected
-            } else {
-                Style::new()
-            };
+            let style = if i == cursor { t.cursor } else { Style::new() };
             let room = width.saturating_sub(e.problem.chars().count() + 4);
             if path.chars().count() > room {
                 let keep = room.saturating_sub(1);
@@ -83,12 +79,12 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             }
             Line::from(vec![
                 Span::styled(format!(" {path}"), style),
-                Span::styled(format!("  {}", e.problem), t.error),
+                Span::styled(format!("  {}", e.problem), t.status_error),
             ])
         })
         .collect();
     if list.items.is_empty() {
-        lines.push(Line::styled(" Nothing to list.", t.dim));
+        lines.push(Line::styled(" Nothing to list.", t.fg_dim));
     }
     let mut foot = String::from(" Enter go to it · Esc close");
     if (list.items.len() as u64) < list.total {
@@ -98,7 +94,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         foot += &format!(" · {h}");
     }
     lines.push(Line::raw(""));
-    lines.push(Line::styled(foot, t.dim));
+    lines.push(Line::styled(foot, t.fg_dim));
     let title = format!(" {} not read: {} ", count(list.total), list.summary());
     let r = area.centered(
         Constraint::Length(area.width.saturating_sub(4).min(100)),

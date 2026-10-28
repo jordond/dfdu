@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Sender, unbounded};
-use dfdu_tree::NodeRef;
+use dfdu_tree::{NodeRef, RuleIx};
 use parking_lot::Mutex;
 
 /// How long one external command may take.
@@ -27,14 +27,14 @@ pub enum CheckReq {
     /// The guards of the rule `rule` matched at `node`, whose path is `path`.
     Guards {
         node: NodeRef,
-        rule: u16,
+        rule: RuleIx,
         path: PathBuf,
         vcs: bool,
         processes: Vec<String>,
     },
     /// Runs a rule's `native.check`, then its `size_command`.
     NativeSize {
-        rule: u16,
+        rule: RuleIx,
         check: Vec<String>,
         command: Vec<String>,
     },
@@ -44,14 +44,14 @@ pub enum CheckReq {
 pub enum CheckMsg {
     Guards {
         node: NodeRef,
-        rule: u16,
+        rule: RuleIx,
         /// `None` when it could not be told (no `git`, an error).
         tracked: Option<bool>,
         /// A process the rule names that runs.
         running: Option<String>,
     },
     NativeSize {
-        rule: u16,
+        rule: RuleIx,
         result: Result<u64, String>,
     },
 }

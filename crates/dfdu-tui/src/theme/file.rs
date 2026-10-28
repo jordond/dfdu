@@ -296,13 +296,10 @@ fg          = "#d8dee9"
         assert_eq!(t.fg.fg, Some(Color::Rgb(0xd8, 0xde, 0xe9)));
         assert_eq!(t.cat[0].fg, Some(Color::Rgb(0xe6, 0x9f, 0x00)));
         assert_eq!(t.cat[1].fg, Some(Color::Rgb(0x00, 0x72, 0xb2)));
-        assert_eq!(t.selected.bg, Some(Color::Rgb(0x3b, 0x42, 0x52)));
-        assert_eq!(t.selected.add_modifier, Modifier::REVERSED);
+        assert_eq!(t.cursor.bg, Some(Color::Rgb(0x3b, 0x42, 0x52)));
+        assert_eq!(t.cursor.add_modifier, Modifier::REVERSED);
         let dark = Theme::named("dark", ColorLevel::TrueColor, None).expect("dark");
-        assert_eq!(
-            t.selected.fg, dark.selected.fg,
-            "cursor.fg comes from the base"
-        );
+        assert_eq!(t.cursor.fg, dark.cursor.fg, "cursor.fg comes from the base");
 
         let t = file.resolve(ColorLevel::Ansi256, None);
         assert_eq!(t.cat[0].fg, Some(Color::Indexed(178)));
@@ -312,7 +309,7 @@ fg          = "#d8dee9"
         let t = file.resolve(ColorLevel::Ansi16, None);
         assert_eq!(t.cat[0].fg, Some(Color::Yellow));
         assert_eq!(t.cat[1].fg, Some(Color::Blue));
-        assert_eq!(t.selected.bg, Some(Color::Reset));
+        assert_eq!(t.cursor.bg, Some(Color::Reset));
         assert_eq!(t.fg.fg, Some(Color::Gray));
     }
 
@@ -339,9 +336,9 @@ fg          = "#d8dee9"
             t.dir,
             Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD)
         );
-        assert_eq!(t.warn, ansi.warn.add_modifier(Modifier::BOLD));
+        assert_eq!(t.status_warn, ansi.status_warn.add_modifier(Modifier::BOLD));
         assert_eq!(t.bg, Style::new().bg(Color::Rgb(0x10, 0x10, 0x10)));
-        assert_eq!(t.error, ansi.error);
+        assert_eq!(t.status_error, ansi.status_error);
         assert_eq!(t.title, ansi.title);
 
         let t = ThemeFile::parse("")

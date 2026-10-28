@@ -1,6 +1,7 @@
 //! The effects on finished frames, with tachyonfx: the flash of moved rows and the fade of
-//! deleted ones. tachyonfx mixes colours in RGB and writes RGB colours into the cells, so the
-//! colour effects run only where [`rgb_effects`] says; elsewhere a flash reverses the row.
+//! deleted ones. The flash mixes its colours in RGB here; tachyonfx's fade blends in HSL, its
+//! default colour space. Both write RGB colours into the cells, so the colour effects run only
+//! where [`rgb_effects`] says; elsewhere a flash reverses the row.
 
 use std::time::Duration;
 
@@ -33,7 +34,7 @@ pub(super) fn flash(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Durati
         return;
     }
     let base = background(theme);
-    let accent = theme.bar.fg.and_then(rgb).unwrap_or(base);
+    let accent = theme.bar_fill.fg.and_then(rgb).unwrap_or(base);
     let from = mix(base, accent, 0.35);
     let timer = EffectTimer::new(FLASH, Interpolation::QuadOut);
     let mut effect = fx::effect_fn((from, base), timer, |&mut (from, base), ctx, cells| {
@@ -51,7 +52,7 @@ pub(super) fn flash(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Durati
 /// theme has a dim or text colour: the terminal's own text colour is not known, and a fade
 /// from the background to itself would hide the row.
 pub(super) fn fade(theme: &Theme, buf: &mut Buffer, area: Rect, elapsed: Duration) {
-    let Some(dim) = theme.dim.fg.or(theme.fg.fg).and_then(rgb) else {
+    let Some(dim) = theme.fg_dim.fg.or(theme.fg.fg).and_then(rgb) else {
         return;
     };
     let base = background(theme);

@@ -56,8 +56,12 @@ const MACOS: &[&str] = &[
     "/usr",
     "/bin",
     "/sbin",
+    "/dev",
     "/private/etc",
     "/private/var/db",
+    // `/etc` and `/var` are symlinks into `/private`; paths may arrive uncanonicalized.
+    "/etc",
+    "/var/db",
     "/Library/Apple",
     "/private/var/folders",
     "/Library/Developer/CoreSimulator/Volumes",
@@ -462,6 +466,9 @@ mod tests {
         assert!(p.covers(b"/System/Library"));
         assert!(p.covers(b"/usr/bin/true"));
         assert!(!p.covers(b"/usr/local/Cellar/x"));
+        assert!(p.covers(b"/dev/fd/3"));
+        assert!(p.covers(b"/etc/hosts"));
+        assert!(p.covers(b"/var/db/x"));
         assert!(p.covers(b"/private/var/folders/ab/xyz/C/com.apple.x"));
         assert!(!p.covers(b"/private/var/folders/ab/xyz/T/tmp.123"));
         assert!(p.covers(b"/Users/u/Library/Containers/com.x/Data/Documents"));

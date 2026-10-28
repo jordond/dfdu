@@ -180,7 +180,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         column(&groups, inner, t)
     };
     if groups.is_empty() {
-        body.push(Line::styled(" nothing matches", t.dim));
+        body.push(Line::styled(" nothing matches", t.fg_dim));
     }
     if h.search.is_empty() {
         for note in NOTES {
@@ -188,7 +188,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             body.extend(
                 wrap(note, inner.saturating_sub(2))
                     .into_iter()
-                    .map(|part| Line::styled(format!(" {part}"), t.dim)),
+                    .map(|part| Line::styled(format!(" {part}"), t.fg_dim)),
             );
         }
     }
@@ -214,7 +214,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         }
         spans.push(Span::styled(
             format!("   {shown} of {}", ACTIONS.len()),
-            t.dim,
+            t.fg_dim,
         ));
         lines.push(Line::from(spans));
     }
@@ -225,10 +225,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         .border_style(t.border_focus)
         .title(Span::styled(" Keys ", t.title));
     if !h.prompt_shown() {
-        block = block.title(Line::styled(" / search ", t.dim).right_aligned());
+        block = block.title(Line::styled(" / search ", t.fg_dim).right_aligned());
     }
     if top < max {
-        block = block.title_bottom(Line::styled(" ↓ more ", t.dim).right_aligned());
+        block = block.title_bottom(Line::styled(" ↓ more ", t.fg_dim).right_aligned());
     }
     f.render_widget(Clear, r);
     f.render_widget(Paragraph::new(lines).block(block), r);
@@ -304,7 +304,7 @@ fn row_lines(row: &Row, keys: usize, width: usize, t: &Theme) -> Vec<Line<'stati
                 // In the keys column: the first key of the palette, where the action runs.
                 let palette = first_key(Action::Palette);
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled(palette, t.dim));
+                spans.push(Span::styled(palette, t.fg_dim));
                 spans.push(Span::raw(" ".repeat(indent - 1 - palette.chars().count())));
             } else if i == 0 {
                 spans.push(Span::raw(" "));
@@ -332,7 +332,7 @@ fn highlighted(
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, ch) in text.chars().enumerate() {
         let hit = hits.binary_search(&((offset + i) as u32)).is_ok();
-        let s = if hit { style.patch(t.matched) } else { style };
+        let s = if hit { style.patch(t.r#match) } else { style };
         match spans.last_mut() {
             Some(last) if last.style == s => last.content.to_mut().push(ch),
             _ => spans.push(Span::styled(ch.to_string(), s)),
@@ -380,20 +380,11 @@ mod tests {
     use ratatui::style::Modifier;
 
     use super::*;
-    use crate::app::keys::tests::press;
-    use crate::snapshot::{EntryData, test_entry};
-    use crate::tests::{render, render_buffer, style_at, text};
+    use crate::tests::{library_snap, press, render, render_buffer, style_at, text};
 
     fn app_with_help(t0: Instant) -> App {
         let mut app = App::new(Theme::no_color(), t0);
-        let es = vec![
-            EntryData {
-                is_dir: true,
-                ..test_entry(0, "Library", 3 << 30)
-            },
-            test_entry(1, "notes.sqlite", 625 << 20),
-        ];
-        app.refresh(crate::filter::tests::snap(es, 1), t0);
+        app.refresh(library_snap(), t0);
         assert!(app.key(press(KeyCode::Char('?')), t0).is_empty());
         app
     }

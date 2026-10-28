@@ -37,7 +37,7 @@ pub struct NativeReq {
 /// A native command as a rule and the matched path: what it is built from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeRule {
-    pub rule: u16,
+    pub rule: dfdu_rules::RuleIx,
     /// Index into the rule's `native.variant` list; `None` for its own command.
     pub variant: Option<u16>,
     pub path: PathBuf,

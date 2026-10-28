@@ -170,7 +170,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
     // An anomaly is marked with `!` as well as the error style, so it shows without colour.
     let anomaly = |name: &str, n: u64| {
         if n > 0 {
-            Span::styled(format!("{name} {}!", count(n)), t.error)
+            Span::styled(format!("{name} {}!", count(n)), t.status_error)
         } else {
             Span::raw(format!("{name} 0"))
         }
@@ -246,7 +246,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
             Span::styled(
                 format!("stalled dirs {}", info.stalled),
                 if info.stalled > 0 {
-                    t.warn
+                    t.status_warn
                 } else {
                     Style::new()
                 },
@@ -254,7 +254,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
         ]),
     ];
     for p in &info.stalled_paths {
-        lines.push(Line::styled(format!("   {}", p.display()), t.dim));
+        lines.push(Line::styled(format!("   {}", p.display()), t.fg_dim));
     }
     if let Some((draw, read)) = ui {
         lines.push(plain(format!("ui draw {}  read {}", dur(draw), dur(read))));
@@ -269,8 +269,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::app::keys::tests::press;
-    use crate::tests::{render, render_buffer, style_at};
+    use crate::tests::{press, render, render_buffer, style_at};
 
     /// Counters of a scan in progress: a known hold histogram (90 slices of about 200 µs, 9 of
     /// 1.5 ms, one of 3 ms) and one stalled directory.
@@ -363,16 +362,16 @@ mod tests {
     }
 
     #[test]
-    fn anomalies_are_marked_without_colour() {
+    fn anomalies_are_marked_without_color() {
         let mut app = open_app(info(2), Theme::no_color());
         let t0 = app.started;
         let out = render(&mut app, t0, 100, 20);
         assert!(out.contains("corrupt 0  lost 2!  duplicate 0"), "{out}");
-        let colour = Theme::ansi16();
-        let mut app = open_app(info(2), colour.clone());
+        let ansi = Theme::ansi16();
+        let mut app = open_app(info(2), ansi.clone());
         let buf = render_buffer(&mut app, t0, 100, 20);
-        assert_eq!(style_at(&buf, "lost 2!").fg, colour.error.fg);
-        assert_ne!(style_at(&buf, "corrupt 0").fg, colour.error.fg);
+        assert_eq!(style_at(&buf, "lost 2!").fg, ansi.status_error.fg);
+        assert_ne!(style_at(&buf, "corrupt 0").fg, ansi.status_error.fg);
     }
 
     #[test]

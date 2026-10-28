@@ -1,0 +1,261 @@
+//! Scan job lifecycle: starting, cutting, cancelling, abandoning stalled directories, and
+//! finishing.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use dfdu_scan::{Backend, DirId, JobId, JobOptions};
+use dfdu_tree::{DirState, ErrKind, Ix, NodeRef, Pages, Tree};
+
+use super::work::Work;
+use super::{Applier, Job, JobKind, JobPhase, Model};
+use crate::links::Scope;
+
+impl<B: Backend> Applier<B> {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn start(
+        &mut self,
+        m: &mut Model,
+        id: u32,
+        kind: JobKind,
+        target: Ix,
+        root: Ix,
+        scope: Scope,
+        path: PathBuf,
+        opts: JobOptions,
+    ) {
+        let rec = m.tree.dir_mut(root).expect("job root is a directory");
+        rec.job = id;
+        rec.dir_id = 0;
+        let mut job = Job {
+            id: JobId(id),
+            kind,
+            target: m.tree.node_ref(target),
+            root: m.tree.node_ref(root),
+            scope,
+            opts: opts.clone(),
+            map: Pages::default(),
+            held_close: HashMap::new(),
+            stalled: HashMap::new(),
+            submitted_seq: 0,
+            phase: JobPhase::Running,
+        };
+        job.set(DirId::ROOT, m.tree.node_ref(root));
+        job.submitted_seq = match &self.remote {
+            Some(l) => l.start_job(JobId(id), &path, &opts),
+            None => self.scan.start_job(JobId(id), &path, opts),
+        };
+        self.jobs.insert(id, job);
+    }
+
+    /// Cuts a directory its job is still scanning: its job's tasks for it are stopped, and it
+    /// reports to its parent at once with `state`. Does nothing to a directory that is not
+    /// pending or already cut.
+    pub(super) fn cut(&mut self, m: &mut Model, ix: Ix, state: DirState) {
+        let Some(rec) = m.tree.dir_mut(ix) else {
+            return;
+        };
+        if rec.state != DirState::Pending || rec.cut {
+            return;
+        }
+        rec.cut = true;
+        rec.state = state;
+        rec.outcome = state;
+        let (job, dir) = (rec.job, rec.dir_id);
+        if !rec.reported {
+            rec.reported = true;
+            self.report_up(m, job, ix);
+        }
+        m.tree.touch(ix);
+        match &self.remote {
+            Some(l) => l.stop_dirs(JobId(job), vec![DirId(dir)]),
+            None => self.scan.stop_dirs(JobId(job), [DirId(dir)]),
+        }
+    }
+
+    pub(super) fn cancel(&mut self, id: u32) {
+        let Some(j) = self.jobs.get_mut(&id) else {
+            return;
+        };
+        if j.phase != JobPhase::Running {
+            return;
+        }
+        j.phase = JobPhase::Cancelled;
+        match &self.remote {
+            Some(l) => l.end_job(j.id),
+            None => self.scan.end_job(j.id),
+        }
+        let root = j.root;
+        self.work.push_back(Work::CancelWalk {
+            job: id,
+            stack: vec![root],
+        });
+        self.work.push_back(Work::FinishJob { job: id });
+    }
+
+    /// Ends a remote scan whose link ended, once everything that arrived before is applied:
+    /// running jobs stop where they are, which leaves the scan incomplete.
+    pub(crate) fn check_link(&mut self, m: &mut Model) {
+        let Some(why) = self.remote.as_ref().and_then(|l| l.take_lost()) else {
+            return;
+        };
+        let running: Vec<u32> = self
+            .jobs
+            .iter()
+            .filter(|(_, j)| j.phase == JobPhase::Running)
+            .map(|(&id, _)| id)
+            .collect();
+        if !running.is_empty() {
+            m.status.incomplete = true;
+        }
+        for id in running {
+            self.cancel(id);
+        }
+        m.status.notice(format!("remote scan: {why}"));
+        m.status.disconnected = Some(why);
+    }
+
+    pub(super) fn abandon(&mut self, m: &mut Model, node: NodeRef) {
+        let Some(ix) = m.tree.resolve(node) else {
+            return;
+        };
+        let Some(rec) = m.tree.dir(ix) else { return };
+        let (job, dir) = (rec.job, rec.dir_id);
+        if rec.listing_closed || rec.cut {
+            return;
+        }
+        if let Some(j) = self.jobs.get_mut(&job) {
+            j.stalled.remove(&dir);
+        }
+        m.tree.set_error(ix, ErrKind::Stalled);
+        self.close_listing(m, job, ix, DirState::Abandoned);
+        self.scanner_abandon(JobId(job), DirId(dir));
+    }
+
+    pub(super) fn scanner_abandon(&mut self, job: JobId, dir: DirId) {
+        let complete = match &self.remote {
+            Some(l) => l.abandon(job, dir),
+            None => self.scan.abandon(job, dir),
+        };
+        if !complete {
+            self.retry_abandon.push((job, dir));
+        }
+    }
+
+    fn under_cut(tree: &Tree, ix: Ix) -> bool {
+        let mut cur = Some(ix);
+        while let Some(c) = cur {
+            if tree.dir(c).is_some_and(|d| d.cut) {
+                return true;
+            }
+            cur = tree.parent(c);
+        }
+        false
+    }
+
+    /// Periodic work: retry abandons that could not take an outbox lock, and abandon
+    /// directories stalled longer than `auto_abandon_ns` (headless mode).
+    pub fn tick(&mut self, m: &mut Model, now: u64, auto_abandon_ns: Option<u64>) {
+        self.measure_watchdog(m, now);
+        let scan = &self.scan;
+        self.retry_abandon.retain(|(j, d)| !scan.abandon(*j, *d));
+        // Stalled directories that were cut or removed since they stalled are not wanted.
+        let mut unwanted = Vec::new();
+        for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
+            for &d in j.stalled.keys() {
+                let gone = j
+                    .get(DirId(d))
+                    .and_then(|r| m.tree.resolve(r))
+                    .is_none_or(|ix| Self::under_cut(&m.tree, ix));
+                if gone {
+                    unwanted.push((j.id, DirId(d)));
+                }
+            }
+        }
+        for (job, dir) in unwanted {
+            if let Some(j) = self.jobs.get_mut(&job.0) {
+                j.stalled.remove(&dir.0);
+            }
+            self.scanner_abandon(job, dir);
+        }
+        if let Some(limit) = auto_abandon_ns {
+            let mut due = Vec::new();
+            for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
+                for (&d, &since) in &j.stalled {
+                    if now.saturating_sub(since) > limit
+                        && let Some(r) = j.get(DirId(d))
+                    {
+                        due.push(r);
+                    }
+                }
+            }
+            for r in due {
+                self.abandon(m, r);
+            }
+        }
+        self.refresh_status(m);
+    }
+
+    pub(super) fn finish_job(&mut self, m: &mut Model, id: u32) {
+        let Some(j) = self.jobs.get_mut(&id) else {
+            return;
+        };
+        let cancelled = j.phase == JobPhase::Cancelled;
+        match &self.remote {
+            Some(l) => l.end_job(j.id),
+            None => self.scan.end_job(j.id),
+        }
+        let (kind, root, target, scope) = (j.kind, j.root, j.target, j.scope);
+        j.phase = if cancelled {
+            JobPhase::Cancelled
+        } else {
+            JobPhase::Done
+        };
+        j.map = Pages::default();
+        j.held_close.clear();
+        let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
+        let job = j.id;
+        for d in stalled {
+            self.scanner_abandon(job, d);
+        }
+        if kind == JobKind::Initial {
+            self.start_measure(m, root);
+        }
+        if kind == JobKind::Rescan {
+            let shadow = m.tree.resolve(root);
+            match (cancelled, shadow, m.tree.resolve_visible(target)) {
+                (false, Some(s), Some(t)) => {
+                    m.tree.replace(t, s);
+                    self.start_measure(m, root);
+                    let keys = self.links.keys_in(scope);
+                    self.work.push_back(Work::Free);
+                    self.work.push_back(Work::Merge { keys, from: scope });
+                }
+                (_, Some(s), _) => {
+                    m.tree.detach(s);
+                    self.work.push_back(Work::Free);
+                }
+                _ => {}
+            }
+        }
+        // Every job's end (done or cancelled) settles the visible charges to the lowest path, so
+        // per-directory totals never depend on scan order.
+        self.work.push_back(Work::FinalPassVisible);
+        self.queue_checks(m);
+        // Keep finished jobs out of the status list once nothing refers to them.
+        if self.jobs.len() > 64 {
+            let done: Vec<u32> = self
+                .jobs
+                .iter()
+                .filter(|(_, j)| matches!(j.phase, JobPhase::Done | JobPhase::Cancelled))
+                .map(|(&k, _)| k)
+                .take(self.jobs.len() - 64)
+                .collect();
+            for k in done {
+                if let Some(j) = self.jobs.remove(&k) {
+                    self.retired.insert(k, j.opts);
+                }
+            }
+        }
+    }
+}

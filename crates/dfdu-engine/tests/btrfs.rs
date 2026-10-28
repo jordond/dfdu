@@ -60,7 +60,7 @@ fn scan(e: &Engine<NativeBackend>, root: &Path, cross_mounts: bool) {
             ..Default::default()
         },
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
 }
 
 fn child(tree: &Tree, ix: Ix, name: &str) -> Ix {
@@ -81,7 +81,7 @@ fn node(e: &Engine<NativeBackend>, rel: &str) -> NodeRef {
 
 fn delete(e: &Engine<NativeBackend>, items: Vec<NodeRef>, mode: Mode) {
     e.send(Command::Delete { items, mode });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
 }
 
 fn notices(e: &Engine<NativeBackend>) -> Vec<String> {

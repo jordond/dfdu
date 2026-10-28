@@ -96,7 +96,8 @@ impl Pool {
         }
     }
 
-    /// Stops all threads. Threads stuck in a filesystem call are not waited for.
+    /// Stops all threads, waiting at most `wait` for the workers once the watchdog has stopped.
+    /// Threads stuck in a filesystem call are left behind.
     pub fn stop(mut self, wait: Duration) {
         self.state.stop.store(true, SeqCst);
         self.state.idle_threads.wake_all();

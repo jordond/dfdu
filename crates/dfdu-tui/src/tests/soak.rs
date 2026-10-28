@@ -30,7 +30,7 @@ use super::blocked::{Gate, GatedWriter};
 fn engine(root: &Path) -> Engine<NativeBackend> {
     let storage = dfdu_sys::storage(root);
     Engine::start(
-        dfdu_scan::native_backend(storage),
+        dfdu_scan::native_backend(storage, false),
         EngineOptions {
             workers: dfdu_engine::workers_for(storage),
             ..Default::default()
@@ -63,7 +63,7 @@ fn scan_quietly(root: &Path) -> (Totals, Duration) {
         opts: JobOptions::default(),
     });
     assert!(
-        e.wait_idle(Some(Duration::from_secs(3600))),
+        e.wait_idle(Some(Duration::from_secs(3600))).is_idle(),
         "reference scan"
     );
     let took = t0.elapsed();
@@ -105,7 +105,7 @@ fn soak_busy_reader_and_blocked_terminal() {
         let backend = CrosstermBackend::new(GatedWriter(g));
         let viewport = Viewport::Fixed(Rect::new(0, 0, 120, 40));
         let mut terminal = Terminal::with_options(backend, TerminalOptions { viewport })?;
-        super::event_loop(&mut terminal, &*e, input)
+        crate::event_loop(&mut terminal, &*e, input)
     });
     let reads = Arc::new(AtomicU64::new(0));
     let (e, st, n) = (engine.clone(), stop.clone(), reads.clone());
@@ -145,7 +145,7 @@ fn soak_busy_reader_and_blocked_terminal() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    let done = engine.wait_idle(Some(Duration::from_secs(3600)));
+    let done = engine.wait_idle(Some(Duration::from_secs(3600))).is_idle();
     let took = t0.elapsed();
     let (peak_mem, rss) = memory();
     stop.store(true, SeqCst);

@@ -5,25 +5,19 @@ use dfdu_tree::{DirState, ErrKind, Meta, NodeFlags};
 use ratatui::crossterm::event::KeyCode;
 
 use super::*;
-use crate::app::keys::tests::press;
 use crate::debug::Counters;
 use crate::extras;
 use crate::snapshot::{self, Target};
-use crate::tests::{assert_cue, render, render_buffer};
+use crate::tests::{assert_cue, press, render, render_buffer};
 use crate::theme::Theme;
 
 const MTIME: i64 = 1_792_834_920;
 
+/// [`crate::tests::meta`] modified at `MTIME`.
 fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
     Meta {
-        kind,
-        apparent: size,
-        alloc: size,
         mtime: MTIME,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
+        ..crate::tests::meta(kind, size, ino)
     }
 }
 
@@ -189,7 +183,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     let t0 = app.started;
     let buf = render_buffer(&mut app, t0, 120, 20);
     assert!(render(&mut app, t0, 120, 20).contains("directory · complete, errors below"));
-    let dim = app.theme.dim.fg;
+    let dim = app.theme.fg_dim.fg;
     assert!(dim.is_some());
     assert_cue(&buf, "complete, errors below", |s| s.fg == dim);
 }
@@ -353,7 +347,7 @@ fn the_wheel_scrolls_the_pane_without_focus() {
 }
 
 #[test]
-fn focus_is_visible_without_colour() {
+fn focus_is_visible_without_color() {
     let m = model();
     let mut app = app_on(&m);
     let t0 = app.started;

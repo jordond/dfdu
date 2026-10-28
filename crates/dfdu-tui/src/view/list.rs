@@ -57,7 +57,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
             Some(Mark::Incomplete) => "  (incomplete: press r to rescan)",
             _ => "  (empty)",
         };
-        lines.push(Line::styled(msg, t.dim));
+        lines.push(Line::styled(msg, t.fg_dim));
     }
     let max = app.rows_largest.max(1);
     let total = app.size_mode.of(&app.snap.dir_total).max(1);
@@ -66,7 +66,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     for (row, &i) in visible.iter().enumerate() {
         let mut line = entry_line(app, i, frame, max, total, bw);
         if sel == Some(app.scroll + row) {
-            line = line.style(t.selected);
+            line = line.style(t.cursor);
         }
         lines.push(line);
     }
@@ -78,7 +78,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
                 if n == 1 { "y" } else { "ies" },
                 human(app.new_largest)
             ),
-            t.dim,
+            t.fg_dim,
         ));
     }
     f.render_widget(Paragraph::new(lines), area);
@@ -97,15 +97,15 @@ fn entry_line(
     let t = &app.theme;
     let e = &app.snap.entries[index];
     let (glyph, gstyle) = match e.mark {
-        Mark::Scanning | Mark::Rescanning => (spinner(frame + (e.dev_ino.1 % 10)), t.dim),
-        Mark::Stalled => ('~', t.warn),
-        Mark::Error => ('!', t.error),
-        Mark::OtherFs => ('>', t.dim),
-        Mark::DupMount => ('=', t.dim),
-        Mark::Network | Mark::Kernel => ('>', t.dim),
-        Mark::ErrorsInside => ('.', t.error),
-        Mark::Deleting => ('x', t.warn),
-        Mark::Incomplete => ('?', t.warn),
+        Mark::Scanning | Mark::Rescanning => (spinner(frame + (e.dev_ino.1 % 10)), t.fg_dim),
+        Mark::Stalled => ('~', t.status_warn),
+        Mark::Error => ('!', t.status_error),
+        Mark::OtherFs => ('>', t.fg_dim),
+        Mark::DupMount => ('=', t.fg_dim),
+        Mark::Network | Mark::Kernel => ('>', t.fg_dim),
+        Mark::ErrorsInside => ('.', t.status_error),
+        Mark::Deleting => ('x', t.status_warn),
+        Mark::Incomplete => ('?', t.status_warn),
         Mark::None => (' ', Style::new()),
     };
     // The gutter cell takes the mark's style where the gutter sets none of its own.
@@ -117,7 +117,7 @@ fn entry_line(
         | Mark::Stalled
         | Mark::Incomplete
         | Mark::Error
-        | Mark::ErrorsInside => t.dim,
+        | Mark::ErrorsInside => t.fg_dim,
         _ => Style::new(),
     };
     let mut spans = vec![
@@ -128,7 +128,7 @@ fn entry_line(
     if bw > 0 {
         let frac = motion::bar(app, e, e.size as f64 / max as f64);
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(bar(frac, bw), t.bar));
+        spans.push(Span::styled(bar(frac, bw), t.bar_fill));
     }
     // A ghost's size is no longer part of the total: its share would be meaningless.
     spans.push(Span::raw(if e.ghost {
@@ -136,11 +136,11 @@ fn entry_line(
     } else {
         format!("  {:>5.1}%", e.size as f64 * 100.0 / total as f64)
     }));
-    spans.push(Span::styled(format!("  {:>6}", count(e.items)), t.dim));
+    spans.push(Span::styled(format!("  {:>6}", count(e.items)), t.fg_dim));
     if let Some(rules) = &app.snap.rules {
         // Inside a match, rows show its category dim: the match is the directory above.
         let (text, style) = match e.tag.map(|g| (g, g.category(rules))) {
-            Some((g, (name, _))) if g.inherited => (name, t.dim),
+            Some((g, (name, _))) if g.inherited => (name, t.fg_dim),
             Some((_, (name, slot))) => (name, t.cat[slot]),
             None => ("", Style::new()),
         };
@@ -157,44 +157,47 @@ fn entry_line(
         spans.push(r);
     }
     let note = match e.mark {
-        Mark::Stalled => Some(("  not responding", t.warn)),
-        Mark::Rescanning => Some(("  rescanning", t.dim)),
-        Mark::OtherFs => Some(("  other filesystem", t.dim)),
-        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.dim)),
-        Mark::Network => Some(("  network filesystem: start with --network to scan", t.dim)),
-        Mark::Kernel => Some(("  kernel filesystem", t.dim)),
-        Mark::Incomplete => Some(("  incomplete: r to rescan", t.warn)),
-        Mark::Deleting => Some(("  deleting", t.warn)),
+        Mark::Stalled => Some(("  not responding", t.status_warn)),
+        Mark::Rescanning => Some(("  rescanning", t.fg_dim)),
+        Mark::OtherFs => Some(("  other filesystem", t.fg_dim)),
+        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.fg_dim)),
+        Mark::Network => Some((
+            "  network filesystem: start with --network to scan",
+            t.fg_dim,
+        )),
+        Mark::Kernel => Some(("  kernel filesystem", t.fg_dim)),
+        Mark::Incomplete => Some(("  incomplete: r to rescan", t.status_warn)),
+        Mark::Deleting => Some(("  deleting", t.status_warn)),
         _ => None,
     };
     if let Some(p) = &e.problem {
-        spans.push(Span::styled(format!("  {p}"), t.error));
+        spans.push(Span::styled(format!("  {p}"), t.status_error));
     } else if e.mark == Mark::Error {
         let what = if e.is_dir {
             "  incomplete"
         } else {
             "  could not be read"
         };
-        spans.push(Span::styled(what, t.error));
+        spans.push(Span::styled(what, t.status_error));
     }
     match e.errors_inside {
         0 => {}
-        1 => spans.push(Span::styled("  1 error inside", t.error)),
+        1 => spans.push(Span::styled("  1 error inside", t.status_error)),
         n => spans.push(Span::styled(
             format!("  {} errors inside", count(n)),
-            t.error,
+            t.status_error,
         )),
     }
     if let Some(l) = &e.label {
-        spans.push(Span::styled(format!("  [{l}]"), t.dim));
+        spans.push(Span::styled(format!("  [{l}]"), t.fg_dim));
     }
     if e.compressed {
-        spans.push(Span::styled("  compressed: at most this", t.dim));
+        spans.push(Span::styled("  compressed: at most this", t.fg_dim));
     }
     if e.shared_out > 0 {
         spans.push(Span::styled(
             format!("  {} also used outside the scan", human(e.shared_out)),
-            t.dim,
+            t.fg_dim,
         ));
     }
     if let Some((s, st)) = note {
@@ -205,16 +208,16 @@ fn entry_line(
         if let Some((s, grew)) = growth::row_note(app, &path, e.size, e.mark) {
             spans.push(Span::styled(
                 format!("  {s}"),
-                if grew { t.warn } else { t.dim },
+                if grew { t.status_warn } else { t.fg_dim },
             ));
         }
     }
     if e.ghost {
-        let struck = t.dim.add_modifier(Modifier::CROSSED_OUT);
+        let struck = t.fg_dim.add_modifier(Modifier::CROSSED_OUT);
         for s in &mut spans {
             s.style = s.style.patch(struck);
         }
-        spans.push(Span::styled("  deleted", t.dim));
+        spans.push(Span::styled("  deleted", t.fg_dim));
     }
     Line::from(spans)
 }
@@ -230,17 +233,14 @@ mod tests {
     use super::*;
     use crate::app::Overlay;
     use crate::snapshot::{EntryData, Snapshot, test_entry};
-    use crate::tests::key;
+    use crate::tests::{press, snap_without_totals};
     use crate::theme::Theme;
 
-    fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
+    /// [`snap_without_totals`] of a scan that has finished.
+    fn finished_snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
         Snapshot {
-            dir_path: PathBuf::from("/r"),
-            dir_node: Some(test_entry(99, "/r", 0).node),
-            at_root: true,
-            entries,
-            version,
-            ..Default::default()
+            busy: false,
+            ..snap_without_totals(entries, version)
         }
     }
 
@@ -274,7 +274,7 @@ mod tests {
             ..test_entry(4, "busy", 7 * mib)
         };
         app.refresh(
-            snap(
+            finished_snap(
                 vec![
                     test_entry(0, "grew", 5 * mib),
                     test_entry(1, "shrank", 2 * mib),
@@ -319,7 +319,10 @@ mod tests {
             is_dir: true,
             ..test_entry(0, "gone", 500)
         };
-        app.refresh(snap(vec![dir.clone(), test_entry(1, "kept", 10)], 1), t0);
+        app.refresh(
+            finished_snap(vec![dir.clone(), test_entry(1, "kept", 10)], 1),
+            t0,
+        );
         // The deleted directory stays in its row as a ghost until the next re-sort.
         let ghost = EntryData {
             ghost: true,
@@ -327,7 +330,7 @@ mod tests {
             is_dir: false,
             ..dir
         };
-        app.refresh(snap(vec![ghost, test_entry(1, "kept", 10)], 2), t0);
+        app.refresh(finished_snap(vec![ghost, test_entry(1, "kept", 10)], 2), t0);
         assert_eq!(app.rows.len(), 2);
         assert!(app.selected_entry().expect("selected").ghost);
 
@@ -347,12 +350,12 @@ mod tests {
         );
 
         for code in [KeyCode::Enter, KeyCode::Char('d'), KeyCode::Char('D')] {
-            assert!(app.key(key(code), t0).is_empty());
+            assert!(app.key(press(code), t0).is_empty());
             assert!(matches!(app.overlay, Overlay::None), "{code:?}");
             assert_eq!(app.target.path, PathBuf::new(), "{code:?} opened the ghost");
         }
         // A re-sort drops the ghost.
-        app.key(key(KeyCode::Char('S')), t0);
+        app.key(press(KeyCode::Char('S')), t0);
         app.reorder(t0);
         assert_eq!(app.rows.len(), 1);
     }
@@ -362,14 +365,14 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let (gone, kept) = (test_entry(0, "gone", 4 << 20), test_entry(1, "kept", 1));
-        app.refresh(snap(vec![gone.clone(), kept.clone()], 1), t0);
+        app.refresh(finished_snap(vec![gone.clone(), kept.clone()], 1), t0);
         // 4 MiB deleted beside 1 byte left: the total no longer counts the ghost.
         let ghost = EntryData {
             ghost: true,
             pseudo: true,
             ..gone
         };
-        let mut s = snap(vec![ghost, kept], 2);
+        let mut s = finished_snap(vec![ghost, kept], 2);
         s.dir_total.alloc = 1;
         app.refresh(s, t0);
         assert_eq!(app.rows.len(), 2);

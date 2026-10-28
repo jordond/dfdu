@@ -32,7 +32,7 @@ fn scan(root: &Path) -> (Vec<u8>, Totals) {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let out = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         let mut out = vec![];
@@ -64,7 +64,7 @@ fn resumed_snapshot_is_rescanned() {
     e.load(loaded.tree);
     assert_eq!(root_total(&e), before, "shown as saved");
     e.send(Command::Rescan { node });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let t = root_total(&e);
     assert_eq!(
         (t.apparent, t.alloc, t.items),
@@ -106,7 +106,7 @@ fn resumed_snapshot_is_classified() {
         },
         changed: None,
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| {
         let rules = m.rules.as_ref().expect("the rules are the model's");
         let classes: Vec<_> = m
@@ -165,7 +165,7 @@ fn resume_rescans_only_changed_directories() {
             "a/b/node_modules/dep".into(),
         ]),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let find = |m: &dfdu_engine::Model, rel: &str| {
         let mut at = m.tree.roots().next().unwrap();
         for n in rel.split('/') {
@@ -210,7 +210,7 @@ fn resume_rescans_only_changed_directories() {
     e.send(Command::Rescan { node: quiet });
     let web = e.read(|m| m.tree.node_ref(find(m, "web").unwrap()));
     e.send(Command::Rescan { node: web });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| assert!(find(m, "quiet/unseen").is_some()));
     assert_eq!(classes(&e).len(), 2);
     let t = root_total(&e);
@@ -276,7 +276,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
         path: root.clone(),
         opts: opts(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let scanned = marks(&e);
     let snap = e.read(|m| {
         let mut out = vec![];
@@ -296,7 +296,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
         opts: opts(),
         changed: Some(vec![]),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert_eq!(marks(&e), scanned);
     e.shutdown(Duration::from_secs(1));
 }
@@ -325,7 +325,7 @@ fn classify_loaded_cost() {
         },
         changed: Some(vec![]),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(600))));
+    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let n = e.read(|m| m.tree.live_nodes());
     eprintln!("{n} nodes classified in {:?}", t.elapsed());
     e.shutdown(Duration::from_secs(1));
@@ -405,7 +405,7 @@ fn btrfs_generations_tell_what_changed() {
         opts: JobOptions::default(),
         changed: Some(changed),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let resumed = root_total(&e);
     e.shutdown(Duration::from_secs(1));
     let (_, now) = scan(&root);

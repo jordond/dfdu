@@ -178,6 +178,7 @@ enum Release {
     /// Fill the Scoop, winget and AUR manifests for a published release (scripts/package-manifests.sh).
     Manifests {
         version: String,
+        /// Output directory (default target/pkg/VERSION).
         out: Option<PathBuf>,
     },
 }

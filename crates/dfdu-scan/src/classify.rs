@@ -28,7 +28,9 @@ use std::sync::Arc;
 
 use dfdu_rules::hash::FastSet as HashSet;
 use dfdu_rules::protected::State;
-use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Safety, Stat, Verdict};
+use dfdu_rules::{
+    Candidate, Hit, Inside, Reach, RuleIx, RuleSet, Safety, Stat, Verdict, rule_path,
+};
 use dfdu_tree::{Class, Kind};
 
 use crate::proto::{DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
@@ -41,7 +43,7 @@ pub struct ClassOpts {
     /// The job root's absolute path, as rules see it ([`rule_path`] of the canonical path).
     pub path: Vec<u8>,
     /// Rules decided for the directories above the job root, innermost last.
-    pub inside: Vec<u16>,
+    pub inside: Vec<RuleIx>,
     /// Whether the job root is protected.
     pub protection: State,
     /// The job root's own hits, from its parent's listing, to check against its own.
@@ -58,10 +60,10 @@ pub struct TaskClass {
     /// Where the directory's own name starts in `path`.
     name_at: usize,
     /// Rules decided for the directories above, innermost last.
-    inside: Vec<u16>,
+    inside: Vec<RuleIx>,
     protection: State,
     /// The directory's own rule, when its parent decided it.
-    decided: Option<u16>,
+    decided: Option<RuleIx>,
     /// Hits to decide on the directory's own listing, best first; empty when decided.
     chain: Vec<Hit>,
     /// Set when a hit in `chain` waits for the parent's whole listing.
@@ -175,7 +177,7 @@ fn pick(chain: &[Hit], inside: &[bool], sib: Option<&[Sib]>) -> Option<Class> {
         };
         (h.inside == Inside::Done || inside[k]).then_some(Class {
             rule: h.rule,
-            safety: safety as u8,
+            safety,
             degraded,
             flags: 0,
         })
@@ -185,7 +187,7 @@ fn pick(chain: &[Hit], inside: &[bool], sib: Option<&[Sib]>) -> Option<Class> {
 fn class_of(h: &Hit) -> Class {
     Class {
         rule: h.rule,
-        safety: h.safety as u8,
+        safety: h.safety,
         degraded: h.degraded,
         flags: 0,
     }
@@ -498,17 +500,4 @@ fn child_path(parent: &[u8], name: &[u8]) -> Vec<u8> {
     }
     p.extend_from_slice(name);
     p
-}
-
-/// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix.
-pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
-    let b = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
-    if cfg!(windows) {
-        let b = b.strip_prefix(br"\\?\").map(<[u8]>::to_vec).unwrap_or(b);
-        b.into_iter()
-            .map(|c| if c == b'\\' { b'/' } else { c })
-            .collect()
-    } else {
-        b
-    }
 }

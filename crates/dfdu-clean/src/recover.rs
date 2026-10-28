@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use dfdu_tree::Kind;
 
-use crate::journal::{ItemRec, Journal, Record, hex_path, kind_of_str, parse_line, path_of_hex};
+use crate::Mode;
+use crate::journal::{ItemRec, Journal, Record, hex_path, parse_line, path_of_hex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pending {
@@ -22,7 +23,7 @@ pub enum Pending {
     PartlyDeleted { stage: PathBuf },
     /// The session ended between the intent and the result. `at_original` says whether
     /// something is still at the item's path; with the trash, the item may be there.
-    Interrupted { mode: String, at_original: bool },
+    Interrupted { mode: Mode, at_original: bool },
     /// Interrupted on its way to the trash, and found there: it can be put back.
     Trashed,
 }
@@ -47,10 +48,11 @@ impl Unfinished {
                 format!("{p}: partly deleted, the rest is at {}", stage.display())
             }
             Pending::Interrupted { mode, at_original } => format!(
-                "{p}: interrupted ({mode}); {}",
+                "{p}: interrupted ({}); {}",
+                mode.journal_name(),
                 if *at_original {
                     "something is still at its path"
-                } else if mode == "trash" {
+                } else if *mode == Mode::Trash {
                     "it is no longer at its path, and was not found in the trash"
                 } else {
                     "it is no longer at its path"
@@ -154,10 +156,9 @@ impl Recovery {
                         e.1 = e.2.clone().map(|stage| Pending::PartlyDeleted { stage });
                     }
                 }
-                Record::Failed { item, .. } | Record::CommitDone { item } => {
-                    open.remove(&key(&item));
-                }
-                Record::Restored { item, .. } => {
+                Record::Failed { item, .. }
+                | Record::CommitDone { item }
+                | Record::Restored { item, .. } => {
                     open.remove(&key(&item));
                 }
             }
@@ -182,7 +183,7 @@ impl Recovery {
                 let mut state = state?;
                 // Interrupted while staging: the rename either happened or it did not.
                 if let (Pending::Interrupted { mode, .. }, Some(s)) = (&state, &stage)
-                    && mode == "stage"
+                    && *mode == Mode::Stage
                     && fs::symlink_metadata(s).is_ok()
                 {
                     state = Pending::Staged { stage: s.clone() };
@@ -192,16 +193,16 @@ impl Recovery {
                     mode,
                     at_original: false,
                 } = &state
-                    && mode == "trash"
+                    && *mode == Mode::Trash
                     && let Some(path) = path_of_hex(&rec.path_hex)
-                    && crate::stage::in_trash(&path, &identity(&rec), started) == Ok(true)
+                    && crate::stage::in_trash(&path, &identity(&rec), started).is_ok_and(|t| t)
                 {
                     state = Pending::Trashed;
                 }
                 Some(Unfinished {
                     journal: path.clone(),
                     path: path_of_hex(&rec.path_hex)?,
-                    kind: kind_of_str(&rec.kind),
+                    kind: rec.kind,
                     state,
                     session,
                     rec,
@@ -218,25 +219,28 @@ impl Recovery {
         Ok(())
     }
 
-    fn checked(&self, i: usize) -> Result<&Unfinished, String> {
-        let u = self.items.get(i).ok_or("no such item")?;
+    fn checked(&self, i: usize) -> io::Result<&Unfinished> {
+        let u = self.items.get(i).ok_or_else(|| refused("no such item"))?;
         if self.sessions[u.session].damaged {
-            return Err(format!(
-                "{} is damaged; nothing is done from it",
-                u.journal.display()
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} is damaged; nothing is done from it",
+                    u.journal.display()
+                ),
             ));
         }
         Ok(u)
     }
 
     /// Deletes what is left of a staged item.
-    pub fn finish(&mut self, i: usize) -> Result<(), String> {
+    pub fn finish(&mut self, i: usize) -> io::Result<()> {
         let u = self.checked(i)?.clone();
         let stage = match &u.state {
             Pending::Staged { stage } | Pending::PartlyDeleted { stage } => stage,
-            Pending::Interrupted { .. } => return Err("not staged; nothing to finish".into()),
+            Pending::Interrupted { .. } => return Err(refused("not staged; nothing to finish")),
             Pending::Trashed => {
-                return Err("it is in the trash: empty the trash to delete it".into());
+                return Err(refused("it is in the trash: empty the trash to delete it"));
             }
         };
         let j = &mut self.sessions[u.session].journal;
@@ -251,7 +255,12 @@ impl Recovery {
         match crate::remove(stage, u.kind) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", stage.display())),
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", stage.display()),
+                ));
+            }
         }
         record(
             j,
@@ -268,10 +277,10 @@ impl Recovery {
 
     /// Closes an interrupted item in its journal, once the user has seen what is at its path
     /// (or in the trash): nothing is done on disk.
-    pub fn dismiss(&mut self, i: usize) -> Result<(), String> {
+    pub fn dismiss(&mut self, i: usize) -> io::Result<()> {
         let u = self.checked(i)?.clone();
         if !matches!(u.state, Pending::Interrupted { .. } | Pending::Trashed) {
-            return Err("staged; finish or restore it instead".into());
+            return Err(refused("staged; finish or restore it instead"));
         }
         record(
             &mut self.sessions[u.session].journal,
@@ -287,7 +296,7 @@ impl Recovery {
     /// Puts an item found in the trash back at its path (refused if something is there now).
     /// Puts a staged item back at its path, or next to it as `<name>.restored-<n>` if
     /// something is there now. Refused for a partly deleted item.
-    pub fn restore(&mut self, i: usize) -> Result<PathBuf, String> {
+    pub fn restore(&mut self, i: usize) -> io::Result<PathBuf> {
         let u = self.checked(i)?.clone();
         if u.state == Pending::Trashed {
             let started = self.sessions[u.session].started;
@@ -303,14 +312,14 @@ impl Recovery {
             return Ok(to);
         }
         let Pending::Staged { stage } = &u.state else {
-            return Err(match u.state {
+            return Err(refused(match u.state {
                 Pending::PartlyDeleted { .. } => {
-                    "partly deleted; it can only be finished, not restored".into()
+                    "partly deleted; it can only be finished, not restored"
                 }
-                _ => "not staged; nothing to restore".into(),
-            });
+                _ => "not staged; nothing to restore",
+            }));
         };
-        let to = crate::stage::put_back(stage, &u.path).map_err(|e| e.to_string())?;
+        let to = crate::stage::put_back(stage, &u.path)?;
         record(
             &mut self.sessions[u.session].journal,
             Record::Restored {
@@ -331,14 +340,19 @@ fn identity(rec: &ItemRec) -> crate::Identity {
     crate::Identity {
         dev: rec.dev,
         ino: rec.ino,
-        kind: kind_of_str(&rec.kind),
+        kind: rec.kind,
         apparent: rec.size,
         mtime: rec.mtime,
     }
 }
 
-fn record(j: &mut Journal, rec: Record) -> Result<(), String> {
+/// An action the item's state does not allow.
+fn refused(why: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, why)
+}
+
+fn record(j: &mut Journal, rec: Record) -> io::Result<()> {
     j.write(rec)
         .and_then(|()| j.sync())
-        .map_err(|e| format!("journal: {e}"))
+        .map_err(|e| io::Error::new(e.kind(), format!("journal: {e}")))
 }

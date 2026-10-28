@@ -337,12 +337,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     app.list_height = height.saturating_sub(1);
     let Some(run) = app.dupes.run.clone() else {
         let msg = " duplicates: not compared yet (r compares the files of the scan)";
-        f.render_widget(Paragraph::new(Line::styled(msg, t.dim)), area);
+        f.render_widget(Paragraph::new(Line::styled(msg, t.fg_dim)), area);
         return;
     };
     let Some(found) = run.result.get() else {
         f.render_widget(
-            Paragraph::new(Line::styled(progress_line(&run.progress), t.dim)),
+            Paragraph::new(Line::styled(progress_line(&run.progress), t.fg_dim)),
             area,
         );
         return;
@@ -369,7 +369,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     if found.skipped > 0 {
         summary += &format!(" · {} skipped", count(found.skipped));
     }
-    let mut lines = vec![Line::styled(summary, t.dim)];
+    let mut lines = vec![Line::styled(summary, t.fg_dim)];
     if rows.is_empty() {
         lines.push(Line::raw(" no duplicates"));
     }
@@ -394,7 +394,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 };
                 Line::from(vec![
                     Span::styled(format!(" {n} copies of {}", human(gr.size)), t.title),
-                    Span::styled(format!(" · {free}"), t.dim),
+                    Span::styled(format!(" · {free}"), t.fg_dim),
                 ])
             }
             Row::File(g, j) => {
@@ -413,12 +413,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 Line::from(vec![
                     Span::styled(format!("   {mark} "), t.key),
                     Span::raw(path),
-                    Span::styled(format!("  {date}"), t.dim),
+                    Span::styled(format!("  {date}"), t.fg_dim),
                 ])
             }
         };
         if i == cursor {
-            line = line.style(t.selected);
+            line = line.style(t.cursor);
         }
         lines.push(line);
     }
@@ -436,7 +436,7 @@ mod tests {
 
     use super::*;
     use crate::snapshot;
-    use crate::tests::{key, render};
+    use crate::tests::{press, render};
     use crate::theme::Theme;
 
     #[test]
@@ -462,7 +462,7 @@ mod tests {
             path: dir.clone(),
             opts: JobOptions::default(),
         });
-        assert!(engine.wait_idle(Some(Duration::from_secs(20))));
+        assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut target = Target::root();
@@ -470,7 +470,7 @@ mod tests {
         app.target = target;
         app.refresh(snap, t0);
 
-        let fx = app.key(key(KeyCode::Char('4')), t0);
+        let fx = app.key(press(KeyCode::Char('4')), t0);
         assert!(matches!(fx[..], [Effect::FindDupes]));
         let (root, cands) = engine.read(|m| {
             let r = m.tree.roots().next().unwrap();
@@ -497,13 +497,13 @@ mod tests {
         assert!(out.contains("photos/old/a copy.jpg"), "{out}");
         assert!(!out.contains("other.jpg"), "{out}");
         // `a` marks every copy but the oldest.
-        app.key(key(KeyCode::Char('a')), t0);
+        app.key(press(KeyCode::Char('a')), t0);
         assert_eq!(app.marks.items().len(), 2);
-        app.key(key(KeyCode::Char('a')), t0);
+        app.key(press(KeyCode::Char('a')), t0);
         assert_eq!(app.marks.items().len(), 2);
         // Space on the group unmarks its copies again.
         app.dupes.cursor = 0;
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.marks.is_empty());
         // A deleted file leaves the group; two left still make one.
         let gone = found(&app).unwrap().groups[0].files[0].path.clone();

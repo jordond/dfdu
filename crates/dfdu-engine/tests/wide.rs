@@ -8,8 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::{Backend, DirStream, FsClass, JobOptions, Limits, PortableBackend, Raw};
-use dfdu_tree::{Meta, Subvol, Totals};
+use dfdu_scan::{Backend, DirStream, Forward, JobOptions, Limits, PortableBackend, Raw};
+use dfdu_tree::Totals;
 
 /// Each block read takes 2 ms longer, so chunk tasks finish (and return the directory's credit)
 /// while the listing still reads, on any OS. At full speed the listing can read the whole
@@ -34,33 +34,15 @@ impl<S: DirStream> DirStream for SlowStream<S> {
     }
 }
 
-impl<B: Backend> Backend for SlowReads<B> {
-    type Loc = B::Loc;
+impl<B: Backend> Forward for SlowReads<B> {
+    type Inner = B;
     type Stream = SlowStream<B::Stream>;
 
-    fn loc_from_path(&self, path: &Path) -> B::Loc {
-        self.0.loc_from_path(path)
-    }
-    fn stat_root(&self, loc: &B::Loc) -> io::Result<Meta> {
-        self.0.stat_root(loc)
+    fn inner(&self) -> &B {
+        &self.0
     }
     fn open(&self, loc: &B::Loc, storage: dfdu_sys::Storage) -> io::Result<Self::Stream> {
         self.0.open(loc, storage).map(SlowStream)
-    }
-    fn subvolume(&self, loc: &B::Loc) -> io::Result<Option<Subvol>> {
-        self.0.subvolume(loc)
-    }
-    fn shares_extents(&self, loc: &B::Loc) -> bool {
-        self.0.shares_extents(loc)
-    }
-    fn data_profile(&self, loc: &B::Loc) -> Option<(&'static str, f64)> {
-        self.0.data_profile(loc)
-    }
-    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
-        self.0.duplicate_mounts(scope)
-    }
-    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
-        self.0.mount_class(mount, dev)
     }
 }
 
@@ -141,7 +123,7 @@ fn scan<B: Backend>(backend: B, root: &Path) -> (Totals, u64) {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(60))));
+    assert!(e.wait_idle(Some(Duration::from_secs(60))).is_idle());
     let out = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         assert!(m.status.stats.corrupt + m.status.stats.lost + m.status.stats.duplicate == 0);

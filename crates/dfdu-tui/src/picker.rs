@@ -85,7 +85,7 @@ pub fn draw(f: &mut Frame, p: &Picker, t: &Theme) {
                     " {:<24} {:<8} {:>10} {:>10} {:>10}",
                     "mounted on", "type", "size", "used", "free"
                 ),
-                t.dim,
+                t.fg_dim,
             ),
         ]),
         header,
@@ -103,7 +103,7 @@ pub fn draw(f: &mut Frame, p: &Picker, t: &Theme) {
         .collect();
     if lines.is_empty() {
         f.render_widget(
-            Paragraph::new(Line::styled(" No disks found.", t.dim)),
+            Paragraph::new(Line::styled(" No disks found.", t.fg_dim)),
             list,
         );
     } else {
@@ -111,12 +111,12 @@ pub fn draw(f: &mut Frame, p: &Picker, t: &Theme) {
     }
     if let Some(s) = &p.status {
         f.render_widget(
-            Paragraph::new(Line::styled(format!(" {s}"), t.warn)),
+            Paragraph::new(Line::styled(format!(" {s}"), t.status_warn)),
             status,
         );
     }
     f.render_widget(
-        Paragraph::new(Line::styled(" ↑↓ move  Enter scan  q quit", t.dim)),
+        Paragraph::new(Line::styled(" ↑↓ move  Enter scan  q quit", t.fg_dim)),
         footer,
     );
 }
@@ -127,7 +127,7 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
         let skip = name.chars().count() - 23;
         name = format!("…{}", name.chars().skip(skip).collect::<String>());
     }
-    let style = if selected { t.selected } else { t.dir };
+    let style = if selected { t.cursor } else { t.dir };
     let mut spans = vec![
         Span::styled(format!(" {name:<24}"), style),
         Span::raw(format!(" {:<8}", d.fstype)),
@@ -143,20 +143,20 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
             let frac = s.used as f64 / s.total.max(1) as f64;
             if bw > 0 {
                 spans.push(Span::raw("  "));
-                spans.push(Span::styled(bar(frac, bw), t.bar));
+                spans.push(Span::styled(bar(frac, bw), t.bar_fill));
             }
             spans.push(Span::raw(format!("  {:>3.0}%", frac * 100.0)));
         }
-        None => spans.push(Span::styled("  not responding", t.warn)),
+        None => spans.push(Span::styled("  not responding", t.status_warn)),
     }
     if d.class == FsClass::Network {
-        spans.push(Span::styled("  network", t.dim));
+        spans.push(Span::styled("  network", t.fg_dim));
     }
     if !d.also_at.is_empty() {
         let also: Vec<String> = d.also_at.iter().map(|p| p.display().to_string()).collect();
         spans.push(Span::styled(
             format!("  also at {}", also.join(", ")),
-            t.dim,
+            t.fg_dim,
         ));
     }
     Line::from(spans)

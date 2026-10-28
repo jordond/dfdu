@@ -122,8 +122,8 @@ pub fn toggle(app: &mut App) {
         app.status = Some("only entries can be marked".into());
         return;
     }
-    if e.is_dir && crate::types::active(app) {
-        app.status = Some(crate::types::NO_FOLDERS.into());
+    if e.is_dir && crate::type_filter::active(app) {
+        app.status = Some(crate::type_filter::NO_FOLDERS.into());
         return;
     }
     let path = app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name));
@@ -321,15 +321,16 @@ mod tests {
 
     use dfdu_engine::{Command, Engine, EngineOptions};
     use dfdu_scan::{JobOptions, PortableBackend};
-    use dfdu_tree::{Kind, Meta, Totals};
+    use dfdu_tree::{Kind, Totals};
     use ratatui::crossterm::event::KeyCode;
     use ratatui::style::Color;
 
     use super::*;
     use crate::app::Effect;
-    use crate::app::tests::snap;
     use crate::snapshot::{self, Snapshot, test_entry};
-    use crate::tests::{key, render, render_buffer, style_at, styled, text};
+    use crate::tests::{
+        meta, press, render, render_buffer, snap_without_totals, style_at, styled, text,
+    };
     use crate::theme::Theme;
 
     /// Reads the model as the run loop does for a frame with a new snapshot.
@@ -361,19 +362,6 @@ mod tests {
             .lines()
             .find(|l| l.contains(name))
             .unwrap_or_else(|| panic!("{name} missing:\n{frame}"))
-    }
-
-    fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-        Meta {
-            kind,
-            apparent: size,
-            alloc: size,
-            mtime: 0,
-            dev: 1,
-            ino,
-            nlink: 1,
-            mount: 0,
-        }
     }
 
     fn add_dir(m: &mut Model, parent: Ix, name: &str, ino: u64) -> Ix {
@@ -433,22 +421,22 @@ mod tests {
             path: root.to_path_buf(),
             opts: JobOptions::default(),
         });
-        assert!(e.wait_idle(Some(Duration::from_secs(20))));
+        assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     }
 
     /// Confirms a permanent delete of what the dialog targets and lets the engine carry it out.
     fn delete_permanently(app: &mut App, e: &Engine<PortableBackend>, t: Instant) {
-        app.key(key(KeyCode::Char('D')), t);
+        app.key(press(KeyCode::Char('D')), t);
         for c in "delete".chars() {
-            app.key(key(KeyCode::Char(c)), t);
+            app.key(press(KeyCode::Char(c)), t);
         }
-        for fx in app.key(key(KeyCode::Enter), t) {
+        for fx in app.key(press(KeyCode::Enter), t) {
             let Effect::Send(cmd) = fx else {
                 panic!("expected a command");
             };
             e.send(cmd);
         }
-        assert!(e.wait_idle(Some(Duration::from_secs(20))));
+        assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     }
 
     #[test]
@@ -460,13 +448,13 @@ mod tests {
             test_entry(1, "b", 2000),
             test_entry(2, "c", 1000),
         ];
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
         assert_eq!(summary_text(&app), None);
         assert!(!stale(&app));
-        assert!(app.key(key(KeyCode::Char(' ')), t0).is_empty());
+        assert!(app.key(press(KeyCode::Char(' ')), t0).is_empty());
         assert!(stale(&app), "a new mark needs a read");
         assert_eq!(app.selected_index(), Some(1));
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert_eq!(app.selected_index(), Some(2));
         assert_eq!(
             summary_text(&app),
@@ -475,11 +463,11 @@ mod tests {
         assert!(gutter(&app, &es[0]).content == "●");
         assert!(gutter(&app, &es[2]).content == " ");
         // On the last row the cursor stays; a second Space unmarks.
-        app.key(key(KeyCode::Char(' ')), t0);
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert_eq!(app.selected_index(), Some(2));
-        app.key(key(KeyCode::Char('g')), t0);
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char('g')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert_eq!(
             summary_text(&app),
             Some(format!("● 1 marked ({})", human(2000)))
@@ -501,18 +489,21 @@ mod tests {
         };
         let gone = test_entry(2, "gone", 4000);
         let a = test_entry(0, "a", 10);
-        app.refresh(snap(vec![shared.clone(), gone.clone(), a.clone()], 1), t0);
+        app.refresh(
+            snap_without_totals(vec![shared.clone(), gone.clone(), a.clone()], 1),
+            t0,
+        );
         // A deleted entry stays in its row until the next re-sort.
         let ghost = EntryData {
             pseudo: true,
             ghost: true,
             ..gone
         };
-        app.refresh(snap(vec![shared.clone(), ghost, a], 2), t0);
+        app.refresh(snap_without_totals(vec![shared.clone(), ghost, a], 2), t0);
         assert!(app.snap.entries[app.rows[1]].ghost);
         for row in 0..2 {
             app.move_to(row);
-            app.key(key(KeyCode::Char(' ')), t0);
+            app.key(press(KeyCode::Char(' ')), t0);
             assert!(app.marks.is_empty());
             assert_eq!(app.selected_index(), Some(row), "the cursor stays");
             assert_eq!(app.status.as_deref(), Some("only entries can be marked"));
@@ -535,12 +526,12 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t);
         e.read(|m| sync(&mut app, m, t));
         select(&mut app, "sub");
-        app.key(key(KeyCode::Enter), t);
+        app.key(press(KeyCode::Enter), t);
         e.read(|m| sync(&mut app, m, t));
         select(&mut app, "inner");
-        app.key(key(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char(' ')), t);
         let old = app.marks.items()[0].target.node;
-        app.key(key(KeyCode::Left), t);
+        app.key(press(KeyCode::Left), t);
         e.read(|m| sync(&mut app, m, t));
         assert!(!stale(&app));
         let out = render(&mut app, t, 90, 8);
@@ -548,7 +539,7 @@ mod tests {
         assert!(line(&out, "1 marked").contains("● 1 marked"), "{out}");
 
         select(&mut app, "sub");
-        app.key(key(KeyCode::Enter), t);
+        app.key(press(KeyCode::Enter), t);
         e.read(|m| sync(&mut app, m, t));
         let out = render(&mut app, t, 90, 8);
         assert!(line(&out, "inner/").starts_with('●'), "{out}");
@@ -558,7 +549,7 @@ mod tests {
         e.send(Command::Rescan {
             node: app.snap.dir_node.expect("sub"),
         });
-        assert!(e.wait_idle(Some(Duration::from_secs(20))));
+        assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
         e.read(|m| sync(&mut app, m, t));
         let inner = app
             .snap
@@ -590,13 +581,13 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t);
         sync(&mut app, &m, t);
         select(&mut app, "a");
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Up), t);
-        app.key(key(KeyCode::Enter), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Up), t);
+        app.key(press(KeyCode::Enter), t);
         sync(&mut app, &m, t);
         select(&mut app, "b");
-        app.key(key(KeyCode::Char(' ')), t);
-        app.key(key(KeyCode::Left), t);
+        app.key(press(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Left), t);
         sync(&mut app, &m, t);
         let a_total = m.tree.total(a).alloc;
         assert_eq!(app.marks.total(), (a_total, false));
@@ -608,25 +599,25 @@ mod tests {
         let mut app2 = App::new(Theme::no_color(), t);
         sync(&mut app2, &m, t);
         select(&mut app2, "a");
-        app2.key(key(KeyCode::Enter), t);
+        app2.key(press(KeyCode::Enter), t);
         sync(&mut app2, &m, t);
         select(&mut app2, "b");
-        app2.key(key(KeyCode::Char(' ')), t);
-        app2.key(key(KeyCode::Left), t);
+        app2.key(press(KeyCode::Char(' ')), t);
+        app2.key(press(KeyCode::Left), t);
         sync(&mut app2, &m, t);
         select(&mut app2, "a");
-        app2.key(key(KeyCode::Char(' ')), t);
+        app2.key(press(KeyCode::Char(' ')), t);
         sync(&mut app2, &m, t);
         assert_eq!(app2.marks.total(), (a_total, false));
 
-        app.key(key(KeyCode::Char('d')), t);
+        app.key(press(KeyCode::Char('d')), t);
         let out = render(&mut app, t, 100, 20);
         assert!(out.contains("Move a/ to the Trash?"), "{out}");
         assert!(
             line(&out, "a/b").contains("inside another marked item"),
             "{out}"
         );
-        let fx = app.key(key(KeyCode::Char('y')), t);
+        let fx = app.key(press(KeyCode::Char('y')), t);
         let a_ref = m.tree.node_ref(a);
         assert!(
             matches!(fx.as_slice(), [Effect::Send(Command::Delete { items, .. })] if items == &[a_ref]),
@@ -644,7 +635,7 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t);
         sync(&mut app, &m, t);
         select(&mut app, "big");
-        app.key(key(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char(' ')), t);
         assert!(stale(&app));
         sync(&mut app, &m, t);
         assert!(!stale(&app), "a read takes the new mark in");
@@ -685,7 +676,7 @@ mod tests {
         e.read(|m| sync(&mut app, m, t));
         for name in ["junk", "file.bin"] {
             select(&mut app, name);
-            app.key(key(KeyCode::Char(' ')), t);
+            app.key(press(KeyCode::Char(' ')), t);
         }
         e.read(|m| sync(&mut app, m, t));
         assert_eq!(app.marks.items().len(), 2);
@@ -722,7 +713,7 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t);
         e.read(|m| sync(&mut app, m, t));
         select(&mut app, "junk");
-        app.key(key(KeyCode::Char(' ')), t);
+        app.key(press(KeyCode::Char(' ')), t);
         delete_permanently(&mut app, &e, t);
         e.read(|m| sync(&mut app, m, t));
         e.shutdown(Duration::from_millis(200));
@@ -855,9 +846,9 @@ mod tests {
             },
             t0,
         );
-        app.key(key(KeyCode::Char(' ')), t0);
-        app.key(key(KeyCode::Down), t0);
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Down), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         render_buffer(&mut app, t0 + Duration::from_secs(14), 100, 10)
     }
 

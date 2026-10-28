@@ -1,5 +1,5 @@
 mod bars;
-mod colour;
+mod color;
 mod markers;
 mod placeholders;
 
@@ -28,8 +28,8 @@ fn dark(level: ColorLevel) -> Theme {
 }
 
 /// A snapshot of `/r` while it is scanned, with the entries' sizes as its total.
-fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
-    let mut s = crate::app::tests::snap(entries, version);
+fn snap_with_alloc(entries: Vec<EntryData>, version: u64) -> Snapshot {
+    let mut s = crate::tests::snap_without_totals(entries, version);
     s.dir_total.alloc = s.entries.iter().map(|e| e.size).sum();
     s
 }
@@ -76,7 +76,7 @@ fn resort_fixture(app: &mut App, t0: Instant) -> Vec<EntryData> {
         test_entry(1, "b", 200),
         test_entry(2, "c", 100),
     ];
-    app.refresh(snap(es.clone(), 1), t0);
+    app.refresh(snap_with_alloc(es.clone(), 1), t0);
     render_buffer(app, t0, W, H);
     es[2].size = 1000;
     es

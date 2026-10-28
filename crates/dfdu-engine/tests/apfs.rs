@@ -67,7 +67,7 @@ fn clones_count_once() {
         path: root.clone(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     e.read(|m| {
         let t = &m.tree;
         let r = t.roots().next().unwrap();

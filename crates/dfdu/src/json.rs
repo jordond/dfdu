@@ -90,8 +90,7 @@ pub fn class(m: &Model, c: Class) -> Value {
         o.insert("rule".into(), r.id.clone().into());
         o.insert("category".into(), r.category().id.into());
     }
-    let safety = dfdu_rules::Safety::ALL.get(c.safety as usize);
-    o.insert("safety".into(), safety.map_or("?", |s| s.as_str()).into());
+    o.insert("safety".into(), c.safety.as_str().into());
     Value::Object(o)
 }
 
@@ -167,7 +166,7 @@ fn subtree(
 }
 
 /// Every entry that could not be read.
-fn errors(m: &Model, root: Ix) -> Vec<Value> {
+fn errors(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
     let list = dfdu_tui::errors(&m.tree, root, usize::MAX);
     list.items
         .iter()
@@ -176,13 +175,13 @@ fn errors(m: &Model, root: Ix) -> Vec<Value> {
             put_path(&mut o, "path", &e.path);
             o.insert("dir".into(), e.is_dir.into());
             o.insert("problem".into(), e.problem.clone().into());
-            Value::Object(o)
+            o
         })
         .collect()
 }
 
 /// Directories not descended into, with the reason.
-fn skipped(m: &Model, root: Ix) -> Vec<Value> {
+fn skipped(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
     let t = &m.tree;
     let mut out = vec![];
     let mut stack = vec![root];
@@ -205,7 +204,7 @@ fn skipped(m: &Model, root: Ix) -> Vec<Value> {
                 let mut o = Map::new();
                 put_path(&mut o, "path", &t.path_buf(ix));
                 o.insert("reason".into(), r.into());
-                out.push(Value::Object(o));
+                out.push(o);
             }
             None => stack.extend(t.children(ix)),
         }
@@ -286,11 +285,9 @@ pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::R
         }
     }
     for e in errors(m, root) {
-        let Value::Object(e) = e else { unreachable!() };
         line(w, "error", e)?;
     }
     for s in skipped(m, root) {
-        let Value::Object(s) = s else { unreachable!() };
         line(w, "skipped", s)?;
     }
     let mut s = Map::new();

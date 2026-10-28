@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use dfdu_engine::{Command, Engine, EngineOptions};
+use dfdu_engine::{Command, Engine, EngineOptions, WaitIdle};
 use dfdu_scan::{JobOptions, PortableBackend};
 
 #[test]
@@ -23,8 +23,11 @@ fn applier_panic_is_fatal_and_reported() {
         opts: JobOptions::default(),
     });
     e.send(Command::InjectPanic);
-    // wait_idle must return (false) instead of waiting for a job that will never finish.
-    assert!(!e.wait_idle(Some(Duration::from_secs(10))) || e.read(|m| m.status.fatal.is_some()));
+    // wait_idle must return the fatal error instead of waiting for a job that will never finish.
+    assert!(matches!(
+        e.wait_idle(Some(Duration::from_secs(10))),
+        WaitIdle::Fatal(_)
+    ));
     let fatal = e.read(|m| m.status.fatal.clone()).expect("fatal is set");
     assert!(fatal.contains("injected applier panic"), "{fatal}");
     let reports: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();

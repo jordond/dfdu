@@ -775,11 +775,6 @@ pub fn data_profile(fd: impl AsFd) -> io::Result<(Profile, u64)> {
     Ok((profile, fs_info(fd.as_fd())?.num_devices))
 }
 
-/// Whether this process may do what root may: delete read-only snapshots, read extent trees.
-pub fn is_privileged() -> bool {
-    rustix::process::geteuid().is_root()
-}
-
 /// The mount table of this process's mount namespace.
 pub fn mount_table() -> io::Result<Vec<crate::MountEntry>> {
     Ok(crate::parse_mountinfo(&std::fs::read(

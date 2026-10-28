@@ -14,7 +14,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use crate::app::{App, Effect, Overlay};
 use crate::snapshot::{self, Target};
-use crate::tests::{key, render};
+use crate::tests::{press, render};
 use crate::theme::{Theme, human};
 
 /// Tests run one at a time: one adds and removes a directory in the shared fixture.
@@ -38,7 +38,7 @@ fn scan(root: &Path, journal: &Path) -> Engine<NativeBackend> {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     e
 }
 
@@ -69,7 +69,7 @@ fn select(app: &mut App, name: &str, t: Instant) {
         {
             return;
         }
-        app.key(key(KeyCode::Down), t);
+        app.key(press(KeyCode::Down), t);
     }
     panic!("{name} not in the list");
 }
@@ -140,7 +140,7 @@ fn data_used_outside_the_scan_may_free_less() {
         "{out}"
     );
     select(&mut app, "a.bin", t);
-    app.key(key(KeyCode::Char('D')), t);
+    app.key(press(KeyCode::Char('D')), t);
     assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
     let dialog = render(&mut app, t, 160, 24);
     let want = format!(
@@ -149,9 +149,9 @@ fn data_used_outside_the_scan_may_free_less() {
     );
     assert!(dialog.contains(&want), "{dialog}");
     // A file that only this snapshot has frees all of it.
-    app.key(key(KeyCode::Esc), t);
+    app.key(press(KeyCode::Esc), t);
     select(&mut app, "only-here.bin", t);
-    app.key(key(KeyCode::Char('D')), t);
+    app.key(press(KeyCode::Char('D')), t);
     let dialog = render(&mut app, t, 160, 24);
     assert!(!dialog.contains("May free less"), "{dialog}");
     e.shutdown(Duration::from_secs(1));
@@ -171,16 +171,16 @@ fn delete_on_btrfs_notes_when_space_is_freed() {
     let mut app = App::new(Theme::no_color(), t);
     show(&e, &mut app, &w, t);
     select(&mut app, "junk", t);
-    app.key(key(KeyCode::Char('D')), t);
+    app.key(press(KeyCode::Char('D')), t);
     for c in "delete".chars() {
-        app.key(key(KeyCode::Char(c)), t);
+        app.key(press(KeyCode::Char(c)), t);
     }
-    let fx = app.key(key(KeyCode::Enter), t);
+    let fx = app.key(press(KeyCode::Enter), t);
     let [Effect::Send(cmd)] = <[Effect; 1]>::try_from(fx).expect("one effect") else {
         panic!("expected a delete command");
     };
     e.send(cmd);
-    assert!(e.wait_idle(Some(Duration::from_secs(30))));
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let out = show(&e, &mut app, &w, t);
     e.shutdown(Duration::from_secs(1));
     let gone = !w.join("junk").exists();

@@ -17,7 +17,7 @@ use std::borrow::Cow;
 use crate::hash::{FastMap, FastSet};
 use crate::protected::{self, Protected};
 use crate::vars::Env;
-use crate::{Glob, Kind, Rule, Safety, glob};
+use crate::{Glob, Kind, Rule, RuleIx, Safety, glob};
 
 /// An entry to classify: its directory's path (absolute, `/`-separated), its name, and the
 /// rest of the listing.
@@ -28,7 +28,7 @@ pub struct Candidate<'a> {
     /// True when the listing of `parent` has an entry with this name.
     pub sibling: &'a dyn Fn(&[u8]) -> bool,
     /// Rules matched by the directories above, innermost last.
-    pub inside: &'a [u16],
+    pub inside: &'a [RuleIx],
     /// Whether the directory is protected (from its own [`Verdict::Protected`]).
     pub protection: protected::State,
     /// `sibling` knows only part of the listing (a wide directory read in several blocks), so
@@ -65,8 +65,7 @@ pub enum Inside {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Hit {
-    /// Index into [`RuleSet::rules`].
-    pub rule: u16,
+    pub rule: RuleIx,
     /// The rule's safety, lowered by a `degrade` condition that holds.
     pub safety: Safety,
     /// The index of that condition in the rule's `degrade`.
@@ -94,14 +93,14 @@ pub struct RuleSet {
     rules: Vec<Rule>,
     /// Rules matched by name only, with a literal name pattern, by that name (lower case when
     /// names fold case).
-    by_name: FastMap<Vec<u8>, Vec<u16>>,
+    by_name: FastMap<Vec<u8>, Vec<RuleIx>>,
     /// Rules matched by name only, with a wildcard name pattern.
-    name_globs: Vec<u16>,
+    name_globs: Vec<RuleIx>,
     /// Some rule matched by name only can match a file; otherwise files skip the name rules.
     file_names: bool,
     /// Every path pattern of every rule, with its rule. Rules with names too are tried only in
     /// directories where one of their path patterns can match.
-    paths: Vec<(u16, Glob)>,
+    paths: Vec<(RuleIx, Glob)>,
     protected: Protected,
     fold: bool,
     /// Every sibling name a rule asks about without a variable in it, and the text after the
@@ -199,11 +198,11 @@ pub(crate) fn may_match_below(g: &Glob, dir: &[u8], depth: usize, fold: bool) ->
 impl RuleSet {
     pub fn new(rules: Vec<Rule>, env: &Env) -> RuleSet {
         let fold = glob::platform_folds_case(env.platform);
-        let mut by_name: FastMap<Vec<u8>, Vec<u16>> = FastMap::default();
+        let mut by_name: FastMap<Vec<u8>, Vec<RuleIx>> = FastMap::default();
         let mut name_globs = Vec::new();
         let mut paths = Vec::new();
         for (i, r) in rules.iter().enumerate() {
-            let i = i as u16;
+            let i = RuleIx(i as u16);
             for g in &r.paths {
                 paths.push((i, g.clone()));
             }
@@ -274,7 +273,7 @@ impl RuleSet {
 
     /// The names [`RuleSet::check_inside`] asks about for rule `i` and the entry named `name`:
     /// its `child` names and required marker files.
-    pub fn inside_names(&self, i: u16, name: &[u8]) -> Vec<Vec<u8>> {
+    pub fn inside_names(&self, i: RuleIx, name: &[u8]) -> Vec<Vec<u8>> {
         let r = self.rule(i);
         let mut v: Vec<Vec<u8>> = Vec::new();
         let names = r.child.iter().flatten().map(|n| fill(n, name).into_owned());
@@ -308,12 +307,18 @@ impl RuleSet {
         h
     }
 
-    pub fn rule(&self, i: u16) -> &Rule {
-        &self.rules[i as usize]
+    pub fn rule(&self, i: RuleIx) -> &Rule {
+        &self.rules[usize::from(i.0)]
     }
 
     pub fn get(&self, id: &str) -> Option<&Rule> {
         self.rules.iter().find(|r| r.id == id)
+    }
+
+    /// The index of the rule with this id.
+    pub fn index(&self, id: &str) -> Option<RuleIx> {
+        let i = self.rules.iter().position(|r| r.id == id)?;
+        Some(RuleIx(i as u16))
     }
 
     pub fn protected(&self) -> &Protected {
@@ -364,7 +369,7 @@ impl RuleSet {
     }
 
     /// The checks after the prefilter, on what the listing shows.
-    fn check(&self, i: u16, c: &Candidate, path: &dyn Fn() -> Vec<u8>) -> Option<Hit> {
+    fn check(&self, i: RuleIx, c: &Candidate, path: &dyn Fn() -> Vec<u8>) -> Option<Hit> {
         let r = self.rule(i);
         if !self.fits(r, c) || (r.top_most && c.inside.contains(&i)) {
             return None;
@@ -426,7 +431,7 @@ impl RuleSet {
     /// missing, otherwise the safety and the `degrade` condition that holds.
     pub fn siblings(
         &self,
-        i: u16,
+        i: RuleIx,
         name: &[u8],
         sibling: &dyn Fn(&[u8]) -> bool,
     ) -> Option<(Safety, Option<u16>)> {
@@ -450,7 +455,7 @@ impl RuleSet {
     /// of a file in it, `empty` whether the listing had no entries at all.
     pub fn check_inside(
         &self,
-        i: u16,
+        i: RuleIx,
         name: &[u8],
         child: &dyn Fn(&[u8]) -> bool,
         marker: ReadMarker,
@@ -496,7 +501,7 @@ impl Dir<'_> {
         if c.inside.iter().any(|&r| set.rule(r).stop_descent) {
             return Verdict::None;
         }
-        let mut found: Vec<u16> = Vec::new();
+        let mut found: Vec<RuleIx> = Vec::new();
         if c.is_dir || set.file_names {
             let rules = if set.fold && c.name.iter().any(u8::is_ascii_uppercase) {
                 set.by_name.get(&c.name.to_ascii_lowercase())

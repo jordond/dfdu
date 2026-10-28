@@ -2,9 +2,10 @@
 //! a [`snapshot::Snapshot`] and the features' `extras::Extras`, then draws from the copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
-//! `view`. Each feature has its own module with its state, keys and drawing: the overlays
-//! `help`, `error_list`, `confirm` and `palette`, and `marks`, `filter`, `details`, `debug`,
-//! `motion` and `mouse`.
+//! `view`. Each feature has its own module with its state, keys and drawing: the views
+//! `treemap`, `cleanup` and `dupes`; the overlays `help`, `error_list`, `confirm`, `palette`
+//! and `type_filter`; the disk picker `picker`; and `marks`, `filter`, `details`, `growth`,
+//! `debug`, `motion` and `mouse`. `history_link` reads and records the scan history.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -26,6 +27,7 @@ mod filter;
 mod fuzzy;
 mod growth;
 mod help;
+mod history_link;
 mod input;
 mod marks;
 mod motion;
@@ -38,26 +40,26 @@ mod setup;
 mod snapshot;
 mod theme;
 mod treemap;
-mod types;
+mod type_filter;
 mod view;
 
 use std::io;
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, select, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{DirId, JobId, JobOptions};
-use dfdu_store::history::{self, Growth};
+use dfdu_store::history;
 use ratatui::Terminal;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 
-pub use app::{App, Effect, Overlay};
+pub use app::{App, Effect, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Overlay};
 pub use cleanup::recommends;
 pub use debug::summary as debug_summary;
+pub use history_link::HistoryLink;
 pub use picker::{DISK_TIMEOUT, Picked, Picker};
 pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
 pub use setup::{ThemeChoice, UiSettings, rules_dir, theme_dir};
@@ -75,26 +77,46 @@ const IDLE: Duration = Duration::from_secs(3600);
 /// How long the terminal gets to answer the background-colour query at start.
 const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
 
+/// Starts an engine scanning a directory on this host with the options given, and returns it
+/// with the options of the scan (which mounts it descends into, the rules it classifies with).
+/// Nothing is sent to it yet.
+pub type StartLocal =
+    Box<dyn FnOnce(&Path, EngineOptions) -> (Engine<dfdu_scan::NativeBackend>, JobOptions)>;
+
+/// What the browser opens.
+pub enum Source {
+    /// A directory on this host, scanned by the engine `start` returns; `None` shows the disk
+    /// picker first.
+    Local {
+        path: Option<PathBuf>,
+        start: StartLocal,
+    },
+    /// A scan read from a file, shown at once while its root is rescanned by the engine `start`
+    /// returns. When `journal`, where the change journal stood when the scan was taken, can
+    /// tell what changed since, only that is rescanned.
+    Resumed {
+        tree: dfdu_tree::Tree,
+        journal: Option<dfdu_store::snapshot::Journal>,
+        start: StartLocal,
+    },
+    /// A scan read from a file, browsed read-only.
+    Imported(dfdu_tree::Tree),
+    /// An engine scanning `path` on another host with `job`: read-only, nothing is recorded in
+    /// the history.
+    Remote {
+        engine: Engine<dfdu_scan::NativeBackend>,
+        path: PathBuf,
+        job: JobOptions,
+    },
+}
+
 pub struct RunOptions {
-    /// Directory to browse; `None` shows the disk picker first.
-    pub path: Option<PathBuf>,
-    /// A scan read from a file, browsed read-only instead of scanning `path`.
-    pub imported: Option<dfdu_tree::Tree>,
-    /// A scan read from a file, shown at once while its root is rescanned (`path` is ignored).
-    pub resumed: Option<dfdu_tree::Tree>,
-    /// An engine scanning on another host (`path` is a path there): read-only, nothing is
-    /// classified or recorded in the history.
-    pub remote: Option<Engine<dfdu_scan::NativeBackend>>,
-    /// Where the change journal stood when the resumed scan started: when it can tell what
-    /// changed since, only that is rescanned.
-    pub journal: Option<dfdu_store::snapshot::Journal>,
-    /// Options of the scan (which mounts it descends into).
-    pub job: JobOptions,
-    /// The rules entries are classified against; `None` classifies nothing.
-    pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
+    pub source: Source,
+    /// Options of engines the browser starts (all but [`Source::Remote`]'s).
     pub engine: EngineOptions,
     pub ui: UiSettings,
-    /// Record the scan in the history once it finishes, and show what grew since the last.
+    /// Record a scan of this host's files in the history once it finishes, and show what grew
+    /// since the last.
     pub history: bool,
 }
 
@@ -118,134 +140,15 @@ pub struct UiOptions {
     pub types: dfdu_tree::filetype::TypeFilter,
 }
 
-/// The browser's link to the scan history (`dfdu_store::history`): the last scan's sizes,
-/// loaded in the background, and what to record the scan under when it finishes.
-#[derive(Clone, Debug)]
-pub struct HistoryLink {
-    pub db: PathBuf,
-    pub options: String,
-    pub started_at: i64,
-    /// Set once the load ends: the sizes, or `None` when there are none.
-    pub growth: Arc<OnceLock<Option<Arc<Growth>>>>,
-}
-
-impl HistoryLink {
-    /// Starts loading the last scan of `root` with `options` from `db`.
-    pub fn start(db: PathBuf, root: PathBuf, options: String) -> HistoryLink {
-        let started_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs() as i64);
-        let growth: Arc<OnceLock<Option<Arc<Growth>>>> = Arc::default();
-        let (lock, path, opts) = (growth.clone(), db.clone(), options.clone());
-        let _ = thread::Builder::new()
-            .name("dfdu-history".into())
-            .spawn(move || {
-                let g = Growth::load(&path, &root, &opts, Some(started_at));
-                let _ = lock.set(g.ok().flatten().map(Arc::new));
-            });
-        HistoryLink {
-            db,
-            options,
-            started_at,
-            growth,
-        }
-    }
-}
-
-/// Records the scan once its first job is done, on a thread the drop waits for.
-struct Recorder {
-    link: Option<HistoryLink>,
-    writer: Option<thread::JoinHandle<()>>,
-}
-
-impl Recorder {
-    /// Takes in what the history has: the last scan's sizes once loaded (true when they just
-    /// arrived), and records this scan once it is complete.
-    fn poll<B: dfdu_scan::Backend>(&mut self, app: &mut App, engine: &Engine<B>) -> bool {
-        let Some(link) = &self.link else {
-            return false;
-        };
-        let arrived = app.growth.is_none()
-            && link.growth.get().is_some_and(|g| {
-                app.growth = g.clone();
-                g.is_some()
-            });
-        if self.writer.is_none() {
-            let rec = engine.read(|m| {
-                let done = m
-                    .status
-                    .jobs
-                    .first()
-                    .is_some_and(|j| j.phase == dfdu_engine::JobPhase::Done);
-                if !done || m.status.busy() {
-                    return None;
-                }
-                let root = m.tree.roots().next()?;
-                let t = m.tree.total(root);
-                Some((
-                    m.tree.path_buf(root),
-                    history::rows(&m.tree, root),
-                    history::Sizes {
-                        disk: t.alloc,
-                        apparent: t.apparent,
-                        entries: t.items,
-                    },
-                    t.errors,
-                    t.errors == 0 && !m.status.incomplete,
-                ))
-            });
-            if let Some((root, rows, total, errors, complete)) = rec {
-                let link = link.clone();
-                self.writer = thread::Builder::new()
-                    .name("dfdu-history".into())
-                    .spawn(move || {
-                        let finished_at = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map_or(0, |d| d.as_secs() as i64);
-                        let _ = history::History::open(&link.db).and_then(|mut h| {
-                            h.record(&history::Record {
-                                root: &root,
-                                options: &link.options,
-                                started_at: link.started_at,
-                                finished_at,
-                                complete,
-                                total,
-                                errors,
-                                rows: &rows,
-                            })
-                        });
-                    })
-                    .ok();
-            }
-        }
-        arrived
-    }
-}
-
-impl Recorder {
-    /// The last scan's sizes are still being read.
-    fn loading(&self) -> bool {
-        self.link.as_ref().is_some_and(|l| l.growth.get().is_none())
-    }
-}
-
-impl Drop for Recorder {
-    fn drop(&mut self) {
-        if let Some(w) = self.writer.take() {
-            let _ = w.join();
-        }
-    }
-}
-
 impl UiOptions {
-    /// The theme from the environment (`NO_COLOR`) at its own colour level, no mouse, no debug
-    /// panel, no `~`.
+    /// The theme [`run`] would choose from the environment with the default settings, without
+    /// asking the terminal for its background; no mouse, no debug panel, no `~`.
     pub fn from_env() -> Self {
-        let theme = Theme::from_env();
+        let colors = setup::resolve_theme(&UiSettings::default(), |k| std::env::var_os(k), || None);
         UiOptions {
-            color_level: theme.level(),
-            background: None,
-            theme,
+            theme: colors.theme,
+            color_level: colors.level,
+            background: colors.background,
             mouse: false,
             debug: false,
             home: None,
@@ -255,7 +158,7 @@ impl UiOptions {
     }
 }
 
-/// Opens the browser on `opts.path` (or a disk chosen in the picker) and returns when the user
+/// Opens the browser on `opts.source` (or a disk chosen in the picker) and returns when the user
 /// quits. Before the alternate screen is entered, the colour level is detected and, when the
 /// theme depends on it, the terminal is asked for its background colour (waiting at most
 /// `BACKGROUND_QUERY` for terminals that do not answer).
@@ -304,76 +207,68 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         types: ui.types.clone(),
     };
     // Only scans that count the same data are compared.
-    let link = |root: &std::path::Path, job: &JobOptions, engine: &EngineOptions| {
+    let link = |root: &Path, job: &JobOptions, engine: &EngineOptions| {
         let db = history::default_path().filter(|_| opts.history)?;
         let key = history::options_key(job.cross_mounts, job.network, engine.measure_workers > 0);
         Some(HistoryLink::start(db, root.to_path_buf(), key))
     };
-    if let Some(tree) = opts.imported {
-        let engine = Engine::start(
-            dfdu_scan::PortableBackend::default(),
-            EngineOptions {
-                imported: true,
-                ..opts.engine
-            },
-        );
-        engine.load(tree);
-        return browse(
-            &mut terminal,
-            engine,
-            ui_opts(theme, None),
-            mouse,
-            ui.debug_stats,
-        );
-    }
-    if let Some(engine) = opts.remote {
-        let path = opts.path.unwrap_or_else(|| PathBuf::from("."));
-        engine.send(Command::Scan {
-            path,
-            opts: opts.job,
-        });
-        return browse(
-            &mut terminal,
-            engine,
-            ui_opts(theme, None),
-            mouse,
-            ui.debug_stats,
-        );
-    }
-    if let Some(tree) = opts.resumed {
-        let root = tree.roots().next().expect("a loaded tree has a root");
-        let path = tree.path_buf(root);
-        let storage = dfdu_sys::storage(&path);
-        let engine_opts = EngineOptions {
-            workers: dfdu_engine::workers_for(storage),
-            ..opts.engine.clone()
-        };
-        let history = link(&path, &opts.job, &engine_opts);
-        let engine = Engine::start(dfdu_scan::native_backend(storage), engine_opts);
-        let node = tree.node_ref(root);
-        engine.load(tree);
-        let mut job = opts.job;
-        job.class = opts
-            .rules
-            .clone()
-            .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
-        let changed = opts
-            .journal
-            .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
-        engine.send(Command::Resume {
-            node,
-            opts: job,
-            changed,
-        });
-        return browse(
-            &mut terminal,
-            engine,
-            ui_opts(theme, history),
-            mouse,
-            ui.debug_stats,
-        );
-    }
-    let path = match opts.path {
+    let (path, start) = match opts.source {
+        Source::Imported(tree) => {
+            let engine = Engine::start(
+                dfdu_scan::PortableBackend::default(),
+                EngineOptions {
+                    imported: true,
+                    ..opts.engine
+                },
+            );
+            engine.load(tree);
+            return browse(
+                &mut terminal,
+                engine,
+                ui_opts(theme, None),
+                mouse,
+                ui.debug_stats,
+            );
+        }
+        Source::Remote { engine, path, job } => {
+            engine.send(Command::Scan { path, opts: job });
+            return browse(
+                &mut terminal,
+                engine,
+                ui_opts(theme, None),
+                mouse,
+                ui.debug_stats,
+            );
+        }
+        Source::Resumed {
+            tree,
+            journal,
+            start,
+        } => {
+            let root = tree.roots().next().expect("a loaded tree has a root");
+            let path = tree.path_buf(root);
+            let (engine, job) = start(&path, opts.engine.clone());
+            let history = link(&path, &job, &opts.engine);
+            let node = tree.node_ref(root);
+            engine.load(tree);
+            let changed = journal
+                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
+            engine.send(Command::Resume {
+                node,
+                opts: job,
+                changed,
+            });
+            return browse(
+                &mut terminal,
+                engine,
+                ui_opts(theme, history),
+                mouse,
+                ui.debug_stats,
+            );
+        }
+        Source::Local { path, start } => (path, start),
+    };
+    let path = match path {
         Some(p) => p,
         None => match picker::pick(&mut terminal, &theme) {
             Ok(picker::Picked::Scan(p)) => p,
@@ -387,18 +282,9 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             }
         },
     };
-    let storage = dfdu_sys::storage(&path);
-    let engine_opts = EngineOptions {
-        workers: dfdu_engine::workers_for(storage),
-        ..opts.engine
-    };
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
-    let history = link(&root, &opts.job, &engine_opts);
-    let engine = Engine::start(dfdu_scan::native_backend(storage), engine_opts);
-    let mut job = opts.job;
-    job.class = opts
-        .rules
-        .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
+    let (engine, job) = start(&path, opts.engine.clone());
+    let history = link(&root, &job, &opts.engine);
     engine.send(Command::Scan { path, opts: job });
     browse(
         &mut terminal,
@@ -482,10 +368,7 @@ where
     if ui.debug {
         debug::toggle(&mut app);
     }
-    let mut recorder = Recorder {
-        link: ui.history.clone(),
-        writer: None,
-    };
+    let mut recorder = history_link::Recorder::new(ui.history.clone());
     let mut focus = None;
     let mut seen_version = None;
     let mut last_draw: Option<Instant> = None;
@@ -515,7 +398,7 @@ where
         // directory or changed the size mode.
         let stale = app.target.path != app.snap.dir_path
             || app.size_mode != read_mode
-            || types::stale(&app);
+            || type_filter::stale(&app);
         let read = extras::plan(data_ready || stale, app.extras_stale());
         let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
         let animating =
@@ -604,7 +487,7 @@ where
         if let Some(t) = app.motion.next_frame_at() {
             wake = wake.min(t.saturating_duration_since(now));
         }
-        if recorder.loading() {
+        if recorder.busy() {
             wake = wake.min(DATA_FRAME);
         }
         if app.extras_stale() {
@@ -633,7 +516,7 @@ where
                 // The input thread ended (terminal closed): leave.
                 Err(_) => return Ok(()),
             },
-            recv(engine.wake()) -> _ => {
+            recv(engine.changes()) -> _ => {
                 // The applier wakes only when its fingerprint changed; it can still match what
                 // was last drawn (the frame read it already), so compare before redrawing.
                 let v = engine.read(|m| m.fingerprint());
@@ -677,11 +560,5 @@ fn spinners_visible(app: &App) -> bool {
     app.snap.busy || dupes::running(app)
 }
 
-#[cfg(test)]
-mod blocked;
-#[cfg(all(test, target_os = "linux"))]
-mod btrfs_tests;
-#[cfg(test)]
-mod soak;
 #[cfg(test)]
 mod tests;

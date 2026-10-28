@@ -42,7 +42,7 @@ fn wait_for(e: &Engine<PortableBackend>, cond: impl Fn(&Model) -> bool) {
         assert!(std::time::Instant::now() < deadline, "timed out");
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn dry_run_then_run() {
             ..JobOptions::default()
         },
     });
-    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let junk = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         let j = m

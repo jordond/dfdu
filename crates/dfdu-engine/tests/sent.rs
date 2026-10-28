@@ -40,7 +40,10 @@ fn sent_counter_counts_messages() {
         samples += 1;
         std::thread::sleep(Duration::from_micros(200));
     }
-    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    assert!(
+        engine.wait_idle(Some(Duration::from_secs(30))).is_idle(),
+        "scan"
+    );
     // Idle does not wait for a message still in the channel (the watchdog's late
     // `Quiescent`): wait until the applier has taken it.
     let settle = Instant::now();

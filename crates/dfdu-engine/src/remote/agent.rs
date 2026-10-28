@@ -1,30 +1,31 @@
 //! `dfdu agent`: the scanner run for a local dfdu on another host, over the agent's stdin and
-//! stdout (the frames are [`crate::wire`]'s).
+//! stdout (the frames are [`super::wire`]'s).
 //!
 //! The agent runs the scanner alone (workers, watchdog, classification with the rules the local
-//! side sent, [`Down::Rules`]) and sends what it produces as [`Up::Batch`] frames; the local
-//! side's applier builds the tree. Deletion runs here too: plans go to a deleter of the agent's
-//! own, which verifies each item against this host's disk and journals it in this host's
-//! journal directory, and its results go back as [`Up::Deleter`]; guard checks and extent
-//! measurement run here as well. Writes block
-//! when the local side stops reading, which stops the workers: the pipe is the byte budget.
-//! A heartbeat goes out after a second with nothing sent. The agent exits when its stdin ends
-//! or its stdout fails (the local side is gone; its stdin may stay open, as under a shell).
+//! side sent, [`ToAgent::Rules`]) and sends what it produces as [`FromAgent::Batch`] frames;
+//! the local side's applier builds the tree. Deletion runs here too: plans go to a deleter of
+//! the agent's own, which verifies each item against this host's disk and journals it in this
+//! host's journal directory, and its results go back as [`FromAgent::Deleter`]; guard checks
+//! and extent measurement run here as well. Writes block when the local side stops reading,
+//! which stops the workers: the pipe is the byte budget. A heartbeat goes out after a second
+//! with nothing sent. The agent exits when its stdin ends or its stdout fails (the local side
+//! is gone; its stdin may stay open, as under a shell).
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
-use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{RecvTimeoutError, Sender, bounded, unbounded};
 use parking_lot::Mutex;
 
 use dfdu_clean::{DeleterHandle, DeleterMsg, STAGE_UNDO_WINDOW, spawn_deleter};
 use dfdu_rules::{Env, RuleSet, Source};
 
+use super::wire::{FromAgent, ToAgent, VERSION, WireClass, read_frame, write_frame};
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
-use crate::wire::{Down, Up, VERSION, WireClass, read_frame, write_frame};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::runtime::Pool;
 use dfdu_scan::{Batch, JobOptions, Limits, ScanMsg, Shared, Sink};
@@ -43,7 +44,7 @@ struct Out<W> {
 }
 
 impl<W: Write> Out<W> {
-    fn send(&self, up: &Up) {
+    fn send(&self, up: &FromAgent) {
         let payload = up.encode();
         let mut w = self.w.lock();
         if write_frame(&mut *w, &payload)
@@ -59,14 +60,14 @@ impl<W: Write> Out<W> {
 
 impl<W: Write + Send> Sink for Out<W> {
     fn try_send(&self, batch: Batch) -> Result<(), Batch> {
-        self.send(&Up::Batch(batch.msgs));
+        self.send(&FromAgent::Batch(batch.msgs));
         Ok(())
     }
     fn send(&self, batch: Batch) {
-        Out::send(self, &Up::Batch(batch.msgs));
+        Out::send(self, &FromAgent::Batch(batch.msgs));
     }
     fn send_control(&self, msg: ScanMsg) {
-        Out::send(self, &Up::Batch(vec![msg]));
+        Out::send(self, &FromAgent::Batch(vec![msg]));
     }
 }
 
@@ -85,26 +86,28 @@ pub fn run<B: dfdu_scan::Backend>(
         last: AtomicU64::new(0),
         failed: AtomicBool::new(false),
     });
-    out.send(&Up::Hello {
+    out.send(&FromAgent::Hello {
         min: VERSION,
         max: VERSION,
         tool: format!("dfdu {}", env!("CARGO_PKG_VERSION")),
     });
     let mut buf = Vec::new();
-    let bad = |e: crate::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
+    let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
     if !read_frame(&mut input, &mut buf).map_err(bad)? {
         return Ok(());
     }
-    match Down::decode(&buf, None).map_err(bad)? {
-        Down::Hello { version } if version == VERSION => {}
-        Down::Hello { version } => {
-            out.send(&Up::Fatal(format!("protocol version {version} not spoken")));
+    match ToAgent::decode(&buf, None).map_err(bad)? {
+        ToAgent::Hello { version } if version == VERSION => {}
+        ToAgent::Hello { version } => {
+            out.send(&FromAgent::Fatal(format!(
+                "protocol version {version} not spoken"
+            )));
             return Err(io::Error::other("protocol version mismatch"));
         }
         _ => return Err(io::Error::other("expected a hello")),
     }
     let measurers = crate::runtime::default_measurers();
-    out.send(&Up::Host {
+    out.send(&FromAgent::Host {
         measure_min: if measurers > 0 {
             crate::applier::MEASURE_MIN
         } else {
@@ -131,7 +134,7 @@ pub fn run<B: dfdu_scan::Backend>(
                     thread::sleep(HEARTBEAT / 4);
                     let idle = out.start.elapsed().as_nanos() as u64 - out.last.load(SeqCst);
                     if idle >= HEARTBEAT.as_nanos() as u64 {
-                        out.send(&Up::Heartbeat);
+                        out.send(&FromAgent::Heartbeat);
                     }
                 }
             })
@@ -139,7 +142,7 @@ pub fn run<B: dfdu_scan::Backend>(
     };
     // Frames are read on a thread of their own, so a failed output is noticed while a read
     // waits; that thread is left blocked when the agent returns for that reason.
-    let (tx, rx) = mpsc::sync_channel::<Result<Vec<u8>, crate::wire::WireError>>(16);
+    let (tx, rx) = bounded::<Result<Vec<u8>, super::wire::WireError>>(16);
     thread::Builder::new()
         .name("dfdu-agent-in".into())
         .spawn(move || {
@@ -159,7 +162,7 @@ pub fn run<B: dfdu_scan::Backend>(
         .expect("spawn agent input");
     let mut rules: Option<Arc<RuleSet>> = None;
     let mut deleter: Option<DeleterHandle> = None;
-    let mut measure: Option<crossbeam_channel::Sender<MeasureReq>> = None;
+    let mut measure: Option<Sender<MeasureReq>> = None;
     let result = loop {
         if out.failed.load(SeqCst) {
             break Err(io::Error::other("output closed"));
@@ -167,21 +170,21 @@ pub fn run<B: dfdu_scan::Backend>(
         let buf = match rx.recv_timeout(HEARTBEAT / 4) {
             Ok(Ok(b)) => b,
             Ok(Err(e)) => break Err(bad(e)),
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break Ok(()),
         };
-        let down = match Down::decode(&buf, rules.as_deref()) {
+        let down = match ToAgent::decode(&buf, rules.as_deref()) {
             Ok(d) => d,
             Err(e) => break Err(bad(e)),
         };
         match down {
-            Down::Hello { .. } => {}
-            Down::Rules { files, root } => {
+            ToAgent::Hello { .. } => {}
+            ToAgent::Rules { files, root } => {
                 let (set, answer) = build_rules(&files, &root);
                 rules = Some(set);
                 out.send(&answer);
             }
-            Down::StartJob {
+            ToAgent::StartJob {
                 job,
                 root,
                 cross_mounts,
@@ -197,36 +200,36 @@ pub fn run<B: dfdu_scan::Backend>(
                     ..JobOptions::default()
                 };
                 let seq = shared.start_job(job, &root, opts);
-                out.send(&Up::Started { job, seq });
+                out.send(&FromAgent::Started { job, seq });
             }
-            Down::Delete(req) => {
+            ToAgent::Delete(req) => {
                 let d = deleter.get_or_insert_with(|| start_deleter(&out, journal_dir.clone()));
                 let _ = d.reqs.send(req);
             }
-            Down::Check(reqs) => {
+            ToAgent::Check(reqs) => {
                 // Guard checks read git indexes and the process list: off the control loop.
                 let out = out.clone();
                 let spawned = thread::Builder::new()
                     .name("dfdu-agent-check".into())
-                    .spawn(move || out.send(&Up::Checked(crate::check_batch(&reqs))));
+                    .spawn(move || out.send(&FromAgent::Checked(crate::check_batch(&reqs))));
                 if let Err(e) = spawned {
                     break Err(e);
                 }
             }
-            Down::Measure(reqs) => {
+            ToAgent::Measure(reqs) => {
                 let m = measure.get_or_insert_with(|| start_measurers(&out, measurers));
                 for r in reqs {
                     let _ = m.send(r);
                 }
             }
-            Down::AbortDelete => {
+            ToAgent::AbortDelete => {
                 if let Some(d) = &deleter {
                     d.abort.store(true, SeqCst);
                 }
             }
-            Down::EndJob { job } => shared.end_job(job),
-            Down::StopDirs { job, dirs } => shared.stop_dirs(job, dirs),
-            Down::Abandon { job, dir } => {
+            ToAgent::EndJob { job } => shared.end_job(job),
+            ToAgent::StopDirs { job, dirs } => shared.stop_dirs(job, dirs),
+            ToAgent::Abandon { job, dir } => {
                 // A worker inside the directory gives its outbox up soon.
                 let mut complete = shared.abandon(job, dir);
                 for _ in 0..100 {
@@ -236,7 +239,7 @@ pub fn run<B: dfdu_scan::Backend>(
                     thread::sleep(Duration::from_millis(1));
                     complete = shared.abandon(job, dir);
                 }
-                out.send(&Up::Abandoned { job, dir, complete });
+                out.send(&FromAgent::Abandoned { job, dir, complete });
             }
         }
     };
@@ -260,14 +263,14 @@ fn start_deleter<W: Write + Send + 'static>(
     out: &Arc<Out<W>>,
     journal_dir: Option<PathBuf>,
 ) -> DeleterHandle {
-    let (tx, rx) = crossbeam_channel::unbounded::<DeleterMsg>();
+    let (tx, rx) = unbounded::<DeleterMsg>();
     let handle = spawn_deleter(journal_dir, STAGE_UNDO_WINDOW, tx);
     let out = out.clone();
     thread::Builder::new()
         .name("dfdu-agent-del".into())
         .spawn(move || {
             for msg in rx {
-                out.send(&Up::Deleter(msg));
+                out.send(&FromAgent::Deleter(msg));
             }
         })
         .expect("spawn deleter output");
@@ -276,28 +279,25 @@ fn start_deleter<W: Write + Send + 'static>(
 
 /// `n` measurers (at least one, which fails every file where nothing can be measured), their
 /// results sent as they come.
-fn start_measurers<W: Write + Send + 'static>(
-    out: &Arc<Out<W>>,
-    n: usize,
-) -> crossbeam_channel::Sender<MeasureReq> {
-    let (tx, rx) = crossbeam_channel::unbounded::<Vec<MeasureMsg>>();
+fn start_measurers<W: Write + Send + 'static>(out: &Arc<Out<W>>, n: usize) -> Sender<MeasureReq> {
+    let (tx, rx) = unbounded::<Vec<MeasureMsg>>();
     let reqs = spawn_measurers(n, tx);
     let out = out.clone();
     thread::Builder::new()
         .name("dfdu-agent-measure".into())
         .spawn(move || {
             for msgs in rx {
-                out.send(&Up::Measured(msgs));
+                out.send(&FromAgent::Measured(msgs));
             }
         })
         .expect("spawn measurer output");
     reqs
 }
 
-/// The rules in `files` built for this host, and the answer to [`Down::Rules`]: this host's
+/// The rules in `files` built for this host, and the answer to [`ToAgent::Rules`]: this host's
 /// platform and the variables the rules read, their fingerprint, and what `root` classifies
 /// against as a scan root.
-fn build_rules(files: &[(Option<String>, String)], root: &[u8]) -> (Arc<RuleSet>, Up) {
+fn build_rules(files: &[(Option<String>, String)], root: &[u8]) -> (Arc<RuleSet>, FromAgent) {
     let env = Env::current();
     let sources: Vec<(Source, String)> = files
         .iter()
@@ -313,7 +313,7 @@ fn build_rules(files: &[(Option<String>, String)], root: &[u8]) -> (Arc<RuleSet>
     let set = Arc::new(set);
     let texts: Vec<&str> = files.iter().map(|(_, t)| t.as_str()).collect();
     let root = PathBuf::from(dfdu_tree::name_os(root).into_owned());
-    let answer = Up::Rules {
+    let answer = FromAgent::Rules {
         platform: env.platform.as_str().into(),
         vars: env.used_by(&texts),
         fingerprint: set.fingerprint(),

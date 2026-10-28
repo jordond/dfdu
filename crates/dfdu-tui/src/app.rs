@@ -27,9 +27,9 @@ use crate::view::Areas;
 use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette, treemap};
 
 /// Automatic re-sort after this long without input...
-const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
+pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
 /// ...and at most this often.
-const MIN_SORT_INTERVAL: Duration = Duration::from_secs(2);
+pub const MIN_SORT_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub enum Effect {
@@ -52,7 +52,7 @@ pub enum Overlay {
     ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
     /// The file type picker.
-    Types(crate::types::Picker),
+    Types(crate::type_filter::Picker),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -658,7 +658,7 @@ impl App {
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
             Overlay::Types(_) => {
-                crate::types::key(self, k);
+                crate::type_filter::key(self, k);
                 return Vec::new();
             }
         }
@@ -694,23 +694,10 @@ impl App {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::snapshot::test_entry;
-    use crate::tests::key;
-
-    pub(crate) fn snap(entries: Vec<EntryData>, version: u64) -> Snapshot {
-        let root = test_entry(99, "/r", 0);
-        Snapshot {
-            dir_path: PathBuf::from("/r"),
-            dir_node: Some(root.node),
-            at_root: true,
-            entries,
-            busy: true,
-            version,
-            ..Default::default()
-        }
-    }
+    use crate::tests::{press, snap_without_totals};
 
     #[test]
     fn cursor_follows_node_across_resort_and_keeps_its_line() {
@@ -719,10 +706,10 @@ pub(crate) mod tests {
         let mut es: Vec<EntryData> = (0..10)
             .map(|i| test_entry(i, &format!("e{i}"), 1000 - i as u64 * 10))
             .collect();
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
         app.list_height = 5;
         for _ in 0..3 {
-            app.key(key(KeyCode::Down), t0);
+            app.key(press(KeyCode::Down), t0);
         }
         app.scroll = 1;
         let picked = app.selected.clone().expect("selected").node;
@@ -730,12 +717,15 @@ pub(crate) mod tests {
 
         // e3 becomes the largest. Within the idle window nothing moves.
         es[3].size = 5000;
-        app.refresh(snap(es.clone(), 2), t0 + Duration::from_millis(100));
+        app.refresh(
+            snap_without_totals(es.clone(), 2),
+            t0 + Duration::from_millis(100),
+        );
         assert_eq!(app.selected_index(), Some(3));
 
         // After the idle delay the automatic sort moves e3 to the top; the cursor follows it
         // and the scroll offset keeps it on the same screen line where possible.
-        app.refresh(snap(es, 3), t0 + Duration::from_secs(3));
+        app.refresh(snap_without_totals(es, 3), t0 + Duration::from_secs(3));
         assert_eq!(app.selected.as_ref().and_then(|s| s.node), picked);
         assert_eq!(app.selected_index(), Some(0));
         assert_eq!(app.scroll, 0);
@@ -746,15 +736,15 @@ pub(crate) mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut es = vec![test_entry(0, "a", 10)];
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
         es.push(test_entry(1, "b", 99));
         es.push(test_entry(2, "c", 50));
-        app.key(key(KeyCode::Down), t0);
-        app.refresh(snap(es.clone(), 2), t0);
+        app.key(press(KeyCode::Down), t0);
+        app.refresh(snap_without_totals(es.clone(), 2), t0);
         assert_eq!(app.rows.len(), 1);
         assert_eq!((app.new_count, app.new_largest), (2, 99));
-        app.key(key(KeyCode::Char('S')), t0);
-        app.refresh(snap(es, 3), t0);
+        app.key(press(KeyCode::Char('S')), t0);
+        app.refresh(snap_without_totals(es, 3), t0);
         assert_eq!(app.rows.len(), 3);
         assert_eq!(app.new_count, 0);
     }
@@ -764,9 +754,9 @@ pub(crate) mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut es = vec![test_entry(0, "a", 10), test_entry(1, "b", 5)];
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
         es[1].size = 999;
-        let mut done = snap(es, 2);
+        let mut done = snap_without_totals(es, 2);
         done.busy = false;
         // 100 ms after the first sort: well inside the minimum interval.
         app.refresh(done, t0 + Duration::from_millis(100));
@@ -787,8 +777,8 @@ pub(crate) mod tests {
             test_entry(1, "b", 20),
             test_entry(2, "c", 10),
         ];
-        app.refresh(snap(es.clone(), 1), t0);
-        app.key(key(KeyCode::Down), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
+        app.key(press(KeyCode::Down), t0);
         let b = app.selected_entry().expect("b").clone();
         // A rescan of "b" swaps in a new node with the same name and identity.
         let b2 = EntryData {
@@ -797,7 +787,10 @@ pub(crate) mod tests {
             ..test_entry(7, "b", 25)
         };
         let new_node = b2.node;
-        app.refresh(snap(vec![es[0].clone(), b2, es[2].clone()], 2), t0);
+        app.refresh(
+            snap_without_totals(vec![es[0].clone(), b2, es[2].clone()], 2),
+            t0,
+        );
         assert_eq!(app.new_count, 0, "the swapped row is not shown as new");
         assert_eq!(app.rows.len(), 3);
         assert_eq!(app.selected_index(), Some(1));
@@ -809,9 +802,9 @@ pub(crate) mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut es = vec![test_entry(0, "a", 30), test_entry(1, "b", 20)];
-        app.refresh(snap(es.clone(), 1), t0);
+        app.refresh(snap_without_totals(es.clone(), 1), t0);
         es[1].size = 900;
-        app.refresh(snap(es, 2), t0 + Duration::from_secs(3));
+        app.refresh(snap_without_totals(es, 2), t0 + Duration::from_secs(3));
         assert_eq!(app.selected_index(), Some(0));
         assert_eq!(
             app.selected_entry().map(|e| e.name.to_vec()),
@@ -829,10 +822,10 @@ pub(crate) mod tests {
             test_entry(1, "c", 20),
             test_entry(2, "a", 10),
         ];
-        app.refresh(snap(es, 1), t0);
-        app.key(key(KeyCode::Down), t0);
+        app.refresh(snap_without_totals(es, 1), t0);
+        app.key(press(KeyCode::Down), t0);
         let picked = app.selected.as_ref().and_then(|s| s.node);
-        app.key(key(KeyCode::Char('n')), t0);
+        app.key(press(KeyCode::Char('n')), t0);
         app.reorder(t0);
         let names: Vec<&[u8]> = app
             .rows

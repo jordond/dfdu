@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn mono_theme_has_no_colours() {
+    fn mono_theme_has_no_colors() {
         for level in [ColorLevel::None, ColorLevel::TrueColor] {
             let t = Theme::named("mono", level, None).expect("mono");
             for token in Token::ALL {
@@ -333,11 +333,11 @@ mod tests {
                     assert!(matches!(c, None | Some(Reset)), "{}: {c:?}", token.name());
                 }
             }
-            assert_eq!(t.selected, Style::new().add_modifier(Modifier::REVERSED));
+            assert_eq!(t.cursor, Style::new().add_modifier(Modifier::REVERSED));
             assert_eq!(t.mark, Style::new().add_modifier(BOLD));
             assert_eq!(t.size_big, Style::new().add_modifier(BOLD));
-            assert_eq!(t.dim, Style::new().add_modifier(Modifier::DIM));
-            assert_eq!(t.matched, Style::new().add_modifier(Modifier::UNDERLINED));
+            assert_eq!(t.fg_dim, Style::new().add_modifier(Modifier::DIM));
+            assert_eq!(t.r#match, Style::new().add_modifier(Modifier::UNDERLINED));
         }
     }
 
@@ -363,9 +363,9 @@ mod tests {
             Some(Color::Indexed(69))
         );
         let none = Theme::named("dark", ColorLevel::None, None).expect("dark");
-        assert!(none.selected.add_modifier.contains(Modifier::REVERSED));
-        assert!(none.matched.add_modifier.contains(Modifier::UNDERLINED));
-        assert!(none.dim.add_modifier.contains(Modifier::DIM));
+        assert!(none.cursor.add_modifier.contains(Modifier::REVERSED));
+        assert!(none.r#match.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(none.fg_dim.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -383,8 +383,8 @@ mod tests {
                     assert!(s.add_modifier.contains(BOLD), "{level:?} {}", token.name());
                 }
             }
-            assert_eq!(t.dim.fg, None);
-            assert!(t.selected.add_modifier.contains(Modifier::REVERSED));
+            assert_eq!(t.fg_dim.fg, None);
+            assert!(t.cursor.add_modifier.contains(Modifier::REVERSED));
         }
     }
 }

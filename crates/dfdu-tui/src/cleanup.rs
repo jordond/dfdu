@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use dfdu_engine::{Command, Model};
 use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, Kind, NodeRef};
+use dfdu_tree::{Class, DirState, Kind, NodeRef, RuleIx};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -39,9 +39,9 @@ pub struct Cleanup {
     cursor: usize,
     scroll: usize,
     /// Groups shown with their items, by (category, safety).
-    open: HashSet<(u16, u8)>,
+    open: HashSet<(u16, Safety)>,
     /// Only items this safe or safer; `None` shows all.
-    filter: Option<u8>,
+    filter: Option<Safety>,
     /// The recommended items were marked (once, when the view first had items).
     preselected: bool,
     pane: Option<Pane>,
@@ -54,7 +54,7 @@ pub struct Cleanup {
 #[derive(Clone, Debug)]
 struct Pane {
     node: NodeRef,
-    rule: u16,
+    rule: RuleIx,
     variant: Option<usize>,
     /// The command whose output is shown; 0 before anything ran (no dry run to show).
     id: u64,
@@ -234,9 +234,9 @@ pub fn recommends(
     if flagged || scanning || !days(QUIET_DAYS) {
         return false;
     }
-    match Safety::ALL.get(c.safety as usize) {
-        Some(Safety::Safe) => size >= rule.min_size,
-        Some(Safety::Regenerable) => {
+    match c.safety {
+        Safety::Safe => size >= rule.min_size,
+        Safety::Regenerable => {
             size >= rule.min_size && days((rule.min_age_days as i64).max(QUIET_DAYS))
         }
         _ => false,
@@ -281,12 +281,12 @@ fn mark_of(it: &Item) -> marks::Item {
 
 /// Protected matches (git-tracked ones) are listed but cannot be marked.
 fn markable(it: &Item) -> bool {
-    it.class.safety < Safety::Protected as u8
+    it.class.safety < Safety::Protected
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Row {
-    Group { cat: u16, safety: u8 },
+    Group { cat: u16, safety: Safety },
     Item(usize),
 }
 
@@ -296,7 +296,7 @@ fn rows(app: &App) -> Vec<Row> {
         return vec![];
     };
     let items = &app.extras.cleanup.items;
-    let mut groups: Vec<((u16, u8), u64)> = vec![];
+    let mut groups: Vec<((u16, Safety), u64)> = vec![];
     for it in items {
         if app.cleanup.filter.is_some_and(|f| it.class.safety > f) {
             continue;
@@ -326,7 +326,7 @@ fn rows(app: &App) -> Vec<Row> {
     out
 }
 
-fn group_items(app: &App, cat: u16, safety: u8) -> Vec<usize> {
+fn group_items(app: &App, cat: u16, safety: Safety) -> Vec<usize> {
     let Some(rules) = &app.snap.rules else {
         return vec![];
     };
@@ -381,15 +381,15 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
         KeyCode::Char('f') => {
             c.filter = match c.filter {
-                None => Some(Safety::Safe as u8),
-                Some(0) => Some(Safety::Regenerable as u8),
-                Some(1) => Some(Safety::Review as u8),
+                None => Some(Safety::Safe),
+                Some(Safety::Safe) => Some(Safety::Regenerable),
+                Some(Safety::Regenerable) => Some(Safety::Review),
                 Some(_) => None,
             };
             c.cursor = 0;
             let label = c.filter.map_or("everything", |f| match f {
-                0 => "safe only",
-                1 => "safe and regenerable",
+                Safety::Safe => "safe only",
+                Safety::Regenerable => "safe and regenerable",
                 _ => "up to review",
             });
             app.status = Some(format!("cleanup: showing {label}"));
@@ -556,57 +556,20 @@ fn pane_key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
 
 /// Draws the view in `area`.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let t = app.theme.clone();
-    let Some(rules) = app.snap.rules.clone() else {
+    if app.snap.rules.is_none() {
         return;
-    };
-    let items = app.extras.cleanup.items.clone();
+    }
     let rows = rows(app);
-    let mut lines: Vec<Line> = vec![];
-    // The reclaimable total of each level, and what is marked.
-    let mut by: [u64; 5] = [0; 5];
-    for it in &items {
-        if let Some(b) = by.get_mut(it.class.safety as usize) {
-            *b += it.size.saturating_sub(it.shared_out);
-        }
-    }
-    let mut sum = vec![Span::raw(" reclaimable  ")];
-    for s in [
-        Safety::Safe,
-        Safety::Regenerable,
-        Safety::Review,
-        Safety::Manual,
-    ] {
-        sum.push(Span::styled(format!("{} ", s.as_str()), t.dim));
-        sum.push(Span::raw(format!("{}   ", human(by[s as usize]))));
-    }
-    lines.push(Line::from(sum));
-    if !app.extras.cleanup.native_sizes.is_empty() {
-        let parts: Vec<String> = app
-            .extras
-            .cleanup
-            .native_sizes
-            .iter()
-            .map(|(name, r)| match r {
-                Ok(b) => format!("{name}: {} by its own count", human(*b)),
-                Err(e) => format!("{name}: {e}"),
-            })
-            .collect();
-        lines.push(Line::styled(format!(" {}", parts.join(" · ")), t.dim));
-    }
+    let mut lines = summary_lines(app);
     // The rule text below gives way to the list on short terminals: three rows stay for it.
     let detail_h: u16 = 4.min(area.height.saturating_sub(lines.len() as u16 + 1 + 3));
     let list_h = area
         .height
         .saturating_sub(lines.len() as u16 + detail_h + 1) as usize;
-    let c = &mut app.cleanup;
-    c.cursor = c.cursor.min(rows.len().saturating_sub(1));
-    if c.cursor < c.scroll {
-        c.scroll = c.cursor;
-    } else if list_h > 0 && c.cursor >= c.scroll + list_h {
-        c.scroll = c.cursor + 1 - list_h;
-    }
-    let (cursor, scroll) = (c.cursor, c.scroll);
+    app.cleanup.clamp_scroll(rows.len(), list_h);
+    let app: &App = app;
+    let t = &app.theme;
+    let (cursor, scroll) = (app.cleanup.cursor, app.cleanup.scroll);
     if rows.is_empty() {
         lines.push(Line::styled(
             if app.snap.busy {
@@ -614,77 +577,18 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 " nothing the rules know about was found"
             },
-            t.dim,
+            t.fg_dim,
         ));
     }
     let now = now_secs();
     for (i, row) in rows.iter().enumerate().skip(scroll).take(list_h) {
-        let sel = i == cursor;
         let mut spans = match *row {
-            Row::Group { cat, safety } => {
-                let ix = group_items(app, cat, safety);
-                let size: u64 = ix.iter().map(|&i| items[i].size).sum();
-                let marked = ix
-                    .iter()
-                    .filter(|&&i| app.marks.contains(items[i].node))
-                    .count();
-                let category = &dfdu_rules::CATEGORIES[cat as usize];
-                let open = app.cleanup.open.contains(&(cat, safety));
-                vec![
-                    Span::raw(if open { " ▾ " } else { " ▸ " }),
-                    Span::styled(
-                        format!("{:<24}", category.name),
-                        t.cat[category.colour as usize],
-                    ),
-                    Span::raw(format!(" {:<12}", Safety::ALL[safety as usize].as_str())),
-                    Span::raw(format!("{:>10}", human(size))),
-                    Span::styled(
-                        format!(
-                            "  {} item{}{}",
-                            ix.len(),
-                            plural(ix.len()),
-                            if marked > 0 {
-                                format!(", {marked} marked")
-                            } else {
-                                String::new()
-                            }
-                        ),
-                        t.dim,
-                    ),
-                ]
-            }
-            Row::Item(i) => {
-                let it = &items[i];
-                let mark = if app.marks.contains(it.node) {
-                    Span::styled("  ● ", t.mark)
-                } else if markable(it) {
-                    Span::raw("    ")
-                } else {
-                    Span::styled("  ⊘ ", t.dim)
-                };
-                let age = (now - it.mtime).max(0) / 86_400;
-                let mut v = vec![
-                    mark,
-                    Span::raw(format!("{:>10}", human(it.size))),
-                    Span::styled(format!("  {:>6}", count(it.items)), t.dim),
-                    Span::styled(format!("  {:>4} d", age), t.dim),
-                    Span::raw(format!("  {}", shown_path(&it.path))),
-                ];
-                for (flag, what) in [
-                    (Class::IN_USE, "in use"),
-                    (Class::VCS_TRACKED, "git-tracked"),
-                    (Class::VCS_UNKNOWN, "git unknown"),
-                ] {
-                    if it.class.has(flag) {
-                        v.push(Span::styled(format!("  {what}"), t.warn));
-                    }
-                }
-                v
-            }
+            Row::Group { cat, safety } => group_line(app, cat, safety),
+            Row::Item(i) => item_line(app, &app.extras.cleanup.items[i], now),
         };
-        if sel {
+        if i == cursor {
             for s in &mut spans {
-                s.style = s.style.patch(t.selected);
+                s.style = s.style.patch(t.cursor);
             }
         }
         lines.push(Line::from(spans));
@@ -695,34 +599,144 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     ])
     .areas(area);
     f.render_widget(Paragraph::new(lines), top);
-    // The selected item's rule: what it is and what deleting it loses.
-    let detail: Vec<Line> = match rows.get(cursor) {
-        Some(Row::Item(i)) => {
-            let it = &items[*i];
-            let r = rules.rule(it.class.rule);
-            let mut d = vec![
-                Line::from(vec![
-                    Span::styled(format!(" {}", r.name), t.title),
-                    Span::styled(
-                        format!("  {}", Safety::ALL[it.class.safety as usize].as_str()),
-                        t.dim,
-                    ),
-                ]),
-                Line::raw(format!(" {}", r.explanation)),
-                Line::styled(format!(" Lost: {}", r.lost), t.dim),
-            ];
-            if r.native.as_ref().is_some_and(|n| !n.command.is_empty()) {
-                d.push(Line::styled(" n runs its own cleanup command", t.dim));
-            }
-            d
-        }
-        _ => vec![Line::styled(
-            " Enter opens a group · Space marks · a marks the recommended · f filters by safety",
-            t.dim,
-        )],
-    };
+    let detail = detail_lines(app, rows.get(cursor));
     f.render_widget(Paragraph::new(detail).wrap(Wrap { trim: false }), bottom);
-    draw_pane(f, app, area, &t);
+    draw_pane(f, app, area, t);
+}
+
+impl Cleanup {
+    /// Keeps the cursor on one of `rows` rows and inside the `list_h` rows shown.
+    fn clamp_scroll(&mut self, rows: usize, list_h: usize) {
+        self.cursor = self.cursor.min(rows.saturating_sub(1));
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        } else if list_h > 0 && self.cursor >= self.scroll + list_h {
+            self.scroll = self.cursor + 1 - list_h;
+        }
+    }
+}
+
+/// The reclaimable total of each safety level, and what native commands count themselves.
+fn summary_lines(app: &App) -> Vec<Line<'static>> {
+    let t = &app.theme;
+    let mut by = [0u64; Safety::ALL.len()];
+    for it in &app.extras.cleanup.items {
+        by[it.class.safety as usize] += it.size.saturating_sub(it.shared_out);
+    }
+    let mut sum = vec![Span::raw(" reclaimable  ")];
+    for s in [
+        Safety::Safe,
+        Safety::Regenerable,
+        Safety::Review,
+        Safety::Manual,
+    ] {
+        sum.push(Span::styled(format!("{} ", s.as_str()), t.fg_dim));
+        sum.push(Span::raw(format!("{}   ", human(by[s as usize]))));
+    }
+    let mut lines = vec![Line::from(sum)];
+    let native = &app.extras.cleanup.native_sizes;
+    if !native.is_empty() {
+        let parts: Vec<String> = native
+            .iter()
+            .map(|(name, r)| match r {
+                Ok(b) => format!("{name}: {} by its own count", human(*b)),
+                Err(e) => format!("{name}: {e}"),
+            })
+            .collect();
+        lines.push(Line::styled(format!(" {}", parts.join(" · ")), t.fg_dim));
+    }
+    lines
+}
+
+/// The row of the group of category `cat` at `safety`: its size, items and how many are marked.
+fn group_line(app: &App, cat: u16, safety: Safety) -> Vec<Span<'static>> {
+    let t = &app.theme;
+    let items = &app.extras.cleanup.items;
+    let ix = group_items(app, cat, safety);
+    let size: u64 = ix.iter().map(|&i| items[i].size).sum();
+    let marked = ix
+        .iter()
+        .filter(|&&i| app.marks.contains(items[i].node))
+        .count();
+    let category = &dfdu_rules::CATEGORIES[cat as usize];
+    let open = app.cleanup.open.contains(&(cat, safety));
+    vec![
+        Span::raw(if open { " ▾ " } else { " ▸ " }),
+        Span::styled(
+            format!("{:<24}", category.name),
+            t.cat[category.color as usize],
+        ),
+        Span::raw(format!(" {:<12}", safety.as_str())),
+        Span::raw(format!("{:>10}", human(size))),
+        Span::styled(
+            format!(
+                "  {} item{}{}",
+                ix.len(),
+                plural(ix.len()),
+                if marked > 0 {
+                    format!(", {marked} marked")
+                } else {
+                    String::new()
+                }
+            ),
+            t.fg_dim,
+        ),
+    ]
+}
+
+/// The row of `it`: its mark, size, items, age in days at `now`, path and warnings.
+fn item_line(app: &App, it: &Item, now: i64) -> Vec<Span<'static>> {
+    let t = &app.theme;
+    let mark = if app.marks.contains(it.node) {
+        Span::styled("  ● ", t.mark)
+    } else if markable(it) {
+        Span::raw("    ")
+    } else {
+        Span::styled("  ⊘ ", t.fg_dim)
+    };
+    let age = (now - it.mtime).max(0) / 86_400;
+    let mut v = vec![
+        mark,
+        Span::raw(format!("{:>10}", human(it.size))),
+        Span::styled(format!("  {:>6}", count(it.items)), t.fg_dim),
+        Span::styled(format!("  {:>4} d", age), t.fg_dim),
+        Span::raw(format!("  {}", shown_path(&it.path))),
+    ];
+    for (flag, what) in [
+        (Class::IN_USE, "in use"),
+        (Class::VCS_TRACKED, "git-tracked"),
+        (Class::VCS_UNKNOWN, "git unknown"),
+    ] {
+        if it.class.has(flag) {
+            v.push(Span::styled(format!("  {what}"), t.status_warn));
+        }
+    }
+    v
+}
+
+/// The selected item's rule: what it is and what deleting it loses; the keys on a group.
+fn detail_lines<'a>(app: &'a App, row: Option<&Row>) -> Vec<Line<'a>> {
+    let t = &app.theme;
+    let (Some(Row::Item(i)), Some(rules)) = (row, &app.snap.rules) else {
+        return vec![Line::styled(
+            " Enter opens a group · Space marks · a marks the recommended · f filters by safety",
+            t.fg_dim,
+        )];
+    };
+    let it = &app.extras.cleanup.items[*i];
+    let r = rules.rule(it.class.rule);
+    let mut d = vec![
+        Line::from(vec![
+            Span::styled(format!(" {}", r.name), t.title),
+            Span::styled(format!("  {}", it.class.safety.as_str()), t.fg_dim),
+        ]),
+        Line::raw(format!(" {}", r.explanation)),
+        Line::styled(format!(" Lost: {}", r.lost), t.fg_dim),
+    ];
+    if r.native.as_ref().is_some_and(|n| !n.command.is_empty()) {
+        d.push(Line::styled(" n runs its own cleanup command", t.fg_dim));
+    }
+    d
 }
 
 fn shown_path(p: &std::path::Path) -> String {
@@ -789,7 +803,7 @@ fn draw_pane(f: &mut Frame, app: &App, area: Rect, t: &crate::theme::Theme) {
             Span::styled("Esc", t.key),
             Span::raw(" close"),
         ]),
-        None => Line::styled(" running…", t.dim),
+        None => Line::styled(" running…", t.fg_dim),
         Some(Ok(())) if p.dry_run => Line::from(vec![
             Span::raw(" That was the dry run. "),
             Span::styled("y", t.key),
@@ -799,14 +813,14 @@ fn draw_pane(f: &mut Frame, app: &App, area: Rect, t: &crate::theme::Theme) {
             Span::styled("Esc", t.key),
             Span::raw(" close"),
         ]),
-        Some(Ok(())) => Line::styled(" Done; the directory is rescanned.", t.ok),
-        Some(Err(e)) => Line::styled(format!(" Failed: {e}"), t.error),
+        Some(Ok(())) => Line::styled(" Done; the directory is rescanned.", t.status_ok),
+        Some(Err(e)) => Line::styled(format!(" Failed: {e}"), t.status_error),
     };
     lines.push(state);
     if p.armed {
         lines.push(Line::styled(
             " This form removes more than the default: press y again to run it.",
-            t.warn,
+            t.status_warn,
         ));
     }
     f.render_widget(
@@ -824,7 +838,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::tests::{key, render};
+    use crate::tests::{press, render};
     use crate::theme::Theme;
     use crate::treemap::tests::{classified, sync};
 
@@ -834,7 +848,7 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         sync(&mut app, &fx.m, t0);
-        let fx_out = app.key(key(KeyCode::Char('3')), t0);
+        let fx_out = app.key(press(KeyCode::Char('3')), t0);
         assert!(
             matches!(fx_out.as_slice(), [Effect::Send(Command::NativeSizes)]),
             "{fx_out:?}"
@@ -852,21 +866,21 @@ mod tests {
 
         // The first group is the safe one; Enter opens it, Space marks its item and again
         // unmarks it.
-        app.key(key(KeyCode::Enter), t0);
+        app.key(press(KeyCode::Enter), t0);
         let frame = render(&mut app, t0, 100, 24);
         assert!(frame.contains("▾ OS and user caches"), "{frame}");
-        app.key(key(KeyCode::Down), t0);
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Down), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.marks.items()[0].target.path.ends_with("mid/m0"));
-        app.key(key(KeyCode::Up), t0);
-        app.key(key(KeyCode::Char(' ')), t0);
+        app.key(press(KeyCode::Up), t0);
+        app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.marks.is_empty(), "Space on a group toggles all of it");
         // `f` shows safe items only: the regenerable group goes.
-        app.key(key(KeyCode::Char('f')), t0);
+        app.key(press(KeyCode::Char('f')), t0);
         let frame = render(&mut app, t0, 100, 24);
         assert!(!frame.contains("Build output"), "{frame}");
         // Back to the list.
-        app.key(key(KeyCode::Char('1')), t0);
+        app.key(press(KeyCode::Char('1')), t0);
         assert!(!active(&app));
     }
 
@@ -877,17 +891,17 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         sync(&mut app, &fx.m, t0);
-        app.key(key(KeyCode::Char('3')), t0);
+        app.key(press(KeyCode::Char('3')), t0);
         sync(&mut app, &fx.m, t0);
-        app.key(key(KeyCode::Enter), t0);
-        app.key(key(KeyCode::Down), t0);
-        app.key(key(KeyCode::Char('i')), t0);
+        app.key(press(KeyCode::Enter), t0);
+        app.key(press(KeyCode::Down), t0);
+        app.key(press(KeyCode::Char('i')), t0);
         sync(&mut app, &fx.m, t0);
         let want = selected_item(&app).unwrap().path.clone();
         let facts = app.extras.details.facts.as_ref().expect("details read");
         assert_eq!(facts.path, want);
         // On a group row there is nothing to describe.
-        app.key(key(KeyCode::Up), t0);
+        app.key(press(KeyCode::Up), t0);
         sync(&mut app, &fx.m, t0);
         assert!(app.extras.details.facts.is_none());
     }
@@ -899,7 +913,7 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         sync(&mut app, &fx.m, t0);
-        app.key(key(KeyCode::Char('3')), t0);
+        app.key(press(KeyCode::Char('3')), t0);
         sync(&mut app, &fx.m, t0);
         let frame = render(&mut app, t0, 100, 10);
         assert!(frame.contains("▸ OS and user caches"), "{frame}");
@@ -911,17 +925,17 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         sync(&mut app, &fx.m, t0);
-        app.key(key(KeyCode::Char('3')), t0);
+        app.key(press(KeyCode::Char('3')), t0);
         sync(&mut app, &fx.m, t0);
         let rules = app.snap.rules.clone().unwrap();
         let base = app.extras.cleanup.items[0].clone();
-        let rule = |id: &str| rules.rules().iter().position(|r| r.id == id).unwrap() as u16;
+        let rule = |id: &str| rules.index(id).unwrap();
         let now = now_secs();
         let day = 86_400;
         let it = |id: &str, safety: Safety, size: u64, age_days: i64, flags: u8| Item {
             class: Class {
                 rule: rule(id),
-                safety: safety as u8,
+                safety,
                 flags,
                 ..base.class
             },
@@ -977,18 +991,26 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         sync(&mut app, &fx.m, t0);
-        app.key(key(KeyCode::Char('3')), t0);
+        app.key(press(KeyCode::Char('3')), t0);
         sync(&mut app, &fx.m, t0);
         // The regenerable group holds `big`, a Rust target/ cleaned with `cargo clean`.
         let groups = rows(&app);
         let at = groups
             .iter()
-            .position(|r| matches!(r, Row::Group { safety: 1, .. }))
+            .position(|r| {
+                matches!(
+                    r,
+                    Row::Group {
+                        safety: Safety::Regenerable,
+                        ..
+                    }
+                )
+            })
             .unwrap();
         app.cleanup.cursor = at;
-        app.key(key(KeyCode::Enter), t0);
-        app.key(key(KeyCode::Down), t0);
-        let out = app.key(key(KeyCode::Char('n')), t0);
+        app.key(press(KeyCode::Enter), t0);
+        app.key(press(KeyCode::Down), t0);
+        let out = app.key(press(KeyCode::Char('n')), t0);
         assert!(
             matches!(
                 out.as_slice(),
@@ -1001,7 +1023,7 @@ mod tests {
             "{out:?}"
         );
         // While it runs, `y` does nothing.
-        assert!(app.key(key(KeyCode::Char('y')), t0).is_empty());
+        assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
         let id = app.cleanup.pane.as_ref().unwrap().id;
         app.extras.cleanup.native = Some(NativeView {
             id,
@@ -1011,7 +1033,7 @@ mod tests {
         });
         let frame = render(&mut app, t0, 100, 24);
         assert!(frame.contains("That was the dry run"), "{frame}");
-        let out = app.key(key(KeyCode::Char('y')), t0);
+        let out = app.key(press(KeyCode::Char('y')), t0);
         assert!(
             matches!(
                 out.as_slice(),

@@ -1,11 +1,11 @@
 //! The local side of a remote scan: the applier's scanner calls go
-//! to a `dfdu agent` as [`Down`] frames, and a reader thread puts the agent's batches into the
+//! to a `dfdu agent` as [`ToAgent`] frames, and a reader thread puts the agent's batches into the
 //! applier's inbox as if local workers had sent them. The inbox's byte budget blocks the
 //! reader, which stops reading the pipe, which blocks the agent's workers.
 //!
 //! Sequence numbers are the one thing translated: the applier compares a job's submitted
 //! number with the one in a `Quiescent`, and the agent counts its own. Each start gets a local
-//! number at once and the agent's in [`Up::Started`], in the same order; a `Quiescent` is
+//! number at once and the agent's in [`FromAgent::Started`], in the same order; a `Quiescent` is
 //! passed on with the highest local number whose agent number it covers.
 //!
 //! Classification runs on the agent, with this side's rules: [`connect`] sends their text, the
@@ -25,6 +25,11 @@
 //! A dead or closed link ends the session's scanning: once everything that arrived is applied,
 //! the running jobs stop where they are, the scan is incomplete and
 //! [`Status::disconnected`](crate::Status) says why; nothing more is scanned.
+//!
+//! The other end is [`agent`]; the frames between them are [`wire`]'s.
+
+pub mod agent;
+pub mod wire;
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
@@ -38,7 +43,6 @@ use std::time::{Duration, Instant};
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::extents::Inode;
 use crate::measure::{MeasureMsg, MeasureReq, MeasureResult};
-use crate::wire::{self, Down, Up, WireClass, read_frame, write_frame};
 use crossbeam_channel::{RecvTimeoutError, Sender};
 use dfdu_clean::{DeleterHandle, DeleterMsg, DeleterReq};
 use dfdu_rules::hash::FastMap as HashMap;
@@ -47,6 +51,7 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Batch, DirId, JobId, JobOptions, ScanMsg, Sink};
 use dfdu_tree::NodeRef;
 use parking_lot::Mutex;
+use wire::{FromAgent, ToAgent, WireClass, read_frame, write_frame};
 
 /// A read that waits this long without a byte means the agent or the link is gone.
 pub const DEAD: Duration = Duration::from_secs(10);
@@ -106,7 +111,7 @@ pub(crate) struct Link {
 }
 
 impl Link {
-    fn send(&self, d: &Down) {
+    fn send(&self, d: &ToAgent) {
         if self.dead.load(SeqCst) {
             return;
         }
@@ -122,7 +127,7 @@ impl Link {
     pub(crate) fn start_job(&self, job: JobId, root: &Path, opts: &JobOptions) -> u64 {
         let seq = self.seq.fetch_add(1, SeqCst) + 1;
         self.pending.lock().push_back(seq);
-        self.send(&Down::StartJob {
+        self.send(&ToAgent::StartJob {
             job,
             root: dfdu_tree::name_bytes(root.as_os_str()).into_owned(),
             cross_mounts: opts.cross_mounts,
@@ -137,18 +142,18 @@ impl Link {
     }
 
     pub(crate) fn end_job(&self, job: JobId) {
-        self.send(&Down::EndJob { job });
+        self.send(&ToAgent::EndJob { job });
     }
 
     pub(crate) fn stop_dirs(&self, job: JobId, dirs: Vec<DirId>) {
         if !dirs.is_empty() {
-            self.send(&Down::StopDirs { job, dirs });
+            self.send(&ToAgent::StopDirs { job, dirs });
         }
     }
 
     /// The agent retries on its side, so the local side never has to.
     pub(crate) fn abandon(&self, job: JobId, dir: DirId) -> bool {
-        self.send(&Down::Abandon { job, dir });
+        self.send(&ToAgent::Abandon { job, dir });
         true
     }
 
@@ -304,15 +309,15 @@ pub(crate) fn connect(
             "the agent closed the link before saying hello",
         ));
     }
-    let tool = match Up::decode(&buf, None).map_err(bad)? {
-        Up::Hello { min, max, tool } if (min..=max).contains(&wire::VERSION) => tool,
-        Up::Hello { min, max, tool } => {
+    let tool = match FromAgent::decode(&buf, None).map_err(bad)? {
+        FromAgent::Hello { min, max, tool } if (min..=max).contains(&wire::VERSION) => tool,
+        FromAgent::Hello { min, max, tool } => {
             return Err(io::Error::other(format!(
                 "{tool} speaks protocol versions {min}-{max}, this dfdu {}",
                 wire::VERSION
             )));
         }
-        Up::Fatal(s) => return Err(io::Error::other(s)),
+        FromAgent::Fatal(s) => return Err(io::Error::other(s)),
         _ => return Err(io::Error::other("the agent did not say hello")),
     };
     let link = Arc::new(Link {
@@ -329,17 +334,17 @@ pub(crate) fn connect(
         natives: Mutex::new(HashSet::default()),
         measuring: Mutex::new(HashMap::default()),
     });
-    link.send(&Down::Hello {
+    link.send(&ToAgent::Hello {
         version: wire::VERSION,
     });
     let (measure_min, privileged) = loop {
         if !read_frame(&mut reader, &mut buf).map_err(bad)? {
             return Err(io::Error::other("the agent closed the link"));
         }
-        match Up::decode(&buf, None).map_err(bad)? {
-            Up::Heartbeat => {}
-            Up::Fatal(s) => return Err(io::Error::other(s)),
-            Up::Host {
+        match FromAgent::decode(&buf, None).map_err(bad)? {
+            FromAgent::Heartbeat => {}
+            FromAgent::Fatal(s) => return Err(io::Error::other(s)),
+            FromAgent::Host {
                 measure_min,
                 privileged,
             } => break (measure_min, privileged),
@@ -354,7 +359,7 @@ pub(crate) fn connect(
         privileged,
     };
     if let Some(r) = rules {
-        link.send(&Down::Rules {
+        link.send(&ToAgent::Rules {
             files: r
                 .files
                 .iter()
@@ -372,11 +377,11 @@ pub(crate) fn connect(
             if !read_frame(&mut reader, &mut buf).map_err(bad)? {
                 return Err(io::Error::other("the agent closed the link"));
             }
-            match Up::decode(&buf, None).map_err(bad)? {
+            match FromAgent::decode(&buf, None).map_err(bad)? {
                 // Before a job starts, batches only say the agent's workers are idle.
-                Up::Heartbeat | Up::Batch(_) => {}
-                Up::Fatal(s) => return Err(io::Error::other(s)),
-                Up::Rules {
+                FromAgent::Heartbeat | FromAgent::Batch(_) => {}
+                FromAgent::Fatal(s) => return Err(io::Error::other(s)),
+                FromAgent::Rules {
                     platform,
                     vars,
                     fingerprint,
@@ -436,7 +441,7 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
         .spawn(move || {
             loop {
                 if ab.swap(false, SeqCst) {
-                    link.send(&Down::AbortDelete);
+                    link.send(&ToAgent::AbortDelete);
                 }
                 match rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(DeleterReq::Plan(p)) => {
@@ -445,7 +450,7 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
                             .insert(p.id, p.items.iter().map(|i| (i.node, i.bytes)).collect());
                         // A plan starting clears an abort asked for before it, as locally.
                         ab.store(false, SeqCst);
-                        link.send(&Down::Delete(DeleterReq::Plan(p)));
+                        link.send(&ToAgent::Delete(DeleterReq::Plan(p)));
                         if link.dead.load(SeqCst) {
                             link.end_plans(&deleted);
                         }
@@ -459,12 +464,12 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
                             continue;
                         }
                         link.natives.lock().insert(n.id);
-                        link.send(&Down::Delete(DeleterReq::Native(n)));
+                        link.send(&ToAgent::Delete(DeleterReq::Native(n)));
                         if link.dead.load(SeqCst) {
                             link.end_plans(&deleted);
                         }
                     }
-                    Ok(r) => link.send(&Down::Delete(r)),
+                    Ok(r) => link.send(&ToAgent::Delete(r)),
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
@@ -478,8 +483,8 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
     }
 }
 
-/// Guard checks and native sizes run on the agent: each batch is sent as it comes; the answers arrive through
-/// the reader ([`spawn_reader`]'s `checked`).
+/// Guard checks and native sizes run on the agent: each batch is sent as it comes; the answers
+/// arrive through the reader ([`spawn_reader`]'s `checked`).
 pub(crate) fn spawn_checker(link: Arc<Link>) -> Sender<Vec<CheckReq>> {
     let (tx, rx) = crossbeam_channel::unbounded::<Vec<CheckReq>>();
     thread::Builder::new()
@@ -487,7 +492,7 @@ pub(crate) fn spawn_checker(link: Arc<Link>) -> Sender<Vec<CheckReq>> {
         .spawn(move || {
             for batch in rx {
                 if !batch.is_empty() {
-                    link.send(&Down::Check(batch));
+                    link.send(&ToAgent::Check(batch));
                 }
             }
         })
@@ -516,7 +521,7 @@ pub(crate) fn spawn_measurer(
                         }
                     }
                 }
-                link.send(&Down::Measure(reqs));
+                link.send(&ToAgent::Measure(reqs));
                 if link.dead.load(SeqCst) {
                     link.end_measures(&measured);
                 }
@@ -592,8 +597,8 @@ fn pump(link: &Link, r: &mut impl Read, sink: &impl Sink, answers: &Answers) -> 
             Ok(false) => return "the agent closed the link".into(),
             Err(e) => return e.to_string(),
         }
-        match Up::decode(&buf, link.rules.get().map(|r| &**r)) {
-            Ok(Up::Batch(mut msgs)) => {
+        match FromAgent::decode(&buf, link.rules.get().map(|r| &**r)) {
+            Ok(FromAgent::Batch(mut msgs)) => {
                 let mut bytes = 0;
                 for m in &mut msgs {
                     if let ScanMsg::Quiescent { submitted_seq } = m {
@@ -603,33 +608,33 @@ fn pump(link: &Link, r: &mut impl Read, sink: &impl Sink, answers: &Answers) -> 
                 }
                 sink.send(Batch { msgs, bytes });
             }
-            Ok(Up::Started { seq, .. }) => {
+            Ok(FromAgent::Started { seq, .. }) => {
                 if let Some(local) = link.pending.lock().pop_front() {
                     link.pairs.lock().push((seq, local));
                 }
             }
             Ok(
-                Up::Heartbeat
-                | Up::Abandoned { .. }
-                | Up::Hello { .. }
-                | Up::Rules { .. }
-                | Up::Host { .. },
+                FromAgent::Heartbeat
+                | FromAgent::Abandoned { .. }
+                | FromAgent::Hello { .. }
+                | FromAgent::Rules { .. }
+                | FromAgent::Host { .. },
             ) => {}
-            Ok(Up::Checked(msgs)) => {
+            Ok(FromAgent::Checked(msgs)) => {
                 let _ = answers.checked.send(msgs);
             }
-            Ok(Up::Deleter(msg)) => {
+            Ok(FromAgent::Deleter(msg)) => {
                 if link.accept(&msg) {
                     let _ = answers.deleted.send(msg);
                 }
             }
-            Ok(Up::Measured(mut msgs)) => {
+            Ok(FromAgent::Measured(mut msgs)) => {
                 msgs.retain(|m| link.accept_measured(m));
                 if !msgs.is_empty() {
                     let _ = answers.measured.send(msgs);
                 }
             }
-            Ok(Up::Fatal(s)) => return format!("the agent stopped: {s}"),
+            Ok(FromAgent::Fatal(s)) => return format!("the agent stopped: {s}"),
             Err(e) => return e.to_string(),
         }
     }
@@ -668,7 +673,7 @@ mod tests {
         assert!(agree(&files, "plan9", &vars, fp, &root).is_err());
         assert!(agree(&files, "linux", &vars, fp ^ 1, &root).is_err());
         let unknown = WireClass {
-            inside: vec![u16::MAX],
+            inside: vec![dfdu_rules::RuleIx(u16::MAX)],
             ..root
         };
         assert!(agree(&files, "linux", &vars, fp, &unknown).is_err());

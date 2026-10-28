@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-engine"
-description = "The applier: single writer of the tree, jobs, gate, accounting, hard links"
+description = "The applier (single writer of the tree), jobs, accounting, hard links, and the remote agent and wire protocol"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
