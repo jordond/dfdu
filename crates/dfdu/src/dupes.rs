@@ -42,6 +42,7 @@ enum Format {
 }
 
 pub fn run(args: DupesArgs) -> ExitCode {
+    args.mounts.backend(&args.path);
     let storage = dfdu_sys::storage(&args.path);
     let spinning = dfdu_engine::workers_for(storage) <= 2;
     let engine = Engine::start(

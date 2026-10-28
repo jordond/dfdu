@@ -15,6 +15,7 @@ dfdu-rules = { path = "../crates/dfdu-rules" }
 dfdu-tui = { path = "../crates/dfdu-tui" }
 dfdu-engine = { path = "../crates/dfdu-engine" }
 dfdu-clean = { path = "../crates/dfdu-clean" }
+dfdu-scan = { path = "../crates/dfdu-scan" }
 tempfile = "3.27.0"
 
 # Not a member of the dfdu workspace: it builds with nightly only.
@@ -62,6 +63,20 @@ bench = false
 [[bin]]
 name = "journal"
 path = "fuzz_targets/journal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire"
+path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ntfs"
+path = "fuzz_targets/ntfs.rs"
 test = false
 doc = false
 bench = false

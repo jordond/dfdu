@@ -204,6 +204,7 @@ pub fn scan(
     threads: Option<usize>,
     journal: bool,
 ) -> Result<(Engine<NativeBackend>, Duration), String> {
+    mounts.backend(path);
     let storage = dfdu_sys::storage(path);
     let opts = EngineOptions {
         workers: threads.unwrap_or_else(|| dfdu_engine::workers_for(storage)),

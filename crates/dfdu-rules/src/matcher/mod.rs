@@ -287,6 +287,23 @@ impl RuleSet {
         &self.rules
     }
 
+    /// A hash of the rules' ids in order (FNV-1a): two sets with the same fingerprint number
+    /// their rules alike, so classes sent between them name the same rules.
+    pub fn fingerprint(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |b: &[u8]| {
+            for &x in b {
+                h = (h ^ u64::from(x)).wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        eat(&(self.rules.len() as u64).to_le_bytes());
+        for r in &self.rules {
+            eat(r.id.as_bytes());
+            eat(&[0, r.safety as u8, r.action as u8, r.degrade.len() as u8]);
+        }
+        h
+    }
+
     pub fn rule(&self, i: u16) -> &Rule {
         &self.rules[i as usize]
     }

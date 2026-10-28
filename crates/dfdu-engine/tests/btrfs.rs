@@ -439,9 +439,13 @@ fn a_mount_made_after_the_scan_stops_the_delete() {
     sh(&["umount", mp.to_str().unwrap()]);
     let _ = fs::remove_dir_all(&w);
     assert!(intact, "deleted into the mount");
-    assert_eq!((s.deleted, s.failed), (0, 1), "{n:?}");
+    assert_eq!(s.deleted, 0, "{n:?}");
+    // Either check stops it: the listing of `h` taken by the scan does not match what is
+    // inside now (the mount's files), or the mount is found when deleting.
     assert!(
-        n.iter().any(|t| t.contains("a filesystem is mounted at")),
+        n.iter()
+            .any(|t| t.contains("a filesystem is mounted at")
+                || t.contains("mp changed since the scan")),
         "{n:?}"
     );
 }

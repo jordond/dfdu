@@ -263,7 +263,11 @@ mod tests {
         }
         let dir = std::fs::File::open(tmp.path()).unwrap();
         let a = tmp.path().join("a");
-        std::fs::write(&a, vec![7u8; 1 << 20]).unwrap();
+        // Synced, so the allocation is settled before it is compared (under load it was not).
+        let mut f = std::fs::File::create(&a).unwrap();
+        f.write_all(&vec![7u8; 1 << 20]).unwrap();
+        f.sync_all().unwrap();
+        drop(f);
         let st = std::fs::metadata(&a).unwrap();
         let at = |n: &std::ffi::CStr| clone_info_at(dir.as_fd(), n).unwrap();
         let alone = at(c"a");

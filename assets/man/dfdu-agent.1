@@ -1,0 +1,16 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-agent 1  "dfdu-agent " 
+.SH NAME
+dfdu\-agent \- Scan for a dfdu on another host (`\-\-remote`): reads requests on stdin and writes what it finds to stdout in dfdu\*(Aqs wire format. Not for use by hand
+.SH SYNOPSIS
+\fBdfdu agent\fR [\fB\-\-threads\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Scan for a dfdu on another host (`\-\-remote`): reads requests on stdin and writes what it finds to stdout in dfdu\*(Aqs wire format. Not for use by hand
+.SH OPTIONS
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

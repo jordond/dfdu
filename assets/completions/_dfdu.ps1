@@ -24,6 +24,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done')
             [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
             [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there). Read-only; nothing is classified or recorded in the history')
             [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)')
             [CompletionResult]::new('--theme', '--theme', [CompletionResultType]::ParameterName, 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown')
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set')
@@ -31,6 +32,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('--no-rules', '--no-rules', [CompletionResultType]::ParameterName, 'Do not classify entries: no categories, no cleanup candidates')
             [CompletionResult]::new('--disks', '--disks', [CompletionResultType]::ParameterName, 'Choose a disk to browse from the mounted filesystems')
             [CompletionResult]::new('--read-only', '--read-only', [CompletionResultType]::ParameterName, 'Never delete anything (the delete keys are refused)')
@@ -53,6 +55,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
+            [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -62,6 +65,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first [default: 10; all for ndjson]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many')
             [CompletionResult]::new('--measure-workers', '--measure-workers', [CompletionResultType]::ParameterName, 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history')
             [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them')
             [CompletionResult]::new('--stall-abandon', '--stall-abandon', [CompletionResultType]::ParameterName, 'Abandon directories stalled this many seconds')
             [CompletionResult]::new('--stall-after', '--stall-after', [CompletionResultType]::ParameterName, 'Report a directory as stalled after one call on it took this many seconds (tests)')
@@ -72,6 +76,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('--no-rules', '--no-rules', [CompletionResultType]::ParameterName, 'Do not classify entries: no categories, no cleanup candidates')
             [CompletionResult]::new('--by-type', '--by-type', [CompletionResultType]::ParameterName, 'After the tree, print disk usage by file type and the largest extensions')
             [CompletionResult]::new('--bytes', '--bytes', [CompletionResultType]::ParameterName, 'Print only the root total in bytes (for scripts and tests)')
@@ -99,6 +104,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -120,6 +126,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -135,6 +142,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -153,6 +161,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -161,13 +170,15 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
-            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot''s')
+            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot''s')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)')
             [CompletionResult]::new('--compress', '--compress', [CompletionResultType]::ParameterName, 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)')
             [CompletionResult]::new('--snapshot', '--snapshot', [CompletionResultType]::ParameterName, 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)')
             [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -202,6 +213,12 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'dfdu;agent' {
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'dfdu;help' {
             [CompletionResult]::new('scan', 'scan', [CompletionResultType]::ParameterValue, 'Scan a directory and print a summary')
             [CompletionResult]::new('disks', 'disks', [CompletionResultType]::ParameterValue, 'List the mounted filesystems with their size and free space')
@@ -215,6 +232,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
+            [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -252,6 +270,9 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             break
         }
         'dfdu;help;completions' {
+            break
+        }
+        'dfdu;help;agent' {
             break
         }
         'dfdu;help;help' {

@@ -82,6 +82,9 @@ pub struct RunOptions {
     pub imported: Option<dfdu_tree::Tree>,
     /// A scan read from a file, shown at once while its root is rescanned (`path` is ignored).
     pub resumed: Option<dfdu_tree::Tree>,
+    /// An engine scanning on another host (`path` is a path there): read-only, nothing is
+    /// classified or recorded in the history.
+    pub remote: Option<Engine<dfdu_scan::NativeBackend>>,
     /// Where the change journal stood when the resumed scan started: when it can tell what
     /// changed since, only that is rescanned.
     pub journal: Option<dfdu_store::snapshot::Journal>,
@@ -323,6 +326,20 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             ui.debug_stats,
         );
     }
+    if let Some(engine) = opts.remote {
+        let path = opts.path.unwrap_or_else(|| PathBuf::from("."));
+        engine.send(Command::Scan {
+            path,
+            opts: opts.job,
+        });
+        return browse(
+            &mut terminal,
+            engine,
+            ui_opts(theme, None),
+            mouse,
+            ui.debug_stats,
+        );
+    }
     if let Some(tree) = opts.resumed {
         let root = tree.roots().next().expect("a loaded tree has a root");
         let path = tree.path_buf(root);
@@ -342,7 +359,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
         let changed = opts
             .journal
-            .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id));
+            .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
         engine.send(Command::Resume {
             node,
             opts: job,

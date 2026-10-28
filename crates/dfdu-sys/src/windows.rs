@@ -114,6 +114,39 @@ pub fn verbatim_path(path: &Path) -> io::Result<PathBuf> {
     Ok(PathBuf::from(std::ffi::OsString::from_wide(&out)))
 }
 
+/// The device of the volume `path` is on, as `\\?\Volume{GUID}` (no trailing separator), for
+/// reading the volume itself. Opening it needs administrator rights.
+pub fn volume_device(path: &Path) -> io::Result<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
+    };
+    let mut p: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if p.contains(&0) {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    p.push(0);
+    let mut mount = vec![0u16; p.len().max(64)];
+    // SAFETY: `p` is NUL-terminated; `mount` is valid for writes of its length in characters,
+    // which is at least the path's, the longest a mount point of it can be.
+    if unsafe { GetVolumePathNameW(p.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut name = [0u16; 64];
+    // SAFETY: `mount` is NUL-terminated (the call wrote it); `name` is valid for writes of its
+    // length in characters (a volume GUID path takes 50 with its NUL).
+    let ok = unsafe {
+        GetVolumeNameForVolumeMountPointW(mount.as_ptr(), name.as_mut_ptr(), name.len() as u32)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    if len > 0 && name[len - 1] == u16::from(b'\\') {
+        len -= 1;
+    }
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(&name[..len])))
+}
+
 /// `path` in the NT namespace (`\??\C:\dir`), for `NtCreateFile`.
 fn nt_path(path: &Path) -> io::Result<Vec<u16>> {
     let v = verbatim_path(path)?;

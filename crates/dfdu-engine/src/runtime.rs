@@ -174,15 +174,26 @@ pub struct EngineOptions {
 /// one per performance core: on an M4 Max (12 + 4) a warm scan of 1M entries takes 2.0 s with
 /// 10 or 12 workers, 2.5 s with 14 and 3.0 s with 16.
 pub fn workers_for(storage: dfdu_sys::Storage) -> usize {
+    let all = || thread::available_parallelism().map_or(4, |n| n.get());
     #[cfg(target_os = "macos")]
-    let cores = dfdu_sys::performance_cores();
+    let cores = dfdu_sys::performance_cores().unwrap_or_else(all);
     #[cfg(not(target_os = "macos"))]
-    let cores = None;
+    let cores = all();
     match storage {
         dfdu_sys::Storage::Rotational => 2,
-        _ => cores
-            .unwrap_or_else(|| thread::available_parallelism().map_or(4, |n| n.get()))
-            .clamp(2, 16),
+        _ => cores.clamp(2, 16),
+    }
+}
+
+/// Measurer threads by default: none where nothing is measured.
+pub(crate) fn default_measurers() -> usize {
+    // The kernel's extent lookups are the cost, and they scale with threads.
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        thread::available_parallelism()
+            .map_or(2, |n| n.get())
+            .clamp(2, 8)
+    } else {
+        0
     }
 }
 
@@ -199,14 +210,7 @@ impl Default for EngineOptions {
             imported: false,
             stage_window: dfdu_clean::STAGE_UNDO_WINDOW,
             crash_dir: default_crash_dir(),
-            // The kernel's extent lookups are the cost, and they scale with threads.
-            measure_workers: if cfg!(any(target_os = "linux", target_os = "macos")) {
-                thread::available_parallelism()
-                    .map_or(2, |n| n.get())
-                    .clamp(2, 8)
-            } else {
-                0
-            },
+            measure_workers: default_measurers(),
             classifiers: 2,
         }
     }
@@ -221,6 +225,7 @@ pub struct Engine<B: Backend> {
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
     pool: Option<Pool>,
+    link: Option<Arc<crate::remote::Link>>,
     delete_abort: Arc<AtomicBool>,
     deleter: Option<JoinHandle<()>>,
     budget: Arc<Budget>,
@@ -241,6 +246,34 @@ const WAIT_LATE: Duration = Duration::from_millis(6);
 
 impl<B: Backend> Engine<B> {
     pub fn start(backend: B, opts: EngineOptions) -> Self {
+        Self::start_inner(backend, opts, None)
+    }
+
+    /// An engine whose scans run on another host, by the `dfdu agent` at the other end of `io`
+    /// (`data-pipeline.md` §9.4); `backend` is only consulted for local reads. Fails when the
+    /// agent does not answer the greeting or speaks no common protocol version. With `rules`,
+    /// the agent classifies with them; the answer says what the scan root classifies against,
+    /// to put in [`Command::Scan`]'s options.
+    pub fn start_remote(
+        backend: B,
+        opts: EngineOptions,
+        io: crate::RemoteIo,
+        rules: Option<crate::RemoteRules>,
+    ) -> std::io::Result<(Self, crate::Connected)> {
+        let (link, reader, connected) = crate::remote::connect(io, rules)?;
+        // The tree's paths are the other host's: nothing here may act on them. Deletion, guard
+        // checks and extent measurement run on the agent (`measure_workers` 0 still turns
+        // measurement off); native commands would run on this host.
+        let remote = Remote {
+            link,
+            reader,
+            measure_min: connected.measure_min,
+            privileged: connected.privileged,
+        };
+        Ok((Self::start_inner(backend, opts, Some(remote)), connected))
+    }
+
+    fn start_inner(backend: B, opts: EngineOptions, remote: Option<Remote>) -> Self {
         let mut limits = opts.limits.clone();
         if limits.chunk_credit == 0 {
             limits.chunk_credit = opts.workers.max(2);
@@ -258,12 +291,34 @@ impl<B: Backend> Engine<B> {
         let (wake_tx, wake_rx) = bounded::<()>(1);
         let stop = Arc::new(AtomicBool::new(false));
 
-        let pool = Pool::start(shared.clone(), inbox.clone(), opts.workers);
+        let (link, reader, remote_min, privileged) = match remote {
+            Some(r) => (
+                Some(r.link),
+                Some(r.reader),
+                Some(r.measure_min),
+                r.privileged,
+            ),
+            None => (None, None, None, dfdu_sys::is_privileged()),
+        };
+        let pool = link
+            .is_none()
+            .then(|| Pool::start(shared.clone(), inbox.clone(), opts.workers));
         let (del_tx, del_rx) = unbounded::<DeleterMsg>();
-        let deleter = spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx);
+        // A remote engine's plans run on the agent; their results come in through the link.
+        let deleter = match &link {
+            Some(l) => crate::remote::spawn_deleter(l.clone(), del_tx.clone()),
+            None => spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx.clone()),
+        };
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
-        let measurers =
-            (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, meas_tx));
+        // A remote engine's measurements run on the agent, when it can measure; their answers
+        // come in through the link.
+        let measurers = match (&link, remote_min) {
+            (Some(l), Some(min)) => (opts.measure_workers > 0 && min > 0)
+                .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone())),
+            _ => (opts.measure_workers > 0)
+                .then(|| spawn_measurers(opts.measure_workers, meas_tx.clone())),
+        };
+        let measure_min = remote_min.unwrap_or(crate::applier::MEASURE_MIN);
         // Without measurers the sender is dropped, and a receiver with no senders is always
         // ready: the applier's `select!` would return at once and it would take the write lock
         // in a loop (measurement is off on macOS and Windows).
@@ -273,8 +328,14 @@ impl<B: Backend> Engine<B> {
             crossbeam_channel::never()
         };
         let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
-        let classifiers =
-            (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, chk_tx));
+        // A remote engine's guard checks run on the agent; their answers come in through the
+        // link.
+        let classifiers = match &link {
+            Some(l) => Some(crate::remote::spawn_checker(l.clone())),
+            None => {
+                (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, chk_tx.clone()))
+            }
+        };
         let chk_rx = if classifiers.is_some() {
             chk_rx
         } else {
@@ -282,7 +343,25 @@ impl<B: Backend> Engine<B> {
         };
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
-        let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
+        if let (Some(l), Some(r)) = (&link, reader) {
+            let wake = wake_tx.clone();
+            let answers = crate::remote::Answers {
+                deleted: del_tx.clone(),
+                checked: chk_tx,
+                measured: meas_tx,
+            };
+            crate::remote::spawn_reader(
+                l.clone(),
+                r,
+                inbox.clone(),
+                answers,
+                stop.clone(),
+                move || {
+                    let _ = wake.try_send(());
+                },
+            );
+        }
+        let (m, sh, st, ln) = (model.clone(), shared.clone(), stop.clone(), link.clone());
         let chans = Channels {
             cmd_rx,
             inbox_rx,
@@ -290,6 +369,8 @@ impl<B: Backend> Engine<B> {
             plans: deleter.reqs,
             meas_rx,
             measure: measurers,
+            measure_min,
+            privileged,
             chk_rx,
             classify: classifiers,
             wake_tx,
@@ -301,7 +382,7 @@ impl<B: Backend> Engine<B> {
                 let crash_dir = opts.crash_dir.clone();
                 let model = m.clone();
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    applier_loop(m, sh, chans, budget, st, opts)
+                    applier_loop(m, sh, ln, chans, budget, st, opts)
                 }));
                 if let Err(p) = r {
                     // An applier panic is a bug. Record it where readers will see it, write a
@@ -329,7 +410,8 @@ impl<B: Backend> Engine<B> {
             wake_rx,
             stop,
             applier: Some(applier),
-            pool: Some(pool),
+            pool,
+            link,
             delete_abort,
             deleter: Some(deleter_thread),
             budget: transit,
@@ -433,6 +515,9 @@ impl<B: Backend> Engine<B> {
         if let Some(p) = self.pool.take() {
             p.stop(wait);
         }
+        if let Some(l) = self.link.take() {
+            l.close();
+        }
         // The applier held the deleter's plan channel; with it gone the deleter finishes its
         // current item, syncs and closes the journal, and exits. Wait for that, within `wait`.
         self.delete_abort.store(true, SeqCst);
@@ -448,6 +533,14 @@ impl<B: Backend> Engine<B> {
     }
 }
 
+/// The link to an agent, for [`Engine::start_inner`].
+struct Remote {
+    link: Arc<crate::remote::Link>,
+    reader: Box<dyn std::io::Read + Send>,
+    measure_min: u64,
+    privileged: bool,
+}
+
 struct Channels {
     cmd_rx: Receiver<Command>,
     inbox_rx: Receiver<Batch>,
@@ -456,6 +549,10 @@ struct Channels {
     meas_rx: Receiver<Vec<MeasureMsg>>,
     /// `None` when measurement is off. Dropping it ends the measurer threads.
     measure: Option<Sender<MeasureReq>>,
+    /// Files allocating less are not measured.
+    measure_min: u64,
+    /// Whoever deletes runs as root (the agent, for a remote engine).
+    privileged: bool,
     chk_rx: Receiver<Vec<CheckMsg>>,
     /// `None` when the classifier pool is off.
     classify: Option<Sender<Vec<CheckReq>>>,
@@ -465,6 +562,7 @@ struct Channels {
 fn applier_loop<B: Backend>(
     model: Arc<RwLock<Model>>,
     shared: Arc<Shared<B>>,
+    remote: Option<Arc<crate::remote::Link>>,
     ch: Channels,
     budget: Arc<Budget>,
     stop: Arc<AtomicBool>,
@@ -477,16 +575,20 @@ fn applier_loop<B: Backend>(
         plans,
         meas_rx,
         measure,
+        measure_min,
+        privileged,
         chk_rx,
         classify,
         wake_tx,
     } = ch;
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
+    applier.remote = remote;
     applier.read_only = opts.read_only || opts.imported;
     applier.imported = opts.imported;
     applier.measure = measure.is_some();
-    applier.measure_min = crate::applier::MEASURE_MIN;
+    applier.measure_min = measure_min;
+    applier.privileged = privileged;
     applier.checks = classify.is_some();
     let mut chks: VecDeque<CheckMsg> = VecDeque::new();
     let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
@@ -561,6 +663,9 @@ fn applier_loop<B: Backend>(
             if started.elapsed() >= SLICE {
                 break;
             }
+        }
+        if cur.is_none() && inbox_rx.is_empty() {
+            applier.check_link(&mut g);
         }
         applier.tick(&mut g, now, auto_abandon);
         applier.refresh_status(&mut g);

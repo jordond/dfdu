@@ -16,7 +16,7 @@ pub mod schema;
 pub mod vars;
 
 pub use glob::{Glob, GlobError};
-pub use load::{LoadError, builtin, load, load_from};
+pub use load::{LoadError, builtin, load, load_from, sources};
 pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Stat, Verdict, stem};
 pub use vars::Env;
 
@@ -45,6 +45,14 @@ impl Platform {
             "windows" => Platform::Windows,
             _ => return None,
         })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Platform::MacOs => "macos",
+            Platform::Linux => "linux",
+            Platform::Windows => "windows",
+        }
     }
 }
 

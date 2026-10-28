@@ -47,6 +47,15 @@ pub fn builtin(env: &Env) -> (RuleSet, Vec<LoadError>) {
 
 /// The built-in rules, then every `*.toml` in `user_dir` (in name order) if it exists.
 pub fn load(env: &Env, user_dir: Option<&Path>) -> (RuleSet, Vec<LoadError>) {
+    let (files, mut errors) = sources(user_dir);
+    let (set, mut more) = load_from(env, &files);
+    errors.append(&mut more);
+    (set, errors)
+}
+
+/// What [`load`] loads: the built-in pack, then the text of every `*.toml` in `user_dir` (in
+/// name order) if it exists, and the files that could not be read.
+pub fn sources(user_dir: Option<&Path>) -> (Vec<(Source, String)>, Vec<LoadError>) {
     let mut files = vec![(Source::Builtin, BUILTIN.to_owned())];
     let mut errors = Vec::new();
     if let Some(dir) = user_dir {
@@ -76,9 +85,7 @@ pub fn load(env: &Env, user_dir: Option<&Path>) -> (RuleSet, Vec<LoadError>) {
             }),
         }
     }
-    let (set, mut more) = load_from(env, &files);
-    errors.append(&mut more);
-    (set, errors)
+    (files, errors)
 }
 
 /// Loads `files` in order into one set.

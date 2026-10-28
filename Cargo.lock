@@ -717,6 +717,7 @@ dependencies = [
 name = "dfdu-engine"
 version = "0.1.0"
 dependencies = [
+ "crc32c",
  "crossbeam-channel",
  "dfdu-bench",
  "dfdu-clean",

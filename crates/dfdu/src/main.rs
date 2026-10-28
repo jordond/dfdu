@@ -60,6 +60,10 @@ struct Cli {
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
+    /// Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be
+    /// installed there). Read-only; nothing is classified or recorded in the history.
+    #[arg(long, value_name = "HOST", conflicts_with_all = ["disks", "import", "resume_from"])]
+    remote: Option<String>,
     /// Show only files of these types or extensions, comma-separated: `video,audio,.iso`
     /// (`t` in the browser changes it).
     #[arg(long = "type", value_name = "TYPES", value_parser = type_filter)]
@@ -159,6 +163,105 @@ enum Cmd {
     Man { dir: PathBuf },
     /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
     Completions { shell: clap_complete::Shell },
+    /// Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what
+    /// it finds to stdout in dfdu's wire format. Not for use by hand.
+    Agent {
+        /// Worker threads.
+        #[arg(long)]
+        threads: Option<usize>,
+    },
+}
+
+/// `dfdu agent`: the scanner for a dfdu on another host, over stdin and stdout.
+fn agent(threads: Option<usize>) -> ExitCode {
+    let workers = threads.unwrap_or_else(|| dfdu_engine::workers_for(dfdu_sys::Storage::Unknown));
+    let r = dfdu_engine::agent::run(
+        native_backend(dfdu_sys::Storage::Unknown),
+        workers,
+        dfdu_clean::default_journal_dir(),
+        std::io::stdin(),
+        std::io::stdout(),
+    );
+    match r {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("dfdu agent: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Starts `dfdu agent` on `host` through `ssh` (or the command in `DFDU_REMOTE_COMMAND`,
+/// split at spaces, which replaces `ssh HOST dfdu agent`).
+fn agent_io(host: &str) -> std::io::Result<dfdu_engine::RemoteIo> {
+    use std::process::{Command as Proc, Stdio};
+    let argv: Vec<String> = match std::env::var("DFDU_REMOTE_COMMAND") {
+        Ok(c) => c.split_whitespace().map(str::to_string).collect(),
+        Err(_) => ["ssh", "--", host, "dfdu", "agent"]
+            .map(str::to_string)
+            .to_vec(),
+    };
+    let (prog, args) = argv
+        .split_first()
+        .ok_or_else(|| std::io::Error::other("DFDU_REMOTE_COMMAND is empty"))?;
+    let mut child = Proc::new(prog)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{prog}: {e}")))?;
+    let reader = Box::new(child.stdout.take().expect("piped stdout"));
+    let writer = Box::new(child.stdin.take().expect("piped stdin"));
+    Ok(dfdu_engine::RemoteIo {
+        reader,
+        writer,
+        child: Some(child),
+    })
+}
+
+/// An engine scanning on `host` through its agent, classifying with `rules`, and what the scan
+/// root classifies against; reports a failure to start.
+fn remote_engine(
+    host: &str,
+    opts: EngineOptions,
+    rules: Option<dfdu_engine::RemoteRules>,
+) -> Result<(Engine<dfdu_scan::NativeBackend>, Option<ClassOpts>), ExitCode> {
+    let started = agent_io(host).and_then(|io| {
+        Engine::start_remote(native_backend(dfdu_sys::Storage::Unknown), opts, io, rules)
+    });
+    match started {
+        Ok((e, c)) => {
+            for msg in c.errors {
+                eprintln!("dfdu: {host}: {msg}");
+            }
+            Ok((e, c.class))
+        }
+        Err(e) => {
+            eprintln!("dfdu: {host}: {e}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+/// Reports why a scan failed, or why a remote one stopped early: an engine that failed, or a
+/// link to the agent that ended before anything arrived, ends the command (exit 1); a link
+/// that ended later leaves an incomplete tree to print.
+fn failed<B: Backend>(engine: &Engine<B>) -> Option<ExitCode> {
+    let (fatal, gone, empty) = engine.read(|m| {
+        (
+            m.status.fatal.clone(),
+            m.status.disconnected.clone(),
+            m.tree.roots().next().is_none(),
+        )
+    });
+    if let Some(msg) = fatal {
+        eprintln!("dfdu: {msg}");
+        return Some(ExitCode::from(1));
+    }
+    let why = gone?;
+    eprintln!("dfdu: remote scan: {why}");
+    empty.then(|| ExitCode::from(1))
 }
 
 /// `dfdu man DIR`: `dfdu.1` and `dfdu-<command>.1` for each visible command.
@@ -221,10 +324,14 @@ struct ExportArgs {
     #[arg(long)]
     threads: Option<usize>,
     /// Start from this snapshot (`--snapshot`) and rescan only the directories changed since
-    /// it was taken, when the volume's change journal can tell (macOS); otherwise everything.
+    /// it was taken, when the volume's change journal can tell (macOS, Windows, btrfs as root);
+    /// otherwise everything.
     /// PATH and the mount options are the snapshot's.
-    #[arg(long, value_name = "SNAPSHOT")]
+    #[arg(long, value_name = "SNAPSHOT", conflicts_with = "remote")]
     resume_from: Option<PathBuf>,
+    /// Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there).
+    #[arg(long, value_name = "HOST")]
+    remote: Option<String>,
     #[command(flatten)]
     mounts: MountArgs,
 }
@@ -270,9 +377,33 @@ struct MountArgs {
     /// or without --cross-mounts.
     #[arg(long, overrides_with = "one_file_system")]
     network: bool,
+    /// Windows, as administrator: read each NTFS volume's master file table instead of listing
+    /// its directories, which is much faster on large volumes. Volumes whose table cannot be
+    /// read are listed as usual.
+    #[arg(long)]
+    mft: bool,
 }
 
 impl MountArgs {
+    /// Applies --mft for scans of `path`, saying why it cannot be used.
+    fn backend(self, path: &Path) {
+        if !self.mft {
+            return;
+        }
+        #[cfg(windows)]
+        match dfdu_scan::check_mft(path) {
+            Ok(()) => dfdu_scan::use_mft(true),
+            Err(e) => eprintln!(
+                "dfdu: --mft: the master file table cannot be read ({e}); listing directories"
+            ),
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = path;
+            eprintln!("dfdu: --mft: only on Windows; listing directories");
+        }
+    }
+
     fn job(self) -> JobOptions {
         JobOptions {
             cross_mounts: self.cross_mounts && !self.one_file_system,
@@ -303,6 +434,23 @@ impl RuleArgs {
             eprintln!("dfdu: {e}");
         }
         Some(Arc::new(set))
+    }
+
+    /// The rule files [`RuleArgs::load`] loads, for an agent to classify a scan of `root` on
+    /// its host with.
+    fn remote(self, root: &Path) -> Option<dfdu_engine::RemoteRules> {
+        if self.no_rules {
+            return None;
+        }
+        let dir = dfdu_tui::rules_dir();
+        let (files, errors) = dfdu_rules::sources(dir.as_deref());
+        for e in errors {
+            eprintln!("dfdu: {e}");
+        }
+        Some(dfdu_engine::RemoteRules {
+            files,
+            root: root.to_path_buf(),
+        })
     }
 }
 
@@ -335,6 +483,10 @@ struct ScanArgs {
     /// sizes as du does.
     #[arg(long)]
     measure_workers: Option<usize>,
+    /// Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there).
+    /// Nothing is classified or recorded in the history.
+    #[arg(long, value_name = "HOST")]
+    remote: Option<String>,
     #[command(flatten)]
     mounts: MountArgs,
     #[command(flatten)]
@@ -463,6 +615,7 @@ fn main() -> ExitCode {
         Some(Cmd::Import(args)) => import(args),
         Some(Cmd::Recover(args)) => recover(args),
         Some(Cmd::Man { dir }) => man(&dir),
+        Some(Cmd::Agent { threads }) => agent(threads),
         Some(Cmd::Completions { shell }) => {
             use clap::CommandFactory;
             clap_complete::generate(shell, &mut Cli::command(), "dfdu", &mut std::io::stdout());
@@ -481,6 +634,7 @@ fn main() -> ExitCode {
                     like_du: false,
                     threads: None,
                     measure_workers: None,
+                    remote: cli.remote,
                     mounts: cli.mounts,
                     rules: cli.rules,
                     bytes: false,
@@ -515,12 +669,42 @@ fn main() -> ExitCode {
                 },
                 None => (None, None),
             };
+            // Connected before the browser takes the terminal, so ssh can ask for a password.
+            let mut job = cli.mounts.job();
+            let remote = match &cli.remote {
+                Some(host) => {
+                    let rules = cli.rules.remote(&path);
+                    // Deletion runs on the agent, journalled on its host.
+                    let opts = EngineOptions {
+                        read_only: cli.read_only,
+                        ..Default::default()
+                    };
+                    match remote_engine(host, opts, rules) {
+                        Ok((e, class)) => {
+                            job.class = class;
+                            Some(e)
+                        }
+                        Err(code) => return code,
+                    }
+                }
+                None => None,
+            };
+            if remote.is_none() && imported.is_none() && !cli.disks {
+                match resumed
+                    .as_ref()
+                    .and_then(|t| t.roots().next().map(|r| t.path_buf(r)))
+                {
+                    Some(p) => cli.mounts.backend(&p),
+                    None => cli.mounts.backend(&path),
+                }
+            }
             let opts = dfdu_tui::RunOptions {
+                remote,
                 path: (!cli.disks).then_some(path),
                 imported,
                 resumed,
                 journal,
-                job: cli.mounts.job(),
+                job,
                 rules: cli.rules.load(),
                 engine: EngineOptions {
                     read_only: cli.read_only,
@@ -546,24 +730,19 @@ fn main() -> ExitCode {
     }
 }
 
-/// Where the change journal of `path`'s volume stands (FSEvents on macOS); `None` where there
-/// is none.
+/// Where the change journal of `path`'s volume stands (FSEvents on macOS, the USN journal on
+/// Windows, the btrfs subvolume's generation on Linux as root); `None` where there is none.
 fn journal_position(path: &Path) -> Option<dfdu_store::snapshot::Journal> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let dev = std::fs::metadata(path).ok()?.dev() as u64;
-        let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
-        Some(dfdu_store::snapshot::Journal {
-            volume,
-            event_id: dfdu_sys::fsevents::current_event_id(),
-        })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        None
-    }
+    // Read before the position, so that whatever changes after it has a ctime no older.
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (volume, event_id) = dfdu_engine::journal_position(path)?;
+    Some(dfdu_store::snapshot::Journal {
+        volume,
+        event_id,
+        time,
+    })
 }
 
 /// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
@@ -719,6 +898,9 @@ fn export(args: ExportArgs) -> ExitCode {
         }
         None => args.path.clone(),
     };
+    if args.remote.is_none() {
+        args.mounts.backend(&path);
+    }
     let storage = dfdu_sys::storage(&path);
     let opts = EngineOptions {
         workers: args
@@ -729,15 +911,21 @@ fn export(args: ExportArgs) -> ExitCode {
         read_only: true,
         ..Default::default()
     };
-    let engine = Engine::start(native_backend(storage), opts);
+    let engine = match &args.remote {
+        Some(host) => match remote_engine(host, opts, None) {
+            Ok((e, _)) => e,
+            Err(code) => return code,
+        },
+        None => Engine::start(native_backend(storage), opts),
+    };
     // Taken before the scan, so that what changes during it is replayed on resume.
-    let journal = journal_position(&path);
+    let journal = journal_position(&path).filter(|_| args.remote.is_none());
     match resumed {
         Some(l) => {
             let changed = l
                 .header
                 .journal
-                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id));
+                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
             let node = l.tree.node_ref(l.root);
             engine.load(l.tree);
             engine.send(Command::Resume {
@@ -752,9 +940,8 @@ fn export(args: ExportArgs) -> ExitCode {
         }),
     }
     engine.wait_idle(None);
-    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-        eprintln!("dfdu: {msg}");
-        return ExitCode::from(1);
+    if let Some(code) = failed(&engine) {
+        return code;
     }
     let meta = ncdu_meta();
     let to_stdout = args.output == Path::new("-");
@@ -887,6 +1074,9 @@ fn scan(args: ScanArgs) -> ExitCode {
         ..Default::default()
     };
     opts.limits.stall_ns = Duration::from_secs_f64(args.stall_after).as_nanos() as u64;
+    if args.remote.is_none() {
+        args.mounts.backend(&args.path);
+    }
     let storage = dfdu_sys::storage(&args.path);
     opts.workers = args
         .threads
@@ -897,6 +1087,13 @@ fn scan(args: ScanArgs) -> ExitCode {
     if args.debug_stats {
         eprintln!("storage: {storage:?}, {} workers", opts.workers);
     }
+    if let Some(host) = &args.remote {
+        let rules = args.rules.remote(&args.path);
+        return match remote_engine(host, opts, rules) {
+            Ok((e, class)) => scan_with(e, args, class),
+            Err(code) => code,
+        };
+    }
     match args.backend {
         BackendArg::Native if inject::requested() => scan_with(
             Engine::start(
@@ -904,13 +1101,21 @@ fn scan(args: ScanArgs) -> ExitCode {
                 opts,
             ),
             args,
+            None,
         ),
-        BackendArg::Native => scan_with(Engine::start(native_backend(storage), opts), args),
-        BackendArg::Portable => scan_with(Engine::start(PortableBackend::default(), opts), args),
+        BackendArg::Native => scan_with(Engine::start(native_backend(storage), opts), args, None),
+        BackendArg::Portable => {
+            scan_with(Engine::start(PortableBackend::default(), opts), args, None)
+        }
     }
 }
 
-fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
+/// Runs a scan with `engine`; `remote_class` is what a remote scan's root classifies against.
+fn scan_with<B: Backend>(
+    engine: Engine<B>,
+    args: ScanArgs,
+    remote_class: Option<ClassOpts>,
+) -> ExitCode {
     let ScanArgs {
         path,
         format,
@@ -927,8 +1132,11 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         no_history,
         debug_stats,
         measure_workers,
+        remote,
         ..
     } = args;
+    // The history is about this host's files.
+    let no_history = no_history || remote.is_some();
     if (types.is_some() || by_type) && format != Format::Table && !bytes {
         eprintln!("dfdu: --type and --by-type work with the table output and --bytes only");
         return ExitCode::from(2);
@@ -938,12 +1146,14 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
     let mut opts = mounts.job();
     let measured = measure_workers.unwrap_or(EngineOptions::default().measure_workers) > 0;
     let key = history::options_key(&opts, measured);
-    opts.class = rules.load().map(|r| ClassOpts::for_root(r, &path));
+    opts.class = match remote {
+        Some(_) => remote_class,
+        None => rules.load().map(|r| ClassOpts::for_root(r, &path)),
+    };
     engine.send(Command::Scan { path, opts });
     engine.wait_idle(None);
-    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-        eprintln!("dfdu: {msg}");
-        return ExitCode::from(1);
+    if let Some(code) = failed(&engine) {
+        return code;
     }
     let elapsed = t0.elapsed();
     let mode = if apparent {

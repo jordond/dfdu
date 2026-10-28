@@ -15,6 +15,7 @@ fn header() -> Header {
         journal: Some(Journal {
             volume: [9; 16],
             event_id: 123_456_789,
+            time: 1_792_999_000,
         }),
     }
 }
@@ -82,7 +83,7 @@ fn many_frames() {
     assert!(matches!(read(&out[..], &small), Err(ImportError::Limit(_))));
 }
 
-/// Version 1 files (no journal position) still read.
+/// Version 1 files (no journal position) and version 2 files (no time) still read.
 #[test]
 fn version_1_reads() {
     let (t, r) = sample();
@@ -97,4 +98,11 @@ fn version_1_reads() {
     assert_eq!(l.header, h);
     let l = read(&bytes(&t, r)[..], &Limits::default()).unwrap();
     assert_eq!(l.header, header());
+    // Version 2: a journal position without its time.
+    let mut v2 = header();
+    v2.journal.as_mut().unwrap().time = 0;
+    let mut out = vec![];
+    write_as(&t, r, &mut out, &v2, VERSION_2).unwrap();
+    let l = read(&out[..], &Limits::default()).unwrap();
+    assert_eq!(l.header, v2);
 }

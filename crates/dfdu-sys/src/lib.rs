@@ -38,6 +38,10 @@ pub use macos::{
 mod windows;
 #[cfg(windows)]
 pub use windows::*;
+#[cfg(windows)]
+mod usn;
+#[cfg(windows)]
+pub use usn::{UsnChanges, usn_changes_since, usn_position};
 
 /// A btrfs subvolume root, as `BTRFS_IOC_GET_SUBVOL_INFO` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]

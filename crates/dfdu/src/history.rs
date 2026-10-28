@@ -249,6 +249,7 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
         .cloned()
         .unwrap_or_else(|| PathBuf::from("."));
     let h = open()?;
+    args.mounts.backend(&path);
     let storage = dfdu_sys::storage(&path);
     let opts = EngineOptions {
         workers: args

@@ -4,7 +4,7 @@
 .SH NAME
 dfdu \- Disk usage browser for the terminal
 .SH SYNOPSIS
-\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
+\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-remote\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Disk usage browser for the terminal
 .SH OPTIONS
@@ -17,6 +17,9 @@ Descend into other local filesystems (disks, tmpfs)
 .TP
 \fB\-\-network\fR
 Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-\-mft\fR
+Windows, as administrator: read each NTFS volume\*(Aqs master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual
 .TP
 \fB\-\-no\-rules\fR
 Do not classify entries: no categories, no cleanup candidates
@@ -32,6 +35,9 @@ Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or 
 .TP
 \fB\-\-read\-only\fR
 Never delete anything (the delete keys are refused)
+.TP
+\fB\-\-remote\fR \fI<HOST>\fR
+Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there). Read\-only; nothing is classified or recorded in the history
 .TP
 \fB\-\-type\fR \fI<TYPES>\fR
 Show only files of these types or extensions, comma\-separated: `video,audio,.iso` (`t` in the browser changes it)
@@ -90,6 +96,9 @@ List what earlier sessions left unfinished (staged items, interrupted deletes), 
 .TP
 dfdu\-completions(1)
 Print a shell completion script (bash, zsh, fish, elvish, powershell)
+.TP
+dfdu\-agent(1)
+Scan for a dfdu on another host (`\-\-remote`): reads requests on stdin and writes what it finds to stdout in dfdu\*(Aqs wire format. Not for use by hand
 .TP
 dfdu\-help(1)
 Print this message or the help of the given subcommand(s)

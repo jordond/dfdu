@@ -234,6 +234,9 @@ pub struct Status {
     /// Set when the applier thread failed; the model no longer changes. Readers should report it
     /// and exit.
     pub fatal: Option<String>,
+    /// Set when a remote scan's link ended: why. The jobs running then stopped where they were
+    /// (the scan is `incomplete`), and nothing more is scanned.
+    pub disconnected: Option<String>,
     /// Outcome of the most recent finished plan.
     pub last_delete: Option<DeleteSummary>,
     /// Items staged and not deleted yet, and their disk usage as scanned.
@@ -522,6 +525,8 @@ enum Work {
 
 pub struct Applier<B: Backend> {
     pub scan: Arc<Shared<B>>,
+    /// Set for a remote scan: scanner calls go to the agent instead of `scan`.
+    pub(crate) remote: Option<Arc<crate::remote::Link>>,
     jobs: BTreeMap<u32, Job>,
     /// Options of finished jobs dropped from `jobs`, for rescans of what they scanned.
     retired: HashMap<u32, JobOptions>,
@@ -550,6 +555,8 @@ pub struct Applier<B: Backend> {
     pub measure: bool,
     /// Files allocating less are not measured ([`MEASURE_MIN`] in the engine).
     pub measure_min: u64,
+    /// The deleter runs as root, so read-only btrfs snapshots can be deleted.
+    pub privileged: bool,
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
     extent_devs: HashSet<u64>,
@@ -750,6 +757,7 @@ impl<B: Backend> Applier<B> {
             scan,
             jobs: BTreeMap::new(),
             retired: HashMap::new(),
+            remote: None,
             next_job: 1,
             links: LinkTable::default(),
             work: VecDeque::new(),
@@ -766,6 +774,7 @@ impl<B: Backend> Applier<B> {
             imported: false,
             measure: true,
             measure_min: 1,
+            privileged: dfdu_sys::is_privileged(),
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
             measure_stack: Vec::new(),
@@ -836,6 +845,17 @@ impl<B: Backend> Applier<B> {
         {
             m.status
                 .notice("an imported scan is read-only: nothing is scanned or deleted".into());
+            m.status.commands_applied += 1;
+            return;
+        }
+        if m.status.disconnected.is_some()
+            && matches!(
+                cmd,
+                Command::Scan { .. } | Command::Rescan { .. } | Command::Resume { .. }
+            )
+        {
+            m.status
+                .notice("the link to the agent is gone: nothing more is scanned".into());
             m.status.commands_applied += 1;
             return;
         }
@@ -938,7 +958,10 @@ impl<B: Backend> Applier<B> {
             phase: JobPhase::Running,
         };
         job.set(DirId::ROOT, m.tree.node_ref(root));
-        job.submitted_seq = self.scan.start_job(JobId(id), &path, opts);
+        job.submitted_seq = match &self.remote {
+            Some(l) => l.start_job(JobId(id), &path, &opts),
+            None => self.scan.start_job(JobId(id), &path, opts),
+        };
         self.jobs.insert(id, job);
     }
 
@@ -1084,14 +1107,20 @@ impl<B: Backend> Applier<B> {
         let id = self.next_job;
         self.next_job += 1;
         // Other volumes mounted below keep their own journals: their mount roots are rescanned.
+        // So are btrfs subvolumes below (another device, no mount): each has a tree, and a
+        // generation, of its own.
         let mut mounts = Vec::new();
         let mut own = |tree: &mut Tree, ix: Ix| {
             if let Some(d) = tree.dir_mut(ix) {
                 d.job = id;
                 d.dir_id = 0;
             }
+            let other_dev = || {
+                tree.parent(ix)
+                    .is_some_and(|p| tree.dev_ino(p).0 != tree.dev_ino(ix).0)
+            };
             if ix != root
-                && tree.flags(ix).has(NodeFlags::MOUNT_ROOT)
+                && (tree.flags(ix).has(NodeFlags::MOUNT_ROOT) || other_dev())
                 && tree.dir(ix).is_some_and(|d| d.state != DirState::Skipped)
             {
                 mounts.push(ix);
@@ -1117,6 +1146,20 @@ impl<B: Backend> Applier<B> {
                 }
             }
         }
+        // Snapshots keep no measured extents: the loaded files are measured again where files
+        // can share them (rescanned parts are measured when their rescans end).
+        let mut devs = vec![root];
+        devs.extend(mounts.iter().copied());
+        for ix in devs {
+            let dev = m.tree.dev_ino(ix).0;
+            if !self.extent_devs.contains(&dev) {
+                let loc = self.scan.backend.loc_from_path(&m.tree.path_buf(ix));
+                if self.scan.backend.shares_extents(&loc) {
+                    self.extent_devs.insert(dev);
+                }
+            }
+        }
+        self.start_measure(m, node);
         targets.extend(mounts);
         let targets = topmost(&m.tree, targets);
         self.jobs.insert(
@@ -1162,7 +1205,10 @@ impl<B: Backend> Applier<B> {
             self.report_up(m, job, ix);
         }
         m.tree.touch(ix);
-        self.scan.stop_dirs(JobId(job), [DirId(dir)]);
+        match &self.remote {
+            Some(l) => l.stop_dirs(JobId(job), vec![DirId(dir)]),
+            None => self.scan.stop_dirs(JobId(job), [DirId(dir)]),
+        }
     }
 
     fn cancel(&mut self, id: u32) {
@@ -1173,13 +1219,38 @@ impl<B: Backend> Applier<B> {
             return;
         }
         j.phase = JobPhase::Cancelled;
-        self.scan.end_job(j.id);
+        match &self.remote {
+            Some(l) => l.end_job(j.id),
+            None => self.scan.end_job(j.id),
+        }
         let root = j.root;
         self.work.push_back(Work::CancelWalk {
             job: id,
             stack: vec![root],
         });
         self.work.push_back(Work::FinishJob { job: id });
+    }
+
+    /// Ends a remote scan whose link ended, once everything that arrived before is applied:
+    /// running jobs stop where they are, which leaves the scan incomplete.
+    pub(crate) fn check_link(&mut self, m: &mut Model) {
+        let Some(why) = self.remote.as_ref().and_then(|l| l.take_lost()) else {
+            return;
+        };
+        let running: Vec<u32> = self
+            .jobs
+            .iter()
+            .filter(|(_, j)| j.phase == JobPhase::Running)
+            .map(|(&id, _)| id)
+            .collect();
+        if !running.is_empty() {
+            m.status.incomplete = true;
+        }
+        for id in running {
+            self.cancel(id);
+        }
+        m.status.notice(format!("remote scan: {why}"));
+        m.status.disconnected = Some(why);
     }
 
     fn abandon(&mut self, m: &mut Model, node: NodeRef) {
@@ -1200,7 +1271,11 @@ impl<B: Backend> Applier<B> {
     }
 
     fn scanner_abandon(&mut self, job: JobId, dir: DirId) {
-        if !self.scan.abandon(job, dir) {
+        let complete = match &self.remote {
+            Some(l) => l.abandon(job, dir),
+            None => self.scan.abandon(job, dir),
+        };
+        if !complete {
             self.retry_abandon.push((job, dir));
         }
     }
@@ -1354,7 +1429,10 @@ impl<B: Backend> Applier<B> {
         for &d in &stop[1..] {
             j.put(d, Slot::Dead);
         }
-        self.scan.stop_dirs(job, stop);
+        match &self.remote {
+            Some(l) => l.stop_dirs(job, stop.into_iter().collect()),
+            None => self.scan.stop_dirs(job, stop),
+        }
         None
     }
 
@@ -1376,7 +1454,10 @@ impl<B: Backend> Applier<B> {
             for &d in &ids {
                 j.put(d, Slot::Dead);
             }
-            self.scan.stop_dirs(c.job, ids);
+            match &self.remote {
+                Some(l) => l.stop_dirs(c.job, ids),
+                None => self.scan.stop_dirs(c.job, ids),
+            }
             return;
         }
         if !rec.mark_seq(c.seq) {
@@ -1818,7 +1899,10 @@ impl<B: Backend> Applier<B> {
             return;
         };
         let cancelled = j.phase == JobPhase::Cancelled;
-        self.scan.end_job(j.id);
+        match &self.remote {
+            Some(l) => l.end_job(j.id),
+            None => self.scan.end_job(j.id),
+        }
         let (kind, root, target, scope) = (j.kind, j.root, j.target, j.scope);
         j.phase = if cancelled {
             JobPhase::Cancelled
@@ -2190,7 +2274,7 @@ impl<B: Backend> Applier<B> {
 
     /// Why the tree says `ix` cannot be deleted; the deleter checks the filesystem again
     /// before touching it.
-    fn delete_refusal(tree: &Tree, ix: Ix) -> Option<String> {
+    fn delete_refusal(tree: &Tree, ix: Ix, privileged: bool) -> Option<String> {
         let flags = tree.flags(ix);
         let t = tree.total(ix);
         if flags.has(NodeFlags::MOUNT_ROOT) {
@@ -2217,7 +2301,7 @@ impl<B: Backend> Applier<B> {
             }
             a = p;
         }
-        if t.ro_subvols > 0 && !dfdu_sys::is_privileged() {
+        if t.ro_subvols > 0 && !privileged {
             return Some(if flags.has(NodeFlags::RO_SUBVOL) {
                 "is a read-only snapshot: deleting it needs root".into()
             } else {
@@ -2261,7 +2345,7 @@ impl<B: Backend> Applier<B> {
                 ));
                 continue;
             }
-            if let Some(why) = Self::delete_refusal(&m.tree, ix) {
+            if let Some(why) = Self::delete_refusal(&m.tree, ix, self.privileged) {
                 m.status.notice(format!(
                     "delete: {} {why}",
                     String::from_utf8_lossy(m.tree.name(ix))
@@ -2560,31 +2644,18 @@ impl<B: Backend> Applier<B> {
         let Some(class) = m.tree.class(ix) else {
             return;
         };
-        let Some(def) = rules.rule(class.rule).native.as_ref() else {
-            return;
-        };
-        let (command, dry) = match variant {
-            None => (&def.command, &def.dry_run),
-            Some(v) => match def.variants.get(v) {
-                Some(x) => (&x.command, &x.dry_run),
-                None => return,
-            },
-        };
         let path = m.tree.path_buf(ix);
-        let argv = if dry_run { dry } else { command };
-        if argv.is_empty() {
+        let Some(req) = variant
+            .map_or(Some(None), |v| u16::try_from(v).ok().map(Some))
+            .and_then(|v| native_req(&rules, class.rule, v, &path, dry_run, id))
+        else {
             return;
-        }
-        let argv = native_argv(argv, &path);
-        let cwd = def
-            .cwd
-            .as_deref()
-            .map(|c| PathBuf::from(native_var(c, &path)));
+        };
         m.status.native = Some(NativeRun {
             id,
             rule: class.rule,
-            command: dfdu_clean::shown_argv(&argv),
-            cwd: cwd.clone(),
+            command: dfdu_clean::shown_argv(&req.command),
+            cwd: req.cwd.clone(),
             dry_run,
             lines: VecDeque::new(),
             done: None,
@@ -2593,16 +2664,7 @@ impl<B: Backend> Applier<B> {
         if !dry_run {
             self.rescan_paths.push(path);
         }
-        self.outgoing_controls
-            .push(DeleterReq::Native(dfdu_clean::NativeReq {
-                id,
-                check: def.check.clone(),
-                pre: def.pre.clone(),
-                command: argv,
-                cwd,
-                timeout: NATIVE_TIMEOUT,
-                dry_run,
-            }));
+        self.outgoing_controls.push(DeleterReq::Native(req));
     }
 
     /// What deleting `items` would free. Walks them, so it is linear in their size.
@@ -2777,6 +2839,48 @@ impl<B: Backend> Applier<B> {
 /// A rule's native command as it runs for the matched node at `path`.
 pub fn native_argv(argv: &[String], path: &Path) -> Vec<String> {
     argv.iter().map(|a| native_var(a, path)).collect()
+}
+
+/// The native command of `rule` (its `variant`, if given; the dry run with `dry_run`) for the
+/// matched node at `path`, or `None` when the rule has no such command. The agent builds what
+/// it is asked to run with this from its own rules, as the local side did.
+pub(crate) fn native_req(
+    rules: &dfdu_rules::RuleSet,
+    rule: u16,
+    variant: Option<u16>,
+    path: &Path,
+    dry_run: bool,
+    id: u64,
+) -> Option<dfdu_clean::NativeReq> {
+    let def = rules.rules().get(rule as usize)?.native.as_ref()?;
+    let (command, dry) = match variant {
+        None => (&def.command, &def.dry_run),
+        Some(v) => {
+            let x = def.variants.get(v as usize)?;
+            (&x.command, &x.dry_run)
+        }
+    };
+    let argv = if dry_run { dry } else { command };
+    if argv.is_empty() {
+        return None;
+    }
+    Some(dfdu_clean::NativeReq {
+        id,
+        check: def.check.clone(),
+        pre: def.pre.clone(),
+        command: native_argv(argv, path),
+        cwd: def
+            .cwd
+            .as_deref()
+            .map(|c| PathBuf::from(native_var(c, path))),
+        timeout: NATIVE_TIMEOUT,
+        dry_run,
+        rule: Some(dfdu_clean::NativeRule {
+            rule,
+            variant,
+            path: path.to_path_buf(),
+        }),
+    })
 }
 
 /// Expands the variables a native command may use, for the matched node at `path`: `{path}`,

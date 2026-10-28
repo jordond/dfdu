@@ -24,6 +24,22 @@ pub struct NodeRef {
     generation: u32,
 }
 
+impl NodeRef {
+    /// The reference as one number, for a peer that only hands it back ([`NodeRef::from_bits`]).
+    pub fn to_bits(self) -> u64 {
+        (u64::from(self.generation) << 32) | u64::from(self.index)
+    }
+
+    /// A reference from [`NodeRef::to_bits`]. Any number gives a reference; one that names no
+    /// live node resolves to nothing, as a stale one does.
+    pub fn from_bits(bits: u64) -> NodeRef {
+        NodeRef {
+            index: bits as u32,
+            generation: (bits >> 32) as u32,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeFlags(u16);
 

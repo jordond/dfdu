@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-export \- Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH SYNOPSIS
-\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-\-resume\-from\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-\-resume\-from\fR] [\fB\-\-remote\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH OPTIONS
@@ -22,7 +22,10 @@ Write dfdu\*(Aqs own snapshot format instead (lossless, checked, compressed; for
 Worker threads
 .TP
 \fB\-\-resume\-from\fR \fI<SNAPSHOT>\fR
-Start from this snapshot (`\-\-snapshot`) and rescan only the directories changed since it was taken, when the volume\*(Aqs change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot\*(Aqs
+Start from this snapshot (`\-\-snapshot`) and rescan only the directories changed since it was taken, when the volume\*(Aqs change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot\*(Aqs
+.TP
+\fB\-\-remote\fR \fI<HOST>\fR
+Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)
 .TP
 \fB\-x\fR, \fB\-\-one\-file\-system\fR
 Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
@@ -32,6 +35,9 @@ Descend into other local filesystems (disks, tmpfs)
 .TP
 \fB\-\-network\fR
 Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-\-mft\fR
+Windows, as administrator: read each NTFS volume\*(Aqs master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

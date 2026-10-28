@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-dupes \- Scan a directory and list the files with identical contents (size, then partial hash, then SHA\-256), the most space to free first
 .SH SYNOPSIS
-\fBdfdu dupes\fR [\fB\-\-min\-size\fR] [\fB\-\-format\fR] [\fB\-\-top\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu dupes\fR [\fB\-\-min\-size\fR] [\fB\-\-format\fR] [\fB\-\-top\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 Scan a directory and list the files with identical contents (size, then partial hash, then SHA\-256), the most space to free first
 .SH OPTIONS
@@ -39,6 +39,9 @@ Descend into other local filesystems (disks, tmpfs)
 .TP
 \fB\-\-network\fR
 Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-\-mft\fR
+Windows, as administrator: read each NTFS volume\*(Aqs master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

@@ -330,3 +330,90 @@ fn classify_loaded_cost() {
     eprintln!("{n} nodes classified in {:?}", t.elapsed());
     e.shutdown(Duration::from_secs(1));
 }
+
+/// btrfs, as root (`DFDU_BTRFS_DIR`, see `scripts/btrfs-fixture.sh`): the subvolume's
+/// generation tells which directories changed since, leaving out those only read (atime
+/// updates, the scan's own among them), and a resume rescans those and every subvolume below,
+/// whose changes are in a tree of its own.
+#[cfg(target_os = "linux")]
+#[test]
+fn btrfs_generations_tell_what_changed() {
+    use std::path::PathBuf;
+    use std::process::Command as Proc;
+    let Some(f) = std::env::var_os("DFDU_BTRFS_DIR").map(PathBuf::from) else {
+        return;
+    };
+    let btrfs = |args: &[&str]| {
+        let st = Proc::new("btrfs").arg("-q").args(args).status().unwrap();
+        assert!(st.success(), "{args:?}");
+    };
+    let root = f.join(format!("work-resume-{}", std::process::id()));
+    fs::create_dir_all(root.join("a/b")).unwrap();
+    fs::create_dir(root.join("quiet")).unwrap();
+    fs::write(root.join("quiet/old"), vec![1u8; 5_000]).unwrap();
+    fs::write(root.join("a/grow"), vec![1u8; 5_000]).unwrap();
+    let sv = root.join("sv");
+    btrfs(&["subvolume", "create", sv.to_str().unwrap()]);
+    fs::write(sv.join("in"), vec![1u8; 9_000]).unwrap();
+    // An atime older than the mtime: reading the file updates it (relatime).
+    let st = Proc::new("touch")
+        .args(["-a", "-d", "2000-01-01"])
+        .arg(root.join("quiet/old"))
+        .status()
+        .unwrap();
+    assert!(st.success());
+    // Everything above has a ctime more than a second before the position's time.
+    std::thread::sleep(Duration::from_millis(2100));
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let Some((uuid, generation)) = dfdu_engine::journal_position(&root) else {
+        // Not root: no position.
+        btrfs(&["subvolume", "delete", sv.to_str().unwrap()]);
+        fs::remove_dir_all(&root).unwrap();
+        return;
+    };
+    let (snap, _) = scan(&root);
+
+    fs::read(root.join("quiet/old")).unwrap();
+    fs::write(root.join("a/b/new"), vec![1u8; 70_000]).unwrap();
+    let mut grow = fs::OpenOptions::new()
+        .append(true)
+        .open(root.join("a/grow"))
+        .unwrap();
+    std::io::Write::write_all(&mut grow, &[2u8; 40_000]).unwrap();
+    drop(grow);
+    fs::write(sv.join("added"), vec![1u8; 30_000]).unwrap();
+
+    let changed = dfdu_engine::changed_since(&root, uuid, generation, time).expect("can tell");
+    let want: Vec<PathBuf> = vec!["a".into(), "a/b".into()];
+    assert_eq!(changed, want);
+    let mut other = uuid;
+    other[0] ^= 0xff;
+    assert_eq!(
+        dfdu_engine::changed_since(&root, other, generation, time),
+        None
+    );
+
+    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let e = engine();
+    let node = loaded.tree.node_ref(loaded.root);
+    e.load(loaded.tree);
+    e.send(Command::Resume {
+        node,
+        opts: JobOptions::default(),
+        changed: Some(changed),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    let resumed = root_total(&e);
+    e.shutdown(Duration::from_secs(1));
+    let (_, now) = scan(&root);
+    assert_eq!(
+        resumed, now,
+        "the subvolume and the changed directories were rescanned"
+    );
+
+    btrfs(&["subvolume", "delete", sv.to_str().unwrap()]);
+    fs::remove_dir_all(&root).unwrap();
+}

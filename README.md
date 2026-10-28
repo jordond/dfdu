@@ -52,6 +52,7 @@ dfdu clean ~/dev --yes --mode stage            # delete the recommended matches
 dfdu scan / --format ndjson > scan.ndjson      # one record per entry
 dfdu export ~ --snapshot -o home.snap          # save a scan; dfdu -f home.snap browses it
 dfdu --resume-from home.snap                   # show it at once; on macOS rescan only what changed
+dfdu --remote server /srv                      # browse a directory on another host (ssh; dfdu installed there)
 dfdu -f scan.ncdu                              # browse an ncdu export (JSON, zstd or ncdu -O binary)
 dfdu diff ~ --since 7d                         # what grew in the last week
 dfdu recover                                   # what an interrupted session left behind

@@ -45,6 +45,42 @@ impl Env {
         }
     }
 
+    /// The variables rules written as `texts` can read here: the ones behind the named
+    /// directories and every `{env:NAME}`, with their values. `Env::with` of these and the
+    /// same platform expands those rules as this environment does (a remote agent's rules,
+    /// rebuilt on the local side).
+    pub fn used_by(&self, texts: &[&str]) -> Vec<(String, String)> {
+        const NAMED: [&str; 11] = [
+            "HOME",
+            "USERPROFILE",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "LOCALAPPDATA",
+            "APPDATA",
+            "TMPDIR",
+            "TEMP",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+        ];
+        let mut names: Vec<&str> = NAMED.to_vec();
+        for t in texts {
+            for (i, _) in t.match_indices("env:") {
+                let rest = &t[i + 4..];
+                let end = rest.find(['|', '}']).unwrap_or(rest.len());
+                if !names.contains(&&rest[..end]) {
+                    names.push(&rest[..end]);
+                }
+            }
+        }
+        let mut out: Vec<(String, String)> = names
+            .into_iter()
+            .filter_map(|n| self.vars.get(n).map(|v| (n.to_owned(), v.clone())))
+            .collect();
+        out.sort();
+        out
+    }
+
     fn var(&self, name: &str) -> Option<&str> {
         self.vars
             .get(name)
@@ -178,6 +214,25 @@ fn slashes(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn used_by_names_the_variables_rules_can_read() {
+        let e = Env::with(
+            Platform::Linux,
+            &[
+                ("HOME", "/h"),
+                ("GOPATH", "/g"),
+                ("SECRET", "x"),
+                ("A", "/a"),
+            ],
+        );
+        let rules = "paths = [\"{env:GOPATH}/pkg\", \"{env:NONE|{env:A}}/b\"]";
+        assert_eq!(
+            e.used_by(&[rules]),
+            [("A", "/a"), ("GOPATH", "/g"), ("HOME", "/h")]
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        );
+    }
 
     fn mac() -> Env {
         Env::with(

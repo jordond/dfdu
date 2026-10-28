@@ -292,7 +292,7 @@ jobs:
       - name: Install btrfs tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends btrfs-progs btrfs-compsize
       - name: Build tests
-        run: cargo test --profile ci --locked --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui
+        run: cargo test --profile ci --locked --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui -p dfdu-store
       - name: Create the btrfs fixture
         run: sudo scripts/btrfs-fixture.sh "$RUNNER_TEMP/btrfs.img" "$DFDU_BTRFS_DIR" "$(id -un)"
       - name: Run btrfs tests unprivileged
@@ -303,6 +303,7 @@ jobs:
         run: |
           cargo test --profile ci --locked -p dfdu-sys -p dfdu-engine --test btrfs
           cargo test --profile ci --locked -p dfdu-tui --lib btrfs_tests
+          cargo test --profile ci --locked -p dfdu-store --test resume btrfs
           cargo test --profile ci --locked -p dfdu-clean --lib
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_BTRFS_DIR,HOME
@@ -366,7 +367,7 @@ jobs:
         run: cargo install cargo-fuzz --locked --version 0.13.2
       - name: Run each target from its seeds and regressions
         run: |
-          for t in snapshot import rules theme native journal; do
+          for t in snapshot import rules theme native journal wire ntfs; do
             mkdir -p "fuzz/corpus/$t"
             extra=""
             if [ -d "fuzz/regressions/$t" ]; then extra="fuzz/regressions/$t"; fi

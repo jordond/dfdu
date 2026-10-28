@@ -21,6 +21,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --resume-from 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done'
             cand -f 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
             cand --file 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
+            cand --remote 'Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there). Read-only; nothing is classified or recorded in the history'
             cand --type 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)'
             cand --theme 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown'
             cand --color 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set'
@@ -28,6 +29,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand --no-rules 'Do not classify entries: no categories, no cleanup candidates'
             cand --disks 'Choose a disk to browse from the mounted filesystems'
             cand --read-only 'Never delete anything (the delete keys are refused)'
@@ -50,6 +52,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
+            cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'dfdu;scan'= {
@@ -58,6 +61,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --top 'Entries to print per directory, largest first [default: 10; all for ndjson]'
             cand --threads 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many'
             cand --measure-workers 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does'
+            cand --remote 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history'
             cand --type 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them'
             cand --stall-abandon 'Abandon directories stalled this many seconds'
             cand --stall-after 'Report a directory as stalled after one call on it took this many seconds (tests)'
@@ -68,6 +72,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand --no-rules 'Do not classify entries: no categories, no cleanup candidates'
             cand --by-type 'After the tree, print disk usage by file type and the largest extensions'
             cand --bytes 'Print only the root total in bytes (for scripts and tests)'
@@ -93,6 +98,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -113,6 +119,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -127,6 +134,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -143,6 +151,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -150,13 +159,15 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand -o 'Where to write (`-` for stdout)'
             cand --output 'Where to write (`-` for stdout)'
             cand --threads 'Worker threads'
-            cand --resume-from 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot''s'
+            cand --resume-from 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot''s'
+            cand --remote 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)'
             cand --compress 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)'
             cand --snapshot 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)'
             cand -x 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+            cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -186,6 +197,11 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'dfdu;agent'= {
+            cand --threads 'Worker threads'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'dfdu;help'= {
             cand scan 'Scan a directory and print a summary'
             cand disks 'List the mounted filesystems with their size and free space'
@@ -199,6 +215,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
+            cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'dfdu;help;scan'= {
@@ -224,6 +241,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
         &'dfdu;help;man'= {
         }
         &'dfdu;help;completions'= {
+        }
+        &'dfdu;help;agent'= {
         }
         &'dfdu;help;help'= {
         }

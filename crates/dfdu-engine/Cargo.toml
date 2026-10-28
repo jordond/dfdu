@@ -23,6 +23,7 @@ gix-discover.workspace = true
 gix-hash.workspace = true
 gix-path.workspace = true
 dfdu-sys.workspace = true
+crc32c.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true

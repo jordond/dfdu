@@ -28,9 +28,11 @@ use crate::ImportError;
 use crate::ncdu::Limits;
 
 pub const MAGIC: &[u8; 8] = b"DFDUSNAP";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 /// Version 1, the same without the change journal position.
 const VERSION_1: u32 = 1;
+/// Version 2, the same without the time of the journal position.
+const VERSION_2: u32 = 2;
 /// Raw bytes per frame.
 pub const FRAME_RAW: usize = 1 << 20;
 /// Largest frame a reader accepts, raw or compressed.
@@ -61,13 +63,20 @@ pub struct Header {
     pub journal: Option<Journal>,
 }
 
-/// A position in a volume's change journal (FSEvents on macOS).
+/// A position in a volume's change journal (FSEvents on macOS, the USN journal on Windows,
+/// a btrfs subvolume's generation on Linux).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Journal {
-    /// The journal's identity (the FSEvents store UUID): positions in another are meaningless.
+    /// The journal's identity (the FSEvents store UUID; the USN journal id and volume serial;
+    /// the btrfs subvolume uuid):
+    /// positions in another are meaningless.
     pub volume: [u8; 16],
-    /// The last event before the scan.
+    /// The last event before the scan (on btrfs, the subvolume's generation).
     pub event_id: u64,
+    /// Seconds since the Unix epoch when the position was read, 0 when not known (format 2).
+    /// btrfs resumes count an inode as changed only if its ctime is not older, so atime
+    /// updates (the scan's own among them) do not.
+    pub time: u64,
 }
 
 const OPT_JOURNAL: u64 = 4;
@@ -166,6 +175,17 @@ fn state_code(s: DirState) -> u8 {
 
 /// Writes the tree below `root` (a visible root, whose name is its path).
 pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Result<u64> {
+    write_as(tree, root, w, header, VERSION)
+}
+
+/// [`write`] in format `version` (2 or 3; tests write older formats with it).
+fn write_as(
+    tree: &Tree,
+    root: Ix,
+    w: impl Write,
+    header: &Header,
+    version: u32,
+) -> io::Result<u64> {
     let mut fw = FrameWriter {
         w: io::BufWriter::with_capacity(1 << 16, w),
         raw: Vec::with_capacity(FRAME_RAW + 4096),
@@ -173,7 +193,7 @@ pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Resul
         crcs: vec![],
     };
     fw.w.write_all(MAGIC)?;
-    fw.w.write_all(&VERSION.to_le_bytes())?;
+    fw.w.write_all(&version.to_le_bytes())?;
     let path = tree.path_buf(root);
     put_bytes(&mut fw.raw, &dfdu_tree::name_bytes(path.as_os_str()));
     put_bytes(&mut fw.raw, header.tool_version.as_bytes());
@@ -191,6 +211,9 @@ pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Resul
     if let Some(j) = &header.journal {
         put_bytes(&mut fw.raw, &j.volume);
         put_u(&mut fw.raw, j.event_id);
+        if version == VERSION {
+            put_u(&mut fw.raw, j.time);
+        }
     }
     let mut devs: Vec<u64> = vec![];
     let mut entries = 0u64;
@@ -432,7 +455,7 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
         return Err(bad("not a dfdu snapshot"));
     }
     let version = u32::from_le_bytes(head[8..].try_into().expect("4 bytes"));
-    if version != VERSION && version != VERSION_1 {
+    if !matches!(version, VERSION | VERSION_1 | VERSION_2) {
         return Err(bad(format!(
             "snapshot format {version}; this dfdu reads {VERSION}"
         )));
@@ -463,6 +486,7 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
         Some(Journal {
             volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
             event_id: rec.u()?,
+            time: if version == VERSION { rec.u()? } else { 0 },
         })
     } else {
         None

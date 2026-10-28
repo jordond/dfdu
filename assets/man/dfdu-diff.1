@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-diff \- What grew: a directory now against its last recorded scan (or one from \-\-since ago), or two saved scans
 .SH SYNOPSIS
-\fBdfdu diff\fR [\fB\-\-since\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-min\-change\fR] [\fB\-\-format\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu diff\fR [\fB\-\-since\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-min\-change\fR] [\fB\-\-format\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 What grew: a directory now against its last recorded scan (or one from \-\-since ago), or two saved scans
 .SH OPTIONS
@@ -45,6 +45,9 @@ Descend into other local filesystems (disks, tmpfs)
 .TP
 \fB\-\-network\fR
 Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-\-mft\fR
+Windows, as administrator: read each NTFS volume\*(Aqs master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

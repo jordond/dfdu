@@ -29,6 +29,18 @@ pub struct NativeReq {
     pub timeout: Duration,
     /// The dry run or inspect step: not journalled, and `pre` is not run.
     pub dry_run: bool,
+    /// The rule it was built from, so that an agent on another host can build it again from
+    /// its own copy of the rules instead of running a command it is sent.
+    pub rule: Option<NativeRule>,
+}
+
+/// A native command as a rule and the matched path: what it is built from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeRule {
+    pub rule: u16,
+    /// Index into the rule's `native.variant` list; `None` for its own command.
+    pub variant: Option<u16>,
+    pub path: PathBuf,
 }
 
 /// Shows an argv as a person would type it.
@@ -179,6 +191,7 @@ mod tests {
             cwd: None,
             timeout,
             dry_run: false,
+            rule: None,
         }
     }
 
