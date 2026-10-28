@@ -21,7 +21,7 @@ fn rules() -> Arc<RuleSet> {
     Arc::new(set)
 }
 
-/// A temporary directory outside the system's, which is a protected path on macOS.
+/// A temporary directory in the target directory.
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
@@ -186,14 +186,20 @@ fn scanning_inside_a_match_starts_from_the_root_s_own_class() {
     });
 }
 
-/// The system's temporary directory is protected on macOS: the scan root is marked, and
-/// nothing in it is classified.
+/// `/private/var/folders` is protected on macOS except the user's own temporary directory:
+/// a scan root in the user's cache directory there is marked and nothing in it is classified;
+/// one in the temporary directory (reached through the `/var` symlink, as `TMPDIR` says) is not.
 #[test]
 fn a_protected_root_is_marked_and_not_classified() {
     if !cfg!(target_os = "macos") {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new("getconf")
+        .arg("DARWIN_USER_CACHE_DIR")
+        .output()
+        .unwrap();
+    let cache = String::from_utf8(out.stdout).unwrap();
+    let tmp = tempfile::tempdir_in(cache.trim()).unwrap();
     project(tmp.path(), 0);
     scan(tmp.path(), 4096, 2, |m| {
         let r = m.tree.roots().next().unwrap();
@@ -201,6 +207,59 @@ fn a_protected_root_is_marked_and_not_classified() {
         assert!(m.tree.is_protected(find(m, "web/node_modules")));
         assert_eq!(m.tree.classes().count(), 0);
     });
+    let tmp = tempfile::tempdir().unwrap();
+    project(tmp.path(), 0);
+    scan(tmp.path(), 4096, 2, |m| {
+        let r = m.tree.roots().next().unwrap();
+        assert!(!m.tree.is_protected(r));
+        assert!(m.tree.classes().count() > 0);
+    });
+}
+
+/// A node the classifier marked protected is refused before a plan exists.
+#[test]
+fn a_protected_node_is_not_deleted() {
+    let tmp = tmp();
+    project(tmp.path(), 0);
+    touch(&tmp.path().join("web/.git/HEAD"));
+    let jdir = tmp.path().join("journals");
+    let engine = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 2,
+            journal_dir: Some(jdir),
+            ..Default::default()
+        },
+    );
+    let root = tmp.path().join("web");
+    engine.send(Command::Scan {
+        path: root.clone(),
+        opts: JobOptions {
+            class: Some(ClassOpts::for_root(rules(), &root)),
+            ..JobOptions::default()
+        },
+    });
+    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    let git = engine.read(|m| {
+        let g = find(m, ".git");
+        assert!(m.tree.is_protected(g));
+        m.tree.node_ref(g)
+    });
+    engine.send(Command::Delete {
+        items: vec![git],
+        mode: dfdu_engine::Mode::Permanent,
+    });
+    assert!(engine.wait_idle(Some(Duration::from_secs(10))));
+    engine.read(|m| {
+        assert!(m.status.last_delete.is_none());
+        assert!(
+            m.status.notices.iter().any(|n| n.contains("is protected")),
+            "{:?}",
+            m.status.notices
+        );
+    });
+    assert!(root.join(".git/HEAD").exists());
+    engine.shutdown(Duration::from_millis(200));
 }
 
 /// The classifier pool checks a match's guards after its job: a `target` git tracks becomes

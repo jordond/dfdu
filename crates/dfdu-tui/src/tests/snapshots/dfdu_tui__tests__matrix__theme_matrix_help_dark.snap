@@ -22,30 +22,30 @@ L7 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97
 L8 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ → l Enter        open directory                 D      delete permanently (type delete)      ┃
 L9 2-2 fg=#88c0d0 | 4-12 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ ← h Backspace <  parent directory                                                            ┃
-L10 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                                                 Panels                                       ┃
-L11 2-2 fg=#88c0d0 | 51-57 fg=#eceff4 bold | 97-97 fg=#88c0d0
-  ┃ Sort                                            /         filter this directory              ┃
-L12 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ s  sort by size (again: reverse)                i         details of the selected entry      ┃
-L13 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ n  sort by name (again: reverse)                Tab       move focus between the list and    ┃
-L14 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-54 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ C  sort by items (again: reverse)                         the details                        ┃
-L15 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ M  sort by modification time (again:            !         list what could not be read, and   ┃
-L16 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃    reverse)                                               go to it                           ┃
+  ┃ ← h Backspace <  parent directory               U      put back what was last moved to the   ┃
+L10 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃                                                        Trash or staged                       ┃
+L11 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
+  ┃ Sort                                                                                         ┃
+L12 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 97-97 fg=#88c0d0
+  ┃ s  sort by size (again: reverse)                Panels                                       ┃
+L13 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 51-57 fg=#eceff4 bold | 97-97 fg=#88c0d0
+  ┃ n  sort by name (again: reverse)                /         filter this directory              ┃
+L14 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ C  sort by items (again: reverse)               i         details of the selected entry      ┃
+L15 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ M  sort by modification time (again:            Tab       move focus between the list and    ┃
+L16 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-54 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃    reverse)                                               the details                        ┃
 L17 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
-  ┃ S  re-sort now                                  ? F1      keys                               ┃
-L18 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-55 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                                                 : Ctrl-P  command palette                    ┃
-L19 2-2 fg=#88c0d0 | 52-59 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ Display                                         F12       debug overlay                      ┃
-L20 2-2 fg=#88c0d0 | 3-10 fg=#eceff4 bold | 52-54 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- 1┃ 1  list view                                                                                 ┃
-L21 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ S  re-sort now                                  !         list what could not be read, and   ┃
+L18 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃                                                           go to it                           ┃
+L19 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
+  ┃ Display                                         ? F1      keys                               ┃
+L20 2-2 fg=#88c0d0 | 3-10 fg=#eceff4 bold | 52-55 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+ 1┃ 1  list view                                    : Ctrl-P  command palette                    ┃
+L21 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-59 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=#8b94a7 | 2-88 fg=#88c0d0 | 89-96 fg=#8b94a7 | 97-97 fg=#88c0d0
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

@@ -176,7 +176,7 @@ fn globs(env: &Env, field: &str, patterns: &[String], names: bool) -> Result<Vec
             return Err(format!("{field}: `{p}` is a path, not a name"));
         }
         for expanded in env.expand(p).map_err(|e| format!("{field}: {e}"))? {
-            let g = Glob::new(&expanded, glob::platform_folds_case())
+            let g = Glob::new(&expanded, glob::platform_folds_case(env.platform))
                 .map_err(|e| format!("{field}: `{p}`: {e}"))?;
             out.push(g);
         }

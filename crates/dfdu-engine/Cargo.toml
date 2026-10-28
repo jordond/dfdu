@@ -33,6 +33,9 @@ dfdu-hangfs.workspace = true
 [target.'cfg(loom)'.dev-dependencies]
 loom.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 dfdu-engine = { path = ".", features = ["fault-injection"] }
 dfdu-bench.workspace = true

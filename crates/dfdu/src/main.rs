@@ -5,7 +5,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+mod clean;
 mod inject;
+mod json;
+mod report;
 
 use clap::{Args, Parser, Subcommand};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, Timing};
@@ -29,6 +32,13 @@ struct Cli {
     /// Choose a disk to browse from the mounted filesystems.
     #[arg(long, conflicts_with = "path")]
     disks: bool,
+    /// Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its
+    /// directory in the background, replacing it when done.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["path", "disks", "import"])]
+    resume_from: Option<PathBuf>,
+    /// Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only.
+    #[arg(short = 'f', long = "file", value_name = "FILE", conflicts_with_all = ["path", "disks"])]
+    import: Option<PathBuf>,
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
@@ -99,6 +109,74 @@ enum Cmd {
     Scan(ScanArgs),
     /// List the mounted filesystems with their size and free space.
     Disks,
+    /// Scan a directory and list what the cleanup rules found in it: caches, build output,
+    /// dependencies, with how safe each is to delete.
+    Report(report::ReportArgs),
+    /// Delete what `report` recommends (dry run unless --yes).
+    Clean(clean::CleanArgs),
+    /// Scan a directory and write it in ncdu's JSON format.
+    Export(ExportArgs),
+    /// Read a scan in ncdu's JSON format and print a summary (`dfdu -f FILE` browses it).
+    Import(ImportArgs),
+    /// List what earlier sessions left unfinished (staged items, interrupted deletes), and
+    /// finish, restore or dismiss them.
+    Recover(RecoverArgs),
+}
+
+#[derive(Args)]
+struct RecoverArgs {
+    /// Delete what is left of these staged items (numbers from the list).
+    #[arg(long, value_name = "N", value_delimiter = ',')]
+    finish: Vec<usize>,
+    /// Put these staged items back at their paths (next to them as NAME.restored-N if
+    /// something is there now).
+    #[arg(long, value_name = "N", value_delimiter = ',')]
+    restore: Vec<usize>,
+    /// Close these interrupted items: nothing is done on disk.
+    #[arg(long, value_name = "N", value_delimiter = ',')]
+    dismiss: Vec<usize>,
+    /// The journal directory (the default is dfdu's state directory).
+    #[arg(long, hide = true)]
+    journals: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    #[arg(default_value = ".")]
+    path: PathBuf,
+    /// Where to write (`-` for stdout).
+    #[arg(short, long, value_name = "FILE", default_value = "-")]
+    output: PathBuf,
+    /// Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import).
+    #[arg(long, conflicts_with = "snapshot")]
+    compress: bool,
+    /// Write dfdu's own snapshot format instead (lossless, checked, compressed; for
+    /// `dfdu -f` and `--resume-from`, not for ncdu).
+    #[arg(long)]
+    snapshot: bool,
+    /// Worker threads.
+    #[arg(long)]
+    threads: Option<usize>,
+    #[command(flatten)]
+    mounts: MountArgs,
+}
+
+#[derive(Args)]
+struct ImportArgs {
+    /// The export (`-` for stdin).
+    file: PathBuf,
+    /// Levels of directories to print below the root.
+    #[arg(long, default_value_t = 1)]
+    depth: usize,
+    /// Entries to print per directory, largest first.
+    #[arg(long, default_value_t = 10)]
+    top: usize,
+    /// Show apparent sizes instead of disk usage.
+    #[arg(long)]
+    apparent: bool,
+    /// Print only the root total in bytes.
+    #[arg(long)]
+    bytes: bool,
 }
 
 /// Which mounts below the scanned directory are descended into. Kernel filesystems (`/proc`,
@@ -156,12 +234,16 @@ impl RuleArgs {
 struct ScanArgs {
     #[arg(default_value = ".")]
     path: PathBuf,
-    /// Levels of directories to print below the root.
-    #[arg(long, default_value_t = 1)]
-    depth: usize,
-    /// Entries to print per directory, largest first.
-    #[arg(long, default_value_t = 10)]
-    top: usize,
+    /// Output: table (for people), json (one document, schema/scan.v1.json), ndjson (one
+    /// record per line, for large trees) or ncdu (ncdu's JSON export).
+    #[arg(long, value_enum, default_value_t = Format::Table)]
+    format: Format,
+    /// Levels of directories to print below the root [default: 1; every level for ndjson].
+    #[arg(long)]
+    depth: Option<usize>,
+    /// Entries to print per directory, largest first [default: 10; all for ndjson].
+    #[arg(long)]
+    top: Option<usize>,
     /// Show apparent sizes instead of disk usage.
     #[arg(long, conflicts_with = "like_du")]
     apparent: bool,
@@ -201,6 +283,14 @@ struct ScanArgs {
     backend: BackendArg,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, PartialEq)]
+enum Format {
+    Table,
+    Json,
+    Ndjson,
+    Ncdu,
+}
+
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum BackendArg {
     Native,
@@ -230,6 +320,8 @@ macro_rules! outln {
 
 /// Exit code when an entry could not be read or the scan is incomplete.
 const EXIT_PARTIAL: u8 = 3;
+/// Exit code when some deletions failed or were refused.
+const EXIT_DELETE_FAILED: u8 = 5;
 
 /// Writes a crash report for a panic on any thread, with the engine's counters and last
 /// messages, then runs the previous hook. In the browser, `dfdu_tui::run` wraps this hook in one
@@ -265,14 +357,26 @@ fn main() -> ExitCode {
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan(args),
         Some(Cmd::Disks) => disks(),
+        Some(Cmd::Report(args)) => match (RuleArgs::default()).load() {
+            Some(rules) => report::run(args, rules),
+            None => ExitCode::from(1),
+        },
+        Some(Cmd::Clean(args)) => match (RuleArgs::default()).load() {
+            Some(rules) => clean::run(args, rules),
+            None => ExitCode::from(1),
+        },
+        Some(Cmd::Export(args)) => export(args),
+        Some(Cmd::Import(args)) => import(args),
+        Some(Cmd::Recover(args)) => recover(args),
         None if cli.disks && !std::io::stdout().is_terminal() => disks(),
         None => {
             let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
             if !std::io::stdout().is_terminal() {
                 return scan(ScanArgs {
                     path,
-                    depth: 1,
-                    top: 10,
+                    format: Format::Table,
+                    depth: None,
+                    top: None,
                     apparent: false,
                     like_du: false,
                     threads: None,
@@ -294,8 +398,24 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
+            let imported = match &cli.import {
+                Some(f) => match read_export(f) {
+                    Ok(im) => Some(im.tree),
+                    Err(code) => return code,
+                },
+                None => None,
+            };
+            let resumed = match &cli.resume_from {
+                Some(f) => match read_export(f) {
+                    Ok(im) => Some(im.tree),
+                    Err(code) => return code,
+                },
+                None => None,
+            };
             let opts = dfdu_tui::RunOptions {
                 path: (!cli.disks).then_some(path),
+                imported,
+                resumed,
                 job: cli.mounts.job(),
                 rules: cli.rules.load(),
                 engine: EngineOptions {
@@ -317,6 +437,223 @@ fn main() -> ExitCode {
                 }
             }
         }
+    }
+}
+
+/// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
+fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
+    let limits = dfdu_store::ncdu::Limits::default();
+    let r = if file == Path::new("-") {
+        dfdu_store::open(std::io::stdin().lock(), &limits)
+    } else {
+        match std::fs::File::open(file) {
+            Ok(f) => dfdu_store::open(f, &limits),
+            Err(e) => {
+                eprintln!("dfdu: {}: {e}", file.display());
+                return Err(ExitCode::from(1));
+            }
+        }
+    };
+    r.map_err(|e| {
+        eprintln!("dfdu: {}: {e}", file.display());
+        ExitCode::from(1)
+    })
+}
+
+/// `dfdu recover`: lists the unfinished items, numbered from 1, then does what was asked
+/// for each, highest number first so the numbers stay valid.
+fn recover(args: RecoverArgs) -> ExitCode {
+    let Some(dir) = args.journals.or_else(dfdu_clean::default_journal_dir) else {
+        eprintln!("dfdu: no state directory for the deletion journal");
+        return ExitCode::from(1);
+    };
+    let mut r = match dfdu_clean::recover::scan(&dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("dfdu: {}: {e}", dir.display());
+            return ExitCode::from(1);
+        }
+    };
+    for n in &r.notes {
+        eprintln!("dfdu: {n}");
+    }
+    let mut todo: Vec<(usize, &str)> = args
+        .finish
+        .iter()
+        .map(|&n| (n, "finish"))
+        .chain(args.restore.iter().map(|&n| (n, "restore")))
+        .chain(args.dismiss.iter().map(|&n| (n, "dismiss")))
+        .collect();
+    if todo.is_empty() {
+        if r.items.is_empty() {
+            outln!("nothing unfinished");
+        }
+        for (i, u) in r.items.iter().enumerate() {
+            outln!("{:>3}  {}", i + 1, u.describe());
+        }
+        return ExitCode::SUCCESS;
+    }
+    todo.sort_by_key(|&(n, _)| std::cmp::Reverse(n));
+    if todo.windows(2).any(|w| w[0].0 == w[1].0) {
+        eprintln!("dfdu: an item is named twice");
+        return ExitCode::from(2);
+    }
+    let mut failed = false;
+    for (n, what) in todo {
+        let Some(i) = n.checked_sub(1).filter(|&i| i < r.items.len()) else {
+            eprintln!("dfdu: no item {n}");
+            failed = true;
+            continue;
+        };
+        let path = r.items[i].path.display().to_string();
+        let res = match what {
+            "finish" => r.finish(i).map(|()| format!("{path}: deleted")),
+            "restore" => r
+                .restore(i)
+                .map(|to| format!("{path}: restored at {}", to.display())),
+            _ => r.dismiss(i).map(|()| format!("{path}: dismissed")),
+        };
+        match res {
+            Ok(msg) => outln!("{msg}"),
+            Err(e) => {
+                eprintln!("dfdu: {path}: {e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::from(EXIT_DELETE_FAILED)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// `dfdu import`: the summary `dfdu scan` prints, for a scan read from a file.
+fn import(args: ImportArgs) -> ExitCode {
+    let im = match read_export(&args.file) {
+        Ok(im) => im,
+        Err(code) => return code,
+    };
+    let m = Model {
+        tree: im.tree,
+        ..Model::default()
+    };
+    let mode = if args.apparent {
+        SizeMode::Apparent
+    } else {
+        SizeMode::Disk
+    };
+    let total = m.tree.total(im.root);
+    if args.bytes {
+        outln!("{}", mode.of(&total));
+    } else {
+        print_tree(&m, im.root, args.depth, args.top, mode);
+        let by = im
+            .written_by
+            .map(|w| format!(", written by {w}"))
+            .unwrap_or_default();
+        outln!("{} entries{by}", im.entries);
+    }
+    if total.errors > 0 {
+        ExitCode::from(EXIT_PARTIAL)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// `dfdu export`: scans `path` and writes it in ncdu's format.
+fn export(args: ExportArgs) -> ExitCode {
+    let storage = dfdu_sys::storage(&args.path);
+    let opts = EngineOptions {
+        workers: args
+            .threads
+            .unwrap_or_else(|| dfdu_engine::workers_for(storage)),
+        auto_abandon: Some(Duration::from_secs(30)),
+        journal_dir: None,
+        read_only: true,
+        ..Default::default()
+    };
+    let engine = Engine::start(native_backend(storage), opts);
+    engine.send(Command::Scan {
+        path: args.path.clone(),
+        opts: args.mounts.job(),
+    });
+    engine.wait_idle(None);
+    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
+        eprintln!("dfdu: {msg}");
+        return ExitCode::from(1);
+    }
+    let meta = ncdu_meta();
+    let to_stdout = args.output == Path::new("-");
+    let result = engine.read(|m| {
+        let root = m
+            .tree
+            .roots()
+            .next()
+            .ok_or_else(|| std::io::Error::other("no scan"))?;
+        let partial = m.tree.total(root).errors > 0 || m.status.incomplete;
+        let write = |w: &mut dyn std::io::Write| -> std::io::Result<_> {
+            if args.snapshot {
+                let header = dfdu_store::snapshot::Header {
+                    tool_version: env!("CARGO_PKG_VERSION").into(),
+                    written: meta.timestamp.unwrap_or(0),
+                    cross_mounts: args.mounts.job().cross_mounts,
+                    network: args.mounts.job().network,
+                };
+                let entries = dfdu_store::snapshot::write(&m.tree, root, w, &header)?;
+                Ok(dfdu_store::ncdu::ExportStats {
+                    entries,
+                    non_utf8: 0,
+                })
+            } else if args.compress {
+                let mut z = dfdu_store::zstd_writer(w)?;
+                let s = dfdu_store::ncdu::export(&m.tree, root, &mut z, &meta)?;
+                z.finish()?;
+                Ok(s)
+            } else {
+                dfdu_store::ncdu::export(&m.tree, root, w, &meta)
+            }
+        };
+        let stats = if to_stdout {
+            write(&mut std::io::stdout().lock())?
+        } else {
+            dfdu_store::write_atomic(&args.output, |f| write(f))?
+        };
+        Ok::<_, std::io::Error>((stats, partial))
+    });
+    engine.shutdown(Duration::from_millis(500));
+    match result {
+        Ok((stats, partial)) => {
+            if stats.non_utf8 > 0 {
+                eprintln!(
+                    "dfdu: {} names are not UTF-8 and were written as they are; ncdu reads \
+                     them, most JSON tools do not",
+                    stats.non_utf8
+                );
+            }
+            if partial {
+                ExitCode::from(EXIT_PARTIAL)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("dfdu: {}: {e}", args.output.display());
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// What an ncdu export says about its writer.
+fn ncdu_meta() -> dfdu_store::ncdu::Metadata {
+    dfdu_store::ncdu::Metadata {
+        progname: Some("dfdu".into()),
+        progver: Some(env!("CARGO_PKG_VERSION").into()),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs()),
     }
 }
 
@@ -402,6 +739,7 @@ fn scan(args: ScanArgs) -> ExitCode {
 fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
     let ScanArgs {
         path,
+        format,
         depth,
         top,
         apparent,
@@ -437,8 +775,32 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         let total = m.tree.total(root);
         if bytes {
             outln!("{}", mode.of(&total));
+        } else if format != Format::Table {
+            let out = json::ScanOut {
+                mode,
+                depth,
+                top,
+                elapsed_ms: elapsed.as_millis() as u64,
+                note: &|ix| notes(m, ix),
+            };
+            let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
+            let r = match format {
+                Format::Json => json::scan(w, m, root, &out),
+                Format::Ndjson => json::scan_ndjson(w, m, root, &out),
+                _ => dfdu_store::ncdu::export(&m.tree, root, &mut *w, &ncdu_meta()).map(|_| ()),
+            };
+            if let Err(e) = r.and_then(|()| std::io::Write::flush(w)) {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return ExitCode::SUCCESS;
+                }
+                eprintln!("dfdu: writing the output: {e}");
+                return ExitCode::from(1);
+            }
+            if list_errors {
+                print_errors(m, root);
+            }
         } else {
-            print_tree(m, root, depth, top, mode);
+            print_tree(m, root, depth.unwrap_or(1), top.unwrap_or(10), mode);
             if list_errors {
                 print_errors(m, root);
             }
@@ -511,8 +873,14 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
     }
 }
 
-/// Why an entry looks the way it does: not scanned, a second mount, a btrfs subvolume.
+/// [`notes`] in brackets after a name, or nothing.
 fn note(m: &Model, ix: Ix) -> String {
+    let n = notes(m, ix);
+    if n.is_empty() { n } else { format!("  [{n}]") }
+}
+
+/// Why an entry looks the way it does: not scanned, a second mount, a btrfs subvolume.
+fn notes(m: &Model, ix: Ix) -> String {
     let tree = &m.tree;
     let mut parts = vec![];
     if let Some(p) = dfdu_tui::problem(tree, ix) {
@@ -545,11 +913,7 @@ fn note(m: &Model, ix: Ix) -> String {
             dfdu_tui::human(out)
         ));
     }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("  [{}]", parts.join("; "))
-    }
+    parts.join("; ")
 }
 
 /// Every entry that could not be read, in path order.

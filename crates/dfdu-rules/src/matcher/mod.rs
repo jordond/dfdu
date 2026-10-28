@@ -170,7 +170,7 @@ pub(crate) fn may_match_below(g: &Glob, dir: &[u8], depth: usize, fold: bool) ->
 
 impl RuleSet {
     pub fn new(rules: Vec<Rule>, env: &Env) -> RuleSet {
-        let fold = glob::platform_folds_case();
+        let fold = glob::platform_folds_case(env.platform);
         let mut by_name: FastMap<Vec<u8>, Vec<u16>> = FastMap::default();
         let mut name_globs = Vec::new();
         let mut paths = Vec::new();

@@ -41,7 +41,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FileAttributeTagInfo, FileFullDirectoryInfo, FileFullDirectoryRestartInfo,
     FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdExtdDirectoryInfo,
     FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, SYNCHRONIZE,
+    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, MoveFileExW, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -75,6 +75,21 @@ fn last_error_code() -> u32 {
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
+}
+
+/// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists: `MoveFileExW` without
+/// `MOVEFILE_REPLACE_EXISTING` (and without `MOVEFILE_COPY_ALLOWED`, so never a copy).
+pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    let z = |p: &Path| -> io::Result<Vec<u16>> {
+        let v = verbatim_path(p)?;
+        Ok(v.as_os_str().encode_wide().chain([0]).collect())
+    };
+    let (f, t) = (z(from)?, z(to)?);
+    // SAFETY: both are NUL-terminated wide strings that outlive the call.
+    if unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// `path` as an absolute verbatim path (`\\?\C:\dir`, `\\?\UNC\server\share\dir`). A relative

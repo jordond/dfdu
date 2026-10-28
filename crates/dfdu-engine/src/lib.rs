@@ -10,13 +10,13 @@ mod recent;
 mod runtime;
 
 pub use applier::{
-    Applier, Command, DeleteProgress, DeleteSummary, JobInfo, JobKind, JobPhase, MeasureProgress,
-    Model, StalledInfo, Stats, Status, Timing,
+    Applier, Command, DeleteProgress, DeleteSummary, Estimate, JobInfo, JobKind, JobPhase,
+    MeasureProgress, Model, NATIVE_LINES, NativeRun, StalledInfo, Stats, Status, Timing, UndoInfo,
 };
 pub use classifier::{
     CheckMsg, CheckReq, check_batch, git_tracked, parse_reclaimable, spawn_classifiers,
 };
-pub use dfdu_clean::{DeleteResult, Mode};
+pub use dfdu_clean::{DeleteResult, Mode, STAGE_UNDO_WINDOW, shown_argv};
 pub use extents::{Inode, Measurement};
 pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 #[cfg(target_os = "linux")]

@@ -153,6 +153,24 @@ pub fn toggle(app: &mut App) {
     app.move_by(1);
 }
 
+/// Marks `item` or unmarks it (found by its node or path), as the cleanup view does for whole
+/// groups.
+pub fn set(app: &mut App, item: Item, on: bool) {
+    let marks = &mut app.marks;
+    let at = marks
+        .items
+        .iter()
+        .position(|it| it.target.node == item.target.node || it.target.path == item.target.path);
+    match (at, on) {
+        (None, true) => marks.items.push(item),
+        (Some(i), false) => {
+            marks.items.remove(i);
+        }
+        _ => return,
+    }
+    marks.changed();
+}
+
 pub fn clear(app: &mut App) {
     if !app.marks.is_empty() {
         app.marks.items.clear();

@@ -1,7 +1,7 @@
 use std::io;
 
 /// File type of an entry, as reported without following symlinks.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Kind {
     File,
     Dir,

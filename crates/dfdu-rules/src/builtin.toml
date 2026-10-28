@@ -56,6 +56,7 @@ not_running = ["cargo", "rustc"]
 not_vcs_tracked = true
 [rule.native]
 check = ["cargo", "--version"]
+dry_run = ["cargo", "clean", "--dry-run"]
 command = ["cargo", "clean"]
 cwd = "{parent}"
 
@@ -323,6 +324,7 @@ paths = ["{env:HOMEBREW_CACHE|{cache}/Homebrew}"]
 stop_descent = true
 [rule.native]
 check = ["brew", "--version"]
+dry_run = ["brew", "cleanup", "--dry-run", "--prune=all"]
 command = ["brew", "cleanup", "--prune=all"]
 
 [[rule]]
@@ -419,6 +421,10 @@ not_running = ["Simulator"]
 check = ["xcrun", "simctl", "help"]
 dry_run = ["xcrun", "simctl", "list", "devices", "unavailable"]
 command = ["xcrun", "simctl", "delete", "unavailable"]
+[[rule.native.variant]]
+name = "also simulator runtimes that cannot be used"
+dry_run = ["xcrun", "simctl", "runtime", "delete", "--unusable", "--dry-run"]
+command = ["xcrun", "simctl", "runtime", "delete", "--unusable"]
 
 [[rule]]
 id = "xcode.caches"
@@ -499,6 +505,12 @@ check = ["docker", "info"]
 size_command = ["docker", "system", "df", "--format", "json"]
 dry_run = ["docker", "system", "df", "-v"]
 command = ["docker", "system", "prune", "--force"]
+[[rule.native.variant]]
+name = "also every image no container uses"
+command = ["docker", "system", "prune", "--all", "--force"]
+[[rule.native.variant]]
+name = "also anonymous volumes no container uses"
+command = ["docker", "system", "prune", "--volumes", "--force"]
 
 [[rule]]
 id = "orbstack.data"

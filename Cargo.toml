@@ -9,6 +9,7 @@ default-members = [
     "crates/dfdu-rules",
     "crates/dfdu-scan",
     "crates/dfdu-sim",
+    "crates/dfdu-store",
     "crates/dfdu-sys",
     "crates/dfdu-tree",
     "crates/dfdu-tui",
@@ -29,6 +30,7 @@ dfdu-clean = { path = "crates/dfdu-clean" }
 dfdu-rules = { path = "crates/dfdu-rules" }
 dfdu-tui = { path = "crates/dfdu-tui" }
 dfdu-sys = { path = "crates/dfdu-sys" }
+dfdu-store = { path = "crates/dfdu-store" }
 dfdu-bench = { path = "crates/dfdu-bench" }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
@@ -42,6 +44,8 @@ crc32c = "0.6.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 hex = "0.4.3"
+boon = "0.6.1"
+ruzstd = "0.9.1"
 humansize = "2.1.3"
 fixedbitset = "0.5.7"
 tempfile = "3.27.0"

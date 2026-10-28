@@ -839,4 +839,4 @@ fn selected_line(app: &App) -> Option<Line<'static>> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

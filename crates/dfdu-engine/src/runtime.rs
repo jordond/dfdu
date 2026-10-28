@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
-use dfdu_clean::{DeleterMsg, Plan, spawn_deleter};
+use dfdu_clean::{DeleterMsg, DeleterReq, spawn_deleter};
 use dfdu_scan::runtime::{Pool, RealClock};
 use dfdu_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
 use parking_lot::{RwLock, RwLockWriteGuard};
@@ -154,6 +154,11 @@ pub struct EngineOptions {
     pub journal_dir: Option<PathBuf>,
     /// Refuse all deletion.
     pub read_only: bool,
+    /// The tree comes from a file ([`Engine::load`]): no scans, rescans, deletes or native
+    /// commands, since its paths may not exist here.
+    pub imported: bool,
+    /// How long a staged item can be put back before it is deleted.
+    pub stage_window: Duration,
     /// Where crash reports go.
     pub crash_dir: Option<PathBuf>,
     /// Threads measuring extents on filesystems that share them; 0 turns measurement off and
@@ -185,6 +190,8 @@ impl Default for EngineOptions {
             check_invariants: std::env::var_os("DFDU_CHECK").is_some(),
             journal_dir: dfdu_clean::default_journal_dir(),
             read_only: false,
+            imported: false,
+            stage_window: dfdu_clean::STAGE_UNDO_WINDOW,
             crash_dir: default_crash_dir(),
             // The kernel's extent lookups are the cost, and they scale with threads.
             measure_workers: if cfg!(target_os = "linux") {
@@ -247,7 +254,7 @@ impl<B: Backend> Engine<B> {
 
         let pool = Pool::start(shared.clone(), inbox.clone(), opts.workers);
         let (del_tx, del_rx) = unbounded::<DeleterMsg>();
-        let deleter = spawn_deleter(opts.journal_dir.clone(), del_tx);
+        let deleter = spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx);
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
         let measurers =
             (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, meas_tx));
@@ -274,7 +281,7 @@ impl<B: Backend> Engine<B> {
             cmd_rx,
             inbox_rx,
             del_rx,
-            plans: deleter.plans,
+            plans: deleter.reqs,
             meas_rx,
             measure: measurers,
             chk_rx,
@@ -348,6 +355,14 @@ impl<B: Backend> Engine<B> {
     /// Runs `f` under the read lock. Do no I/O inside `f`: the applier waits for the lock.
     pub fn read<R>(&self, f: impl FnOnce(&Model) -> R) -> R {
         f(&self.model.read())
+    }
+
+    /// Replaces the tree with one read from a file (an engine started with
+    /// [`EngineOptions::imported`]), before anything is scanned.
+    pub fn load(&self, tree: dfdu_tree::Tree) {
+        let mut m = self.model.write();
+        m.tree = tree;
+        m.tree.bump_version();
     }
 
     /// Receives a message whenever the model changed.
@@ -431,7 +446,7 @@ struct Channels {
     cmd_rx: Receiver<Command>,
     inbox_rx: Receiver<Batch>,
     del_rx: Receiver<DeleterMsg>,
-    plans: Sender<Plan>,
+    plans: Sender<DeleterReq>,
     meas_rx: Receiver<Vec<MeasureMsg>>,
     /// `None` when measurement is off. Dropping it ends the measurer threads.
     measure: Option<Sender<MeasureReq>>,
@@ -462,7 +477,8 @@ fn applier_loop<B: Backend>(
     } = ch;
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
-    applier.read_only = opts.read_only;
+    applier.read_only = opts.read_only || opts.imported;
+    applier.imported = opts.imported;
     applier.measure = measure.is_some();
     applier.checks = classify.is_some();
     let mut chks: VecDeque<CheckMsg> = VecDeque::new();
@@ -547,7 +563,12 @@ fn applier_loop<B: Backend>(
             g.status.incomplete = true;
             g.status.notices.push(format!("invariant violated: {e}"));
         }
-        let outgoing = applier.take_plans();
+        let mut outgoing: Vec<DeleterReq> = applier
+            .take_plans()
+            .into_iter()
+            .map(DeleterReq::Plan)
+            .collect();
+        outgoing.extend(applier.take_deleter_controls());
         let requests = applier.take_measure_requests();
         let checks = applier.take_check_requests();
         let changed = g.fingerprint() != before;

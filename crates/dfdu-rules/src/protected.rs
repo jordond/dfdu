@@ -246,7 +246,7 @@ pub struct Protected {
 
 impl Protected {
     pub fn new(env: &Env) -> Protected {
-        let fold = glob::platform_folds_case();
+        let fold = glob::platform_folds_case(env.platform);
         let (paths, except) = match env.platform {
             Platform::MacOs => (MACOS, MACOS_EXCEPT),
             Platform::Linux => (LINUX, LINUX_EXCEPT),

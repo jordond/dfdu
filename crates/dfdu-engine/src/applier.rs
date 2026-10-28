@@ -3,10 +3,11 @@
 //! drive it.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
-use dfdu_clean::{DeleteResult, DeleterMsg, Identity, Mode, Plan, PlanItem};
+use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
     Backend, Chunk, ChunkStatus, DirId, Entry, JobId, JobOptions, ListingStatus, Mark, ScanMsg,
@@ -62,6 +63,14 @@ impl Model {
             .map(|d| (d.plan, d.done, d.queued_plans))
             .hash(&mut h);
         s.last_delete.as_ref().map(|d| d.plan).hash(&mut h);
+        s.staged.hash(&mut h);
+        s.undo.as_ref().map(|u| (u.plan, u.items)).hash(&mut h);
+        s.undoing.hash(&mut h);
+        s.estimate.as_ref().map(|e| e.id).hash(&mut h);
+        s.native
+            .as_ref()
+            .map(|n| (n.id, n.lines.len(), n.done.is_some()))
+            .hash(&mut h);
         s.measuring
             .as_ref()
             .map(|p| (p.done, p.requested))
@@ -227,6 +236,16 @@ pub struct Status {
     pub fatal: Option<String>,
     /// Outcome of the most recent finished plan.
     pub last_delete: Option<DeleteSummary>,
+    /// Items staged and not deleted yet, and their disk usage as scanned.
+    pub staged: (usize, u64),
+    /// The latest plan whose items can still be put back ([`Command::Undo`]).
+    pub undo: Option<UndoInfo>,
+    /// An undo is running for this plan.
+    pub undoing: Option<u64>,
+    /// The answer to the latest [`Command::Estimate`].
+    pub estimate: Option<Estimate>,
+    /// The latest native cleanup command ([`Command::RunNative`]).
+    pub native: Option<NativeRun>,
     /// Shared-extent measurement in progress.
     pub measuring: Option<MeasureProgress>,
     /// Files whose extents could not be measured; their shared data may be counted more than
@@ -246,6 +265,56 @@ pub struct MeasureProgress {
     pub requested: u64,
 }
 
+/// What deleting a set of nodes is expected to free (architecture §7): their disk usage,
+/// less what stays because other files use it too.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Estimate {
+    /// The id the estimate was asked for with.
+    pub id: u64,
+    pub bytes: u64,
+    /// Targets counted (those inside another are counted with it) and the nodes in them.
+    pub items: usize,
+    pub nodes: u64,
+    /// Hard-linked files with links outside the targets: their data stays.
+    pub linked_out: u64,
+    /// Data shared with files outside the scan (reflinks, snapshots): it stays.
+    pub shared_out: u64,
+    /// A target is still being scanned: `bytes` is a lower bound.
+    pub scanning: bool,
+    /// Files may share data the scan does not see (APFS clones, or reflinks not measured), so
+    /// deleting may free less.
+    pub may_free_less: bool,
+}
+
+/// A native cleanup command and what it printed.
+#[derive(Clone, Debug)]
+pub struct NativeRun {
+    pub id: u64,
+    pub rule: u16,
+    /// The command as a person would type it, and where it runs.
+    pub command: String,
+    pub cwd: Option<PathBuf>,
+    pub dry_run: bool,
+    /// Its output, the last [`NATIVE_LINES`] lines.
+    pub lines: VecDeque<String>,
+    /// `None` while it runs.
+    pub done: Option<Result<(), String>>,
+}
+
+/// Lines of a native command's output kept.
+pub const NATIVE_LINES: usize = 2000;
+/// How long a native cleanup command may run.
+const NATIVE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+#[derive(Clone, Debug)]
+pub struct UndoInfo {
+    pub plan: u64,
+    pub mode: Mode,
+    /// Items the undo would put back.
+    pub items: usize,
+    pub bytes: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct DeleteProgress {
     pub plan: u64,
@@ -257,6 +326,7 @@ pub struct DeleteProgress {
 #[derive(Clone, Debug, Default)]
 pub struct DeleteSummary {
     pub plan: u64,
+    pub mode: Option<Mode>,
     pub deleted: usize,
     pub bytes: u64,
     pub stale: usize,
@@ -265,7 +335,13 @@ pub struct DeleteSummary {
     pub aborted: usize,
     /// Something was deleted on btrfs, which frees the space when the transaction commits.
     pub btrfs: bool,
+    /// The items not deleted and why, in the order their results came, at most
+    /// [`PROBLEMS_KEPT`].
+    pub problems: Vec<(NodeRef, String)>,
 }
+
+/// Items not deleted that a [`DeleteSummary`] lists.
+pub const PROBLEMS_KEPT: usize = 1000;
 
 impl Status {
     pub fn running(&self) -> usize {
@@ -304,6 +380,12 @@ pub enum Command {
     Rescan {
         node: NodeRef,
     },
+    /// Rescan the root of a tree loaded from a file ([`Engine::load`](crate::Engine::load))
+    /// with these options, which no scan job of this session holds.
+    Resume {
+        node: NodeRef,
+        opts: JobOptions,
+    },
     Cancel {
         job: JobId,
     },
@@ -312,6 +394,27 @@ pub enum Command {
     Delete {
         items: Vec<NodeRef>,
         mode: Mode,
+    },
+    /// Put back what this plan moved to the trash or staged ([`Status::undo`]).
+    Undo {
+        plan: u64,
+    },
+    /// Delete staged items now rather than when their undo window ends.
+    CommitStaged,
+    /// Run the native command of the rule that matched `node` (its `variant`, if given), or its
+    /// dry run; progress goes to [`Status::native`] with `id`. The node's directory is rescanned
+    /// after a real run.
+    RunNative {
+        id: u64,
+        node: NodeRef,
+        variant: Option<usize>,
+        dry_run: bool,
+    },
+    /// Estimate what deleting these nodes would free; the answer goes to [`Status::estimate`]
+    /// with `id`.
+    Estimate {
+        id: u64,
+        items: Vec<NodeRef>,
     },
     /// Drop queued delete plans. The runtime also stops the running plan after its current item.
     AbortDelete,
@@ -424,11 +527,20 @@ pub struct Applier<B: Backend> {
     queued_plans: VecDeque<Plan>,
     active_plan: Option<ActivePlan>,
     outgoing_plans: Vec<Plan>,
+    /// Undo and commit requests for the deleter.
+    outgoing_controls: Vec<DeleterReq>,
+    /// Plans with items that can still be put back: mode, items, bytes, staged items among them.
+    undoable: BTreeMap<u64, (Mode, usize, u64)>,
+    /// Paths whose directories are rescanned when the running undo or native command ends:
+    /// what it put back or what it cleaned.
+    rescan_paths: Vec<PathBuf>,
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
     /// Refuse every delete request.
     pub read_only: bool,
+    /// The tree was loaded from a file: refuse what would touch the filesystem.
+    pub imported: bool,
     /// Measure extents after each job.
     pub measure: bool,
     extents: ExtentTable,
@@ -455,6 +567,7 @@ const MEASURE_TIMEOUT_NS: u64 = 60_000_000_000;
 
 struct ActivePlan {
     id: u64,
+    mode: Mode,
     total: usize,
     remaining: HashSet<NodeRef>,
     summary: DeleteSummary,
@@ -583,9 +696,13 @@ impl<B: Backend> Applier<B> {
             queued_plans: VecDeque::new(),
             active_plan: None,
             outgoing_plans: Vec::new(),
+            outgoing_controls: Vec::new(),
+            undoable: BTreeMap::new(),
+            rescan_paths: Vec::new(),
             next_plan: 1,
             deferred_rescans: Vec::new(),
             read_only: false,
+            imported: false,
             measure: true,
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
@@ -644,6 +761,22 @@ impl<B: Backend> Applier<B> {
 
     pub fn command(&mut self, m: &mut Model, cmd: Command, _now: u64) {
         m.recent.push(Event::of_command(&cmd));
+        if self.imported
+            && matches!(
+                cmd,
+                Command::Scan { .. }
+                    | Command::Rescan { .. }
+                    | Command::Resume { .. }
+                    | Command::Delete { .. }
+                    | Command::RunNative { .. }
+                    | Command::NativeSizes
+            )
+        {
+            m.status
+                .notice("an imported scan is read-only: nothing is scanned or deleted".into());
+            m.status.commands_applied += 1;
+            return;
+        }
         match cmd {
             Command::Scan { path, opts } => {
                 let id = self.next_job;
@@ -656,7 +789,8 @@ impl<B: Backend> Applier<B> {
                 }
                 self.start(m, id, JobKind::Initial, root, root, VISIBLE, path, opts);
             }
-            Command::Rescan { node } => self.rescan(m, node),
+            Command::Rescan { node } => self.rescan(m, node, None),
+            Command::Resume { node, opts } => self.rescan(m, node, Some(opts)),
             Command::Cancel { job } => self.cancel(job.0),
             Command::CancelAll => {
                 let ids: Vec<u32> = self.jobs.keys().copied().collect();
@@ -671,6 +805,22 @@ impl<B: Backend> Applier<B> {
                 }
             }
             Command::Delete { items, mode } => self.submit_plan(m, items, mode),
+            Command::Undo { plan } => {
+                if m.status.undoing.is_none() && self.undoable.remove(&plan).is_some() {
+                    m.status.undoing = Some(plan);
+                    self.outgoing_controls.push(DeleterReq::Undo { plan });
+                }
+            }
+            Command::CommitStaged => self.outgoing_controls.push(DeleterReq::Commit),
+            Command::RunNative {
+                id,
+                node,
+                variant,
+                dry_run,
+            } => self.run_native(m, id, node, variant, dry_run),
+            Command::Estimate { id, items } => {
+                m.status.estimate = Some(self.estimate(m, &items, id));
+            }
             Command::NativeSizes => self.native_sizes(m),
             #[cfg(feature = "fault-injection")]
             Command::InjectPanic => panic!("injected applier panic"),
@@ -731,7 +881,8 @@ impl<B: Backend> Applier<B> {
         false
     }
 
-    fn rescan(&mut self, m: &mut Model, node: NodeRef) {
+    /// Rescans `node` with the options of the job that scanned it, or `given`.
+    fn rescan(&mut self, m: &mut Model, node: NodeRef, given: Option<JobOptions>) {
         let Some(ix) = m.tree.resolve_visible(node) else {
             m.status.notice("rescan: that directory is gone".into());
             return;
@@ -809,14 +960,21 @@ impl<B: Backend> Applier<B> {
         }
         let owner = self.jobs.get(&m.tree.dir(ix).expect("dir").job);
         let owner_root = owner.and_then(|j| m.tree.resolve(j.root));
-        let mut opts = owner.map(|j| j.opts.clone()).unwrap_or_default();
+        let resumed = given.is_some();
+        let mut opts = given
+            .or_else(|| owner.map(|j| j.opts.clone()))
+            .unwrap_or_default();
         // Duplicate mounts are judged against the whole visible tree, not just this part.
         let mut top = ix;
         while let Some(p) = m.tree.parent(top) {
             top = p;
         }
         opts.scope = Some(m.tree.path_buf(top));
-        if let Some(c) = &mut opts.class {
+        if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
+            m.rules = Some(c.rules.clone());
+            m.tree
+                .set_protection(shadow, c.protection.protected(), false);
+        } else if let Some(c) = &mut opts.class {
             *c = rescan_class(&m.tree, ix, owner_root, c);
             let f = m.tree.flags(ix);
             m.tree.set_protection(
@@ -1098,7 +1256,7 @@ impl<B: Backend> Applier<B> {
             let fx = if f.meta.is_hardlink() {
                 let mut fx = Ix(0);
                 self.links
-                    .add_scanned((f.meta.dev, f.meta.ino), scope, |charged| {
+                    .add_scanned((f.meta.dev, f.meta.ino), f.meta.nlink, scope, |charged| {
                         fx = m.tree.add_file(ix, name, &f.meta, charged, None);
                         m.tree.node_ref(fx)
                     });
@@ -1843,6 +2001,11 @@ impl<B: Backend> Applier<B> {
         std::mem::take(&mut self.outgoing_plans)
     }
 
+    /// Undo and commit requests for the deleter thread, sent after the plans.
+    pub fn take_deleter_controls(&mut self) -> Vec<DeleterReq> {
+        std::mem::take(&mut self.outgoing_controls)
+    }
+
     fn plan_nodes(&self) -> impl Iterator<Item = NodeRef> + '_ {
         let active = self
             .active_plan
@@ -1869,6 +2032,9 @@ impl<B: Backend> Applier<B> {
         let t = tree.total(ix);
         if flags.has(NodeFlags::MOUNT_ROOT) {
             return Some("is a mount point; unmount it first".into());
+        }
+        if tree.is_protected(ix) {
+            return Some("is protected (version control, secrets or system data)".into());
         }
         if t.mounts > 0 {
             return Some(format!(
@@ -1939,6 +2105,7 @@ impl<B: Backend> Applier<B> {
                 ));
                 continue;
             }
+            let inside = std::sync::Arc::new(listings(&m.tree, ix));
             self.cut(m, ix, DirState::Deleting);
             m.tree.set_deleting(ix, true);
             let (dev, ino) = m.tree.dev_ino(ix);
@@ -1953,6 +2120,7 @@ impl<B: Backend> Applier<B> {
                     mtime: m.tree.mtime(ix),
                 },
                 bytes: m.tree.total(ix).alloc,
+                inside,
             });
         }
         if out.is_empty() {
@@ -2002,10 +2170,12 @@ impl<B: Backend> Applier<B> {
             });
             self.active_plan = Some(ActivePlan {
                 id: plan.id,
+                mode: plan.mode,
                 total: remaining.len(),
                 remaining,
                 summary: DeleteSummary {
                     plan: plan.id,
+                    mode: Some(plan.mode),
                     ..Default::default()
                 },
             });
@@ -2020,7 +2190,7 @@ impl<B: Backend> Applier<B> {
             match m.tree.resolve_visible(r) {
                 None => {}
                 Some(ix) if self.plan_overlaps(&m.tree, ix) => self.deferred_rescans.push(r),
-                Some(_) => self.rescan(m, r),
+                Some(_) => self.rescan(m, r, None),
             }
         }
     }
@@ -2045,6 +2215,15 @@ impl<B: Backend> Applier<B> {
                     DeleteResult::Deleted => {
                         s.deleted += 1;
                         s.bytes += bytes;
+                        if active.mode.undoable() {
+                            let u = self.undoable.entry(plan).or_insert((active.mode, 0, 0));
+                            u.1 += 1;
+                            u.2 += bytes;
+                        }
+                        if active.mode == Mode::Stage {
+                            m.status.staged.0 += 1;
+                            m.status.staged.1 += bytes;
+                        }
                         if let Some(ix) = ix {
                             m.tree.detach(ix);
                             self.work.push_back(Work::Free);
@@ -2069,7 +2248,7 @@ impl<B: Backend> Applier<B> {
                             // a part-way delete inside it leaves nothing stale.
                             let skipped =
                                 m.tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped);
-                            rescan = (was_cut || partial) && !skipped;
+                            rescan = (was_cut || partial) && !skipped && m.tree.dir(ix).is_some();
                             if rescan {
                                 // Its totals are no longer known. Marking it cut keeps it shown
                                 // as incomplete if the rescan below is cancelled or never runs.
@@ -2083,6 +2262,9 @@ impl<B: Backend> Applier<B> {
                             .map(|ix| String::from_utf8_lossy(m.tree.name(ix)).into_owned())
                             .unwrap_or_default();
                         m.status.notice(format!("delete {name}: {other}"));
+                        if s.problems.len() < PROBLEMS_KEPT {
+                            s.problems.push((node, other.to_string()));
+                        }
                     }
                 }
                 let done = active.total - active.remaining.len();
@@ -2114,8 +2296,261 @@ impl<B: Backend> Applier<B> {
                 self.retry_deferred_rescans(m);
                 self.start_next_plan(m);
             }
+            DeleterMsg::Committed {
+                plan,
+                bytes,
+                result,
+            } => {
+                m.status.staged.0 = m.status.staged.0.saturating_sub(1);
+                m.status.staged.1 = m.status.staged.1.saturating_sub(bytes);
+                self.forget_undoable(plan, bytes);
+                if let Err(e) = result {
+                    m.status.notice(format!("delete staged: {e}"));
+                }
+            }
+            DeleterMsg::Restored {
+                plan: _,
+                original,
+                staged,
+                bytes,
+                result,
+            } => {
+                if staged {
+                    m.status.staged.0 = m.status.staged.0.saturating_sub(1);
+                    m.status.staged.1 = m.status.staged.1.saturating_sub(bytes);
+                }
+                match result {
+                    Ok(to) => {
+                        if to != original {
+                            m.status.notice(format!(
+                                "undo: {} exists again; restored as {}",
+                                original.display(),
+                                to.display()
+                            ));
+                        }
+                        self.rescan_paths.push(to);
+                    }
+                    Err(e) => m.status.notice(format!("undo {}: {e}", original.display())),
+                }
+            }
+            DeleterMsg::NativeOutput { id, line } => {
+                if let Some(n) = m.status.native.as_mut().filter(|n| n.id == id) {
+                    if n.lines.len() == NATIVE_LINES {
+                        n.lines.pop_front();
+                    }
+                    n.lines.push_back(line);
+                }
+            }
+            DeleterMsg::NativeDone { id, result } => {
+                if let Some(n) = m.status.native.as_mut().filter(|n| n.id == id) {
+                    let rescan = !n.dry_run && result.is_ok();
+                    n.done = Some(result);
+                    if rescan {
+                        self.rescan_paths(m);
+                    }
+                }
+                self.rescan_paths.clear();
+            }
+            DeleterMsg::UndoDone { plan } => {
+                if m.status.undoing == Some(plan) {
+                    m.status.undoing = None;
+                }
+                self.rescan_paths(m);
+            }
+            DeleterMsg::Unfinished { items, notes } => {
+                if let Some(first) = items.first() {
+                    let more = match items.len() {
+                        1 => String::new(),
+                        n => format!("; and {} more", n - 1),
+                    };
+                    m.status.notice(format!(
+                        "an earlier session left {} delete{} unfinished, kept as they are \
+                         (dfdu recover lists them): {first}{more}",
+                        items.len(),
+                        if items.len() == 1 { "" } else { "s" },
+                    ));
+                }
+                for n in notes {
+                    m.status.notice(format!("deletion journal: {n}"));
+                }
+            }
         }
+        self.refresh_undo(m);
         self.refresh_status(m);
+    }
+
+    fn run_native(
+        &mut self,
+        m: &mut Model,
+        id: u64,
+        node: NodeRef,
+        variant: Option<usize>,
+        dry_run: bool,
+    ) {
+        if self.read_only && !dry_run {
+            m.status.notice("native command: read-only mode".into());
+            return;
+        }
+        let (Some(rules), Some(ix)) = (m.rules.clone(), m.tree.resolve_visible(node)) else {
+            return;
+        };
+        let Some(class) = m.tree.class(ix) else {
+            return;
+        };
+        let Some(def) = rules.rule(class.rule).native.as_ref() else {
+            return;
+        };
+        let (command, dry) = match variant {
+            None => (&def.command, &def.dry_run),
+            Some(v) => match def.variants.get(v) {
+                Some(x) => (&x.command, &x.dry_run),
+                None => return,
+            },
+        };
+        let path = m.tree.path_buf(ix);
+        let argv = if dry_run { dry } else { command };
+        if argv.is_empty() {
+            return;
+        }
+        let argv: Vec<String> = argv.iter().map(|a| native_var(a, &path)).collect();
+        let cwd = def
+            .cwd
+            .as_deref()
+            .map(|c| PathBuf::from(native_var(c, &path)));
+        m.status.native = Some(NativeRun {
+            id,
+            rule: class.rule,
+            command: dfdu_clean::shown_argv(&argv),
+            cwd: cwd.clone(),
+            dry_run,
+            lines: VecDeque::new(),
+            done: None,
+        });
+        self.rescan_paths.clear();
+        if !dry_run {
+            self.rescan_paths.push(path);
+        }
+        self.outgoing_controls
+            .push(DeleterReq::Native(dfdu_clean::NativeReq {
+                id,
+                check: def.check.clone(),
+                pre: def.pre.clone(),
+                command: argv,
+                cwd,
+                timeout: NATIVE_TIMEOUT,
+                dry_run,
+            }));
+    }
+
+    /// What deleting `items` would free. Walks them, so it is linear in their size.
+    pub fn estimate(&self, m: &Model, items: &[NodeRef], id: u64) -> Estimate {
+        let tree = &m.tree;
+        let all: HashSet<Ix> = items
+            .iter()
+            .filter_map(|&r| tree.resolve_visible(r))
+            .collect();
+        let tops: Vec<Ix> = all
+            .iter()
+            .copied()
+            .filter(|&ix| {
+                let mut a = ix;
+                while let Some(p) = tree.parent(a) {
+                    if all.contains(&p) {
+                        return false;
+                    }
+                    a = p;
+                }
+                true
+            })
+            .collect();
+        let mut e = Estimate {
+            id,
+            items: tops.len(),
+            // APFS clones share data without a sign the scan can read.
+            may_free_less: cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        // Hard-linked inodes in the targets: links seen, and the charged link's bytes if it is
+        // among them.
+        let mut linked: HashMap<Inode, (u32, u64)> = HashMap::new();
+        for &t in &tops {
+            let tot = tree.total(t);
+            e.bytes += tot.alloc;
+            e.shared_out += tot.shared_out;
+            e.nodes += tot.items;
+            e.may_free_less |= self.extent_devs.contains(&tree.dev_ino(t).0) && !self.measure;
+            let mut stack = vec![t];
+            while let Some(ix) = stack.pop() {
+                if let Some(d) = tree.dir(ix) {
+                    e.scanning |= d.state == DirState::Pending || d.cut;
+                    stack.extend(tree.children(ix));
+                    continue;
+                }
+                let f = tree.flags(ix);
+                if f.has(NodeFlags::HARDLINK) {
+                    let l = linked.entry(tree.dev_ino(ix)).or_default();
+                    l.0 += 1;
+                    if f.has(NodeFlags::CHARGED) {
+                        l.1 = tree.own(ix).alloc;
+                    }
+                }
+            }
+        }
+        for (key, (seen, bytes)) in linked {
+            if seen < self.links.nlink(key) {
+                e.linked_out += bytes;
+            }
+        }
+        e.bytes = e.bytes.saturating_sub(e.shared_out + e.linked_out);
+        e
+    }
+
+    /// A staged item of `plan` was deleted: it can no longer be put back.
+    fn forget_undoable(&mut self, plan: u64, bytes: u64) {
+        if let Some(u) = self.undoable.get_mut(&plan) {
+            u.1 = u.1.saturating_sub(1);
+            u.2 = u.2.saturating_sub(bytes);
+            if u.1 == 0 {
+                self.undoable.remove(&plan);
+            }
+        }
+    }
+
+    fn refresh_undo(&mut self, m: &mut Model) {
+        m.status.undo = self
+            .undoable
+            .iter()
+            .next_back()
+            .map(|(&plan, &(mode, items, bytes))| UndoInfo {
+                plan,
+                mode,
+                items,
+                bytes,
+            });
+    }
+
+    /// Rescans the nearest directory in the tree above each item an undo put back: the
+    /// highest of them only, since a rescan covers what is below it.
+    fn rescan_paths(&mut self, m: &mut Model) {
+        let mut dirs: Vec<Ix> = std::mem::take(&mut self.rescan_paths)
+            .iter()
+            .filter_map(|p| p.parent().and_then(|p| node_at(&m.tree, p)))
+            .collect();
+        dirs.sort_unstable();
+        dirs.dedup();
+        let tops: Vec<Ix> = dirs
+            .iter()
+            .copied()
+            .filter(|&d| {
+                !dirs
+                    .iter()
+                    .any(|&a| a != d && Self::is_ancestor(&m.tree, a, d))
+            })
+            .collect();
+        for d in tops {
+            self.deferred_rescans.push(m.tree.node_ref(d));
+        }
+        self.retry_deferred_rescans(m);
     }
 
     /// The extent table's view of one inode, for debugging.
@@ -2174,6 +2609,69 @@ impl<B: Backend> Applier<B> {
         }
         Ok(())
     }
+}
+
+/// Expands the variables a native command may use, for the matched node at `path`: `{path}`,
+/// `{parent}`, `{name}` and `{name_stem}`.
+fn native_var(arg: &str, path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    arg.replace("{path}", &path.to_string_lossy())
+        .replace("{parent}", &path.parent().unwrap_or(path).to_string_lossy())
+        .replace("{name_stem}", &stem)
+        .replace("{name}", &name)
+}
+
+/// What the scan saw in each directory of `item` it read completely, for the deleter to
+/// compare (`dfdu_clean::inside`). Linear in the item's size, under the write lock.
+fn listings(tree: &Tree, item: Ix) -> dfdu_clean::inside::Listings {
+    use dfdu_clean::inside::{Listing, name_hash};
+    let mut out = dfdu_clean::inside::Listings::new();
+    if tree.kind(item) != Kind::Dir {
+        return out;
+    }
+    let mut stack = vec![(item, PathBuf::new())];
+    while let Some((d, rel)) = stack.pop() {
+        if tree.dir(d).is_none_or(|r| r.state != DirState::Complete) {
+            continue;
+        }
+        let mut entries = vec![];
+        for c in tree.children(d) {
+            let name = tree.name(c);
+            entries.push((name_hash(name), tree.dev_ino(c).1, tree.kind(c)));
+            if tree.kind(c) == Kind::Dir {
+                stack.push((c, rel.join(&*dfdu_tree::name_os(name))));
+            }
+        }
+        entries.sort_unstable();
+        out.insert(
+            rel,
+            Listing {
+                ino: tree.dev_ino(d).1,
+                entries,
+            },
+        );
+    }
+    out
+}
+
+/// The deepest visible node on `path`: the node itself when the tree has it, else its nearest
+/// ancestor that it has.
+fn node_at(tree: &Tree, path: &Path) -> Option<Ix> {
+    let root = tree
+        .roots()
+        .filter(|&r| tree.is_visible(r))
+        .find(|&r| path.starts_with(tree.path_buf(r)))?;
+    let rest = path.strip_prefix(tree.path_buf(root)).ok()?;
+    let mut at = root;
+    for c in rest.components() {
+        let name = dfdu_tree::name_bytes(c.as_os_str());
+        match tree.children(at).find(|&ch| tree.name(ch) == &*name) {
+            Some(ch) if tree.kind(ch) == Kind::Dir => at = ch,
+            _ => break,
+        }
+    }
+    Some(at)
 }
 
 #[cfg(test)]

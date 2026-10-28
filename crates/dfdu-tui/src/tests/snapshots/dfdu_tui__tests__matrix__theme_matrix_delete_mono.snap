@@ -25,8 +25,8 @@ L9 39-69 dim
                  │  163.0 GiB  total · 812.2k items  still scanning: at least this │
 L11 51-81 dim
                  │                                                                 │
-                 │ Method: Trash, recoverable   p delete permanently instead       │
-L13 48-48 bold
+                 │ Method: Trash, recoverable   p delete permanently  s stage      │
+L13 48-48 bold | 70-70 bold
                  │ 50.0 GiB or more: confirm by typing the word.                   │
 L14 18-63 dim
                  │ type delete and Enter: ▌   Esc cancel                           │
@@ -40,5 +40,5 @@ L15 24-29 bold | 42-42 bold | 46-48 bold
 L21 0-58 bold
                                                                     ● 2 marked (at least 163.0 GiB)
 L22 0-67 dim | 68-98 bold dim | 99-99 dim
- p switch method  Esc cancel
-L23 1-1 bold | 2-15 dim | 18-20 bold | 21-27 dim
+ p permanent  s stage  Esc cancel
+L23 1-1 bold | 2-11 dim | 14-14 bold | 15-20 dim | 23-25 bold | 26-32 dim

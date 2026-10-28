@@ -1,72 +1,280 @@
-//! The deleter thread: runs one plan at a time, item by item, journalling each.
+//! The deleter thread: runs one plan at a time, item by item, journalling each; deletes staged
+//! items when their undo window ends; puts items back on undo.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::{RecvTimeoutError, Sender, unbounded};
 use dfdu_tree::{ErrKind, Kind};
 
 use crate::journal::Journal;
-use crate::{DeleteResult, DeleterMsg, Mode, Plan, PlanItem, Refusal, verify};
+use crate::recover;
+use crate::stage::Stager;
+use crate::{
+    DeleteResult, DeleterMsg, DeleterReq, Mode, Plan, PlanItem, Refusal, rename_noreplace, verify,
+};
 
 pub struct DeleterHandle {
-    pub plans: Sender<Plan>,
+    pub reqs: Sender<DeleterReq>,
     /// Set to stop the running plan after the current item; cleared when the next plan starts.
     pub abort: Arc<AtomicBool>,
     pub thread: JoinHandle<()>,
 }
 
+/// How long a staged item can be put back before it is deleted in the background.
+pub const STAGE_UNDO_WINDOW: Duration = Duration::from_secs(60);
+
+/// An item the session can still put back.
+struct Kept {
+    plan: u64,
+    item: PlanItem,
+    /// When it went to the trash, in seconds since the epoch.
+    at: i64,
+    /// Where it is staged; `None` for the trash.
+    staged: Option<PathBuf>,
+    /// When a staged item is committed.
+    due: Instant,
+}
+
+struct State {
+    journal_dir: Option<PathBuf>,
+    journal: Option<Journal>,
+    stager: Option<Stager>,
+    out: Sender<DeleterMsg>,
+    kept: Vec<Kept>,
+    window: Duration,
+}
+
 /// Starts the deleter. Results go to `out`. Without a journal directory, or if the journal
-/// cannot be created, every item is refused: nothing is deleted without a record.
-pub fn spawn_deleter(journal_dir: Option<PathBuf>, out: Sender<DeleterMsg>) -> DeleterHandle {
-    let (tx, rx) = unbounded::<Plan>();
+/// cannot be created, every item is refused: nothing is deleted without a record. Staged items
+/// are deleted `window` after they were staged ([`STAGE_UNDO_WINDOW`] in the app), or on
+/// [`DeleterReq::Commit`]; those still staged when the deleter stops are left for recovery
+/// (`crate::recover`).
+pub fn spawn_deleter(
+    journal_dir: Option<PathBuf>,
+    window: Duration,
+    out: Sender<DeleterMsg>,
+) -> DeleterHandle {
+    let (tx, rx) = unbounded::<DeleterReq>();
     let abort = Arc::new(AtomicBool::new(false));
     let ab = abort.clone();
     let thread = thread::Builder::new()
         .name("dfdu-deleter".into())
         .spawn(move || {
-            let mut journal: Option<Journal> = None;
-            for plan in rx {
-                ab.store(false, SeqCst);
-                if journal.is_none() {
-                    journal = journal_dir.as_deref().and_then(|d| Journal::create(d).ok());
-                }
-                let mut btrfs = false;
-                for item in &plan.items {
-                    let result = if ab.load(SeqCst) {
-                        DeleteResult::Aborted
-                    } else {
-                        match journal.as_mut() {
-                            None => DeleteResult::Refused(Refusal::NoJournal),
-                            Some(j) => run_item(j, &plan, item),
-                        }
-                    };
-                    btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path);
-                    let _ = out.send(DeleterMsg::Item {
-                        plan: plan.id,
-                        node: item.node,
-                        bytes: item.bytes,
-                        result,
-                    });
-                }
-                if let Some(j) = journal.as_mut() {
-                    let _ = j.sync();
-                }
-                let _ = out.send(DeleterMsg::Done {
-                    plan: plan.id,
-                    btrfs,
+            let mut st = State {
+                journal_dir,
+                journal: None,
+                stager: None,
+                out,
+                kept: Vec::new(),
+                window,
+            };
+            if let Some(r) = st
+                .journal_dir
+                .as_deref()
+                .and_then(|d| recover::scan(d).ok())
+                && !(r.items.is_empty() && r.notes.is_empty())
+            {
+                let _ = st.out.send(DeleterMsg::Unfinished {
+                    items: r.items.iter().map(recover::Unfinished::describe).collect(),
+                    notes: r.notes.clone(),
                 });
+            }
+            loop {
+                let next = st
+                    .kept
+                    .iter()
+                    .filter(|k| k.staged.is_some())
+                    .map(|k| k.due)
+                    .min();
+                let req = match next {
+                    Some(t) => match rx.recv_deadline(t) {
+                        Ok(r) => Some(r),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    },
+                    None => match rx.recv() {
+                        Ok(r) => Some(r),
+                        Err(_) => break,
+                    },
+                };
+                match req {
+                    None => st.commit(Some(Instant::now())),
+                    Some(DeleterReq::Plan(plan)) => {
+                        ab.store(false, SeqCst);
+                        st.run_plan(&plan, &ab);
+                    }
+                    Some(DeleterReq::Undo { plan }) => st.undo(plan),
+                    Some(DeleterReq::Native(req)) => {
+                        ab.store(false, SeqCst);
+                        st.native(&req, &ab);
+                    }
+                    Some(DeleterReq::Commit) => st.commit(None),
+                }
+            }
+            if let Some(j) = st.journal.as_mut() {
+                let _ = j.sync();
             }
         })
         .expect("spawn deleter");
     DeleterHandle {
-        plans: tx,
+        reqs: tx,
         abort,
         thread,
     }
+}
+
+impl State {
+    fn open_journal(&mut self) {
+        if self.journal.is_none() {
+            self.journal = self
+                .journal_dir
+                .as_deref()
+                .and_then(|d| Journal::create(d).ok());
+            if let Some(j) = &self.journal {
+                let base = self
+                    .journal_dir
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map(|p| p.join("stage"));
+                self.stager = Some(Stager::new(j.session(), base));
+            }
+        }
+    }
+
+    fn run_plan(&mut self, plan: &Plan, ab: &AtomicBool) {
+        self.open_journal();
+        let mut btrfs = false;
+        for item in &plan.items {
+            let result = if ab.load(SeqCst) {
+                DeleteResult::Aborted
+            } else {
+                match (self.journal.as_mut(), self.stager.as_mut()) {
+                    (Some(j), Some(s)) => {
+                        let at = now_secs();
+                        let (r, staged) = run_item(j, s, plan, item);
+                        if r == DeleteResult::Deleted && plan.mode.undoable() {
+                            self.kept.push(Kept {
+                                plan: plan.id,
+                                item: item.clone(),
+                                at,
+                                staged,
+                                due: Instant::now() + self.window,
+                            });
+                        }
+                        r
+                    }
+                    _ => DeleteResult::Refused(Refusal::NoJournal),
+                }
+            };
+            btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path);
+            let _ = self.out.send(DeleterMsg::Item {
+                plan: plan.id,
+                node: item.node,
+                bytes: item.bytes,
+                result,
+            });
+        }
+        if let Some(j) = self.journal.as_mut() {
+            let _ = j.sync();
+        }
+        let _ = self.out.send(DeleterMsg::Done {
+            plan: plan.id,
+            btrfs,
+        });
+    }
+
+    /// Runs a native command. The real one is journalled like a delete: nothing runs without
+    /// its record.
+    fn native(&mut self, req: &crate::NativeReq, ab: &AtomicBool) {
+        let result = if req.dry_run {
+            crate::native::run(req, ab, &self.out)
+        } else {
+            self.open_journal();
+            match self.journal.as_mut() {
+                None => Err(Refusal::NoJournal.to_string()),
+                Some(j) => match j.native(req) {
+                    Err(e) => Err(format!("journal: {e}")),
+                    Ok(()) => {
+                        let r = crate::native::run(req, ab, &self.out);
+                        let _ = j.native_done(req.id, &r);
+                        r
+                    }
+                },
+            }
+        };
+        let _ = self.out.send(DeleterMsg::NativeDone { id: req.id, result });
+    }
+
+    /// Deletes the staged items due by `by`, or all of them.
+    fn commit(&mut self, by: Option<Instant>) {
+        let (due, keep): (Vec<Kept>, Vec<Kept>) = std::mem::take(&mut self.kept)
+            .into_iter()
+            .partition(|k| k.staged.is_some() && by.is_none_or(|t| k.due <= t));
+        self.kept = keep;
+        let Some(j) = self.journal.as_mut() else {
+            return;
+        };
+        for k in due {
+            let staged = k.staged.as_deref().expect("staged");
+            let result = j
+                .commit_intent(k.plan, &k.item)
+                .map_err(|e| format!("journal: {e}"))
+                .and_then(|()| {
+                    fault::commit_hang(staged);
+                    crate::remove(staged, k.item.identity.kind).map_err(|e| {
+                        format!(
+                            "{} stays staged at {}: {e}",
+                            k.item.path.display(),
+                            staged.display()
+                        )
+                    })
+                })
+                .and_then(|()| {
+                    j.commit_done(k.plan, &k.item)
+                        .map_err(|e| format!("journal: {e}"))
+                });
+            let _ = self.out.send(DeleterMsg::Committed {
+                plan: k.plan,
+                bytes: k.item.bytes,
+                result,
+            });
+        }
+    }
+
+    fn undo(&mut self, plan: u64) {
+        let (mine, keep): (Vec<Kept>, Vec<Kept>) = std::mem::take(&mut self.kept)
+            .into_iter()
+            .partition(|k| k.plan == plan);
+        self.kept = keep;
+        for k in mine {
+            let result = match &k.staged {
+                Some(s) => crate::stage::put_back(s, &k.item.path).map_err(|e| e.to_string()),
+                None => crate::stage::restore_from_trash(&k.item, k.at),
+            };
+            if let (Ok(to), Some(j)) = (&result, self.journal.as_mut()) {
+                let _ = j.restored(plan, &k.item, to);
+            }
+            let _ = self.out.send(DeleterMsg::Restored {
+                plan,
+                original: k.item.path.clone(),
+                staged: k.staged.is_some(),
+                bytes: k.item.bytes,
+                result,
+            });
+        }
+        let _ = self.out.send(DeleterMsg::UndoDone { plan });
+    }
+}
+
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Whether the deleted item's directory is on btrfs.
@@ -79,28 +287,64 @@ fn on_btrfs(path: &Path) -> bool {
     false
 }
 
-fn run_item(journal: &mut Journal, plan: &Plan, item: &PlanItem) -> DeleteResult {
-    if let Err(r) = verify(item, &plan.scan_root, plan.mode) {
+fn run_item(
+    journal: &mut Journal,
+    stager: &mut Stager,
+    plan: &Plan,
+    item: &PlanItem,
+) -> (DeleteResult, Option<PathBuf>) {
+    let checked = verify(item, &plan.scan_root, plan.mode).and_then(|()| {
+        if item.identity.kind == Kind::Dir {
+            crate::inside::compare(&item.path, &item.inside).map_err(DeleteResult::Stale)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(r) = checked {
         let _ = journal.result(plan.id, item, &r);
-        return r;
+        return (r, None);
     }
-    if let Err(e) = journal.intent(plan.id, plan.mode, item) {
-        return DeleteResult::Failed {
-            partial: false,
-            err: ErrKind::from(&e),
-            msg: format!("journal: {e}"),
-        };
+    let stage = if plan.mode == Mode::Stage {
+        match stager.target(item, &plan.scan_root) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                let r = DeleteResult::Failed {
+                    partial: false,
+                    err: ErrKind::from(&e),
+                    msg: e.to_string(),
+                };
+                let _ = journal.result(plan.id, item, &r);
+                return (r, None);
+            }
+        }
+    } else {
+        None
+    };
+    if let Err(e) = journal.intent(plan.id, plan.mode, item, stage.as_deref()) {
+        return (
+            DeleteResult::Failed {
+                partial: false,
+                err: ErrKind::from(&e),
+                msg: format!("journal: {e}"),
+            },
+            None,
+        );
     }
-    let result = execute(&item.path, item.identity.kind, plan.mode);
+    let result = execute(&item.path, item.identity.kind, plan.mode, stage.as_deref());
     let _ = journal.result(plan.id, item, &result);
-    result
+    (result, stage)
 }
 
-fn execute(path: &Path, kind: Kind, mode: Mode) -> DeleteResult {
-    let r = match mode {
-        Mode::Trash => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
+fn execute(path: &Path, kind: Kind, mode: Mode, stage: Option<&Path>) -> DeleteResult {
+    let r = match (mode, stage) {
+        (Mode::Trash, _) => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
+        // A rename: all or nothing.
+        (Mode::Stage, Some(to)) => {
+            rename_noreplace(path, to).map_err(|e| (ErrKind::from(&e), e.to_string()))
+        }
+        (Mode::Stage, None) => Err((ErrKind::Other, "no staging path".into())),
         // Never crosses into another mount; destroys btrfs subvolumes where allowed.
-        Mode::Permanent => {
+        (Mode::Permanent, _) => {
             crate::remove(path, kind).map_err(|e| (ErrKind::from(&e), e.to_string()))
         }
     };
@@ -108,8 +352,35 @@ fn execute(path: &Path, kind: Kind, mode: Mode) -> DeleteResult {
         Ok(()) => DeleteResult::Deleted,
         Err((err, msg)) => {
             // If the path is still there, part of it may already be gone.
-            let partial = kind == Kind::Dir && fs::symlink_metadata(path).is_ok();
+            let partial =
+                mode == Mode::Permanent && kind == Kind::Dir && fs::symlink_metadata(path).is_ok();
             DeleteResult::Failed { partial, err, msg }
         }
     }
+}
+
+/// Test hooks (the `fault-injection` feature).
+mod fault {
+    use std::path::Path;
+
+    /// With `DFDU_FAULT_COMMIT_HANG` set, a staged commit deletes one entry of the item and
+    /// then never returns, so a test can kill the process part-way through (scenario 17).
+    #[cfg(feature = "fault-injection")]
+    pub fn commit_hang(staged: &Path) {
+        if std::env::var_os("DFDU_FAULT_COMMIT_HANG").is_none() {
+            return;
+        }
+        if let Some(e) = std::fs::read_dir(staged)
+            .ok()
+            .and_then(|mut d| d.next()?.ok())
+        {
+            let _ = std::fs::remove_file(e.path());
+        }
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[cfg(not(feature = "fault-injection"))]
+    pub fn commit_hang(_staged: &Path) {}
 }

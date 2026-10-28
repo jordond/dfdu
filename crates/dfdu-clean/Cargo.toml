@@ -10,8 +10,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Test-only hooks (a staged commit that hangs part-way).
+fault-injection = []
+
 [dependencies]
 dfdu-tree.workspace = true
+dfdu-rules.workspace = true
+dunce.workspace = true
 trash = "5.2.9"
 crossbeam-channel.workspace = true
 etcetera.workspace = true
@@ -27,4 +33,6 @@ rustix.workspace = true
 dfdu-sys.workspace = true
 
 [dev-dependencies]
+rand.workspace = true
+dfdu-clean = { path = ".", features = ["fault-injection"] }
 tempfile.workspace = true

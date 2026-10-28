@@ -12,23 +12,23 @@ expression: frame
   ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
   ┃ G End            last entry                     d      move to Trash                         ┃
   ┃ → l Enter        open directory                 D      delete permanently (type delete)      ┃
-  ┃ ← h Backspace <  parent directory                                                            ┃
-  ┃                                                 Panels                                       ┃
-  ┃ Sort                                            /         filter this directory              ┃
-  ┃ s  sort by size (again: reverse)                i         details of the selected entry      ┃
-  ┃ n  sort by name (again: reverse)                Tab       move focus between the list and    ┃
-  ┃ C  sort by items (again: reverse)                         the details                        ┃
-  ┃ M  sort by modification time (again:            !         list what could not be read, and   ┃
-  ┃    reverse)                                               go to it                           ┃
-  ┃ S  re-sort now                                  ? F1      keys                               ┃
-  ┃                                                 : Ctrl-P  command palette                    ┃
-  ┃ Display                                         F12       debug overlay                      ┃
-  ┃ 1  list view                                                                                 ┃
-  ┃ 2  treemap view                                 Global                                       ┃
+  ┃ ← h Backspace <  parent directory               U      put back what was last moved to the   ┃
+  ┃                                                        Trash or staged                       ┃
+  ┃ Sort                                                                                         ┃
+  ┃ s  sort by size (again: reverse)                Panels                                       ┃
+  ┃ n  sort by name (again: reverse)                /         filter this directory              ┃
+  ┃ C  sort by items (again: reverse)               i         details of the selected entry      ┃
+  ┃ M  sort by modification time (again:            Tab       move focus between the list and    ┃
+  ┃    reverse)                                               the details                        ┃
+  ┃ S  re-sort now                                  !         list what could not be read, and   ┃
+  ┃                                                           go to it                           ┃
+  ┃ Display                                         ? F1      keys                               ┃
+  ┃ 1  list view                                    : Ctrl-P  command palette                    ┃
+  ┃ 2  treemap view                                 F12       debug overlay                      ┃
+  ┃ 3  cleanup view: what the rules found, by                                                    ┃
+  ┃    safety                                       Global                                       ┃
   ┃ +  treemap: one level deeper                    Esc       close the overlay, or clear the    ┃
   ┃ -  treemap: one level less                                filter                             ┃
   ┃ p  treemap: colour by top folder or age         q Ctrl-C  quit                               ┃
-  ┃ a  toggle apparent size / disk usage                                                         ┃
-  ┃ u  toggle disk usage like du (shared data                                                    ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

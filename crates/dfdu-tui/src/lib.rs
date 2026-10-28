@@ -15,6 +15,7 @@
 //! selected for the details pane), they are read without copying the directory again.
 
 mod app;
+mod cleanup;
 mod confirm;
 mod debug;
 mod details;
@@ -50,6 +51,7 @@ use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, E
 use ratatui::crossterm::execute;
 
 pub use app::{App, Effect, Overlay};
+pub use cleanup::recommends;
 pub use debug::summary as debug_summary;
 pub use picker::{DISK_TIMEOUT, Picked, Picker};
 pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
@@ -71,6 +73,10 @@ const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
 pub struct RunOptions {
     /// Directory to browse; `None` shows the disk picker first.
     pub path: Option<PathBuf>,
+    /// A scan read from a file, browsed read-only instead of scanning `path`.
+    pub imported: Option<dfdu_tree::Tree>,
+    /// A scan read from a file, shown at once while its root is rescanned (`path` is ignored).
+    pub resumed: Option<dfdu_tree::Tree>,
     /// Options of the scan (which mounts it descends into).
     pub job: JobOptions,
     /// The rules entries are classified against; `None` classifies nothing.
@@ -149,6 +155,46 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         setup::restore_terminal(mouse);
         return Err(e);
     }
+    let ui_opts = |theme: Theme| UiOptions {
+        theme,
+        color_level: colors.level,
+        background: colors.background,
+        mouse,
+        debug: ui.debug_stats,
+        home: setup::home_dir(),
+    };
+    if let Some(tree) = opts.imported {
+        let engine = Engine::start(
+            dfdu_scan::PortableBackend::default(),
+            EngineOptions {
+                imported: true,
+                ..opts.engine
+            },
+        );
+        engine.load(tree);
+        return browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats);
+    }
+    if let Some(tree) = opts.resumed {
+        let root = tree.roots().next().expect("a loaded tree has a root");
+        let path = tree.path_buf(root);
+        let storage = dfdu_sys::storage(&path);
+        let engine = Engine::start(
+            dfdu_scan::native_backend(storage),
+            EngineOptions {
+                workers: dfdu_engine::workers_for(storage),
+                ..opts.engine
+            },
+        );
+        let node = tree.node_ref(root);
+        engine.load(tree);
+        let mut job = opts.job;
+        job.class = opts
+            .rules
+            .clone()
+            .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
+        engine.send(Command::Resume { node, opts: job });
+        return browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats);
+    }
     let path = match opts.path {
         Some(p) => p,
         None => match picker::pick(&mut terminal, &theme) {
@@ -174,6 +220,18 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         .rules
         .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
     engine.send(Command::Scan { path, opts: job });
+    browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats)
+}
+
+/// Runs the loop on `engine` until the user quits, then restores the terminal and stops the
+/// engine.
+fn browse<B: dfdu_scan::Backend>(
+    terminal: &mut ratatui::DefaultTerminal,
+    engine: Engine<B>,
+    ui: UiOptions,
+    mouse: bool,
+    debug_stats: bool,
+) -> io::Result<()> {
     let (tx, input) = unbounded();
     let spawned = thread::Builder::new()
         .name("dfdu-input".into())
@@ -185,23 +243,11 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             }
         });
     let result = match spawned {
-        Ok(_) => event_loop_with(
-            &mut terminal,
-            &engine,
-            input,
-            UiOptions {
-                theme,
-                color_level: colors.level,
-                background: colors.background,
-                mouse,
-                debug: ui.debug_stats,
-                home: setup::home_dir(),
-            },
-        ),
+        Ok(_) => event_loop_with(terminal, &engine, input, ui),
         Err(e) => Err(e),
     };
     setup::restore_terminal(mouse);
-    if ui.debug_stats {
+    if debug_stats {
         let summary = debug_summary(&engine);
         if !summary.is_empty() {
             eprintln!("{}", summary.trim_end());

@@ -184,4 +184,18 @@ pub struct NativeDef {
     pub list_command: Vec<String>,
     #[serde(default)]
     pub dry_run: Vec<String>,
+    /// Further-reaching forms of `command` (`docker system prune --all`), offered separately
+    /// and each confirmed on its own.
+    #[serde(default, rename = "variant")]
+    pub variants: Vec<VariantDef>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VariantDef {
+    /// What it adds, for the confirmation ("also unused images").
+    pub name: String,
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub dry_run: Vec<String>,
 }

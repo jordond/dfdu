@@ -1,0 +1,166 @@
+//! Interop with ncdu 2 (ROADMAP M7): a directory scanned by dfdu and by ncdu gives the same
+//! totals, and an export goes through ncdu (`ncdu -e -f FILE -o FILE`) and back unchanged.
+//! Skipped when `ncdu` is not installed.
+
+#![cfg(unix)]
+
+use std::fs;
+use std::path::Path;
+use std::process::Command as Proc;
+use std::time::Duration;
+
+use dfdu_engine::{Command, Engine, EngineOptions};
+use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_store::ncdu::{self, Limits, Metadata};
+use dfdu_tree::Totals;
+
+fn have_ncdu() -> bool {
+    Proc::new("ncdu")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn fixture(root: &Path) {
+    let w = |p: &str, n: usize| {
+        let p = root.join(p);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, vec![3u8; n]).unwrap();
+    };
+    w("a/one", 10_000);
+    w("a/b/two", 70_000);
+    w("a/b/c/three", 1);
+    w("empty/.keep", 0);
+    w("sp ace/\"quoted\"\\name", 5_000);
+    fs::hard_link(root.join("a/one"), root.join("link")).unwrap();
+    fs::hard_link(root.join("a/one"), root.join("a/b/link2")).unwrap();
+    std::os::unix::fs::symlink("a/one", root.join("sym")).unwrap();
+    fs::create_dir(root.join("void")).unwrap();
+}
+
+/// The scan's export and root totals.
+fn scan(root: &Path) -> (Vec<u8>, Totals) {
+    let e = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 2,
+            journal_dir: None,
+            ..Default::default()
+        },
+    );
+    e.send(Command::Scan {
+        path: root.to_path_buf(),
+        opts: JobOptions::default(),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    let out = e.read(|m| {
+        let r = m.tree.roots().next().unwrap();
+        let mut out = vec![];
+        ncdu::export(&m.tree, r, &mut out, &Metadata::default()).unwrap();
+        (out, m.tree.total(r))
+    });
+    e.shutdown(Duration::from_secs(1));
+    out
+}
+
+fn totals(json: &[u8]) -> Totals {
+    let im = ncdu::import(json, &Limits::default()).unwrap();
+    im.tree.total(im.root)
+}
+
+#[test]
+fn ncdu_and_dfdu_agree() {
+    if !have_ncdu() {
+        eprintln!("skipped: ncdu is not installed");
+        return;
+    }
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let root = tmp.path().join("tree");
+    fixture(&root);
+    let (ours, scanned) = scan(&root);
+    let t = totals(&ours);
+    assert_eq!(
+        (t.apparent, t.alloc, t.items),
+        (scanned.apparent, scanned.alloc, scanned.items)
+    );
+
+    // ncdu's own scan of the same directory.
+    let theirs = tmp.path().join("ncdu.json");
+    let ok = Proc::new("ncdu")
+        .args(["-x", "-o"])
+        .arg(&theirs)
+        .arg(&root)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let n = totals(&fs::read(&theirs).unwrap());
+    assert_eq!(
+        (n.apparent, n.alloc, n.items),
+        (scanned.apparent, scanned.alloc, scanned.items),
+        "ncdu's scan against dfdu's"
+    );
+
+    // Ours through ncdu and back.
+    let mine = tmp.path().join("dfdu.json");
+    fs::write(&mine, &ours).unwrap();
+    let back = tmp.path().join("back.json");
+    let ok = Proc::new("ncdu")
+        .args(["-e", "-f"])
+        .arg(&mine)
+        .arg("-o")
+        .arg(&back)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let b = totals(&fs::read(&back).unwrap());
+    assert_eq!(
+        (b.apparent, b.alloc, b.items),
+        (t.apparent, t.alloc, t.items)
+    );
+    // Compressed, both ways.
+    let z = tmp.path().join("ncdu.zst");
+    let ok = Proc::new("ncdu")
+        .args(["-x", "--compress", "-o"])
+        .arg(&z)
+        .arg(&root)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(ok.status.success());
+    let c = totals(&fs::read(&z).unwrap());
+    assert_eq!(
+        (c.apparent, c.alloc, c.items),
+        (n.apparent, n.alloc, n.items)
+    );
+    let mut w = dfdu_store::zstd_writer(fs::File::create(&mine).unwrap()).unwrap();
+    std::io::Write::write_all(&mut w, &ours).unwrap();
+    w.finish().unwrap();
+    let ok = Proc::new("ncdu")
+        .arg("-f")
+        .arg(&mine)
+        .arg("-o")
+        .arg(&back)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let b = totals(&fs::read(&back).unwrap());
+    assert_eq!(
+        (b.apparent, b.alloc, b.items),
+        (t.apparent, t.alloc, t.items)
+    );
+}

@@ -35,6 +35,7 @@ pub enum Action {
     SkipStalled,
     Trash,
     DeletePermanent,
+    Undo,
     Help,
     Errors,
     Close,
@@ -47,6 +48,7 @@ pub enum Action {
     Debug,
     ViewList,
     ViewTreemap,
+    ViewCleanup,
     TreemapDeeper,
     TreemapShallower,
     TreemapColour,
@@ -123,6 +125,12 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(Action::ViewList, "1", "list view", Group::Display),
     row(Action::ViewTreemap, "2", "treemap view", Group::Display),
     row(
+        Action::ViewCleanup,
+        "3",
+        "cleanup view: what the rules found, by safety",
+        Group::Display,
+    ),
+    row(
         Action::TreemapDeeper,
         "+",
         "treemap: one level deeper",
@@ -182,6 +190,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Action::DeletePermanent,
         "D",
         "delete permanently (type delete)",
+        Group::Act,
+    ),
+    row(
+        Action::Undo,
+        "U",
+        "put back what was last moved to the Trash or staged",
         Group::Act,
     ),
     row(Action::Filter, "/", "filter this directory", Group::Panels),
@@ -329,8 +343,20 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
                 app.status = Some("skipping directories that are not responding".into());
             }
         }
-        Action::Trash => confirm::open(app, Mode::Trash),
-        Action::DeletePermanent => confirm::open(app, Mode::Permanent),
+        Action::Trash => fx.extend(confirm::open(app, Mode::Trash)),
+        Action::DeletePermanent => fx.extend(confirm::open(app, Mode::Permanent)),
+        Action::Undo => match &app.snap.undo {
+            Some(u) if !app.snap.undoing => {
+                fx.push(Effect::Send(Command::Undo { plan: u.plan }));
+                app.status = Some(format!(
+                    "putting back {} item{} ({})…",
+                    u.items,
+                    if u.items == 1 { "" } else { "s" },
+                    crate::theme::human(u.bytes)
+                ));
+            }
+            _ => app.status = Some("nothing to undo".into()),
+        },
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
@@ -345,8 +371,15 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::FocusDetails => details::focus(app),
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
-        Action::ViewList => treemap::show(app, false),
-        Action::ViewTreemap => treemap::show(app, true),
+        Action::ViewList => {
+            crate::cleanup::show(app, false);
+            treemap::show(app, false)
+        }
+        Action::ViewTreemap => {
+            crate::cleanup::show(app, false);
+            treemap::show(app, true)
+        }
+        Action::ViewCleanup => fx.extend(crate::cleanup::show(app, true)),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
         Action::TreemapColour => treemap::cycle_colour(app),
@@ -383,7 +416,7 @@ pub(crate) mod tests {
 
     use super::*;
 
-    const ALL: [Action; 36] = [
+    const ALL: [Action; 38] = [
         Action::Quit,
         Action::Up,
         Action::Down,
@@ -405,6 +438,7 @@ pub(crate) mod tests {
         Action::SkipStalled,
         Action::Trash,
         Action::DeletePermanent,
+        Action::Undo,
         Action::Help,
         Action::Errors,
         Action::Close,
@@ -417,6 +451,7 @@ pub(crate) mod tests {
         Action::Debug,
         Action::ViewList,
         Action::ViewTreemap,
+        Action::ViewCleanup,
         Action::TreemapDeeper,
         Action::TreemapShallower,
         Action::TreemapColour,
@@ -487,6 +522,7 @@ pub(crate) mod tests {
             (c('x'), Action::SkipStalled),
             (c('d'), Action::Trash),
             (c('D'), Action::DeletePermanent),
+            (c('U'), Action::Undo),
             (c('?'), Action::Help),
             (c('!'), Action::Errors),
             (KeyCode::Esc, Action::Close),
@@ -514,12 +550,13 @@ pub(crate) mod tests {
             (c('<'), Action::Parent),
             (c('1'), Action::ViewList),
             (c('2'), Action::ViewTreemap),
+            (c('3'), Action::ViewCleanup),
             (c('+'), Action::TreemapDeeper),
             (c('-'), Action::TreemapShallower),
         ] {
             assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
         }
-        for code in [c('z'), c('3'), KeyCode::F(2), KeyCode::Insert] {
+        for code in [c('z'), c('4'), KeyCode::F(2), KeyCode::Insert] {
             assert_eq!(action_for(&press(code)), None, "{code:?}");
         }
     }

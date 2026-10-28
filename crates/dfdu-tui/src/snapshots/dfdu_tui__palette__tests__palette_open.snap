@@ -10,8 +10,7 @@ expression: frame
 
 
 
-
-            ┌ Commands 40/40 ──────────────────────────────────────────────────────────┐
+            ┌ Commands 42/42 ──────────────────────────────────────────────────────────┐
             │ : ▌                                                                      │
             │ move up                                                    navigate  ↑ k │
             │ move down                                                  navigate  ↓ j │
@@ -28,6 +27,7 @@ expression: frame
             │ re-sort now                                                      sort  S │
             │ list view                                                     display  1 │
             │ treemap view                                                  display  2 │
+            │ cleanup view: what the rules found, by safety                 display  3 │
             │ treemap: one level deeper                                     display  + │
             │ treemap: one level less                                       display  - │
             │ treemap: colour by top folder or age                          display  p │
@@ -40,6 +40,7 @@ expression: frame
             │ clear all marks                                                      act │
             │ move to Trash                                                     act  d │
             │ delete permanently (type delete)                                  act  D │
+            │ put back what was last moved to the Trash or staged               act  U │
             │ filter this directory                                          panels  / │
             │ details of the selected entry                                  panels  i │
             │ move focus between the list and the details                  panels  Tab │
@@ -54,7 +55,6 @@ expression: frame
             │ Theme: mono                                                      setting │
             │ Theme: high-contrast                                             setting │
             └──────────────────────────────────────────────────────────────────────────┘
-
 
 
 

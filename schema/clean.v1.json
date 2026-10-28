@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/clean.v1.json",
+  "title": "dfdu clean --format json",
+  "description": "The rules' matches dfdu clean considered, largest first, each with what happened to it. Items are those of report.v1.json with an outcome. Fields may be added without changing schema_version.",
+  "type": "object",
+  "required": ["schema_version", "tool", "root", "generated_at", "complete", "dry_run", "mode", "items", "summary"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": { "$ref": "scan.v1.json#/$defs/tool" },
+    "root": { "type": "string" },
+    "root_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+    "generated_at": { "type": "integer" },
+    "complete": { "type": "boolean" },
+    "dry_run": { "type": "boolean", "description": "Without --yes nothing was changed." },
+    "mode": { "enum": ["trash", "stage", "delete"] },
+    "items": {
+      "type": "array",
+      "items": {
+        "allOf": [{ "$ref": "report.v1.json#/$defs/item" }],
+        "required": ["outcome"],
+        "properties": {
+          "outcome": { "enum": ["planned", "skipped", "deleted", "failed"], "description": "planned: would be deleted (dry run). deleted: deleted, moved to the trash, or its tool's command ran." },
+          "reason": { "type": "string", "description": "Why it was skipped or failed." }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["planned", "deleted", "skipped", "failed"],
+      "additionalProperties": { "$ref": "report.v1.json#/$defs/count_disk" }
+    }
+  }
+}

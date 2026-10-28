@@ -1,0 +1,150 @@
+//! `dfdu recover`: items an exited session left staged are listed, then restored or finished;
+//! an interrupted delete is listed and dismissed.
+
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
+
+use crossbeam_channel::unbounded;
+use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
+use dfdu_tree::{Meta, Tree};
+
+fn item(tree: &mut Tree, p: &Path) -> PlanItem {
+    let m = Meta::from_metadata(&fs::symlink_metadata(p).unwrap());
+    let r = tree.new_root(b"/", &m, false);
+    PlanItem {
+        node: tree.node_ref(r),
+        path: p.to_path_buf(),
+        identity: Identity {
+            dev: m.dev,
+            ino: m.ino,
+            kind: m.kind,
+            apparent: m.apparent,
+            mtime: m.mtime,
+        },
+        bytes: 0,
+        inside: Default::default(),
+    }
+}
+
+fn recover_status(journals: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_dfdu"))
+        .arg("recover")
+        .arg("--journals")
+        .arg(journals)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn recover(journals: &Path, args: &[&str]) -> String {
+    let o = recover_status(journals, args);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap()
+}
+
+/// Runs one plan of `items` in `mode` in a deleter session that then exits.
+fn run_plan(journals: &Path, root: &Path, mode: Mode, paths: &[&Path]) {
+    let (tx, rx) = unbounded();
+    let d = dfdu_clean::spawn_deleter(Some(journals.to_path_buf()), Duration::from_secs(3600), tx);
+    let mut tree = Tree::new();
+    let items = paths.iter().map(|p| item(&mut tree, p)).collect();
+    d.reqs
+        .send(DeleterReq::Plan(Plan {
+            id: 1,
+            mode,
+            scan_root: root.to_path_buf(),
+            items,
+        }))
+        .unwrap();
+    for m in rx.iter() {
+        match m {
+            DeleterMsg::Item { result, .. } => assert_eq!(result, DeleteResult::Deleted),
+            DeleterMsg::Done { .. } => break,
+            _ => {}
+        }
+    }
+    drop(d);
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+/// A permanent delete whose end the journal never recorded is listed as interrupted; it can
+/// be dismissed, not finished or restored.
+#[test]
+fn an_interrupted_delete_is_dismissed() {
+    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
+    let tmp = tempfile::tempdir_in(base).unwrap();
+    let root = tmp.path().join("root");
+    fs::create_dir_all(root.join("c")).unwrap();
+    fs::write(root.join("c/f"), b"z").unwrap();
+    let journals = tmp.path().join("state/ops");
+    run_plan(&journals, &root, Mode::Permanent, &[&root.join("c")]);
+    // As if the session had been killed before the delete ended: its `done` record is lost.
+    let journal = fs::read_dir(&journals)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(&journal).unwrap();
+    assert!(text.contains("\"done\""), "{text}");
+    let cut: String = text
+        .lines()
+        .filter(|l| !l.contains("\"done\""))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    fs::write(&journal, cut).unwrap();
+
+    let list = recover(&journals, &[]);
+    assert!(list.contains("  1  ") && list.contains("/root/c"), "{list}");
+    assert!(!list.contains("  2  "), "{list}");
+    for refused in ["--finish", "--restore"] {
+        let o = recover_status(&journals, &[refused, "1"]);
+        assert_eq!(o.status.code(), Some(5), "{refused}");
+    }
+    assert_eq!(
+        recover(&journals, &["--dismiss", "1"]).trim(),
+        format!("{}: dismissed", root.join("c").display())
+    );
+    assert_eq!(recover(&journals, &[]), "nothing unfinished\n");
+    assert!(
+        fs::read_to_string(&journal)
+            .unwrap()
+            .contains("dismissed in a later session")
+    );
+}
+
+#[test]
+fn staged_items_are_restored_or_finished() {
+    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
+    let tmp = tempfile::tempdir_in(base).unwrap();
+    let root = tmp.path().join("root");
+    fs::create_dir_all(root.join("a")).unwrap();
+    fs::write(root.join("a/f"), b"x").unwrap();
+    fs::write(root.join("b"), b"y").unwrap();
+    let journals = tmp.path().join("state/ops");
+    run_plan(
+        &journals,
+        &root,
+        Mode::Stage,
+        &[&root.join("a"), &root.join("b")],
+    );
+    assert!(!root.join("a").exists() && !root.join("b").exists());
+
+    let list = recover(&journals, &[]);
+    assert!(
+        list.contains("  1  ") && list.contains("/root/a: staged at"),
+        "{list}"
+    );
+    assert!(
+        list.contains("  2  ") && list.contains("/root/b: staged at"),
+        "{list}"
+    );
+    let done = recover(&journals, &["--restore", "1", "--finish", "2"]);
+    assert!(done.contains("a: restored at"), "{done}");
+    assert!(done.contains("b: deleted"), "{done}");
+    assert_eq!(fs::read(root.join("a/f")).unwrap(), b"x");
+    assert!(!root.join("b").exists());
+    assert_eq!(recover(&journals, &[]), "nothing unfinished\n");
+}

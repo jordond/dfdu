@@ -17,10 +17,17 @@ dfdu-rules.workspace = true
 dfdu-engine.workspace = true
 dfdu-tui.workspace = true
 dfdu-sys.workspace = true
+dfdu-store.workspace = true
+dfdu-clean.workspace = true
 clap.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+dunce.workspace = true
+boon.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["pty", "termios"] }

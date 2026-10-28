@@ -59,12 +59,15 @@ impl ErrorList {
             .kinds
             .iter()
             .any(|(k, _)| *k == ErrKind::PermissionDenied);
-        // One wording in tests, so the frame snapshots are the same on every platform.
-        (denied && !dfdu_sys::is_privileged()).then_some(if cfg!(all(windows, not(test))) {
-            "run as administrator to read them"
-        } else {
-            "run as root (sudo) to read them"
-        })
+        // One wording in tests, so the frame snapshots are the same on every platform and as
+        // root.
+        (denied && (cfg!(test) || !dfdu_sys::is_privileged())).then_some(
+            if cfg!(all(windows, not(test))) {
+                "run as administrator to read them"
+            } else {
+                "run as root (sudo) to read them"
+            },
+        )
     }
 }
 

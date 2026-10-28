@@ -79,9 +79,14 @@ impl Event {
         Event::Command(match cmd {
             Command::Scan { .. } => "Scan",
             Command::Rescan { .. } => "Rescan",
+            Command::Resume { .. } => "Resume",
             Command::Cancel { .. } => "Cancel",
             Command::CancelAll => "CancelAll",
             Command::Delete { .. } => "Delete",
+            Command::Undo { .. } => "Undo",
+            Command::CommitStaged => "CommitStaged",
+            Command::Estimate { .. } => "Estimate",
+            Command::RunNative { .. } => "RunNative",
             Command::AbortDelete => "AbortDelete",
             #[cfg(feature = "fault-injection")]
             Command::InjectPanic => "InjectPanic",

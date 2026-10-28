@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use dfdu_tree::{Kind, name_bytes};
+use dfdu_tree::{Kind, name_bytes, name_os};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
@@ -40,7 +40,7 @@ const SYNC_EVERY: Duration = Duration::from_millis(100);
 /// record with fields this version does not know still checks.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "kebab-case")]
-enum Record {
+pub(crate) enum Record {
     Session {
         pid: u32,
     },
@@ -48,6 +48,9 @@ enum Record {
         #[serde(flatten)]
         item: ItemRec,
         mode: String,
+        /// `stage`: where the item is renamed to, as `path_hex` is for the item.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage_hex: Option<String>,
     },
     Done {
         #[serde(flatten)]
@@ -58,6 +61,32 @@ enum Record {
         item: ItemRec,
         detail: String,
     },
+    /// Before a staged item's background delete starts.
+    CommitIntent {
+        #[serde(flatten)]
+        item: ItemRec,
+    },
+    CommitDone {
+        #[serde(flatten)]
+        item: ItemRec,
+    },
+    /// An undo or a recovery put the item back, at `to_hex`.
+    Restored {
+        #[serde(flatten)]
+        item: ItemRec,
+        to_hex: String,
+    },
+    /// Before a native cleanup command runs, and after.
+    Native {
+        id: u64,
+        argv: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+    },
+    NativeDone {
+        id: u64,
+        result: String,
+    },
 }
 
 impl Record {
@@ -67,21 +96,26 @@ impl Record {
             Record::Intent { .. } => "intent",
             Record::Done { .. } => "done",
             Record::Failed { .. } => "failed",
+            Record::CommitIntent { .. } => "commit-intent",
+            Record::CommitDone { .. } => "commit-done",
+            Record::Restored { .. } => "restored",
+            Record::Native { .. } => "native",
+            Record::NativeDone { .. } => "native-done",
         }
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct ItemRec {
-    plan: u64,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ItemRec {
+    pub plan: u64,
     /// For people reading the journal; `path_hex` is the exact path.
-    path: String,
-    path_hex: String,
-    dev: u64,
-    ino: u64,
-    kind: String,
-    size: u64,
-    mtime: i64,
+    pub path: String,
+    pub path_hex: String,
+    pub dev: u64,
+    pub ino: u64,
+    pub kind: String,
+    pub size: u64,
+    pub mtime: i64,
     /// btrfs: the uuid of the subvolume holding the item, in intent records. Subvolume `st_dev`
     /// numbers can change between mounts, so recovery matches the inode within this subvolume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,7 +128,7 @@ impl ItemRec {
         ItemRec {
             plan,
             path: item.path.display().to_string(),
-            path_hex: hex::encode(name_bytes(item.path.as_os_str())),
+            path_hex: hex_path(&item.path),
             dev: id.dev,
             ino: id.ino,
             kind: kind_str(id.kind).to_string(),
@@ -110,6 +144,24 @@ struct Line<'a> {
     #[serde(borrow)]
     rec: &'a RawValue,
     crc: String,
+}
+
+pub(crate) fn hex_path(p: &Path) -> String {
+    hex::encode(name_bytes(p.as_os_str()))
+}
+
+pub(crate) fn path_of_hex(h: &str) -> Option<PathBuf> {
+    let b = hex::decode(h).ok()?;
+    Some(PathBuf::from(name_os(&b).into_owned()))
+}
+
+pub(crate) fn kind_of_str(s: &str) -> Kind {
+    match s {
+        "file" => Kind::File,
+        "dir" => Kind::Dir,
+        "symlink" => Kind::Symlink,
+        _ => Kind::Other,
+    }
 }
 
 fn kind_str(k: Kind) -> &'static str {
@@ -160,7 +212,26 @@ impl Journal {
         &self.path
     }
 
-    fn write(&mut self, rec: Record) -> io::Result<()> {
+    /// The session id: the journal's file name without `.jsonl`, also the name of the
+    /// session's staging directories.
+    pub fn session(&self) -> String {
+        self.path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Continues an earlier session's journal, whose lock the caller holds (recovery).
+    pub(crate) fn resume(file: File, path: PathBuf) -> Journal {
+        Journal {
+            file,
+            path,
+            last_sync: Instant::now(),
+            dirty: false,
+        }
+    }
+
+    pub(crate) fn write(&mut self, rec: Record) -> io::Result<()> {
         let body = serde_json::value::to_raw_value(&rec).map_err(io::Error::other)?;
         let crc = format!("{:08x}", crc32c::crc32c(body.get().as_bytes()));
         let mut line =
@@ -171,10 +242,18 @@ impl Journal {
         Ok(())
     }
 
-    /// Records the intent to act on `item` and syncs it to disk before returning.
-    pub fn intent(&mut self, plan: u64, mode: Mode, item: &PlanItem) -> io::Result<()> {
+    /// Records the intent to act on `item` (to stage it at `stage`) and syncs it to disk
+    /// before returning.
+    pub fn intent(
+        &mut self,
+        plan: u64,
+        mode: Mode,
+        item: &PlanItem,
+        stage: Option<&Path>,
+    ) -> io::Result<()> {
         let mode = match mode {
             Mode::Trash => "trash",
+            Mode::Stage => "stage",
             Mode::Permanent => "delete",
         };
         let rec = ItemRec {
@@ -184,6 +263,30 @@ impl Journal {
         self.write(Record::Intent {
             item: rec,
             mode: mode.into(),
+            stage_hex: stage.map(hex_path),
+        })?;
+        self.sync()
+    }
+
+    /// Before a staged item's background delete starts; synced.
+    pub fn commit_intent(&mut self, plan: u64, item: &PlanItem) -> io::Result<()> {
+        self.write(Record::CommitIntent {
+            item: ItemRec::of(plan, item),
+        })?;
+        self.sync()
+    }
+
+    pub fn commit_done(&mut self, plan: u64, item: &PlanItem) -> io::Result<()> {
+        self.write(Record::CommitDone {
+            item: ItemRec::of(plan, item),
+        })?;
+        self.sync()
+    }
+
+    pub fn restored(&mut self, plan: u64, item: &PlanItem, to: &Path) -> io::Result<()> {
+        self.write(Record::Restored {
+            item: ItemRec::of(plan, item),
+            to_hex: hex_path(to),
         })?;
         self.sync()
     }
@@ -204,6 +307,27 @@ impl Journal {
         Ok(())
     }
 
+    /// Before a native command runs; synced.
+    pub fn native(&mut self, req: &crate::NativeReq) -> io::Result<()> {
+        self.write(Record::Native {
+            id: req.id,
+            argv: req.command.clone(),
+            cwd: req.cwd.as_ref().map(|p| p.display().to_string()),
+        })?;
+        self.sync()
+    }
+
+    pub fn native_done(&mut self, id: u64, result: &Result<(), String>) -> io::Result<()> {
+        self.write(Record::NativeDone {
+            id,
+            result: match result {
+                Ok(()) => "ok".into(),
+                Err(e) => e.clone(),
+            },
+        })?;
+        self.sync()
+    }
+
     pub fn sync(&mut self) -> io::Result<()> {
         if self.dirty {
             self.file.sync_data()?;
@@ -217,13 +341,18 @@ impl Journal {
 /// Parses a journal line and checks its CRC. Returns the record type, or `None` for a damaged
 /// or torn line.
 pub fn check_line(line: &str) -> Option<&'static str> {
+    parse_line(line).map(|r| r.kind())
+}
+
+/// A journal line's record, or `None` for a damaged or torn line or a record type this version
+/// does not know.
+pub(crate) fn parse_line(line: &str) -> Option<Record> {
     let l: Line = serde_json::from_str(line).ok()?;
     let crc = u32::from_str_radix(&l.crc, 16).ok()?;
     if crc != crc32c::crc32c(l.rec.get().as_bytes()) {
         return None;
     }
-    let rec: Record = serde_json::from_str(l.rec.get()).ok()?;
-    Some(rec.kind())
+    serde_json::from_str(l.rec.get()).ok()
 }
 
 #[cfg(test)]
@@ -258,8 +387,9 @@ mod tests {
                 mtime: 4,
             },
             bytes: 4096,
+            inside: Default::default(),
         };
-        j.intent(7, Mode::Trash, &item).unwrap();
+        j.intent(7, Mode::Trash, &item, None).unwrap();
         j.result(7, &item, &DeleteResult::Deleted).unwrap();
         j.sync().unwrap();
         let path = j.path().to_path_buf();

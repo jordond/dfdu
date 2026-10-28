@@ -863,6 +863,150 @@ fn delete_while_scanning_then_late_messages() {
     );
 }
 
+/// The results scenario 10 runs through, and how each counts in the plan's summary
+/// `(stale, refused, failed, aborted)`.
+fn unfinished_results() -> Vec<(dfdu_clean::DeleteResult, (usize, usize, usize, usize))> {
+    use dfdu_clean::{DeleteResult, Refusal};
+    let failed = |partial| DeleteResult::Failed {
+        partial,
+        err: dfdu_tree::ErrKind::Other,
+        msg: "eio".into(),
+    };
+    vec![
+        (DeleteResult::Refused(Refusal::Protected), (0, 1, 0, 0)),
+        (DeleteResult::Aborted, (0, 0, 0, 1)),
+        (DeleteResult::Stale("changed".into()), (1, 0, 0, 0)),
+        (failed(false), (0, 0, 1, 0)),
+        (failed(true), (0, 0, 1, 0)),
+    ]
+}
+
+/// Answers the running plan's items with `result`, removing `gone` from the filesystem first
+/// (what a part-way delete took), then ends the plan. Checks that each item is still in the
+/// tree and no longer marked as being deleted, that a rescan started exactly for `rescanned`,
+/// marked cut until it completes, and the plan's summary.
+fn answer_plan(
+    sim: &mut Sim,
+    items: &[&str],
+    result: &dfdu_clean::DeleteResult,
+    counts: (usize, usize, usize, usize),
+    gone: Option<&str>,
+    rescanned: bool,
+) {
+    use dfdu_scan::Backend;
+    if let Some(g) = gone {
+        let path = std::path::Path::new(dfdu_sim::ROOT_NAME).join(g);
+        let n = sim.shared.backend.loc_from_path(&path);
+        sim.spec.delete_subtree(n);
+    }
+    assert_eq!(rescans_running(sim), 0);
+    for _ in items {
+        assert!(sim.delete_next(result.clone()).unwrap());
+    }
+    assert!(
+        sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap(),
+        "Done"
+    );
+    assert!(sim.running_plan().is_none());
+    for p in items {
+        let ix = find(sim, p);
+        assert!(
+            !sim.model.tree.flags(ix).has(dfdu_tree::NodeFlags::DELETING),
+            "{p}"
+        );
+    }
+    let dir = find(sim, items[0]);
+    assert_eq!(rescans_running(sim), usize::from(rescanned), "{result:?}");
+    if rescanned {
+        assert!(sim.model.tree.dir(dir).unwrap().cut, "{result:?}");
+    }
+    let s = sim.model.status.last_delete.clone().expect("summary");
+    assert_eq!(
+        (s.deleted, (s.stale, s.refused, s.failed, s.aborted)),
+        (
+            0,
+            (
+                counts.0 * items.len(),
+                counts.1 * items.len(),
+                counts.2 * items.len(),
+                counts.3 * items.len()
+            )
+        ),
+        "{result:?}"
+    );
+    assert!(
+        last_notice(sim).starts_with(&format!(
+            "delete {}: ",
+            items.last().unwrap().rsplit('/').next().unwrap()
+        )),
+        "{}",
+        last_notice(sim)
+    );
+}
+
+/// Scenario 10: deletes that are refused, aborted, stale and failed (whole or part-way), on a
+/// directory and a file the scan had finished. Each stays in the tree with its totals; only a
+/// directory a delete emptied part-way is rescanned, and the random tail checks it against the
+/// filesystem.
+#[test]
+fn unfinished_deletes_on_uncut_nodes() {
+    for_seeds(nested, cfg(), |sim| {
+        finish_jobs(sim);
+        for (result, counts) in unfinished_results() {
+            let partial = matches!(
+                result,
+                dfdu_clean::DeleteResult::Failed { partial: true, .. }
+            );
+            let before = sim.model.tree.total(find(sim, "a")).alloc;
+            delete(sim, &["a/b", "d/df0"]);
+            assert_eq!(
+                state(sim, "a/b"),
+                DirState::Complete,
+                "a finished directory is not cut"
+            );
+            answer_plan(
+                sim,
+                &["a/b", "d/df0"],
+                &result,
+                counts,
+                partial.then_some("a/b/c"),
+                partial,
+            );
+            if partial {
+                finish_jobs(sim);
+                assert!(!sim.model.tree.dir(find(sim, "a/b")).unwrap().cut);
+                assert!(sim.model.tree.total(find(sim, "a")).alloc < before);
+            } else {
+                assert_eq!(sim.model.tree.total(find(sim, "a")).alloc, before);
+            }
+        }
+    });
+}
+
+/// Scenario 10 on cut nodes: a directory the scan is still reading is cut by the delete, so
+/// whatever the result, its totals are unknown and it is rescanned once the plan no longer
+/// holds it; until then it stays marked cut.
+#[test]
+fn unfinished_deletes_on_cut_nodes() {
+    for (result, counts) in unfinished_results() {
+        let partial = matches!(
+            result,
+            dfdu_clean::DeleteResult::Failed { partial: true, .. }
+        );
+        for_seeds(nested, cfg(), |sim| {
+            scan_root(sim);
+            assert_eq!(state(sim, "a"), DirState::Pending);
+            delete(sim, &["a"]);
+            assert_eq!(state(sim, "a"), DirState::Deleting);
+            answer_plan(sim, &["a"], &result, counts, partial.then_some("a/b"), true);
+            finish_jobs(sim);
+            let a = find(sim, "a");
+            assert!(!sim.model.tree.dir(a).unwrap().cut, "{result:?}");
+            assert_eq!(state(sim, "a"), DirState::Complete, "{result:?}");
+        });
+    }
+}
+
 /// The entries of `paths` that hold their inode's charge.
 fn charged(sim: &Sim, paths: &[&str]) -> Vec<String> {
     paths

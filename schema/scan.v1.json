@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/scan.v1.json",
+  "title": "dfdu scan --format json",
+  "description": "A scanned directory tree. Sizes are bytes. Names and paths are UTF-8; when the bytes on disk are not valid UTF-8 the text has replacement characters and the raw bytes are in the matching *_bytes_b64 field (standard base64). Fields may be added without changing schema_version.",
+  "type": "object",
+  "required": ["schema_version", "tool", "root", "size_mode", "complete", "elapsed_ms", "totals", "tree", "errors", "skipped"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": { "$ref": "#/$defs/tool" },
+    "root": { "type": "string" },
+    "root_bytes_b64": { "$ref": "#/$defs/b64" },
+    "size_mode": { "enum": ["disk", "apparent", "du"], "description": "The size children are ordered by." },
+    "complete": { "type": "boolean", "description": "Every entry was read and the scan finished." },
+    "elapsed_ms": { "$ref": "#/$defs/count" },
+    "totals": { "$ref": "#/$defs/totals" },
+    "tree": { "$ref": "#/$defs/entry" },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/error" } },
+    "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "b64": { "type": "string", "pattern": "^[A-Za-z0-9+/]*={0,2}$" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": { "name": { "const": "dfdu" }, "version": { "type": "string" } }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["disk", "apparent", "du", "shared_outside", "entries", "errors"],
+      "properties": {
+        "disk": { "$ref": "#/$defs/count", "description": "Disk usage, data shared between files (hard links, reflinks, snapshots) counted once." },
+        "apparent": { "$ref": "#/$defs/count", "description": "Apparent size (file lengths)." },
+        "du": { "$ref": "#/$defs/count", "description": "Disk usage as du counts it: shared data once per file." },
+        "shared_outside": { "$ref": "#/$defs/count", "description": "Part of disk also used by files outside the scan." },
+        "entries": { "$ref": "#/$defs/count", "description": "Entries, the root included." },
+        "errors": { "$ref": "#/$defs/count", "description": "Entries that could not be read." }
+      }
+    },
+    "class": {
+      "type": "object",
+      "description": "The cleanup rule this entry matched.",
+      "required": ["safety"],
+      "properties": {
+        "rule": { "type": "string" },
+        "category": { "type": "string" },
+        "safety": { "$ref": "#/$defs/safety" }
+      }
+    },
+    "safety": { "enum": ["safe", "regenerable", "review", "manual", "protected"] },
+    "entry": {
+      "type": "object",
+      "required": ["name", "type", "disk", "apparent", "du", "entries", "errors", "mtime"],
+      "properties": {
+        "name": { "type": "string" },
+        "name_bytes_b64": { "$ref": "#/$defs/b64" },
+        "type": { "enum": ["dir", "file", "symlink", "other"] },
+        "disk": { "$ref": "#/$defs/count" },
+        "apparent": { "$ref": "#/$defs/count" },
+        "du": { "$ref": "#/$defs/count" },
+        "entries": { "$ref": "#/$defs/count" },
+        "errors": { "$ref": "#/$defs/count" },
+        "mtime": { "type": "integer", "description": "Modification time, seconds since 1970." },
+        "class": { "$ref": "#/$defs/class" },
+        "note": { "type": "string", "description": "Why the entry looks the way it does (not read, another filesystem, shared data), for people." },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/entry" }, "description": "Largest first, at most --top, to --depth levels." },
+        "rest": {
+          "type": "object",
+          "description": "The children left out by --top, summed.",
+          "required": ["count", "disk", "apparent", "du", "entries"],
+          "properties": {
+            "count": { "$ref": "#/$defs/count" },
+            "disk": { "$ref": "#/$defs/count" },
+            "apparent": { "$ref": "#/$defs/count" },
+            "du": { "$ref": "#/$defs/count" },
+            "entries": { "$ref": "#/$defs/count" }
+          }
+        },
+        "shared_between_entries": { "$ref": "#/$defs/count", "description": "Disk usage shared by several children, counted at this directory." }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["path", "dir", "problem"],
+      "properties": {
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "#/$defs/b64" },
+        "dir": { "type": "boolean" },
+        "problem": { "type": "string" }
+      }
+    },
+    "skipped": {
+      "type": "object",
+      "required": ["path", "reason"],
+      "properties": {
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "#/$defs/b64" },
+        "reason": { "enum": ["other-filesystem", "network-filesystem", "kernel-filesystem", "mounted-again"] }
+      }
+    }
+  }
+}

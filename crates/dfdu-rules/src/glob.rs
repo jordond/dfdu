@@ -145,9 +145,9 @@ impl Glob {
     }
 }
 
-/// Whether case is folded when names are compared on this platform.
-pub fn platform_folds_case() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+/// Whether case is folded when names are compared on platform `p`.
+pub fn platform_folds_case(p: crate::Platform) -> bool {
+    matches!(p, crate::Platform::MacOs | crate::Platform::Windows)
 }
 
 /// The first component of `s` and the rest after its `/`, `None` when there is no `/`.

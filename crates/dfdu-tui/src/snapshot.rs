@@ -290,6 +290,13 @@ pub struct Snapshot {
     pub notice: Option<String>,
     /// `(done, total)` of the running delete plan.
     pub deleting: Option<(usize, usize)>,
+    /// What [`Command::Undo`](dfdu_engine::Command::Undo) would put back.
+    pub undo: Option<dfdu_engine::UndoInfo>,
+    pub undoing: bool,
+    /// Items staged and not deleted yet, and their size.
+    pub staged: (usize, u64),
+    /// The latest estimate of what a delete would free.
+    pub estimate: Option<dfdu_engine::Estimate>,
     pub last_delete: Option<DeleteSummary>,
     /// `(done, requested)` of the shared-extent measurement in progress.
     pub measuring: Option<(u64, u64)>,
@@ -383,6 +390,10 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
         incomplete: m.status.incomplete,
         notice: m.status.notices.last().cloned(),
         deleting: m.status.deleting.as_ref().map(|d| (d.done, d.total)),
+        undo: m.status.undo.clone(),
+        undoing: m.status.undoing.is_some(),
+        staged: m.status.staged,
+        estimate: m.status.estimate.clone(),
         last_delete: m.status.last_delete.clone(),
         measuring: m.status.measuring.as_ref().map(|p| (p.done, p.requested)),
         unmeasured: m.status.unmeasured,

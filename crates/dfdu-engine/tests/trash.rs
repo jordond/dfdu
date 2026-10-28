@@ -1,4 +1,4 @@
-//! Trash mode on Linux, with the freedesktop trash redirected to a temporary directory so the
+//! Trash mode and its undo on Linux, with the freedesktop trash redirected to a temporary directory so the
 //! test never touches the user's real trash. The outer test re-runs this binary with
 //! `XDG_DATA_HOME` set, because changing the environment of a running process needs `unsafe`.
 
@@ -84,5 +84,18 @@ fn inner_trash() {
         base.join("data/Trash/files/junk/x.bin").exists(),
         "item is in the redirected trash"
     );
+    // Undo takes it back out, by its original path and deletion time.
+    e.send(Command::Undo { plan: s.plan });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    while e.read(|m| m.status.undoing.is_some()) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(
+        root.join("junk/x.bin").exists(),
+        "{:?}",
+        e.read(|m| m.status.notices.clone())
+    );
+    assert!(!base.join("data/Trash/files/junk").exists());
     e.shutdown(Duration::from_secs(1));
 }

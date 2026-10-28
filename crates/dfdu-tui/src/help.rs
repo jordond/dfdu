@@ -30,7 +30,9 @@ const GROUPS: [(Group, &str); 6] = [
 const NOTES: [&str; 4] = [
     "Rows hold their order while you navigate; they re-sort 1.5 s after your last key, or when \
      you press S.",
-    "In the delete dialog, p switches between the Trash and deleting permanently.",
+    "In the delete dialog, p switches between the Trash and deleting permanently, s to staging: \
+     renamed aside at once, deleted after a minute. U puts back what was last moved to the Trash \
+     or staged.",
     "In the treemap, arrows and hjkl move between tiles, Enter zooms in, and Backspace or < \
      zooms out. Tiles keep their place until the rows re-sort.",
     "Mouse: click selects, double-click opens, the wheel scrolls. Hold Shift to select text in \
@@ -471,6 +473,8 @@ mod tests {
         let mut app = app_with_help(t0);
         let frame = render(&mut app, t0, 60, 30);
         insta::assert_snapshot!("help_60x30", frame);
+        // Taller, so the wrapped row checked below is not the last one shown.
+        let frame = render(&mut app, t0, 60, 40);
         let rows = inside(&frame);
         for r in &rows {
             let headings = GROUPS.iter().filter(|(_, h)| r.contains(h)).count();
@@ -570,7 +574,7 @@ mod tests {
         typed(&mut app, "F12", t0);
         let frame = render(&mut app, t0, 100, 30);
         assert!(frame.contains("debug overlay"), "{frame}");
-        assert!(frame.contains("1 of 36"), "{frame}");
+        assert!(frame.contains("1 of 38"), "{frame}");
         typed(&mut app, " zzz", t0);
         let frame = render(&mut app, t0, 100, 30);
         assert!(frame.contains("nothing matches"), "{frame}");
@@ -580,7 +584,7 @@ mod tests {
         app.key(press(KeyCode::Enter), t0);
         assert!(!help(&app).searching);
         let frame = render(&mut app, t0, 100, 30);
-        assert!(frame.contains(" / F12   1 of 36"), "{frame}");
+        assert!(frame.contains(" / F12   1 of 38"), "{frame}");
         // Esc while searching clears the query and keeps the help open.
         app.key(press(KeyCode::Char('/')), t0);
         app.key(press(KeyCode::Esc), t0);

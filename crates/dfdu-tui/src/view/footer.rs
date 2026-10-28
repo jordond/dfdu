@@ -26,6 +26,7 @@ pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
 pub fn status(f: &mut Frame, app: &App, area: Rect) {
     let msg = match app.snap.deleting {
         Some((done, total)) => format!("deleting {done}/{total}…"),
+        None if app.snap.undoing => "putting back…".into(),
         None => app
             .status
             .clone()
@@ -81,7 +82,11 @@ fn context(app: &App) -> Vec<Hint> {
     match &app.overlay {
         Overlay::None => {}
         Overlay::ConfirmDelete(_) => {
-            return vec![hint("p", "switch method", 0), hint("Esc", "cancel", 0)];
+            return vec![
+                hint("p", "permanent", 0),
+                hint("s", "stage", 1),
+                hint("Esc", "cancel", 0),
+            ];
         }
         Overlay::Help(h) if h.searching() => return editing("scroll"),
         Overlay::Help(_) => {
@@ -127,6 +132,20 @@ fn context(app: &App) -> Vec<Hint> {
     ]
     .map(first_key)
     .join(" ");
+    if crate::cleanup::active(app) {
+        return vec![
+            hint(arrows, "move", 3),
+            hint("Enter", "open", 2),
+            hint(first_key(Action::ToggleMark), "mark", 1),
+            hint("a", "recommended", 4),
+            hint("f", "filter", 5),
+            hint("n", "command", 4),
+            hint(first_key(Action::Trash), "trash marked", 0),
+            hint(first_key(Action::ViewList), "list", 3),
+            help,
+            quit,
+        ];
+    }
     if crate::treemap::active(app) {
         let mut hints = vec![
             hint("←↑↓→", "move", 2),
@@ -283,7 +302,7 @@ mod tests {
         );
         list.key(press(KeyCode::Char('D')), t0);
         assert!(matches!(list.overlay, Overlay::ConfirmDelete(_)));
-        assert_eq!(shown(&list, 120), " p switch method  Esc cancel");
+        assert_eq!(shown(&list, 120), " p permanent  s stage  Esc cancel");
         list.key(press(KeyCode::Esc), t0);
 
         list.key(press(KeyCode::Char('/')), t0);
@@ -305,7 +324,7 @@ mod tests {
         list.key(press(KeyCode::Char('d')), t0);
         assert!(matches!(list.overlay, Overlay::ConfirmDelete(_)));
         assert!(details::focused(&list));
-        assert_eq!(shown(&list, 120), " p switch method  Esc cancel");
+        assert_eq!(shown(&list, 120), " p permanent  s stage  Esc cancel");
         list.key(press(KeyCode::Esc), t0);
 
         for (open, want) in overlays() {

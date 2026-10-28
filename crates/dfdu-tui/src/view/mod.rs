@@ -64,7 +64,9 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
 
     header::draw(f, app, header, now, frame);
     app.treemap.shown = app.treemap.on && treemap::fits(area);
-    if app.treemap.shown {
+    if crate::cleanup::active(app) {
+        crate::cleanup::draw(f, app, list);
+    } else if app.treemap.shown {
         treemap::draw(f, app, list, now);
     } else {
         list::draw(f, app, list, now, frame);

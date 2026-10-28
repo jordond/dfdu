@@ -1,6 +1,7 @@
 //! The delete confirmation, for the marked entries or else the selected one. It lists the
 //! targets, their total and the method: `y` moves them to the Trash, `p` switches between the
-//! Trash and a permanent delete. A permanent delete, and a move to the Trash of 50 GiB or more
+//! Trash and a permanent delete, `s` between the Trash and staging (renamed aside at once, put
+//! back with `U` for a minute, then deleted). A permanent delete, and a move to the Trash of 50 GiB or more
 //! or of a directory still being scanned, needs the word "delete" typed and `Enter`.
 
 use std::cmp::Reverse;
@@ -82,6 +83,8 @@ pub struct Confirm {
     typed: LineInput,
     /// The word must be typed to confirm.
     typing: bool,
+    /// The id of the engine's estimate of what the delete frees ([`Command::Estimate`]).
+    estimate: u64,
 }
 
 impl Confirm {
@@ -99,6 +102,7 @@ impl Confirm {
             mode,
             typed: LineInput::default(),
             typing: false,
+            estimate: 0,
         };
         c.set_mode(mode);
         c
@@ -121,8 +125,9 @@ impl Confirm {
 }
 
 /// Asks to delete the marked entries, the outermost of them, or without marks the selected
-/// entry. The "shared between entries" row and deleted rows cannot be deleted.
-pub fn open(app: &mut App, mode: Mode) {
+/// entry, and asks the engine what that would free. The "shared between entries" row and
+/// deleted rows cannot be deleted.
+pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
     let targets: Vec<Item> = if app.marks.is_empty() {
         let e = app.selected_entry().filter(|e| !e.pseudo);
         e.map(Item::of).into_iter().collect()
@@ -151,9 +156,17 @@ pub fn open(app: &mut App, mode: Mode) {
             .collect()
     };
     if targets.is_empty() {
-        return;
+        return Vec::new();
     }
-    app.overlay = Overlay::ConfirmDelete(Confirm::new(targets, mode));
+    let mut c = Confirm::new(targets, mode);
+    app.estimates += 1;
+    c.estimate = app.estimates;
+    let items = c.sent().map(|t| t.node).collect();
+    app.overlay = Overlay::ConfirmDelete(c);
+    vec![Effect::Send(Command::Estimate {
+        id: app.estimates,
+        items,
+    })]
 }
 
 /// Handles a key while the dialog is open: confirms, switches the method, cancels or edits the
@@ -166,8 +179,16 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         KeyCode::Esc | KeyCode::Char('n') => false,
         KeyCode::Char('p' | 'P') => {
             let other = match c.mode {
-                Mode::Trash => Mode::Permanent,
+                Mode::Trash | Mode::Stage => Mode::Permanent,
                 Mode::Permanent => Mode::Trash,
+            };
+            c.set_mode(other);
+            return Vec::new();
+        }
+        KeyCode::Char('s' | 'S') if !c.typing || c.typed.text().is_empty() => {
+            let other = match c.mode {
+                Mode::Stage => Mode::Trash,
+                _ => Mode::Stage,
             };
             c.set_mode(other);
             return Vec::new();
@@ -194,6 +215,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         }));
         app.status = Some(match mode {
             Mode::Trash => "moving to the Trash…".into(),
+            Mode::Stage => "staging…".into(),
             Mode::Permanent => "deleting…".into(),
         });
     }
@@ -214,6 +236,13 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     };
     let mut lines = match c.mode {
         Mode::Trash => vec![Line::raw(format!(" Move {what} to the Trash?"))],
+        Mode::Stage => vec![
+            Line::raw(format!(" Stage {what} for deletion?")),
+            Line::raw(format!(
+                " Deleted after {} s; U puts it back until then.",
+                dfdu_engine::STAGE_UNDO_WINDOW.as_secs()
+            )),
+        ],
         Mode::Permanent => vec![
             Line::styled(format!(" Permanently delete {what}?"), t.error),
             Line::raw(" This cannot be undone."),
@@ -258,26 +287,64 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         }
         lines.push(Line::from(total));
     }
-    if c.shared_out > 0 {
-        lines.push(Line::styled(
+    match app.snap.estimate.as_ref().filter(|e| e.id == c.estimate) {
+        Some(e) => {
+            let mut s = format!(
+                " Frees {}{}",
+                if e.scanning { "at least " } else { "about " },
+                human(e.bytes)
+            );
+            let stays: Vec<String> = [
+                (e.linked_out, "hard-linked from outside"),
+                (e.shared_out, "shared with data outside the scan"),
+            ]
+            .iter()
+            .filter(|(b, _)| *b > 0)
+            .map(|(b, why)| format!("{} {why}", human(*b)))
+            .collect();
+            if !stays.is_empty() {
+                s.push_str(&format!("; stays: {}", stays.join(", ")));
+            }
+            if e.may_free_less {
+                s.push_str("; may free less (clones)");
+            }
+            lines.push(Line::styled(
+                s,
+                if e.linked_out + e.shared_out > 0 {
+                    t.warn
+                } else {
+                    t.dim
+                },
+            ));
+        }
+        None if c.shared_out > 0 => lines.push(Line::styled(
             format!(
                 " May free less: {} of it is also used outside the scan.",
                 human(c.shared_out)
             ),
             t.warn,
-        ));
+        )),
+        None => {}
     }
     lines.push(Line::raw(""));
     let (method, other) = match c.mode {
         Mode::Trash => ("Trash, recoverable", "delete permanently"),
+        Mode::Stage => ("stage, then delete", "delete permanently"),
         Mode::Permanent => ("delete permanently", "move to the Trash"),
+    };
+    let staging = if c.mode == Mode::Stage {
+        "the Trash"
+    } else {
+        "stage"
     };
     lines.push(Line::from(vec![
         Span::raw(format!(" Method: {method}   ")),
         Span::styled("p", t.key),
-        Span::raw(format!(" {other} instead")),
+        Span::raw(format!(" {other}  ")),
+        Span::styled("s", t.key),
+        Span::raw(format!(" {staging}")),
     ]));
-    if c.mode == Mode::Trash && c.typing {
+    if c.mode != Mode::Permanent && c.typing {
         let why = if c.total >= LARGE {
             format!(" {} or more: confirm by typing the word.", human(LARGE))
         } else {
@@ -371,7 +438,14 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t0);
-        assert!(app.key(key(KeyCode::Char('d')), t0).is_empty());
+        let fx = app.key(key(KeyCode::Char('d')), t0);
+        assert!(
+            matches!(
+                fx.as_slice(),
+                [Effect::Send(Command::Estimate { id: 1, items })] if items.len() == 1
+            ),
+            "the dialog asks what the delete frees: {fx:?}"
+        );
         assert!(matches!(
             app.overlay,
             Overlay::ConfirmDelete(Confirm {
@@ -452,6 +526,55 @@ mod tests {
     }
 
     #[test]
+    fn shows_the_engine_estimate() {
+        let t = Instant::now();
+        let mut app = App::new(Theme::no_color(), t);
+        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t);
+        app.key(key(KeyCode::Char('d')), t);
+        let mut s = snap(vec![test_entry(0, "a", 10)], 2);
+        s.estimate = Some(dfdu_engine::Estimate {
+            id: 1,
+            bytes: 3 << 20,
+            linked_out: 1 << 20,
+            ..Default::default()
+        });
+        app.refresh(s, t);
+        let out = render(&mut app, t, 100, 30);
+        assert!(
+            out.contains("Frees about 3.0 MiB; stays: 1.0 MiB hard-linked from outside"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn s_switches_to_staging() {
+        let t = Instant::now();
+        let mut app = App::new(Theme::no_color(), t);
+        app.refresh(snap(vec![test_entry(0, "a", 10)], 1), t);
+        app.key(key(KeyCode::Char('d')), t);
+        assert!(app.key(key(KeyCode::Char('s')), t).is_empty());
+        assert_eq!(
+            (dialog(&app).mode, dialog(&app).typing),
+            (Mode::Stage, false)
+        );
+        let out = render(&mut app, t, 100, 30);
+        assert!(out.contains("Stage a for deletion?"), "{out}");
+        assert!(out.contains("U puts it back"), "{out}");
+        assert!(out.contains("s the Trash"), "{out}");
+        let fx = app.key(key(KeyCode::Char('y')), t);
+        assert!(
+            matches!(
+                fx.as_slice(),
+                [Effect::Send(Command::Delete {
+                    mode: Mode::Stage,
+                    ..
+                })]
+            ),
+            "{fx:?}"
+        );
+    }
+
+    #[test]
     fn p_switches_method() {
         let t = Instant::now();
         let mut app = App::new(Theme::no_color(), t);
@@ -464,7 +587,7 @@ mod tests {
         );
         let out = render(&mut app, t, 100, 30);
         assert!(out.contains("Permanently delete a?"), "{out}");
-        assert!(out.contains("p move to the Trash instead"), "{out}");
+        assert!(out.contains("p move to the Trash  s stage"), "{out}");
         // Permanent now: 'y' is only typed.
         assert!(app.key(key(KeyCode::Char('y')), t).is_empty());
         assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));

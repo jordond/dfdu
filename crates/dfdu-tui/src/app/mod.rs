@@ -102,6 +102,8 @@ pub struct App {
     pub list_height: usize,
     pub overlay: Overlay,
     pub status: Option<String>,
+    /// Estimates asked for so far; the latest one's id.
+    pub estimates: u64,
     pub started: Instant,
     pub done_at: Option<Instant>,
     pub quit: bool,
@@ -112,6 +114,7 @@ pub struct App {
     pub motion: Motion,
     pub mouse: mouse::Mouse,
     pub treemap: treemap::Treemap,
+    pub cleanup: crate::cleanup::Cleanup,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
@@ -142,8 +145,13 @@ fn shown(hide_hidden: bool, e: &EntryData) -> bool {
 /// One line describing a finished delete plan. On btrfs the freed space shows up in the free
 /// space only after the transaction commits, and for snapshots after the cleaner ran.
 pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
+    let done = match d.mode {
+        Some(dfdu_engine::Mode::Trash) => "moved to the Trash",
+        Some(dfdu_engine::Mode::Stage) => "staged",
+        _ => "deleted",
+    };
     let mut parts = vec![format!(
-        "deleted {} ({})",
+        "{done} {} ({})",
         d.deleted,
         crate::theme::human(d.bytes)
     )];
@@ -158,6 +166,9 @@ pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
         }
     }
     let mut s = parts.join(", ");
+    if d.deleted > 0 && d.mode.is_some_and(|m| m.undoable()) {
+        s.push_str("; U puts it back");
+    }
     if d.btrfs {
         s.push_str("; btrfs frees the space when it commits (snapshots: in the background)");
     }
@@ -187,6 +198,7 @@ impl App {
             list_height: 1,
             overlay: Overlay::None,
             status: None,
+            estimates: 0,
             started: now,
             done_at: None,
             quit: false,
@@ -197,6 +209,7 @@ impl App {
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
             treemap: treemap::Treemap::default(),
+            cleanup: Default::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
@@ -246,7 +259,10 @@ impl App {
     /// new snapshot is due. A read must make it false: while it is true, the run loop reads
     /// again at once.
     pub fn extras_stale(&self) -> bool {
-        marks::stale(self) || details::stale(self) || treemap::stale(self)
+        marks::stale(self)
+            || details::stale(self)
+            || treemap::stale(self)
+            || crate::cleanup::stale(self)
     }
 
     fn auto_sort_due(&self, now: Instant) -> bool {
@@ -634,6 +650,11 @@ impl App {
         }
         if details::focused(self)
             && let Some(fx) = details::key(self, &k)
+        {
+            return fx;
+        }
+        if crate::cleanup::active(self)
+            && let Some(fx) = crate::cleanup::key(self, &k)
         {
             return fx;
         }

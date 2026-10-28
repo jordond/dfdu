@@ -6,7 +6,7 @@ use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::{debug, details, marks, treemap};
+use crate::{cleanup, debug, details, marks, treemap};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
@@ -14,6 +14,7 @@ pub struct Extras {
     pub details: details::Info,
     pub debug: debug::Info,
     pub treemap: treemap::Info,
+    pub cleanup: cleanup::Info,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree. `counters` are the
@@ -24,6 +25,7 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
         details: details::read(m, app),
         debug: debug::read(m, budget, counters),
         treemap: treemap::read(m, app),
+        cleanup: cleanup::read(m, app),
     }
 }
 
@@ -33,6 +35,7 @@ pub fn apply(app: &mut App, extras: Extras) {
     app.extras = extras;
     marks::apply(app);
     details::apply(app);
+    cleanup::apply(app);
 }
 
 /// What the run loop reads from the model before a frame.

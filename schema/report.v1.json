@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/report.v1.json",
+  "title": "dfdu report --format json",
+  "description": "What the cleanup rules matched in a scan, largest first. Sizes are bytes; paths as in scan.v1.json. Fields may be added without changing schema_version.",
+  "type": "object",
+  "required": ["schema_version", "tool", "root", "generated_at", "complete", "elapsed_ms", "items", "summary"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": { "$ref": "scan.v1.json#/$defs/tool" },
+    "root": { "type": "string" },
+    "root_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+    "generated_at": { "type": "integer", "description": "Seconds since 1970." },
+    "complete": { "type": "boolean" },
+    "elapsed_ms": { "$ref": "scan.v1.json#/$defs/count" },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "summary": { "$ref": "#/$defs/summary" },
+    "threshold": {
+      "type": "object",
+      "description": "Present with --fail-above.",
+      "required": ["fail_above", "exceeded"],
+      "properties": {
+        "fail_above": { "$ref": "scan.v1.json#/$defs/count" },
+        "exceeded": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["path", "type", "rule", "rule_name", "category", "category_name", "safety", "action", "disk", "apparent", "entries", "shared_outside", "mtime", "age_days", "recommended", "checked", "in_use", "vcs_tracked", "scanning", "explanation", "lost"],
+      "properties": {
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+        "type": { "enum": ["dir", "file"] },
+        "rule": { "type": "string" },
+        "rule_name": { "type": "string" },
+        "category": { "type": "string" },
+        "category_name": { "type": "string" },
+        "safety": { "$ref": "scan.v1.json#/$defs/safety" },
+        "action": { "enum": ["delete", "trash", "native", "report"], "description": "How the rule cleans it up: delete the files, move them to the trash, run the owning tool's command, or nothing (reported only)." },
+        "native_command": { "type": "array", "items": { "type": "string" }, "description": "The owning tool's command, as arguments." },
+        "disk": { "$ref": "scan.v1.json#/$defs/count" },
+        "apparent": { "$ref": "scan.v1.json#/$defs/count" },
+        "entries": { "$ref": "scan.v1.json#/$defs/count" },
+        "shared_outside": { "$ref": "scan.v1.json#/$defs/count", "description": "Part of disk that deleting it does not free." },
+        "mtime": { "type": "integer" },
+        "age_days": { "$ref": "scan.v1.json#/$defs/count" },
+        "recommended": { "type": "boolean", "description": "dfdu clean selects it by default." },
+        "checked": { "type": "boolean", "description": "The rule's guards (git tracking, running processes) were checked." },
+        "in_use": { "type": "boolean" },
+        "vcs_tracked": { "type": "boolean" },
+        "scanning": { "type": "boolean" },
+        "degraded": { "type": "string", "description": "Why the safety level is lower than the rule's." },
+        "explanation": { "type": "string" },
+        "lost": { "type": "string", "description": "What deleting it loses." }
+      }
+    },
+    "count_disk": {
+      "type": "object",
+      "required": ["items", "disk"],
+      "properties": {
+        "items": { "$ref": "scan.v1.json#/$defs/count" },
+        "disk": { "$ref": "scan.v1.json#/$defs/count" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["items", "disk", "by_safety", "recommended"],
+      "properties": {
+        "items": { "$ref": "scan.v1.json#/$defs/count" },
+        "disk": { "$ref": "scan.v1.json#/$defs/count", "description": "Disk usage of the items, protected ones left out." },
+        "by_safety": {
+          "type": "object",
+          "required": ["safe", "regenerable", "review", "manual", "protected"],
+          "additionalProperties": { "$ref": "#/$defs/count_disk" }
+        },
+        "recommended": { "$ref": "#/$defs/count_disk" }
+      }
+    }
+  }
+}

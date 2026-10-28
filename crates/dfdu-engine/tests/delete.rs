@@ -203,6 +203,21 @@ fn refusals_with<B: Backend>(backend: fn() -> B) {
     assert!(root.exists());
     e.shutdown(Duration::from_secs(1));
 
+    // A protected name, and a file below a protected directory: the deleter refuses them
+    // without the classifier's marks (this scan has no rules).
+    write(&root.join(".env"), 10);
+    write(&root.join("keep/.git/config"), 10);
+    let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
+    scan(&e, root);
+    let s = delete(
+        &e,
+        vec![node(&e, ".env"), node(&e, "keep/.git/config")],
+        Mode::Permanent,
+    );
+    assert_eq!((s.deleted, s.refused), (0, 2));
+    assert!(root.join(".env").exists() && root.join("keep/.git/config").exists());
+    e.shutdown(Duration::from_secs(1));
+
     // No journal: nothing is deleted.
     let e = engine(backend(), None, false);
     scan(&e, root);
@@ -222,5 +237,258 @@ fn refusals_with<B: Backend>(backend: fn() -> B) {
     assert!(e.wait_idle(Some(Duration::from_secs(5))));
     assert!(e.read(|m| m.status.last_delete.is_none()));
     assert!(root.join("junk").exists());
+    e.shutdown(Duration::from_secs(1));
+}
+
+fn engine_staging<B: Backend>(backend: B, state: &Path, window: Duration) -> Engine<B> {
+    Engine::start(
+        backend,
+        EngineOptions {
+            journal_dir: Some(state.join("ops")),
+            stage_window: window,
+            check_invariants: true,
+            workers: 2,
+            ..Default::default()
+        },
+    )
+}
+
+/// Waits until `cond` holds of the model, for at most 20 s.
+fn wait_for<B: Backend>(e: &Engine<B>, cond: impl Fn(&dfdu_engine::Model) -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !e.read(&cond) {
+        assert!(std::time::Instant::now() < deadline, "timed out");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn staged_files(state: &Path) -> Vec<String> {
+    let mut out = vec![];
+    for s in fs::read_dir(state.join("stage"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        for f in fs::read_dir(s.path()).unwrap().flatten() {
+            out.push(f.file_name().to_string_lossy().into_owned());
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn staged_items_are_deleted_on_commit() {
+    let tree = fixture();
+    let root = tree.path();
+    let state = tempdir("state");
+    let e = engine_staging(
+        PortableBackend::default(),
+        state.path(),
+        Duration::from_secs(3600),
+    );
+    scan(&e, root);
+    let before = root_alloc(&e);
+    let junk = e.read(|m| {
+        m.tree
+            .total(m.tree.resolve(node(&e, "junk")).unwrap())
+            .alloc
+    });
+    let s = delete(&e, vec![node(&e, "junk")], Mode::Stage);
+    assert_eq!((s.deleted, s.mode), (1, Some(Mode::Stage)));
+    assert!(!root.join("junk").exists());
+    assert_eq!(root_alloc(&e), before - junk);
+    // Renamed aside, whole, in the staging directory beside the journals.
+    assert_eq!(staged_files(state.path()), ["1-junk"]);
+    assert_eq!(e.read(|m| m.status.staged), (1, junk));
+    assert!(e.read(|m| m.status.undo.as_ref().is_some_and(|u| u.items == 1)));
+    e.send(Command::CommitStaged);
+    wait_for(&e, |m| m.status.staged.0 == 0);
+    assert!(staged_files(state.path()).is_empty());
+    assert!(
+        e.read(|m| m.status.undo.is_none()),
+        "nothing left to put back"
+    );
+    e.shutdown(Duration::from_secs(5));
+    assert_eq!(
+        journal_kinds(&state.path().join("ops")),
+        ["session", "intent", "done", "commit-intent", "commit-done"]
+    );
+}
+
+/// Items an exited session left staged are reported when the next one starts, and left alone.
+#[test]
+fn a_new_session_reports_what_an_earlier_one_left() {
+    let tree = fixture();
+    let root = tree.path();
+    let state = tempdir("state");
+    let e = engine_staging(
+        PortableBackend::default(),
+        state.path(),
+        Duration::from_secs(3600),
+    );
+    scan(&e, root);
+    delete(
+        &e,
+        vec![node(&e, "junk"), node(&e, "file.bin")],
+        Mode::Stage,
+    );
+    e.shutdown(Duration::from_secs(5));
+    assert_eq!(staged_files(state.path()), ["1-junk", "2-file.bin"]);
+
+    let e = engine_staging(
+        PortableBackend::default(),
+        state.path(),
+        Duration::from_secs(3600),
+    );
+    wait_for(&e, |m| {
+        m.status
+            .notices
+            .iter()
+            .any(|n| n.starts_with("an earlier session left 2 deletes unfinished"))
+    });
+    e.shutdown(Duration::from_secs(5));
+    assert_eq!(staged_files(state.path()), ["1-junk", "2-file.bin"]);
+}
+
+#[test]
+fn staged_items_are_deleted_when_the_window_ends() {
+    let tree = fixture();
+    let state = tempdir("state");
+    let e = engine_staging(
+        PortableBackend::default(),
+        state.path(),
+        Duration::from_millis(200),
+    );
+    scan(&e, tree.path());
+    delete(
+        &e,
+        vec![node(&e, "junk"), node(&e, "file.bin")],
+        Mode::Stage,
+    );
+    wait_for(&e, |m| m.status.staged.0 == 0);
+    assert!(staged_files(state.path()).is_empty());
+    e.shutdown(Duration::from_secs(5));
+}
+
+/// Undo puts staged items back, next to what took their place if something did, and the tree
+/// shows them again after a rescan of their directory.
+#[test]
+fn undo_puts_staged_items_back() {
+    let tree = fixture();
+    let root = tree.path();
+    let state = tempdir("state");
+    let e = engine_staging(
+        PortableBackend::default(),
+        state.path(),
+        Duration::from_secs(3600),
+    );
+    scan(&e, root);
+    let before = root_alloc(&e);
+    let s = delete(
+        &e,
+        vec![node(&e, "junk/sub"), node(&e, "file.bin")],
+        Mode::Stage,
+    );
+    assert_eq!(s.deleted, 2);
+    write(&root.join("file.bin"), 10);
+    let plan = e.read(|m| m.status.undo.as_ref().map(|u| u.plan)).unwrap();
+    e.send(Command::Undo { plan });
+    wait_for(&e, |m| {
+        m.status.undoing.is_none() && m.status.undo.is_none()
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert!(root.join("junk/sub/c.bin").exists());
+    assert_eq!(
+        fs::read(root.join("file.bin.restored-1")).unwrap().len(),
+        3_000
+    );
+    assert_eq!(fs::read(root.join("file.bin")).unwrap().len(), 10);
+    assert!(staged_files(state.path()).is_empty());
+    assert_eq!(e.read(|m| m.status.staged), (0, 0));
+    // The rescans found everything: what was put back, and the new file.bin.
+    assert!(root_alloc(&e) > before);
+    node(&e, "junk/sub/c.bin");
+    node(&e, "file.bin.restored-1");
+    e.shutdown(Duration::from_secs(5));
+    let kinds = journal_kinds(&state.path().join("ops"));
+    assert_eq!(
+        kinds.iter().filter(|k| *k == "restored").count(),
+        2,
+        "{kinds:?}"
+    );
+}
+
+/// The scan-to-delete race inside a directory item (ROADMAP M6): a file added, a file replaced
+/// by another of the same name, a directory replaced, and a directory swapped for a symlink,
+/// each deep inside, right after the scan (in the same second, so modification times do not
+/// tell). None of the items is deleted, permanently or staged, and each is reported.
+#[test]
+fn changes_inside_items_stop_their_delete() {
+    for mode in [Mode::Permanent, Mode::Stage] {
+        changes_inside(PortableBackend::default, mode);
+        #[cfg(windows)]
+        changes_inside(dfdu_scan::WindowsBackend::default, mode);
+    }
+}
+
+fn changes_inside<B: Backend>(backend: fn() -> B, mode: Mode) {
+    let tree = tempdir("inside");
+    let root = tree.path();
+    for d in ["added", "replaced", "dir", "swapped"] {
+        write(&root.join(d).join("x/y/f.bin"), 1_000);
+        write(&root.join(d).join("g.bin"), 1_000);
+    }
+    let state = tempdir("state");
+    let e = engine_staging(backend(), state.path(), Duration::from_secs(3600));
+    scan(&e, root);
+    let items: Vec<NodeRef> = ["added", "replaced", "dir", "swapped"]
+        .iter()
+        .map(|d| node(&e, d))
+        .collect();
+    write(&root.join("added/x/y/new.bin"), 10);
+    write(&root.join("replaced/x/y/f.tmp"), 1_000);
+    fs::rename(
+        root.join("replaced/x/y/f.tmp"),
+        root.join("replaced/x/y/f.bin"),
+    )
+    .unwrap();
+    fs::rename(root.join("dir/x/y"), root.join("dir/y.old")).unwrap();
+    write(&root.join("dir/x/y/f.bin"), 1_000);
+    let elsewhere_dir = tempdir("elsewhere");
+    write(&elsewhere_dir.path().join("f.bin"), 1_000);
+    fs::remove_dir_all(root.join("swapped/x/y")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(elsewhere_dir.path(), root.join("swapped/x/y")).unwrap();
+    #[cfg(windows)]
+    assert!(
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(root.join("swapped/x/y"))
+            .arg(elsewhere_dir.path())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let s = delete(&e, items, mode);
+    // Windows compares names only, so the file replaced under the same name is not seen.
+    let expect = if cfg!(windows) { 3 } else { 4 };
+    let notices = e.read(|m| m.status.notices.join("\n"));
+    assert_eq!(
+        (s.deleted, s.stale),
+        (4 - expect, expect),
+        "{mode:?} {s:?} {notices}"
+    );
+    assert!(notices.contains("changed since the scan"), "{notices}");
+    for d in ["added", "dir", "swapped"] {
+        assert!(
+            root.join(d).join("g.bin").exists(),
+            "{mode:?} {d} was touched"
+        );
+    }
+    assert!(elsewhere_dir.path().join("f.bin").exists());
     e.shutdown(Duration::from_secs(1));
 }

@@ -25,8 +25,8 @@ fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
     }
 }
 
-struct Fixture {
-    m: Model,
+pub(crate) struct Fixture {
+    pub(crate) m: Model,
     ino: u64,
 }
 
@@ -84,7 +84,7 @@ fn tree() -> Fixture {
 
 /// Reads the model as the run loop does for a frame with a new snapshot: the snapshot, then
 /// the extras until none is stale.
-fn sync(app: &mut App, m: &Model, now: Instant) {
+pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
     let mut target = app.target.clone();
     let snap = snapshot::build(m, &mut target, app.size_mode);
     app.target = target;
@@ -455,7 +455,7 @@ fn ten_thousand_rows_lay_out_quickly() {
 }
 
 /// [`tree`] with the built-in rules, `big` matched as a Rust `target/`.
-fn classified() -> Fixture {
+pub(crate) fn classified() -> Fixture {
     let mut fx = tree();
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
     let rules = dfdu_rules::builtin(&env).0;

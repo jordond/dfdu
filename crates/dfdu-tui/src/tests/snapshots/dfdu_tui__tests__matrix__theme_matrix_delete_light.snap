@@ -25,8 +25,8 @@ L9 39-69 fg=#6c7180
                  │  163.0 GiB  total · 812.2k items  still scanning: at least this │
 L11 51-81 fg=#6c7180
                  │                                                                 │
-                 │ Method: Trash, recoverable   p delete permanently instead       │
-L13 48-48 fg=#1b6b8c bold
+                 │ Method: Trash, recoverable   p delete permanently  s stage      │
+L13 48-48 fg=#1b6b8c bold | 70-70 fg=#1b6b8c bold
                  │ 50.0 GiB or more: confirm by typing the word.                   │
 L14 18-63 fg=#6c7180
                  │ type delete and Enter: ▌   Esc cancel                           │
@@ -40,5 +40,5 @@ L15 24-29 fg=#1b6b8c bold | 42-42 fg=#1b6b8c bold | 46-48 fg=#1b6b8c bold
 L21 0-58 fg=#8a5300
                                                                     ● 2 marked (at least 163.0 GiB)
 L22 0-67 fg=#6c7180 | 68-98 fg=#8e3a9e bold | 99-99 fg=#6c7180
- p switch method  Esc cancel
-L23 1-1 fg=#1b6b8c bold | 2-15 fg=#6c7180 | 18-20 fg=#1b6b8c bold | 21-27 fg=#6c7180
+ p permanent  s stage  Esc cancel
+L23 1-1 fg=#1b6b8c bold | 2-11 fg=#6c7180 | 14-14 fg=#1b6b8c bold | 15-20 fg=#6c7180 | 23-25 fg=#1b6b8c bold | 26-32 fg=#6c7180

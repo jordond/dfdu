@@ -16,7 +16,7 @@ pub mod schema;
 pub mod vars;
 
 pub use glob::{Glob, GlobError};
-pub use load::{LoadError, builtin, load};
+pub use load::{LoadError, builtin, load, load_from};
 pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Verdict};
 pub use vars::Env;
 

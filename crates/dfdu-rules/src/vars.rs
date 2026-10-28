@@ -16,11 +16,21 @@ pub struct Env {
 }
 
 impl Env {
-    /// This machine's platform and environment.
+    /// This machine's platform and environment. Directories are resolved the way scan roots
+    /// are (on macOS `TMPDIR` is under `/var`, a symlink to `/private/var`).
     pub fn current() -> Env {
+        let vars = std::env::vars()
+            .map(|(k, v)| {
+                let dir = k == "HOME" || k == "TMPDIR" || k.ends_with("_HOME");
+                match std::fs::canonicalize(&v) {
+                    Ok(p) if dir && cfg!(unix) => (k, p.to_string_lossy().into_owned()),
+                    _ => (k, v),
+                }
+            })
+            .collect();
         Env {
             platform: Platform::current(),
-            vars: std::env::vars().collect(),
+            vars,
         }
     }
 

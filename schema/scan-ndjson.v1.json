@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/scan-ndjson.v1.json",
+  "title": "One line of dfdu scan --format ndjson",
+  "description": "The output is one JSON object per line: a header, an entry per entry (depth first, largest first), error and skipped lines, and a summary last. A missing summary means the output was cut short.",
+  "type": "object",
+  "required": ["record"],
+  "oneOf": [
+    {
+      "properties": {
+        "record": { "const": "header" },
+        "schema_version": { "const": 1 },
+        "tool": { "$ref": "scan.v1.json#/$defs/tool" },
+        "root": { "type": "string" },
+        "root_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+        "size_mode": { "enum": ["disk", "apparent", "du"] }
+      },
+      "required": ["schema_version", "tool", "root", "size_mode"]
+    },
+    {
+      "properties": {
+        "record": { "const": "entry" },
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+        "depth": { "$ref": "scan.v1.json#/$defs/count" },
+        "type": { "enum": ["dir", "file", "symlink", "other"] },
+        "disk": { "$ref": "scan.v1.json#/$defs/count" },
+        "apparent": { "$ref": "scan.v1.json#/$defs/count" },
+        "du": { "$ref": "scan.v1.json#/$defs/count" },
+        "entries": { "$ref": "scan.v1.json#/$defs/count" },
+        "errors": { "$ref": "scan.v1.json#/$defs/count" },
+        "mtime": { "type": "integer" },
+        "class": { "$ref": "scan.v1.json#/$defs/class" },
+        "note": { "type": "string" }
+      },
+      "required": ["path", "depth", "type", "disk", "apparent", "du", "entries", "errors", "mtime"]
+    },
+    {
+      "allOf": [{ "$ref": "scan.v1.json#/$defs/error" }],
+      "properties": { "record": { "const": "error" } }
+    },
+    {
+      "allOf": [{ "$ref": "scan.v1.json#/$defs/skipped" }],
+      "properties": { "record": { "const": "skipped" } }
+    },
+    {
+      "properties": {
+        "record": { "const": "summary" },
+        "complete": { "type": "boolean" },
+        "elapsed_ms": { "$ref": "scan.v1.json#/$defs/count" },
+        "totals": { "$ref": "scan.v1.json#/$defs/totals" }
+      },
+      "required": ["complete", "elapsed_ms", "totals"]
+    }
+  ]
+}

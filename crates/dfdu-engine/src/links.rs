@@ -106,6 +106,8 @@ struct Links {
     stale: usize,
     /// A prune was requested and has not run yet.
     prune_due: bool,
+    /// The link count the scan read (the largest, if it changed between links).
+    nlink: u32,
 }
 
 #[derive(Debug, Default)]
@@ -135,9 +137,12 @@ impl LinkTable {
     pub fn add_scanned(
         &mut self,
         key: (u64, u64),
+        nlink: u32,
         scope: Scope,
         make: impl FnOnce(bool) -> NodeRef,
     ) {
+        let l = self.map.entry(key).or_default();
+        l.nlink = l.nlink.max(nlink);
         let e = self.entry(key, scope);
         let charged = e.charged.is_none();
         let node = make(charged);
@@ -187,6 +192,11 @@ impl LinkTable {
             self.map.remove(&key);
         }
         n
+    }
+
+    /// The inode's link count, as the scan read it; 0 if no link of it is known.
+    pub fn nlink(&self, key: (u64, u64)) -> u32 {
+        self.map.get(&key).map_or(0, |l| l.nlink)
     }
 
     /// The charged link of an inode in `scope`.
