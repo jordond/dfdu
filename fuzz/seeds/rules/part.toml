@@ -1,0 +1,120 @@
+# Built-in rules, first version (ROADMAP M5). Schema: categories-and-cleanup.md §9.2.
+#
+# `verified` lists the platforms where a rule's paths were checked on a real machine
+# (docs/rules.md); a path rule is enabled by default only there. Rules that match by name or
+# marker have no platform-specific paths and no `verified` list.
+
+schema_version = 1
+
+# --- Generic ----------------------------------------------------------------------------------
+
+[[rule]]
+id = "generic.cachedir-tag"
+category = "sys.cache"
+name = "Tagged cache directory"
+safety = "safe"
+action = "delete"
+explanation = "The directory holds a valid CACHEDIR.TAG (bford.info/cachedir), which marks its whole subtree as cache."
+lost = "Cached data; the owning program recreates it."
+min_size = "50 MiB"
+priority = 10
+[rule.match]
+kind = "dir"
+names = ["*"]
+stop_descent = true
+  [[rule.match.marker]]
+  file = "CACHEDIR.TAG"
+  prefix = "Signature: 8a477f597d28d172789f06886806bc55"
+  required = true
+[rule.guard]
+not_vcs_tracked = true
+
+# --- Project build output and dependencies ----------------------------------------------------
+
+[[rule]]
+id = "rust.target"
+category = "dev.build"
+name = "Rust build output (target/)"
+safety = "regenerable"
+action = "native"
+explanation = "Build output of a Cargo project. Cargo writes CACHEDIR.TAG into the default target directory."
+lost = "All compiled artifacts; the next build recompiles every crate."
+min_size = "100 MiB"
+min_age_days = 14
+priority = 60
+[rule.match]
+kind = "dir"
+names = ["target"]
+stop_descent = true
+top_most = true
+  [[rule.match.sibling]]
+  any_of = ["Cargo.toml"]
+  [[rule.match.child]]
+  any_of = ["CACHEDIR.TAG", ".rustc_info.json", "debug", "release"]
+[rule.guard]
+not_running = ["cargo", "rustc"]
+not_vcs_tracked = true
+[rule.native]
+check = ["cargo", "--version"]
+dry_run = ["cargo", "clean", "--dry-run"]
+command = ["cargo", "clean"]
+cwd = "{parent}"
+
+[[rule]]
+id = "node.node_modules"
+category = "dev.deps"
+name = "Node.js dependencies (node_modules)"
+safety = "regenerable"
+action = "delete"
+explanation = "Installed packages for a JavaScript project. Reinstall with npm ci, pnpm install, yarn or bun install."
+lost = "Installed packages; reinstalling needs network access unless the package manager cache has them."
+min_size = "50 MiB"
+min_age_days = 30
+priority = 60
+[rule.match]
+kind = "dir"
+names = ["node_modules"]
+stop_descent = true
+top_most = true
+exclude = ["**/lib/node_modules", "{home}/.nvm/**"]
+  [[rule.match.sibling]]
+  any_of = ["package.json"]
+[rule.guard]
+not_vcs_tracked = true
+not_inside = ["**/*.app", "{program_files}"]
+[rule.degrade]
+  [[rule.degrade.when]]
+  missing_sibling = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock"]
+  safety = "review"
+  reason = "No lockfile next to it: reinstalling may resolve different versions."
+
+[[rule]]
+id = "python.venv"
+category = "dev.deps"
+name = "Python virtual environment"
+safety = "regenerable"
+action = "delete"
+explanation = "A virtual environment with the packages installed for a project."
+lost = "Installed packages; recreate the environment and reinstall."
+min_size = "50 MiB"
+min_age_days = 30
+priority = 60
+[rule.match]
+kind = "dir"
+names = [".venv", "venv"]
+stop_descent = true
+  [[rule.match.child]]
+  any_of = ["pyvenv.cfg"]
+[rule.guard]
+not_vcs_tracked = true
+[rule.degrade]
+  [[rule.degrade.when]]
+  missing_sibling = ["uv.lock", "poetry.lock", "Pipfile.lock", "pdm.lock", "requirements.txt"]
+  safety = "review"
+  reason = "No lockfile or requirements.txt next to it: the installed versions may not be reproducible."
+
+# --- Package manager caches --------------------------------------------------------------------
+
+[[rule]]
+id = "npm.cache"
+category = "dev.pkgcache"

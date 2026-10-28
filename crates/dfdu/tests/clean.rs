@@ -231,3 +231,57 @@ fn walk_files(dir: &Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// What an earlier session left staged is reported by `clean`, and finished with
+/// `--finish-staged --yes`; without `--yes` nothing is done.
+#[test]
+fn clean_reports_and_finishes_what_earlier_sessions_staged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap().join("tree");
+    let state = tmp.path().join("state");
+    fs::create_dir(&root).unwrap();
+    fixture(&root);
+    let r = root.to_str().unwrap();
+    // Stage the old project's dependencies, then lose the commit: as if the session had been
+    // killed inside its undo window.
+    let o = dfdu(&state, &["clean", r, "--yes", "--mode", "stage"]);
+    assert!(o.status.success());
+    let journal = fs::read_dir(state.join("ops"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(&journal).unwrap();
+    let cut: String = text
+        .lines()
+        .filter(|l| !l.contains("\"commit-"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    fs::write(&journal, cut).unwrap();
+    // The staged copy is gone already (the commit ran); put a stand-in there.
+    let list = String::from_utf8(dfdu(&state, &["recover"]).stdout).unwrap();
+    let stage = list
+        .split(": staged at ")
+        .nth(1)
+        .map(|s| std::path::PathBuf::from(s.trim()))
+        .unwrap_or_else(|| panic!("{list}"));
+    fs::create_dir_all(stage.join("pkg")).unwrap();
+    fs::write(stage.join("pkg/index.js"), b"x").unwrap();
+
+    let o = dfdu(&state, &["clean", r, "--finish-staged"]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("1 item earlier sessions left unfinished"),
+        "{err}"
+    );
+    assert!(stage.exists(), "without --yes nothing is done");
+    let o = dfdu(&state, &["clean", r, "--finish-staged", "--yes"]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("staged earlier, deleted"), "{err}");
+    assert!(!stage.exists());
+    assert_eq!(
+        String::from_utf8_lossy(&dfdu(&state, &["recover"]).stdout).trim(),
+        "nothing unfinished"
+    );
+}

@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["disk-usage", "du", "ncdu", "tui", "cleanup"]
+categories = ["command-line-utilities", "filesystem"]
 publish.workspace = true
 
 [lints]
@@ -20,11 +25,13 @@ dfdu-sys.workspace = true
 dfdu-store.workspace = true
 dfdu-clean.workspace = true
 clap.workspace = true
+clap_mangen.workspace = true
+clap_complete.workspace = true
 serde_json.workspace = true
+dunce.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-dunce.workspace = true
 boon.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true
@@ -34,3 +41,17 @@ rustix = { workspace = true, features = ["pty", "termios"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 dfdu-hangfs.workspace = true
+
+# Released through `dist` (dist-workspace.toml) although it is not published to crates.io.
+[package.metadata.dist]
+dist = true
+
+# `cargo binstall dfdu` fetches the archives `dist` uploads to GitHub Releases.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/dfdu-{ target }{ archive-suffix }"
+bin-dir = "dfdu-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"

@@ -18,6 +18,10 @@ dfdu-clean.workspace = true
 crossbeam-channel.workspace = true
 parking_lot.workspace = true
 dunce.workspace = true
+gix-index.workspace = true
+gix-discover.workspace = true
+gix-hash.workspace = true
+gix-path.workspace = true
 dfdu-sys.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

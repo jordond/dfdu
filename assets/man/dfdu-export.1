@@ -1,0 +1,37 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-export 1  "dfdu-export " 
+.SH NAME
+dfdu\-export \- Scan a directory and write it in ncdu\*(Aqs JSON format
+.SH SYNOPSIS
+\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+Scan a directory and write it in ncdu\*(Aqs JSON format
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<FILE>\fR [default: \-]
+Where to write (`\-` for stdout)
+.TP
+\fB\-\-compress\fR
+Compress with zstd (ncdu reads it with `\-f`; dfdu recognises it on import)
+.TP
+\fB\-\-snapshot\fR
+Write dfdu\*(Aqs own snapshot format instead (lossless, checked, compressed; for `dfdu \-f` and `\-\-resume\-from`, not for ncdu)
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR] [default: .]
+

@@ -1,0 +1,8 @@
+name = "my-theme"
+base = "dark"            # inherit unset tokens from a built-in theme
+
+[tokens]
+fg          = "#d8dee9"
+"cat.cache" = { rgb = "#E69F00", ansi256 = 178, ansi16 = "yellow" }
+"cat.build" = { rgb = "#0072B2", ansi256 = 25,  ansi16 = "blue" }
+"cursor.bg" = { rgb = "#3b4252", ansi16 = "reset", modifiers = ["reversed"] }

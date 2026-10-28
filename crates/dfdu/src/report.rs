@@ -264,7 +264,10 @@ fn how(rules: &RuleSet, it: &Item) -> String {
     match r.action {
         _ if it.safety() == Safety::Protected => "keep".into(),
         Action::Native => match &r.native {
-            Some(n) if !n.command.is_empty() => format!("run `{}`", n.command.join(" ")),
+            Some(n) if !n.command.is_empty() => format!(
+                "run `{}`",
+                dfdu_engine::shown_argv(&dfdu_engine::native_argv(&n.command, &it.path))
+            ),
             _ => "use its tool".into(),
         },
         Action::Report => "report only".into(),
@@ -298,7 +301,8 @@ pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
     o.insert("safety".into(), it.safety().as_str().into());
     o.insert("action".into(), action_name(r.action).into());
     if let Some(n) = r.native.as_ref().filter(|n| !n.command.is_empty()) {
-        o.insert("native_command".into(), n.command.clone().into());
+        let argv = dfdu_engine::native_argv(&n.command, &it.path);
+        o.insert("native_command".into(), argv.into());
     }
     o.insert("disk".into(), it.disk.into());
     o.insert("apparent".into(), it.apparent.into());
@@ -451,6 +455,9 @@ fn table(
         }
         if it.class.has(Class::VCS_TRACKED) {
             flags.push("tracked by git".into());
+        }
+        if it.class.has(Class::VCS_UNKNOWN) {
+            flags.push("git tracking unknown".into());
         }
         if let Some(d) = it.class.degraded {
             flags.push(r.degrade[d as usize].reason.clone());

@@ -23,6 +23,7 @@ mod error_list;
 mod extras;
 mod filter;
 mod fuzzy;
+mod growth;
 mod help;
 mod input;
 mod marks;
@@ -40,12 +41,14 @@ mod view;
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, select, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{DirId, JobId, JobOptions};
+use dfdu_store::history::{self, Growth};
 use ratatui::Terminal;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
@@ -83,6 +86,8 @@ pub struct RunOptions {
     pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
     pub engine: EngineOptions,
     pub ui: UiSettings,
+    /// Record the scan in the history once it finishes, and show what grew since the last.
+    pub history: bool,
 }
 
 /// How the browser looks and behaves, decided before the loop starts.
@@ -99,6 +104,127 @@ pub struct UiOptions {
     pub debug: bool,
     /// The user's home directory, shown as `~`.
     pub home: Option<PathBuf>,
+    /// The scan history this browser reads and adds to.
+    pub history: Option<HistoryLink>,
+}
+
+/// The browser's link to the scan history (`dfdu_store::history`): the last scan's sizes,
+/// loaded in the background, and what to record the scan under when it finishes.
+#[derive(Clone, Debug)]
+pub struct HistoryLink {
+    pub db: PathBuf,
+    pub options: String,
+    pub started_at: i64,
+    /// Set once the load ends: the sizes, or `None` when there are none.
+    pub growth: Arc<OnceLock<Option<Arc<Growth>>>>,
+}
+
+impl HistoryLink {
+    /// Starts loading the last scan of `root` with `options` from `db`.
+    pub fn start(db: PathBuf, root: PathBuf, options: String) -> HistoryLink {
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let growth: Arc<OnceLock<Option<Arc<Growth>>>> = Arc::default();
+        let (lock, path, opts) = (growth.clone(), db.clone(), options.clone());
+        let _ = thread::Builder::new()
+            .name("dfdu-history".into())
+            .spawn(move || {
+                let g = Growth::load(&path, &root, &opts, Some(started_at));
+                let _ = lock.set(g.ok().flatten().map(Arc::new));
+            });
+        HistoryLink {
+            db,
+            options,
+            started_at,
+            growth,
+        }
+    }
+}
+
+/// Records the scan once its first job is done, on a thread the drop waits for.
+struct Recorder {
+    link: Option<HistoryLink>,
+    writer: Option<thread::JoinHandle<()>>,
+}
+
+impl Recorder {
+    /// Takes in what the history has: the last scan's sizes once loaded (true when they just
+    /// arrived), and records this scan once it is complete.
+    fn poll<B: dfdu_scan::Backend>(&mut self, app: &mut App, engine: &Engine<B>) -> bool {
+        let Some(link) = &self.link else {
+            return false;
+        };
+        let arrived = app.growth.is_none()
+            && link.growth.get().is_some_and(|g| {
+                app.growth = g.clone();
+                g.is_some()
+            });
+        if self.writer.is_none() {
+            let rec = engine.read(|m| {
+                let done = m
+                    .status
+                    .jobs
+                    .first()
+                    .is_some_and(|j| j.phase == dfdu_engine::JobPhase::Done);
+                if !done || m.status.busy() {
+                    return None;
+                }
+                let root = m.tree.roots().next()?;
+                let t = m.tree.total(root);
+                Some((
+                    m.tree.path_buf(root),
+                    history::rows(&m.tree, root),
+                    history::Sizes {
+                        disk: t.alloc,
+                        apparent: t.apparent,
+                        entries: t.items,
+                    },
+                    t.errors,
+                    t.errors == 0 && !m.status.incomplete,
+                ))
+            });
+            if let Some((root, rows, total, errors, complete)) = rec {
+                let link = link.clone();
+                self.writer = thread::Builder::new()
+                    .name("dfdu-history".into())
+                    .spawn(move || {
+                        let finished_at = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs() as i64);
+                        let _ = history::History::open(&link.db).and_then(|mut h| {
+                            h.record(&history::Record {
+                                root: &root,
+                                options: &link.options,
+                                started_at: link.started_at,
+                                finished_at,
+                                complete,
+                                total,
+                                errors,
+                                rows: &rows,
+                            })
+                        });
+                    })
+                    .ok();
+            }
+        }
+        arrived
+    }
+}
+
+impl Recorder {
+    /// The last scan's sizes are still being read.
+    fn loading(&self) -> bool {
+        self.link.as_ref().is_some_and(|l| l.growth.get().is_none())
+    }
+}
+
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        if let Some(w) = self.writer.take() {
+            let _ = w.join();
+        }
+    }
 }
 
 impl UiOptions {
@@ -113,6 +239,7 @@ impl UiOptions {
             mouse: false,
             debug: false,
             home: None,
+            history: None,
         }
     }
 }
@@ -155,13 +282,20 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         setup::restore_terminal(mouse);
         return Err(e);
     }
-    let ui_opts = |theme: Theme| UiOptions {
+    let ui_opts = |theme: Theme, history: Option<HistoryLink>| UiOptions {
         theme,
         color_level: colors.level,
         background: colors.background,
         mouse,
         debug: ui.debug_stats,
         home: setup::home_dir(),
+        history,
+    };
+    // Only scans that count the same data are compared.
+    let link = |root: &std::path::Path, job: &JobOptions, engine: &EngineOptions| {
+        let db = history::default_path().filter(|_| opts.history)?;
+        let key = history::options_key(job.cross_mounts, job.network, engine.measure_workers > 0);
+        Some(HistoryLink::start(db, root.to_path_buf(), key))
     };
     if let Some(tree) = opts.imported {
         let engine = Engine::start(
@@ -172,19 +306,24 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             },
         );
         engine.load(tree);
-        return browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats);
+        return browse(
+            &mut terminal,
+            engine,
+            ui_opts(theme, None),
+            mouse,
+            ui.debug_stats,
+        );
     }
     if let Some(tree) = opts.resumed {
         let root = tree.roots().next().expect("a loaded tree has a root");
         let path = tree.path_buf(root);
         let storage = dfdu_sys::storage(&path);
-        let engine = Engine::start(
-            dfdu_scan::native_backend(storage),
-            EngineOptions {
-                workers: dfdu_engine::workers_for(storage),
-                ..opts.engine
-            },
-        );
+        let engine_opts = EngineOptions {
+            workers: dfdu_engine::workers_for(storage),
+            ..opts.engine.clone()
+        };
+        let history = link(&path, &opts.job, &engine_opts);
+        let engine = Engine::start(dfdu_scan::native_backend(storage), engine_opts);
         let node = tree.node_ref(root);
         engine.load(tree);
         let mut job = opts.job;
@@ -193,7 +332,13 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             .clone()
             .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
         engine.send(Command::Resume { node, opts: job });
-        return browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats);
+        return browse(
+            &mut terminal,
+            engine,
+            ui_opts(theme, history),
+            mouse,
+            ui.debug_stats,
+        );
     }
     let path = match opts.path {
         Some(p) => p,
@@ -214,13 +359,21 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         workers: dfdu_engine::workers_for(storage),
         ..opts.engine
     };
+    let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let history = link(&root, &opts.job, &engine_opts);
     let engine = Engine::start(dfdu_scan::native_backend(storage), engine_opts);
     let mut job = opts.job;
     job.class = opts
         .rules
         .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
     engine.send(Command::Scan { path, opts: job });
-    browse(&mut terminal, engine, ui_opts(theme), mouse, ui.debug_stats)
+    browse(
+        &mut terminal,
+        engine,
+        ui_opts(theme, history),
+        mouse,
+        ui.debug_stats,
+    )
 }
 
 /// Runs the loop on `engine` until the user quits, then restores the terminal and stops the
@@ -295,6 +448,10 @@ where
     if ui.debug {
         debug::toggle(&mut app);
     }
+    let mut recorder = Recorder {
+        link: ui.history.clone(),
+        writer: None,
+    };
     let mut focus = None;
     let mut seen_version = None;
     let mut last_draw: Option<Instant> = None;
@@ -309,6 +466,9 @@ where
     // entries, data is drawn as soon as it arrives instead of waiting for `DATA_FRAME`.
     let mut shown_entries = false;
     loop {
+        if recorder.poll(&mut app, engine) {
+            input_dirty = true;
+        }
         let now = Instant::now();
         // A read copies the current directory under the read lock, about 100 ms for one of a
         // million entries. Scan data is read at most every `DATA_FRAME`, and at most every
@@ -405,6 +565,9 @@ where
         }
         if let Some(t) = app.motion.next_frame_at() {
             wake = wake.min(t.saturating_duration_since(now));
+        }
+        if recorder.loading() {
+            wake = wake.min(DATA_FRAME);
         }
         if app.extras_stale() {
             // Something after the last read changed what the extras are read for (such as a

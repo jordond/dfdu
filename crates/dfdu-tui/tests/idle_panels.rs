@@ -146,6 +146,7 @@ fn settled_with_panels(
         mouse: false,
         debug: true,
         home: None,
+        history: None,
     };
     thread::scope(|scope| {
         let (tx, rx) = unbounded();

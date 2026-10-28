@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod clean;
+mod history;
 mod inject;
 mod json;
 mod report;
@@ -18,8 +19,23 @@ use dfdu_scan::{Backend, JobOptions, PortableBackend, native_backend};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
 use dfdu_tui::{ColorLevel, SizeMode, Theme, ThemeChoice, ThemeFile, UiSettings};
 
+/// The exit codes, for `--help` and the man page (architecture §8).
+const EXIT_CODES: &str = "Exit codes:
+  0    success
+  1    fatal error (the directory could not be read, an output could not be written)
+  2    usage error
+  3    finished, but some entries could not be read or the scan is incomplete
+  4    report --fail-above: the matches add up to more than the limit
+  5    clean, recover: some deletions failed or were refused
+  130  interrupted (Ctrl-C)";
+
 #[derive(Parser)]
-#[command(version, about, args_conflicts_with_subcommands = true)]
+#[command(
+    version,
+    about,
+    args_conflicts_with_subcommands = true,
+    after_long_help = EXIT_CODES
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -42,6 +58,9 @@ struct Cli {
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
+    /// Do not record the scan in the history, nor show what grew since the last one.
+    #[arg(long)]
+    no_history: bool,
     /// Colour theme: auto, dark, light, ansi (the terminal's own 16 colours), mono, high-contrast,
     /// or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto
     /// asks the terminal for its background colour at start (up to 1 s if it does not answer)
@@ -114,6 +133,11 @@ enum Cmd {
     Report(report::ReportArgs),
     /// Delete what `report` recommends (dry run unless --yes).
     Clean(clean::CleanArgs),
+    /// What grew: a directory now against its last recorded scan (or one from --since ago),
+    /// or two saved scans.
+    Diff(history::DiffArgs),
+    /// List the recorded scans.
+    History(history::HistoryArgs),
     /// Scan a directory and write it in ncdu's JSON format.
     Export(ExportArgs),
     /// Read a scan in ncdu's JSON format and print a summary (`dfdu -f FILE` browses it).
@@ -121,6 +145,36 @@ enum Cmd {
     /// List what earlier sessions left unfinished (staged items, interrupted deletes), and
     /// finish, restore or dismiss them.
     Recover(RecoverArgs),
+    /// Write man pages (dfdu.1 and one per command) into DIR, for packagers.
+    #[command(hide = true)]
+    Man { dir: PathBuf },
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
+    Completions { shell: clap_complete::Shell },
+}
+
+/// `dfdu man DIR`: `dfdu.1` and `dfdu-<command>.1` for each visible command.
+fn man(dir: &Path) -> ExitCode {
+    use clap::CommandFactory;
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        let cmd = Cli::command();
+        let mut out = std::fs::File::create(dir.join("dfdu.1"))?;
+        clap_mangen::Man::new(cmd.clone()).render(&mut out)?;
+        for sub in cmd.get_subcommands().filter(|s| !s.is_hide_set()) {
+            let name: &'static str = format!("dfdu-{}", sub.get_name()).leak();
+            let page = sub.clone().name(name).bin_name(name.replacen("-", " ", 1));
+            let mut out = std::fs::File::create(dir.join(format!("{name}.1")))?;
+            clap_mangen::Man::new(page).render(&mut out)?;
+        }
+        Ok(())
+    };
+    match write() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("dfdu: {}: {e}", dir.display());
+            ExitCode::from(1)
+        }
+    }
 }
 
 #[derive(Args)]
@@ -129,7 +183,7 @@ struct RecoverArgs {
     #[arg(long, value_name = "N", value_delimiter = ',')]
     finish: Vec<usize>,
     /// Put these staged items back at their paths (next to them as NAME.restored-N if
-    /// something is there now).
+    /// something is there now), or take these items found in the trash back out of it.
     #[arg(long, value_name = "N", value_delimiter = ',')]
     restore: Vec<usize>,
     /// Close these interrupted items: nothing is done on disk.
@@ -268,6 +322,9 @@ struct ScanArgs {
     /// List every entry that could not be read, with the reason.
     #[arg(long)]
     errors: bool,
+    /// Do not record the scan in the history (`dfdu diff`, `dfdu history`).
+    #[arg(long)]
+    no_history: bool,
     /// Abandon directories stalled this many seconds.
     #[arg(long, default_value_t = 30.0, value_parser = seconds)]
     stall_abandon: f64,
@@ -365,9 +422,17 @@ fn main() -> ExitCode {
             Some(rules) => clean::run(args, rules),
             None => ExitCode::from(1),
         },
+        Some(Cmd::Diff(args)) => history::diff(args),
+        Some(Cmd::History(args)) => history::list(args),
         Some(Cmd::Export(args)) => export(args),
         Some(Cmd::Import(args)) => import(args),
         Some(Cmd::Recover(args)) => recover(args),
+        Some(Cmd::Man { dir }) => man(&dir),
+        Some(Cmd::Completions { shell }) => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "dfdu", &mut std::io::stdout());
+            ExitCode::SUCCESS
+        }
         None if cli.disks && !std::io::stdout().is_terminal() => disks(),
         None => {
             let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
@@ -385,6 +450,7 @@ fn main() -> ExitCode {
                     rules: cli.rules,
                     bytes: false,
                     errors: false,
+                    no_history: false,
                     stall_abandon: 30.0,
                     stall_after: 10.0,
                     debug_stats: false,
@@ -422,6 +488,7 @@ fn main() -> ExitCode {
                     read_only: cli.read_only,
                     ..Default::default()
                 },
+                history: !cli.no_history && cli.import.is_none(),
                 ui: UiSettings {
                     theme,
                     color: cli.color.0,
@@ -748,11 +815,16 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         rules,
         bytes,
         errors: list_errors,
+        no_history,
         debug_stats,
+        measure_workers,
         ..
     } = args;
     let t0 = Instant::now();
+    let started = report::now_secs();
     let mut opts = mounts.job();
+    let measured = measure_workers.unwrap_or(EngineOptions::default().measure_workers) > 0;
+    let key = history::options_key(&opts, measured);
     opts.class = rules.load().map(|r| ClassOpts::for_root(r, &path));
     engine.send(Command::Scan { path, opts });
     engine.wait_idle(None);
@@ -808,6 +880,9 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         }
         if debug_stats {
             print_debug_stats(m);
+        }
+        if !no_history {
+            history::record(m, root, &key, started);
         }
         if total.errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)

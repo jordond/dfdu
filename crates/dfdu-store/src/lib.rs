@@ -1,6 +1,7 @@
-//! Persistence: ncdu JSON import and export (`safety-persistence-ops.md` §3.1), zstd streams
-//! and atomic file writes.
+//! Persistence: ncdu JSON import and export (`safety-persistence-ops.md` §3.1), native
+//! snapshots, scan history, zstd streams and atomic file writes.
 
+pub mod history;
 mod json;
 pub mod ncdu;
 pub mod snapshot;
@@ -135,6 +136,8 @@ impl<R: io::BufRead> io::Read for ZstdReader<R> {
 
 /// Writes `path` all at once or not at all: into a temporary file next to it, synced, then
 /// renamed over it, and the directory synced, so a crash leaves the old file or the new one.
+/// The temporary file is locked while it is written; those of writers that died (unlocked)
+/// are removed first.
 pub fn write_atomic<T>(
     path: &std::path::Path,
     f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
@@ -144,11 +147,16 @@ pub fn write_atomic<T>(
         _ => std::path::Path::new("."),
     };
     let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut tmp_name = std::ffi::OsString::from(".");
-    tmp_name.push(name);
-    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let mut prefix = std::ffi::OsString::from(".");
+    prefix.push(name);
+    prefix.push(".");
+    remove_stale_temps(dir, prefix.as_encoded_bytes());
+    let mut tmp_name = prefix;
+    tmp_name.push(format!("{}.tmp", std::process::id()));
     let tmp = dir.join(tmp_name);
     let mut file = std::fs::File::create(&tmp)?;
+    // Held until the file is closed, by this process or by its death.
+    let _ = file.try_lock();
     let r = f(&mut file).and_then(|v| file.sync_all().map(|()| v));
     let v = match r {
         Ok(v) => v,
@@ -166,6 +174,31 @@ pub fn write_atomic<T>(
     #[cfg(unix)]
     std::fs::File::open(dir)?.sync_all()?;
     Ok(v)
+}
+
+/// Removes the temporary files `<prefix><pid>.tmp` in `dir` that no writer holds locked: those
+/// of writers killed before they renamed them.
+fn remove_stale_temps(dir: &std::path::Path, prefix: &[u8]) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let n = e.file_name();
+        let b = n.as_encoded_bytes();
+        let Some(pid) = b.strip_prefix(prefix).and_then(|r| r.strip_suffix(b".tmp")) else {
+            continue;
+        };
+        if pid.is_empty() || !pid.iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        let Ok(f) = std::fs::OpenOptions::new().write(true).open(e.path()) else {
+            continue;
+        };
+        if f.try_lock().is_ok() {
+            drop(f);
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// A scan read from a file of either kind.

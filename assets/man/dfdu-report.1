@@ -1,0 +1,56 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-report 1  "dfdu-report " 
+.SH NAME
+dfdu\-report \- Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete
+.SH SYNOPSIS
+\fBdfdu report\fR [\fB\-\-min\-size\fR] [\fB\-\-category\fR] [\fB\-\-older\-than\fR] [\fB\-\-safety\fR] [\fB\-\-fail\-above\fR] [\fB\-\-format\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete
+.SH OPTIONS
+.TP
+\fB\-\-min\-size\fR \fI<SIZE>\fR
+Only matches at least this big (`100M`, `1.5GiB`, `500 KB`)
+.TP
+\fB\-\-category\fR \fI<CATEGORY>\fR
+Only these categories (comma separated): an id such as `dev.build`, or its first part (`dev`) for all of them
+.TP
+\fB\-\-older\-than\fR \fI<AGE>\fR
+Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days)
+.TP
+\fB\-\-safety\fR \fI<LEVEL>\fR
+Only matches this safe or safer: safe, regenerable, review, manual or protected (all)
+.TP
+\fB\-\-fail\-above\fR \fI<SIZE>\fR
+Exit with code 4 when the matches listed, protected ones left out, add up to more than this (`5GiB`), for CI
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: table]
+Output: table or json (schema/report.v1.json)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+table
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR] [default: .]
+

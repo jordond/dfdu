@@ -41,7 +41,14 @@ fn headless_scan_abandons_hung_directories() {
 
     let t0 = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_dfdu"))
-        .args(["scan", "--network", "--errors", "--depth", "2"])
+        .args([
+            "scan",
+            "--network",
+            "--errors",
+            "--depth",
+            "2",
+            "--no-history",
+        ])
         .args(["--stall-after", "0.3", "--stall-abandon", "0.5"])
         .arg(&root)
         .stdout(Stdio::piped())

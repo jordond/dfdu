@@ -39,7 +39,7 @@
         "category_name": { "type": "string" },
         "safety": { "$ref": "scan.v1.json#/$defs/safety" },
         "action": { "enum": ["delete", "trash", "native", "report"], "description": "How the rule cleans it up: delete the files, move them to the trash, run the owning tool's command, or nothing (reported only)." },
-        "native_command": { "type": "array", "items": { "type": "string" }, "description": "The owning tool's command, as arguments." },
+        "native_command": { "type": "array", "items": { "type": "string" }, "description": "The owning tool's command for this item, as arguments, with the rule's variables filled in." },
         "disk": { "$ref": "scan.v1.json#/$defs/count" },
         "apparent": { "$ref": "scan.v1.json#/$defs/count" },
         "entries": { "$ref": "scan.v1.json#/$defs/count" },

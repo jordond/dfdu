@@ -1,0 +1,5 @@
+base = "light"
+name = "nord"
+[tokens]
+fg = "#2e3440"
+bar = "blue"

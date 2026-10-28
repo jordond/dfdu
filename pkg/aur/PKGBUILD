@@ -1,0 +1,24 @@
+# Maintainer: Jordon de Hoog <jordon.dehoog@gmail.com>
+pkgname=dfdu-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Disk usage browser for the terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/jordond/dfdu"
+license=('MIT')
+provides=('dfdu')
+conflicts=('dfdu')
+source_x86_64=("$url/releases/download/v$pkgver/dfdu-x86_64-unknown-linux-musl.tar.xz")
+source_aarch64=("$url/releases/download/v$pkgver/dfdu-aarch64-unknown-linux-musl.tar.xz")
+sha256sums_x86_64=('@SHA256_x86_64-unknown-linux-musl@')
+sha256sums_aarch64=('@SHA256_aarch64-unknown-linux-musl@')
+
+package() {
+    cd "dfdu-$CARCH-unknown-linux-musl"
+    install -Dm755 dfdu "$pkgdir/usr/bin/dfdu"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 man/*.1 -t "$pkgdir/usr/share/man/man1"
+    install -Dm644 completions/dfdu.bash "$pkgdir/usr/share/bash-completion/completions/dfdu"
+    install -Dm644 completions/_dfdu "$pkgdir/usr/share/zsh/site-functions/_dfdu"
+    install -Dm644 completions/dfdu.fish "$pkgdir/usr/share/fish/vendor_completions.d/dfdu.fish"
+}

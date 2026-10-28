@@ -8,6 +8,11 @@ use std::process::{Command, Stdio};
 fn dfdu(args: &[&std::ffi::OsStr]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_dfdu"))
         .args(args)
+        // Scans are recorded in the history: not in the user's.
+        .env(
+            "DFDU_STATE_DIR",
+            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("state"),
+        )
         .stdin(Stdio::null())
         .output()
         .unwrap()

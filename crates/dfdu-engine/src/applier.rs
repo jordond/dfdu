@@ -1884,9 +1884,13 @@ impl<B: Backend> Applier<B> {
                     return;
                 };
                 c.flags = (c.flags & !Class::QUEUED) | Class::CHECKED;
-                if tracked == Some(true) {
-                    c.flags |= Class::VCS_TRACKED;
-                    c.safety = dfdu_rules::Safety::Protected as u8;
+                match tracked {
+                    Some(true) => {
+                        c.flags |= Class::VCS_TRACKED;
+                        c.safety = dfdu_rules::Safety::Protected as u8;
+                    }
+                    Some(false) => {}
+                    None => c.flags |= Class::VCS_UNKNOWN,
                 }
                 if running.is_some() {
                     c.flags |= Class::IN_USE;
@@ -2412,7 +2416,7 @@ impl<B: Backend> Applier<B> {
         if argv.is_empty() {
             return;
         }
-        let argv: Vec<String> = argv.iter().map(|a| native_var(a, &path)).collect();
+        let argv = native_argv(argv, &path);
         let cwd = def
             .cwd
             .as_deref()
@@ -2609,6 +2613,11 @@ impl<B: Backend> Applier<B> {
         }
         Ok(())
     }
+}
+
+/// A rule's native command as it runs for the matched node at `path`.
+pub fn native_argv(argv: &[String], path: &Path) -> Vec<String> {
+    argv.iter().map(|a| native_var(a, path)).collect()
 }
 
 /// Expands the variables a native command may use, for the matched node at `path`: `{path}`,

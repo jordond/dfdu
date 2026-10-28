@@ -1,0 +1,75 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-scan 1  "dfdu-scan " 
+.SH NAME
+dfdu\-scan \- Scan a directory and print a summary
+.SH SYNOPSIS
+\fBdfdu scan\fR [\fB\-\-format\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-like\-du\fR] [\fB\-\-threads\fR] [\fB\-\-measure\-workers\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-no\-rules\fR] [\fB\-\-bytes\fR] [\fB\-\-errors\fR] [\fB\-\-no\-history\fR] [\fB\-\-stall\-abandon\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+Scan a directory and print a summary
+.SH OPTIONS
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: table]
+Output: table (for people), json (one document, schema/scan.v1.json), ndjson (one record per line, for large trees) or ncdu (ncdu\*(Aqs JSON export)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+table
+.IP \(bu 2
+json
+.IP \(bu 2
+ndjson
+.IP \(bu 2
+ncdu
+.RE
+.TP
+\fB\-\-depth\fR \fI<DEPTH>\fR
+Levels of directories to print below the root [default: 1; every level for ndjson]
+.TP
+\fB\-\-top\fR \fI<TOP>\fR
+Entries to print per directory, largest first [default: 10; all for ndjson]
+.TP
+\fB\-\-apparent\fR
+Show apparent sizes instead of disk usage
+.TP
+\fB\-\-like\-du\fR
+Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many
+.TP
+\fB\-\-measure\-workers\fR \fI<MEASURE_WORKERS>\fR
+Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-\-no\-rules\fR
+Do not classify entries: no categories, no cleanup candidates
+.TP
+\fB\-\-bytes\fR
+Print only the root total in bytes (for scripts and tests)
+.TP
+\fB\-\-errors\fR
+List every entry that could not be read, with the reason
+.TP
+\fB\-\-no\-history\fR
+Do not record the scan in the history (`dfdu diff`, `dfdu history`)
+.TP
+\fB\-\-stall\-abandon\fR \fI<STALL_ABANDON>\fR [default: 30]
+Abandon directories stalled this many seconds
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR] [default: .]
+

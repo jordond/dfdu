@@ -11,6 +11,11 @@ use serde_json::Value;
 fn dfdu(args: &[&std::ffi::OsStr]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dfdu"))
         .args(args)
+        // Scans are recorded in the history: not in the user's.
+        .env(
+            "DFDU_STATE_DIR",
+            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("state"),
+        )
         .stdin(Stdio::null())
         .output()
         .unwrap()
@@ -258,5 +263,41 @@ fn report_json_validates_and_fail_above_sets_the_exit_code() {
     assert!(
         text.contains("node_modules") && text.contains("regenerable"),
         "{text}"
+    );
+}
+
+/// A native command is shown, in the table and in JSON, with the rule's variables filled in for
+/// the item: the AVD rule deletes `avdmanager delete avd -n pixel`.
+#[test]
+fn native_commands_are_shown_for_their_item() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let avd = root.join("avd");
+    fs::create_dir_all(avd.join("pixel.avd")).unwrap();
+    fs::write(avd.join("pixel.avd/config.ini"), "x").unwrap();
+    fs::write(avd.join("pixel.ini"), "x").unwrap();
+    let report = |format: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_dfdu"))
+            .args(["report".as_ref(), root.as_os_str()])
+            .args(["--format", format])
+            .env("ANDROID_AVD_HOME", &avd)
+            .env("DFDU_STATE_DIR", root.join("state"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        o
+    };
+    let table = String::from_utf8(report("table").stdout).unwrap();
+    assert!(
+        table.contains("`avdmanager delete avd -n pixel`"),
+        "{table}"
+    );
+    let doc = json(&report("json"));
+    let it = &doc["items"][0];
+    assert_eq!(it["rule"], "android.avd", "{doc}");
+    assert_eq!(
+        it["native_command"],
+        serde_json::json!(["avdmanager", "delete", "avd", "-n", "pixel"])
     );
 }

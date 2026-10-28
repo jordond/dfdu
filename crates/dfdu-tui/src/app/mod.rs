@@ -121,6 +121,8 @@ pub struct App {
     pub areas: Areas,
     /// The user's home directory, shown as `~` in the breadcrumbs.
     pub home: Option<PathBuf>,
+    /// The sizes of the last recorded scan of this root, to show what grew since.
+    pub growth: Option<std::sync::Arc<dfdu_store::history::Growth>>,
     /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
     pub sort_gen: u64,
     last_input: Instant,
@@ -213,6 +215,7 @@ impl App {
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
+            growth: None,
             sort_gen: 0,
             // No key pressed yet counts as idle.
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),

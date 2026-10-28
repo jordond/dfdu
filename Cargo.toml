@@ -20,6 +20,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
+repository = "https://github.com/jordond/dfdu"
+homepage = "https://github.com/jordond/dfdu"
 publish = false
 
 [workspace.dependencies]
@@ -36,6 +38,8 @@ crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"
 clap = { version = "4.6.7", features = ["derive"] }
+clap_mangen = "0.3.3"
+clap_complete = "4.6.11"
 anyhow = "1.0.104"
 os_str_bytes = { version = "7.2.1", features = ["conversions"] }
 dunce = "1.0.5"
@@ -45,6 +49,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 hex = "0.4.3"
 boon = "0.6.1"
+gix-index = "0.58.0"
+gix-discover = "0.57.1"
+gix-hash = { version = "0.28.1", features = ["sha1"] }
+gix-path = "0.14.1"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 ruzstd = "0.9.1"
 humansize = "2.1.3"
 fixedbitset = "0.5.7"
@@ -91,3 +100,9 @@ debug-assertions = true
 overflow-checks = true
 lto = false
 codegen-units = 16
+
+# The release build: `dist build` and `cargo build --profile dist`.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+strip = true

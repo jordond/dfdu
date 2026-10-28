@@ -23,6 +23,8 @@ pub enum Pending {
     /// The session ended between the intent and the result. `at_original` says whether
     /// something is still at the item's path; with the trash, the item may be there.
     Interrupted { mode: String, at_original: bool },
+    /// Interrupted on its way to the trash, and found there: it can be put back.
+    Trashed,
 }
 
 #[derive(Clone, Debug)]
@@ -48,10 +50,13 @@ impl Unfinished {
                 "{p}: interrupted ({mode}); {}",
                 if *at_original {
                     "something is still at its path"
+                } else if mode == "trash" {
+                    "it is no longer at its path, and was not found in the trash"
                 } else {
                     "it is no longer at its path"
                 }
             ),
+            Pending::Trashed => format!("{p}: interrupted (trash); it is in the trash"),
         }
     }
 }
@@ -62,6 +67,9 @@ type OpenItem = (ItemRec, Option<Pending>, Option<PathBuf>);
 
 struct Session {
     journal: Journal,
+    /// When the session started (seconds since the epoch, from the journal's name), before
+    /// anything it trashed went to the trash.
+    started: i64,
     /// A line other than the last failed its check: only reported, never acted on.
     damaged: bool,
 }
@@ -161,6 +169,13 @@ impl Recovery {
             ));
         }
         let session = self.sessions.len();
+        // Journals are named `<seconds>-<nanoseconds>-<pid>.jsonl`.
+        let started = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.split('-').next())
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
         let mut items: Vec<Unfinished> = open
             .into_values()
             .filter_map(|(rec, state, stage)| {
@@ -171,6 +186,17 @@ impl Recovery {
                     && fs::symlink_metadata(s).is_ok()
                 {
                     state = Pending::Staged { stage: s.clone() };
+                }
+                // Interrupted on its way to the trash: it may be there.
+                if let Pending::Interrupted {
+                    mode,
+                    at_original: false,
+                } = &state
+                    && mode == "trash"
+                    && let Some(path) = path_of_hex(&rec.path_hex)
+                    && crate::stage::in_trash(&path, &identity(&rec), started) == Ok(true)
+                {
+                    state = Pending::Trashed;
                 }
                 Some(Unfinished {
                     journal: path.clone(),
@@ -186,6 +212,7 @@ impl Recovery {
         self.items.extend(items);
         self.sessions.push(Session {
             journal: Journal::resume(file, path),
+            started,
             damaged,
         });
         Ok(())
@@ -208,6 +235,9 @@ impl Recovery {
         let stage = match &u.state {
             Pending::Staged { stage } | Pending::PartlyDeleted { stage } => stage,
             Pending::Interrupted { .. } => return Err("not staged; nothing to finish".into()),
+            Pending::Trashed => {
+                return Err("it is in the trash: empty the trash to delete it".into());
+            }
         };
         let j = &mut self.sessions[u.session].journal;
         if matches!(u.state, Pending::Staged { .. }) {
@@ -240,7 +270,7 @@ impl Recovery {
     /// (or in the trash): nothing is done on disk.
     pub fn dismiss(&mut self, i: usize) -> Result<(), String> {
         let u = self.checked(i)?.clone();
-        if !matches!(u.state, Pending::Interrupted { .. }) {
+        if !matches!(u.state, Pending::Interrupted { .. } | Pending::Trashed) {
             return Err("staged; finish or restore it instead".into());
         }
         record(
@@ -254,10 +284,24 @@ impl Recovery {
         Ok(())
     }
 
+    /// Puts an item found in the trash back at its path (refused if something is there now).
     /// Puts a staged item back at its path, or next to it as `<name>.restored-<n>` if
     /// something is there now. Refused for a partly deleted item.
     pub fn restore(&mut self, i: usize) -> Result<PathBuf, String> {
         let u = self.checked(i)?.clone();
+        if u.state == Pending::Trashed {
+            let started = self.sessions[u.session].started;
+            let to = crate::stage::restore_from_trash(&u.path, &identity(&u.rec), started)?;
+            record(
+                &mut self.sessions[u.session].journal,
+                Record::Restored {
+                    item: u.rec.clone(),
+                    to_hex: hex_path(&to),
+                },
+            )?;
+            self.items.remove(i);
+            return Ok(to);
+        }
         let Pending::Staged { stage } = &u.state else {
             return Err(match u.state {
                 Pending::PartlyDeleted { .. } => {
@@ -279,6 +323,17 @@ impl Recovery {
         }
         self.items.remove(i);
         Ok(to)
+    }
+}
+
+/// The identity the scan saw, as the journal recorded it.
+fn identity(rec: &ItemRec) -> crate::Identity {
+    crate::Identity {
+        dev: rec.dev,
+        ino: rec.ino,
+        kind: kind_of_str(&rec.kind),
+        apparent: rec.size,
+        mtime: rec.mtime,
     }
 }
 

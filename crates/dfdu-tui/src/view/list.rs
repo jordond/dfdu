@@ -11,7 +11,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::snapshot::Mark;
 use crate::theme::{bar, count, human, spinner};
-use crate::{filter, marks, motion};
+use crate::{filter, growth, marks, motion};
 
 fn bar_width(width: u16) -> usize {
     match width {
@@ -200,6 +200,15 @@ fn entry_line(
     if let Some((s, st)) = note {
         spans.push(Span::styled(s, st));
     }
+    if app.growth.is_some() && !e.ghost && !e.pseudo {
+        let path = app.snap.dir_path.join(dfdu_tree::name_os(&e.name));
+        if let Some((s, grew)) = growth::row_note(app, &path, e.size, e.mark) {
+            spans.push(Span::styled(
+                format!("  {s}"),
+                if grew { t.warn } else { t.dim },
+            ));
+        }
+    }
     if e.ghost {
         let struck = t.dim.add_modifier(Modifier::CROSSED_OUT);
         for s in &mut spans {
@@ -232,6 +241,73 @@ mod tests {
             entries,
             version,
             ..Default::default()
+        }
+    }
+
+    /// Rows note what grew or shrank noticeably since the last recorded scan; small changes,
+    /// entries the history does not have and rows still scanning get no note.
+    #[test]
+    fn rows_note_growth_since_the_last_scan() {
+        use dfdu_store::history::{Growth, Sizes};
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let mib = 1u64 << 20;
+        let then = |disk: u64| Sizes {
+            disk,
+            apparent: disk,
+            entries: 1,
+        };
+        app.growth = Some(std::sync::Arc::new(Growth {
+            root: PathBuf::from("/r"),
+            at: 86_400 * 3,
+            sizes: [
+                (b"grew".to_vec(), then(mib)),
+                (b"shrank".to_vec(), then(9 * mib)),
+                (b"same".to_vec(), then(4 * mib + 1000)),
+                (b"busy".to_vec(), then(mib)),
+            ]
+            .into_iter()
+            .collect(),
+        }));
+        let busy = EntryData {
+            mark: Mark::Scanning,
+            ..test_entry(4, "busy", 7 * mib)
+        };
+        app.refresh(
+            snap(
+                vec![
+                    test_entry(0, "grew", 5 * mib),
+                    test_entry(1, "shrank", 2 * mib),
+                    test_entry(2, "same", 4 * mib),
+                    test_entry(3, "unknown", 3 * mib),
+                    busy,
+                ],
+                1,
+            ),
+            t0,
+        );
+        let mut term = Terminal::new(TestBackend::new(120, 10)).expect("terminal");
+        term.draw(|f| crate::view::draw(f, &mut app, t0))
+            .expect("draw");
+        let buf = term.backend().buffer();
+        let rows: Vec<String> = (0..10)
+            .map(|y| (0..120).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+        let row = |name: &str| {
+            rows.iter()
+                .find(|r| r.contains(&format!("  {name}")))
+                .unwrap_or_else(|| panic!("{name}: {rows:#?}"))
+        };
+        assert!(
+            row("grew").contains("+4.0 MiB since 1970-01-04"),
+            "{rows:#?}"
+        );
+        assert!(
+            row("shrank").contains("-7.0 MiB since 1970-01-04"),
+            "{rows:#?}"
+        );
+        for quiet in ["same", "unknown", "busy"] {
+            assert!(!row(quiet).contains("since"), "{quiet}: {rows:#?}");
         }
     }
 

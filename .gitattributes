@@ -1,2 +1,6 @@
 crates/dfdu-tui/src/snapshots/*.snap text eol=lf
 crates/dfdu-tui/src/**/snapshots/*.snap text eol=lf
+# Shipped as generated (crates/dfdu/tests/assets.rs compares them byte for byte).
+assets/man/** text eol=lf
+assets/completions/** text eol=lf
+*.gif binary

@@ -1,0 +1,83 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-clean 1  "dfdu-clean " 
+.SH NAME
+dfdu\-clean \- Delete what `report` recommends (dry run unless \-\-yes)
+.SH SYNOPSIS
+\fBdfdu clean\fR [\fB\-\-min\-size\fR] [\fB\-\-category\fR] [\fB\-\-older\-than\fR] [\fB\-\-safety\fR] [\fB\-\-all\fR] [\fB\-\-mode\fR] [\fB\-\-yes\fR] [\fB\-\-allow\-commands\fR] [\fB\-\-finish\-staged\fR] [\fB\-\-restore\-staged\fR] [\fB\-\-format\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+Delete what `report` recommends (dry run unless \-\-yes)
+.SH OPTIONS
+.TP
+\fB\-\-min\-size\fR \fI<SIZE>\fR
+Only matches at least this big (`100M`, `1.5GiB`, `500 KB`)
+.TP
+\fB\-\-category\fR \fI<CATEGORY>\fR
+Only these categories (comma separated): an id such as `dev.build`, or its first part (`dev`) for all of them
+.TP
+\fB\-\-older\-than\fR \fI<AGE>\fR
+Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days)
+.TP
+\fB\-\-safety\fR \fI<LEVEL>\fR [default: regenerable]
+Matches this safe or safer are considered: safe, regenerable or review. Manual and protected matches are never deleted
+.TP
+\fB\-\-all\fR
+Every match that passes the filters, not only the recommended ones (recommended: `safe` above the rule\*(Aqs minimum size, `regenerable` also unchanged for the rule\*(Aqs minimum age, nothing changed in the last 7 days)
+.TP
+\fB\-\-mode\fR \fI<MODE>\fR [default: trash]
+trash (the default; frees no space until the trash is emptied), stage (moved aside at once, then deleted; what is left after a crash is offered by `dfdu recover`) or delete (permanently)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+trash
+.IP \(bu 2
+stage
+.IP \(bu 2
+delete
+.RE
+.TP
+\fB\-\-yes\fR
+Delete. Without it nothing is changed: the plan is printed
+.TP
+\fB\-\-allow\-commands\fR
+Run the owning tool\*(Aqs cleanup command for matches cleaned up that way (`docker system prune`, `go clean \-cache`). Without it they are skipped
+.TP
+\fB\-\-finish\-staged\fR
+First delete what earlier sessions left staged (`dfdu recover` lists it)
+.TP
+\fB\-\-restore\-staged\fR
+First put back what earlier sessions left staged
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: table]
+Output: table or json (schema/clean.v1.json)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+table
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR] [default: .]
+

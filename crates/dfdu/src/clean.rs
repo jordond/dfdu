@@ -47,6 +47,12 @@ pub struct CleanArgs {
     /// prune`, `go clean -cache`). Without it they are skipped.
     #[arg(long)]
     pub allow_commands: bool,
+    /// First delete what earlier sessions left staged (`dfdu recover` lists it).
+    #[arg(long, conflicts_with = "restore_staged")]
+    pub finish_staged: bool,
+    /// First put back what earlier sessions left staged.
+    #[arg(long)]
+    pub restore_staged: bool,
     /// Output: table or json (schema/clean.v1.json).
     #[arg(long, value_enum, default_value_t = report::ReportFormat::Table)]
     pub format: report::ReportFormat,
@@ -124,6 +130,8 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
         )
     } else if c.has(Class::VCS_TRACKED) {
         "tracked by version control".into()
+    } else if c.has(Class::VCS_UNKNOWN) {
+        "git could not tell whether it tracks files in it".into()
     } else if c.has(Class::IN_USE) {
         "in use: a process it belongs to is running".into()
     } else if !c.has(Class::CHECKED) && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
@@ -144,7 +152,68 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
     })
 }
 
+/// Reports what earlier sessions left unfinished, and with `--finish-staged` or
+/// `--restore-staged` (and `--yes`) finishes or restores their staged items. Returns whether
+/// something failed.
+fn earlier_sessions(args: &CleanArgs) -> bool {
+    let Some(dir) = dfdu_clean::default_journal_dir() else {
+        return false;
+    };
+    let mut r = match dfdu_clean::recover::scan(&dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("dfdu: {}: {e}", dir.display());
+            return true;
+        }
+    };
+    if r.items.is_empty() {
+        return false;
+    }
+    let act = args.yes && (args.finish_staged || args.restore_staged);
+    let mut failed = false;
+    // Highest first, so the numbers of the others stay valid.
+    for i in (0..r.items.len()).rev() {
+        let staged = matches!(
+            r.items[i].state,
+            dfdu_clean::recover::Pending::Staged { .. }
+                | dfdu_clean::recover::Pending::PartlyDeleted { .. }
+        );
+        if !act || !staged {
+            continue;
+        }
+        let path = r.items[i].path.display().to_string();
+        let res = if args.finish_staged {
+            r.finish(i)
+                .map(|()| format!("{path}: staged earlier, deleted"))
+        } else {
+            r.restore(i)
+                .map(|to| format!("{path}: staged earlier, restored at {}", to.display()))
+        };
+        match res {
+            Ok(m) => eprintln!("dfdu: {m}"),
+            Err(e) => {
+                eprintln!("dfdu: {path}: {e}");
+                failed = true;
+            }
+        }
+    }
+    if !r.items.is_empty() {
+        eprintln!(
+            "dfdu: {} item{} earlier sessions left unfinished (dfdu recover lists them{})",
+            r.items.len(),
+            if r.items.len() == 1 { "" } else { "s" },
+            if act {
+                ""
+            } else {
+                "; --finish-staged or --restore-staged with --yes acts on staged ones"
+            }
+        );
+    }
+    failed
+}
+
 pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
+    let earlier_failed = earlier_sessions(&args);
     let (engine, _) = match report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)
     {
         Ok(e) => e,
@@ -184,7 +253,7 @@ pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
             eprintln!("dfdu: writing the output: {e}");
             return ExitCode::from(1);
         }
-        if outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
+        if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
             ExitCode::from(EXIT_DELETE_FAILED)
         } else if !complete {
             ExitCode::from(EXIT_PARTIAL)
@@ -312,7 +381,8 @@ fn print_table(
         let why = o.reason().map(|r| format!("  ({r})")).unwrap_or_default();
         let how = match rules.rule(it.class.rule).native.as_ref() {
             Some(n) if rules.rule(it.class.rule).action == Action::Native => {
-                format!("  `{}`", n.command.join(" "))
+                let argv = dfdu_engine::native_argv(&n.command, &it.path);
+                format!("  `{}`", dfdu_engine::shown_argv(&argv))
             }
             _ => String::new(),
         };

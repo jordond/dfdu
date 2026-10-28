@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/diff.v1.json",
+  "title": "dfdu diff --format json",
+  "description": "How a directory tree changed between two scans: the total and the biggest changes, largest first. Sizes are bytes; paths as in scan.v1.json. Fields may be added without changing schema_version.",
+  "type": "object",
+  "required": ["schema_version", "tool", "root", "old", "new", "total", "changes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": { "$ref": "scan.v1.json#/$defs/tool" },
+    "root": { "type": "string" },
+    "root_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+    "old": { "$ref": "#/$defs/side" },
+    "new": { "$ref": "#/$defs/side" },
+    "total": { "$ref": "#/$defs/change" },
+    "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } }
+  },
+  "$defs": {
+    "side": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "type": "string", "description": "history (a recorded scan), scan (a scan made now) or the file the scan was read from." },
+        "finished_at": { "type": "integer", "description": "When the scan finished, seconds since 1970." }
+      }
+    },
+    "sizes": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["disk", "apparent", "entries"],
+          "properties": {
+            "disk": { "$ref": "scan.v1.json#/$defs/count" },
+            "apparent": { "$ref": "scan.v1.json#/$defs/count" },
+            "entries": { "$ref": "scan.v1.json#/$defs/count" }
+          }
+        }
+      ]
+    },
+    "change": {
+      "type": "object",
+      "required": ["path", "status", "old", "new", "delta_disk", "delta_apparent"],
+      "properties": {
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+        "status": { "enum": ["new", "gone", "grown", "shrunk", "unchanged"] },
+        "old": { "$ref": "#/$defs/sizes", "description": "null where the path was not there." },
+        "new": { "$ref": "#/$defs/sizes" },
+        "delta_disk": { "type": "integer" },
+        "delta_apparent": { "type": "integer" }
+      }
+    }
+  }
+}

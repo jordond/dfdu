@@ -1,0 +1,67 @@
+[package]
+name = "dfdu-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+description = "cargo-fuzz targets for dfdu's decoders and loaders (data-pipeline.md §10.4)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+dfdu-store = { path = "../crates/dfdu-store" }
+dfdu-rules = { path = "../crates/dfdu-rules" }
+dfdu-tui = { path = "../crates/dfdu-tui" }
+dfdu-engine = { path = "../crates/dfdu-engine" }
+dfdu-clean = { path = "../crates/dfdu-clean" }
+tempfile = "3.27.0"
+
+# Not a member of the dfdu workspace: it builds with nightly only.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "snapshot"
+path = "fuzz_targets/snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import"
+path = "fuzz_targets/import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rules"
+path = "fuzz_targets/rules.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme"
+path = "fuzz_targets/theme.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "native"
+path = "fuzz_targets/native.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal"
+path = "fuzz_targets/journal.rs"
+test = false
+doc = false
+bench = false

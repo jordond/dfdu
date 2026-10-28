@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: jordond.dfdu
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: Jordon de Hoog
+PackageName: dfdu
+License: MIT
+ShortDescription: Disk usage browser for the terminal
+PackageUrl: https://github.com/jordond/dfdu
+Tags:
+  - disk-usage
+  - du
+  - ncdu
+  - tui
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

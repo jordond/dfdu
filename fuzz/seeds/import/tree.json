@@ -1,0 +1,11 @@
+[1,2,{"progname":"dfdu","progver":"0.1.0","timestamp":1793158529},
+[{"name":"/private/tmp/dfdu-seed","asize":128,"dev":16777234,"mtime":1793158529},
+[{"name":"web","asize":160,"mtime":1793158529},
+{"name":"link","asize":4,"notreg":true,"mtime":1793158529},
+{"name":"package.json","asize":3,"dsize":4096,"mtime":1793158529},
+[{"name":"node_modules","asize":96,"mtime":1793158529},
+[{"name":"x","asize":64,"mtime":1793158529}]]],
+[{"name":"a","asize":128,"mtime":1793158529},
+{"name":"hard","asize":5000,"dsize":8192,"ino":419688872,"hlnkc":true,"nlink":2,"mtime":1793158529},
+[{"name":"b","asize":96,"mtime":1793158529},
+{"name":"f","asize":5000,"dsize":8192,"ino":419688872,"hlnkc":true,"nlink":2,"mtime":1793158529}]]]]

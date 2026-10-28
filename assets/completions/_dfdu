@@ -1,0 +1,420 @@
+#compdef dfdu
+
+autoload -U is-at-least
+
+_dfdu() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'(--disks -f --file)--resume-from=[Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done]:FILE:_files' \
+'(--disks)-f+[Browse a scan exported to FILE (ncdu JSON, plain or zstd; \`-\` for stdin), read-only]:FILE:_files' \
+'(--disks)--file=[Browse a scan exported to FILE (ncdu JSON, plain or zstd; \`-\` for stdin), read-only]:FILE:_files' \
+'--theme=[Colour theme\: auto, dark, light, ansi (the terminal'\''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown]:THEME:_default' \
+'--color=[Colours\: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set]:WHEN:_default' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'--no-rules[Do not classify entries\: no categories, no cleanup candidates]' \
+'()--disks[Choose a disk to browse from the mounted filesystems]' \
+'--read-only[Never delete anything (the delete keys are refused)]' \
+'--no-history[Do not record the scan in the history, nor show what grew since the last one]' \
+'--no-mouse[Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down]' \
+'--debug-stats[Start with the debug panel open, and print its numbers when the browser exits]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'-V[Print version]' \
+'--version[Print version]' \
+'::path -- Directory to browse (opens the interactive browser when stdout is a terminal):_files' \
+":: :_dfdu_commands" \
+"*::: :->dfdu" \
+&& ret=0
+    case $state in
+    (dfdu)
+        words=($line[2] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:dfdu-command-$line[2]:"
+        case $line[2] in
+            (scan)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output\: table (for people), json (one document, schema/scan.v1.json), ndjson (one record per line, for large trees) or ncdu (ncdu'\''s JSON export)]:FORMAT:(table json ndjson ncdu)' \
+'--depth=[Levels of directories to print below the root \[default\: 1; every level for ndjson\]]:DEPTH:_default' \
+'--top=[Entries to print per directory, largest first \[default\: 10; all for ndjson\]]:TOP:_default' \
+'--threads=[Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks\: 2, network\: 4) add that many]:THREADS:_default' \
+'--measure-workers=[Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does]:MEASURE_WORKERS:_default' \
+'--stall-abandon=[Abandon directories stalled this many seconds]:STALL_ABANDON:_default' \
+'--stall-after=[Report a directory as stalled after one call on it took this many seconds (tests)]:STALL_AFTER:_default' \
+'--backend=[Filesystem access\: \`native\` (the fastest for this system) or \`portable\` (std\:\:fs, the reference the native backends are tested against)]:BACKEND:(native portable)' \
+'(--like-du)--apparent[Show apparent sizes instead of disk usage]' \
+'--like-du[Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once]' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'--no-rules[Do not classify entries\: no categories, no cleanup candidates]' \
+'--bytes[Print only the root total in bytes (for scripts and tests)]' \
+'--errors[List every entry that could not be read, with the reason]' \
+'--no-history[Do not record the scan in the history (\`dfdu diff\`, \`dfdu history\`)]' \
+'--debug-stats[Print pipeline counters and applier timing (lock hold and wait) after the scan]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path:_files' \
+&& ret=0
+;;
+(disks)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(report)
+_arguments "${_arguments_options[@]}" : \
+'--min-size=[Only matches at least this big (\`100M\`, \`1.5GiB\`, \`500 KB\`)]:SIZE:_default' \
+'*--category=[Only these categories (comma separated)\: an id such as \`dev.build\`, or its first part (\`dev\`) for all of them]:CATEGORY:_default' \
+'--older-than=[Only matches unchanged for this long (\`30d\`, \`2w\`, \`12h\`; a bare number is days)]:AGE:_default' \
+'--safety=[Only matches this safe or safer\: safe, regenerable, review, manual or protected (all)]:LEVEL:_default' \
+'--fail-above=[Exit with code 4 when the matches listed, protected ones left out, add up to more than this (\`5GiB\`), for CI]:SIZE:_default' \
+'--format=[Output\: table or json (schema/report.v1.json)]:FORMAT:(table json)' \
+'--threads=[Worker threads]:THREADS:_default' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path:_files' \
+&& ret=0
+;;
+(clean)
+_arguments "${_arguments_options[@]}" : \
+'--min-size=[Only matches at least this big (\`100M\`, \`1.5GiB\`, \`500 KB\`)]:SIZE:_default' \
+'*--category=[Only these categories (comma separated)\: an id such as \`dev.build\`, or its first part (\`dev\`) for all of them]:CATEGORY:_default' \
+'--older-than=[Only matches unchanged for this long (\`30d\`, \`2w\`, \`12h\`; a bare number is days)]:AGE:_default' \
+'--safety=[Matches this safe or safer are considered\: safe, regenerable or review. Manual and protected matches are never deleted]:LEVEL:_default' \
+'--mode=[trash (the default; frees no space until the trash is emptied), stage (moved aside at once, then deleted; what is left after a crash is offered by \`dfdu recover\`) or delete (permanently)]:MODE:(trash stage delete)' \
+'--format=[Output\: table or json (schema/clean.v1.json)]:FORMAT:(table json)' \
+'--threads=[Worker threads]:THREADS:_default' \
+'--all[Every match that passes the filters, not only the recommended ones (recommended\: \`safe\` above the rule'\''s minimum size, \`regenerable\` also unchanged for the rule'\''s minimum age, nothing changed in the last 7 days)]' \
+'--yes[Delete. Without it nothing is changed\: the plan is printed]' \
+'--allow-commands[Run the owning tool'\''s cleanup command for matches cleaned up that way (\`docker system prune\`, \`go clean -cache\`). Without it they are skipped]' \
+'(--restore-staged)--finish-staged[First delete what earlier sessions left staged (\`dfdu recover\` lists it)]' \
+'--restore-staged[First put back what earlier sessions left staged]' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path:_files' \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+'--since=[Compare with the recorded scan closest to this long ago (\`7d\`, \`2w\`, \`12h\`) instead of the last one]:AGE:_default' \
+'--depth=[Levels below the root to list]:DEPTH:_default' \
+'--top=[Changes to list, largest first]:TOP:_default' \
+'--min-change=[Leave out changes smaller than this (\`1M\`, \`500K\`)]:SIZE:_default' \
+'--format=[Output\: table or json (schema/diff.v1.json)]:FORMAT:(table json)' \
+'--threads=[Worker threads]:THREADS:_default' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'*::paths -- A directory, scanned now and compared with its last recorded scan; or two files (a snapshot or an ncdu export each), the older first:_files' \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path -- Only scans of this directory:_files' \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Where to write (\`-\` for stdout)]:FILE:_files' \
+'--output=[Where to write (\`-\` for stdout)]:FILE:_files' \
+'--threads=[Worker threads]:THREADS:_default' \
+'(--snapshot)--compress[Compress with zstd (ncdu reads it with \`-f\`; dfdu recognises it on import)]' \
+'--snapshot[Write dfdu'\''s own snapshot format instead (lossless, checked, compressed; for \`dfdu -f\` and \`--resume-from\`, not for ncdu)]' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path:_files' \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+'--depth=[Levels of directories to print below the root]:DEPTH:_default' \
+'--top=[Entries to print per directory, largest first]:TOP:_default' \
+'--apparent[Show apparent sizes instead of disk usage]' \
+'--bytes[Print only the root total in bytes]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':file -- The export (`-` for stdin):_files' \
+&& ret=0
+;;
+(recover)
+_arguments "${_arguments_options[@]}" : \
+'*--finish=[Delete what is left of these staged items (numbers from the list)]:N:_default' \
+'*--restore=[Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it]:N:_default' \
+'*--dismiss=[Close these interrupted items\: nothing is done on disk]:N:_default' \
+'--journals=[The journal directory (the default is dfdu'\''s state directory)]:JOURNALS:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(man)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':dir:_files' \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_dfdu__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:dfdu-help-command-$line[1]:"
+        case $line[1] in
+            (scan)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(disks)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(report)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(clean)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(recover)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(man)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_dfdu_commands] )) ||
+_dfdu_commands() {
+    local commands; commands=(
+'scan:Scan a directory and print a summary' \
+'disks:List the mounted filesystems with their size and free space' \
+'report:Scan a directory and list what the cleanup rules found in it\: caches, build output, dependencies, with how safe each is to delete' \
+'clean:Delete what \`report\` recommends (dry run unless --yes)' \
+'diff:What grew\: a directory now against its last recorded scan (or one from --since ago), or two saved scans' \
+'history:List the recorded scans' \
+'export:Scan a directory and write it in ncdu'\''s JSON format' \
+'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
+'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
+'man:Write man pages (dfdu.1 and one per command) into DIR, for packagers' \
+'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'dfdu commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__clean_commands] )) ||
+_dfdu__subcmd__clean_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu clean commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__completions_commands] )) ||
+_dfdu__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu completions commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__diff_commands] )) ||
+_dfdu__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu diff commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__disks_commands] )) ||
+_dfdu__subcmd__disks_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu disks commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__export_commands] )) ||
+_dfdu__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu export commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help_commands] )) ||
+_dfdu__subcmd__help_commands() {
+    local commands; commands=(
+'scan:Scan a directory and print a summary' \
+'disks:List the mounted filesystems with their size and free space' \
+'report:Scan a directory and list what the cleanup rules found in it\: caches, build output, dependencies, with how safe each is to delete' \
+'clean:Delete what \`report\` recommends (dry run unless --yes)' \
+'diff:What grew\: a directory now against its last recorded scan (or one from --since ago), or two saved scans' \
+'history:List the recorded scans' \
+'export:Scan a directory and write it in ncdu'\''s JSON format' \
+'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
+'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
+'man:Write man pages (dfdu.1 and one per command) into DIR, for packagers' \
+'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'dfdu help commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__clean_commands] )) ||
+_dfdu__subcmd__help__subcmd__clean_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help clean commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__completions_commands] )) ||
+_dfdu__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help completions commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__diff_commands] )) ||
+_dfdu__subcmd__help__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help diff commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__disks_commands] )) ||
+_dfdu__subcmd__help__subcmd__disks_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help disks commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__export_commands] )) ||
+_dfdu__subcmd__help__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help export commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__help_commands] )) ||
+_dfdu__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help help commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__history_commands] )) ||
+_dfdu__subcmd__help__subcmd__history_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help history commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__import_commands] )) ||
+_dfdu__subcmd__help__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help import commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__man_commands] )) ||
+_dfdu__subcmd__help__subcmd__man_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help man commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__recover_commands] )) ||
+_dfdu__subcmd__help__subcmd__recover_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help recover commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__report_commands] )) ||
+_dfdu__subcmd__help__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help report commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__scan_commands] )) ||
+_dfdu__subcmd__help__subcmd__scan_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help scan commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__history_commands] )) ||
+_dfdu__subcmd__history_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu history commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__import_commands] )) ||
+_dfdu__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu import commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__man_commands] )) ||
+_dfdu__subcmd__man_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu man commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__recover_commands] )) ||
+_dfdu__subcmd__recover_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu recover commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__report_commands] )) ||
+_dfdu__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu report commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__scan_commands] )) ||
+_dfdu__subcmd__scan_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu scan commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_dfdu" ]; then
+    _dfdu "$@"
+else
+    compdef _dfdu dfdu
+fi

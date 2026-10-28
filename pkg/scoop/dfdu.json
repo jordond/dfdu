@@ -1,0 +1,21 @@
+{
+    "version": "@VERSION@",
+    "description": "Disk usage browser for the terminal",
+    "homepage": "https://github.com/jordond/dfdu",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/jordond/dfdu/releases/download/v@VERSION@/dfdu-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA256_x86_64-pc-windows-msvc@"
+        }
+    },
+    "bin": "dfdu.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/jordond/dfdu/releases/download/v$version/dfdu-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}

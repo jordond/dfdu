@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-import 1  "dfdu-import " 
+.SH NAME
+dfdu\-import \- Read a scan in ncdu\*(Aqs JSON format and print a summary (`dfdu \-f FILE` browses it)
+.SH SYNOPSIS
+\fBdfdu import\fR [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-bytes\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+.SH DESCRIPTION
+Read a scan in ncdu\*(Aqs JSON format and print a summary (`dfdu \-f FILE` browses it)
+.SH OPTIONS
+.TP
+\fB\-\-depth\fR \fI<DEPTH>\fR [default: 1]
+Levels of directories to print below the root
+.TP
+\fB\-\-top\fR \fI<TOP>\fR [default: 10]
+Entries to print per directory, largest first
+.TP
+\fB\-\-apparent\fR
+Show apparent sizes instead of disk usage
+.TP
+\fB\-\-bytes\fR
+Print only the root total in bytes
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIFILE\fR>
+The export (`\-` for stdin)

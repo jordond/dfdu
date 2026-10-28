@@ -352,11 +352,33 @@ jobs:
           path: target/release/dfdu${{ runner.os == 'Windows' && '.exe' || '' }}
           retention-days: 7
 
+  fuzz:
+    name: Fuzz (one minute per target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+      - name: Run each target from its seeds and regressions
+        run: |
+          for t in snapshot import rules theme native journal; do
+            mkdir -p "fuzz/corpus/$t"
+            extra=""
+            if [ -d "fuzz/regressions/$t" ]; then extra="fuzz/regressions/$t"; fi
+            cargo +nightly fuzz run "$t" "fuzz/corpus/$t" "fuzz/seeds/$t" $extra -- \
+              -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+          done
+
   ci-success:
     name: CI success
     if: always()
     needs:
-      [fmt, clippy, docs, test, coverage, msrv, deny, simulation, loom, fuse, btrfs, machete, binaries, zizmor]
+      [fmt, clippy, docs, test, coverage, msrv, deny, simulation, loom, fuse, btrfs, machete, binaries, zizmor, fuzz]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

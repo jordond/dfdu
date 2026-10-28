@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-recover 1  "dfdu-recover " 
+.SH NAME
+dfdu\-recover \- List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them
+.SH SYNOPSIS
+\fBdfdu recover\fR [\fB\-\-finish\fR] [\fB\-\-restore\fR] [\fB\-\-dismiss\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them
+.SH OPTIONS
+.TP
+\fB\-\-finish\fR \fI<N>\fR
+Delete what is left of these staged items (numbers from the list)
+.TP
+\fB\-\-restore\fR \fI<N>\fR
+Put these staged items back at their paths (next to them as NAME.restored\-N if something is there now), or take these items found in the trash back out of it
+.TP
+\fB\-\-dismiss\fR \fI<N>\fR
+Close these interrupted items: nothing is done on disk
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

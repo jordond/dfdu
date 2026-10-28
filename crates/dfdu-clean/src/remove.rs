@@ -14,7 +14,15 @@ use dfdu_tree::Kind;
 
 /// Deletes `path` (a directory and everything in it, or a single entry).
 pub fn remove(path: &Path, kind: Kind) -> io::Result<()> {
-    imp::remove(path, kind)
+    imp::remove(path, kind, None)
+}
+
+/// Deletes `path` only if what it names is still the device and inode `(dev, ino)`, checked
+/// on the item as opened for the delete, so a path that was swapped since it was verified (a
+/// directory above it replaced by a symlink) deletes nothing. Windows checks nothing more than
+/// [`remove`].
+pub fn remove_verified(path: &Path, kind: Kind, dev: u64, ino: u64) -> io::Result<()> {
+    imp::remove(path, kind, Some((dev, ino)))
 }
 
 #[cfg(unix)]
@@ -75,22 +83,54 @@ mod imp {
         ))
     }
 
-    pub fn remove(path: &Path, kind: Kind) -> io::Result<()> {
+    fn changed(path: &Path) -> io::Error {
+        io::Error::other(format!(
+            "{} is no longer the item that was checked; not deleting it",
+            path.display()
+        ))
+    }
+
+    pub fn remove(path: &Path, kind: Kind, expect: Option<(u64, u64)>) -> io::Result<()> {
         let (parent, name) = match (path.parent(), path.file_name()) {
             (Some(p), Some(n)) if !p.as_os_str().is_empty() => (p, n),
             _ => return Err(io::ErrorKind::InvalidInput.into()),
         };
         let pfd = open_dir(CWD, parent.as_os_str())?;
         if kind != Kind::Dir {
+            if let Some((dev, ino)) = expect {
+                let st =
+                    rustix::fs::statat(&pfd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(errno)?;
+                if (st.st_dev as u64, st.st_ino as u64) != (dev, ino) {
+                    return Err(changed(path));
+                }
+            }
             return rustix::fs::unlinkat(&pfd, name, AtFlags::empty()).map_err(errno);
         }
-        let (root, _) = fs_of(open_dir(&pfd, name)?.as_fd())?;
-        remove_dir(pfd.as_fd(), name, root, path)
+        let dfd = open_dir(&pfd, name)?;
+        if let Some((dev, ino)) = expect {
+            let st = rustix::fs::fstat(&dfd).map_err(errno)?;
+            if (st.st_dev as u64, st.st_ino as u64) != (dev, ino) {
+                return Err(changed(path));
+            }
+        }
+        let (root, _) = fs_of(dfd.as_fd())?;
+        empty_and_remove(pfd.as_fd(), name, dfd, root, path)
     }
 
     fn remove_dir(parent: BorrowedFd<'_>, name: &OsStr, root: Fs, path: &Path) -> io::Result<()> {
-        // Checked on the opened directory itself, so a mount made in between is seen.
         let dfd = open_dir(parent, name)?;
+        empty_and_remove(parent, name, dfd, root, path)
+    }
+
+    /// Empties the directory open as `dfd` (`name` in `parent`) and removes it.
+    fn empty_and_remove(
+        parent: BorrowedFd<'_>,
+        name: &OsStr,
+        dfd: OwnedFd,
+        root: Fs,
+        path: &Path,
+    ) -> io::Result<()> {
+        // Checked on the opened directory itself, so a mount made in between is seen.
         let (here, ino) = fs_of(dfd.as_fd())?;
         if !here.same(root) {
             return Err(io::Error::other(format!(
@@ -147,7 +187,7 @@ mod imp {
 
     /// Windows: `remove_dir_all` does not follow junctions or mounted-folder reparse points; it
     /// removes the link itself.
-    pub fn remove(path: &Path, kind: Kind) -> io::Result<()> {
+    pub fn remove(path: &Path, kind: Kind, _expect: Option<(u64, u64)>) -> io::Result<()> {
         if kind == Kind::Dir {
             std::fs::remove_dir_all(path)
         } else {
@@ -176,6 +216,38 @@ mod tests {
         std::fs::write(tmp.path().join("f"), b"x").unwrap();
         remove(&tmp.path().join("f"), Kind::File).unwrap();
         assert!(!tmp.path().join("f").exists());
+    }
+
+    /// A directory above the item replaced by a symlink after the item was checked: the path
+    /// now names another directory, which is not deleted. (A symlink as the parent itself is
+    /// refused when the parent is opened.)
+    #[test]
+    fn a_swapped_path_deletes_nothing() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let item = tmp.path().join("a/b/item");
+        std::fs::create_dir_all(&item).unwrap();
+        std::fs::write(tmp.path().join("a/b/file"), b"x").unwrap();
+        let m = std::fs::symlink_metadata(&item).unwrap();
+        let f = std::fs::symlink_metadata(tmp.path().join("a/b/file")).unwrap();
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(other.join("b/item")).unwrap();
+        std::fs::write(other.join("b/item/precious"), b"p").unwrap();
+        std::fs::write(other.join("b/file"), b"p").unwrap();
+        std::fs::rename(tmp.path().join("a"), tmp.path().join("a-moved")).unwrap();
+        std::os::unix::fs::symlink(&other, tmp.path().join("a")).unwrap();
+        let e = remove_verified(&item, Kind::Dir, m.dev(), m.ino()).unwrap_err();
+        assert!(e.to_string().contains("no longer the item"), "{e}");
+        assert!(other.join("b/item/precious").exists());
+        let file = tmp.path().join("a/b/file");
+        let e = remove_verified(&file, Kind::File, f.dev(), f.ino()).unwrap_err();
+        assert!(e.to_string().contains("no longer the item"), "{e}");
+        assert!(other.join("b/file").exists());
+        // Where they are now, they are deleted.
+        let moved = tmp.path().join("a-moved/b");
+        remove_verified(&moved.join("item"), Kind::Dir, m.dev(), m.ino()).unwrap();
+        remove_verified(&moved.join("file"), Kind::File, f.dev(), f.ino()).unwrap();
+        assert!(!moved.join("item").exists() && !moved.join("file").exists());
     }
 
     #[test]

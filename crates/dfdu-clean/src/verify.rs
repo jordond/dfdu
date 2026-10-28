@@ -59,7 +59,8 @@ fn fixed_protected(path: &Path) -> bool {
 /// Linux: the freedesktop home trash is on the filesystem of `$XDG_DATA_HOME`. The `trash`
 /// crate copies items from other filesystems into it, which can fill the home filesystem and
 /// takes as long as a copy, so such items are refused for trash mode.
-/// On btrfs a different `st_dev` on the same mount is another subvolume.
+/// On btrfs a different `st_dev` on the same mount is another subvolume. A data directory that
+/// does not exist yet is created by the trash crate, on the filesystem of its nearest ancestor.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
     use etcetera::BaseStrategy;
@@ -67,7 +68,11 @@ fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
     let data = etcetera::base_strategy::Xdg::new()
         .ok()
         .map(|x| x.data_dir());
-    let Some((dir, m)) = data.and_then(|d| fs::metadata(&d).ok().map(|m| (d, m))) else {
+    let found = data.and_then(|d| {
+        d.ancestors()
+            .find_map(|a| fs::metadata(a).ok().map(|m| (a.to_path_buf(), m)))
+    });
+    let Some((dir, m)) = found else {
         return Some(Refusal::TrashCrossesFilesystems);
     };
     if m.dev() == item_dev {

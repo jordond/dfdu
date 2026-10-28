@@ -1,0 +1,240 @@
+
+using namespace System.Management.Automation
+using namespace System.Management.Automation.Language
+
+Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $commandElements = $commandAst.CommandElements
+    $command = @(
+        'dfdu'
+        for ($i = 1; $i -lt $commandElements.Count; $i++) {
+            $element = $commandElements[$i]
+            if ($element -isnot [StringConstantExpressionAst] -or
+                $element.StringConstantType -ne [StringConstantType]::BareWord -or
+                $element.Value.StartsWith('-') -or
+                $element.Value -eq $wordToComplete) {
+                break
+        }
+        $element.Value
+    }) -join ';'
+
+    $completions = @(switch ($command) {
+        'dfdu' {
+            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done')
+            [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only')
+            [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only')
+            [CompletionResult]::new('--theme', '--theme', [CompletionResultType]::ParameterName, 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--no-rules', '--no-rules', [CompletionResultType]::ParameterName, 'Do not classify entries: no categories, no cleanup candidates')
+            [CompletionResult]::new('--disks', '--disks', [CompletionResultType]::ParameterName, 'Choose a disk to browse from the mounted filesystems')
+            [CompletionResult]::new('--read-only', '--read-only', [CompletionResultType]::ParameterName, 'Never delete anything (the delete keys are refused)')
+            [CompletionResult]::new('--no-history', '--no-history', [CompletionResultType]::ParameterName, 'Do not record the scan in the history, nor show what grew since the last one')
+            [CompletionResult]::new('--no-mouse', '--no-mouse', [CompletionResultType]::ParameterName, 'Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down')
+            [CompletionResult]::new('--debug-stats', '--debug-stats', [CompletionResultType]::ParameterName, 'Start with the debug panel open, and print its numbers when the browser exits')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('-V', '-V ', [CompletionResultType]::ParameterName, 'Print version')
+            [CompletionResult]::new('--version', '--version', [CompletionResultType]::ParameterName, 'Print version')
+            [CompletionResult]::new('scan', 'scan', [CompletionResultType]::ParameterValue, 'Scan a directory and print a summary')
+            [CompletionResult]::new('disks', 'disks', [CompletionResultType]::ParameterValue, 'List the mounted filesystems with their size and free space')
+            [CompletionResult]::new('report', 'report', [CompletionResultType]::ParameterValue, 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete')
+            [CompletionResult]::new('clean', 'clean', [CompletionResultType]::ParameterValue, 'Delete what `report` recommends (dry run unless --yes)')
+            [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans')
+            [CompletionResult]::new('history', 'history', [CompletionResultType]::ParameterValue, 'List the recorded scans')
+            [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
+            [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
+            [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
+            [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
+            [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'dfdu;scan' {
+            [CompletionResult]::new('--format', '--format', [CompletionResultType]::ParameterName, 'Output: table (for people), json (one document, schema/scan.v1.json), ndjson (one record per line, for large trees) or ncdu (ncdu''s JSON export)')
+            [CompletionResult]::new('--depth', '--depth', [CompletionResultType]::ParameterName, 'Levels of directories to print below the root [default: 1; every level for ndjson]')
+            [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first [default: 10; all for ndjson]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many')
+            [CompletionResult]::new('--measure-workers', '--measure-workers', [CompletionResultType]::ParameterName, 'Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does')
+            [CompletionResult]::new('--stall-abandon', '--stall-abandon', [CompletionResultType]::ParameterName, 'Abandon directories stalled this many seconds')
+            [CompletionResult]::new('--stall-after', '--stall-after', [CompletionResultType]::ParameterName, 'Report a directory as stalled after one call on it took this many seconds (tests)')
+            [CompletionResult]::new('--backend', '--backend', [CompletionResultType]::ParameterName, 'Filesystem access: `native` (the fastest for this system) or `portable` (std::fs, the reference the native backends are tested against)')
+            [CompletionResult]::new('--apparent', '--apparent', [CompletionResultType]::ParameterName, 'Show apparent sizes instead of disk usage')
+            [CompletionResult]::new('--like-du', '--like-du', [CompletionResultType]::ParameterName, 'Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('--no-rules', '--no-rules', [CompletionResultType]::ParameterName, 'Do not classify entries: no categories, no cleanup candidates')
+            [CompletionResult]::new('--bytes', '--bytes', [CompletionResultType]::ParameterName, 'Print only the root total in bytes (for scripts and tests)')
+            [CompletionResult]::new('--errors', '--errors', [CompletionResultType]::ParameterName, 'List every entry that could not be read, with the reason')
+            [CompletionResult]::new('--no-history', '--no-history', [CompletionResultType]::ParameterName, 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)')
+            [CompletionResult]::new('--debug-stats', '--debug-stats', [CompletionResultType]::ParameterName, 'Print pipeline counters and applier timing (lock hold and wait) after the scan')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;disks' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;report' {
+            [CompletionResult]::new('--min-size', '--min-size', [CompletionResultType]::ParameterName, 'Only matches at least this big (`100M`, `1.5GiB`, `500 KB`)')
+            [CompletionResult]::new('--category', '--category', [CompletionResultType]::ParameterName, 'Only these categories (comma separated): an id such as `dev.build`, or its first part (`dev`) for all of them')
+            [CompletionResult]::new('--older-than', '--older-than', [CompletionResultType]::ParameterName, 'Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days)')
+            [CompletionResult]::new('--safety', '--safety', [CompletionResultType]::ParameterName, 'Only matches this safe or safer: safe, regenerable, review, manual or protected (all)')
+            [CompletionResult]::new('--fail-above', '--fail-above', [CompletionResultType]::ParameterName, 'Exit with code 4 when the matches listed, protected ones left out, add up to more than this (`5GiB`), for CI')
+            [CompletionResult]::new('--format', '--format', [CompletionResultType]::ParameterName, 'Output: table or json (schema/report.v1.json)')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;clean' {
+            [CompletionResult]::new('--min-size', '--min-size', [CompletionResultType]::ParameterName, 'Only matches at least this big (`100M`, `1.5GiB`, `500 KB`)')
+            [CompletionResult]::new('--category', '--category', [CompletionResultType]::ParameterName, 'Only these categories (comma separated): an id such as `dev.build`, or its first part (`dev`) for all of them')
+            [CompletionResult]::new('--older-than', '--older-than', [CompletionResultType]::ParameterName, 'Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days)')
+            [CompletionResult]::new('--safety', '--safety', [CompletionResultType]::ParameterName, 'Matches this safe or safer are considered: safe, regenerable or review. Manual and protected matches are never deleted')
+            [CompletionResult]::new('--mode', '--mode', [CompletionResultType]::ParameterName, 'trash (the default; frees no space until the trash is emptied), stage (moved aside at once, then deleted; what is left after a crash is offered by `dfdu recover`) or delete (permanently)')
+            [CompletionResult]::new('--format', '--format', [CompletionResultType]::ParameterName, 'Output: table or json (schema/clean.v1.json)')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('--all', '--all', [CompletionResultType]::ParameterName, 'Every match that passes the filters, not only the recommended ones (recommended: `safe` above the rule''s minimum size, `regenerable` also unchanged for the rule''s minimum age, nothing changed in the last 7 days)')
+            [CompletionResult]::new('--yes', '--yes', [CompletionResultType]::ParameterName, 'Delete. Without it nothing is changed: the plan is printed')
+            [CompletionResult]::new('--allow-commands', '--allow-commands', [CompletionResultType]::ParameterName, 'Run the owning tool''s cleanup command for matches cleaned up that way (`docker system prune`, `go clean -cache`). Without it they are skipped')
+            [CompletionResult]::new('--finish-staged', '--finish-staged', [CompletionResultType]::ParameterName, 'First delete what earlier sessions left staged (`dfdu recover` lists it)')
+            [CompletionResult]::new('--restore-staged', '--restore-staged', [CompletionResultType]::ParameterName, 'First put back what earlier sessions left staged')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;diff' {
+            [CompletionResult]::new('--since', '--since', [CompletionResultType]::ParameterName, 'Compare with the recorded scan closest to this long ago (`7d`, `2w`, `12h`) instead of the last one')
+            [CompletionResult]::new('--depth', '--depth', [CompletionResultType]::ParameterName, 'Levels below the root to list')
+            [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Changes to list, largest first')
+            [CompletionResult]::new('--min-change', '--min-change', [CompletionResultType]::ParameterName, 'Leave out changes smaller than this (`1M`, `500K`)')
+            [CompletionResult]::new('--format', '--format', [CompletionResultType]::ParameterName, 'Output: table or json (schema/diff.v1.json)')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;history' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;export' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('--compress', '--compress', [CompletionResultType]::ParameterName, 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)')
+            [CompletionResult]::new('--snapshot', '--snapshot', [CompletionResultType]::ParameterName, 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;import' {
+            [CompletionResult]::new('--depth', '--depth', [CompletionResultType]::ParameterName, 'Levels of directories to print below the root')
+            [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first')
+            [CompletionResult]::new('--apparent', '--apparent', [CompletionResultType]::ParameterName, 'Show apparent sizes instead of disk usage')
+            [CompletionResult]::new('--bytes', '--bytes', [CompletionResultType]::ParameterName, 'Print only the root total in bytes')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;recover' {
+            [CompletionResult]::new('--finish', '--finish', [CompletionResultType]::ParameterName, 'Delete what is left of these staged items (numbers from the list)')
+            [CompletionResult]::new('--restore', '--restore', [CompletionResultType]::ParameterName, 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it')
+            [CompletionResult]::new('--dismiss', '--dismiss', [CompletionResultType]::ParameterName, 'Close these interrupted items: nothing is done on disk')
+            [CompletionResult]::new('--journals', '--journals', [CompletionResultType]::ParameterName, 'The journal directory (the default is dfdu''s state directory)')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;man' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;completions' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;help' {
+            [CompletionResult]::new('scan', 'scan', [CompletionResultType]::ParameterValue, 'Scan a directory and print a summary')
+            [CompletionResult]::new('disks', 'disks', [CompletionResultType]::ParameterValue, 'List the mounted filesystems with their size and free space')
+            [CompletionResult]::new('report', 'report', [CompletionResultType]::ParameterValue, 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete')
+            [CompletionResult]::new('clean', 'clean', [CompletionResultType]::ParameterValue, 'Delete what `report` recommends (dry run unless --yes)')
+            [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans')
+            [CompletionResult]::new('history', 'history', [CompletionResultType]::ParameterValue, 'List the recorded scans')
+            [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
+            [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
+            [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
+            [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
+            [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'dfdu;help;scan' {
+            break
+        }
+        'dfdu;help;disks' {
+            break
+        }
+        'dfdu;help;report' {
+            break
+        }
+        'dfdu;help;clean' {
+            break
+        }
+        'dfdu;help;diff' {
+            break
+        }
+        'dfdu;help;history' {
+            break
+        }
+        'dfdu;help;export' {
+            break
+        }
+        'dfdu;help;import' {
+            break
+        }
+        'dfdu;help;recover' {
+            break
+        }
+        'dfdu;help;man' {
+            break
+        }
+        'dfdu;help;completions' {
+            break
+        }
+        'dfdu;help;help' {
+            break
+        }
+    })
+
+    $completions.Where{ $_.CompletionText -like "$wordToComplete*" } |
+        Sort-Object -Property ListItemText
+}

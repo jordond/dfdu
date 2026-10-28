@@ -7,14 +7,17 @@
 //! requests and applies its answers, which name nodes by [`NodeRef`], so an answer for a node
 //! freed since is dropped (scenario 13 in `data-pipeline.md` §10.2).
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_tree::NodeRef;
+use parking_lot::Mutex;
 
 /// How long one external command may take.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
@@ -154,37 +157,69 @@ fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Whether git tracks a file in the directory at `path`: `git ls-files --error-unmatch` in
-/// its parent. `Some(false)` outside a repository. The repository's own configuration could
-/// name a command for git to run (`core.fsmonitor`), so that is turned off.
+/// Whether git tracks a file in the directory at `path` (or the file itself): read from the
+/// index of the nearest repository above it (`gix-index`), so no command runs and nothing in
+/// the repository's configuration is executed. `Some(false)` outside a repository, `None` when
+/// its index cannot be read.
 pub fn git_tracked(path: &Path) -> Option<bool> {
-    let (parent, name) = (path.parent()?, path.file_name()?);
-    if !inside_git_repo(parent) {
+    let parent = path.parent()?;
+    let Some(root) = parent.ancestors().find(|d| d.join(".git").exists()) else {
         return Some(false);
-    }
-    let argv: Vec<String> = [
-        "git",
-        "-c",
-        "core.fsmonitor=false",
-        "ls-files",
-        "--error-unmatch",
-        "--",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .chain([name.to_string_lossy().into_owned()])
-    .collect();
-    match run(&argv, Some(parent)) {
-        Ok(_) => Some(true),
-        // Exit status 1: nothing under it is tracked.
-        Err(e) if e.contains("exit status: 1") => Some(false),
-        Err(_) => None,
-    }
+    };
+    let rel = gix_path::into_bstr(path.strip_prefix(root).ok()?).ok()?;
+    let rel = gix_path::to_unix_separators_on_windows(rel);
+    let index = index(root)?;
+    let mut dir = rel.to_vec();
+    dir.push(b'/');
+    Some(
+        index.entry_by_path(rel.as_ref()).is_some()
+            || index
+                .prefixed_entries(dir.as_slice().into())
+                .is_some_and(|e| !e.is_empty()),
+    )
 }
 
-/// A `.git` in `dir` or a directory above it.
-fn inside_git_repo(dir: &Path) -> bool {
-    dir.ancestors().any(|d| d.join(".git").exists())
+/// The index of the repository whose work tree is `root` (`.git` a directory, or a file naming
+/// one as in linked work trees and submodules), kept and read again only when its file
+/// changed. Empty when the repository has none yet.
+fn index(root: &Path) -> Option<Arc<gix_index::File>> {
+    type Kept = (PathBuf, Option<(SystemTime, u64)>, Arc<gix_index::File>);
+    static KEPT: Mutex<Option<HashMap<PathBuf, Kept>>> = Mutex::new(None);
+    let stamp = |p: &Path| {
+        std::fs::metadata(p)
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())))
+    };
+    if let Some((file, at, index)) = KEPT.lock().get_or_insert_with(HashMap::new).get(root)
+        && stamp(file) == *at
+    {
+        return Some(index.clone());
+    }
+    let dot = root.join(".git");
+    let git_dir = if dot.is_dir() {
+        dot
+    } else {
+        gix_discover::path::from_gitdir_file(&dot).ok()?
+    };
+    // A `.git` that names no repository is not read as one with nothing tracked.
+    gix_discover::is_git(&git_dir).ok()?;
+    let file = git_dir.join("index");
+    let at = stamp(&file);
+    let index = gix_index::File::at_or_default(
+        &file,
+        gix_hash::Kind::Sha1,
+        false,
+        gix_index::decode::Options::default(),
+    )
+    .ok()?;
+    let index = Arc::new(index);
+    let mut kept = KEPT.lock();
+    let kept = kept.get_or_insert_with(HashMap::new);
+    if kept.len() >= 64 {
+        kept.clear();
+    }
+    kept.insert(root.to_path_buf(), (file, at, index.clone()));
+    Some(index)
 }
 
 /// The names of running processes: `ps -axo comm=` (the file name of each command), or
@@ -245,7 +280,8 @@ pub fn parse_reclaimable(out: &str) -> Option<u64> {
         let rest = &line[at + "\"Reclaimable\"".len()..];
         let value = rest.split('"').nth(1)?;
         let size = value.split_whitespace().next()?;
-        *total.get_or_insert(0) += parse_unit_size(size)?;
+        // Sizes past 16 EiB are not sizes.
+        total = Some(total.unwrap_or(0u64).checked_add(parse_unit_size(size)?)?);
     }
     total
 }
@@ -283,6 +319,9 @@ mod tests {
         assert_eq!(parse_reclaimable(out), Some(1_200_512_000));
         assert_eq!(parse_reclaimable("12345\n"), Some(12345));
         assert_eq!(parse_reclaimable("nothing"), None);
+        // Found by the `native` fuzz target: lines that add up past u64.
+        let big = format!("\"Reclaimable\":\"8{}\"\n", "5".repeat(19));
+        assert_eq!(parse_reclaimable(&big.repeat(2)), None);
     }
 
     #[test]
@@ -312,6 +351,28 @@ mod tests {
         git(&["add", "tracked"]);
         assert_eq!(git_tracked(&repo.join("tracked")), Some(true));
         assert_eq!(git_tracked(&repo.join("untracked")), Some(false));
+        // A name is not a pattern: `b[1]` would match the tracked file `b1`.
+        std::fs::write(repo.join("b1"), "x").unwrap();
+        std::fs::create_dir(repo.join("b[1]")).unwrap();
+        std::fs::write(repo.join("b[1]/f"), "x").unwrap();
+        git(&["add", "b1"]);
+        assert_eq!(git_tracked(&repo.join("b[1]")), Some(false));
+        assert_eq!(git_tracked(&repo.join("b1")), Some(true));
+        // The kept index is read again once git changes it.
+        git(&["add", "untracked"]);
+        assert_eq!(git_tracked(&repo.join("untracked")), Some(true));
+        // A repository inside another answers for its own files.
+        let inner = repo.join("vendor/lib");
+        std::fs::create_dir_all(inner.join("target")).unwrap();
+        std::fs::write(inner.join("target/f"), "x").unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&inner)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        assert_eq!(git_tracked(&inner.join("target")), Some(false));
         let outside = tempfile::tempdir().unwrap();
         std::fs::create_dir(outside.path().join("target")).unwrap();
         assert_eq!(git_tracked(&outside.path().join("target")), Some(false));

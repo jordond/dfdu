@@ -19,7 +19,7 @@ use dfdu_tree::{ErrKind, Kind, NodeRef};
 pub use deleter::{DeleterHandle, STAGE_UNDO_WINDOW, spawn_deleter};
 pub use journal::{Journal, check_line, default_journal_dir};
 pub use native::{NativeReq, shown as shown_argv};
-pub use remove::remove;
+pub use remove::{remove, remove_verified};
 pub use stage::rename_noreplace;
 pub use verify::{is_protected, verify};
 

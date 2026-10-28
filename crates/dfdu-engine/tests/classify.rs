@@ -328,3 +328,49 @@ fn a_git_tracked_target_is_protected() {
     });
     engine.shutdown(Duration::from_millis(200));
 }
+
+/// A match in a repository git cannot read (here a `.git` file pointing nowhere; also no git
+/// installed, or a repository it refuses as another user's) is flagged as unknown, and not
+/// recommended.
+#[test]
+fn a_target_git_cannot_answer_for_is_flagged() {
+    let tmp = tmp();
+    fs::write(tmp.path().join(".git"), "gitdir: /nonexistent/dfdu-test\n").unwrap();
+    project(tmp.path(), 0);
+    let engine = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 2,
+            journal_dir: None,
+            crash_dir: None,
+            measure_workers: 0,
+            ..Default::default()
+        },
+    );
+    engine.send(Command::Scan {
+        path: tmp.path().to_path_buf(),
+        opts: JobOptions {
+            class: Some(ClassOpts::for_root(rules(), tmp.path())),
+            ..JobOptions::default()
+        },
+    });
+    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    let t0 = std::time::Instant::now();
+    while !engine.read(|m| {
+        m.tree
+            .class(find(m, "rust/target"))
+            .unwrap()
+            .has(Class::CHECKED)
+    }) {
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "checks did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    engine.read(|m| {
+        let c = m.tree.class(find(m, "rust/target")).unwrap();
+        assert!(c.has(Class::VCS_UNKNOWN) && !c.has(Class::VCS_TRACKED));
+    });
+    engine.shutdown(Duration::from_millis(200));
+}

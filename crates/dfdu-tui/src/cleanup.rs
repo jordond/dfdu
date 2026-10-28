@@ -230,7 +230,8 @@ pub fn recommends(
 ) -> bool {
     let days = |d: i64| now - mtime >= d * 86_400;
     let c = &class;
-    if c.has(Class::IN_USE) || c.has(Class::VCS_TRACKED) || scanning || !days(QUIET_DAYS) {
+    let flagged = c.has(Class::IN_USE) || c.has(Class::VCS_TRACKED) || c.has(Class::VCS_UNKNOWN);
+    if flagged || scanning || !days(QUIET_DAYS) {
         return false;
     }
     match Safety::ALL.get(c.safety as usize) {
@@ -335,7 +336,7 @@ fn group_items(app: &App, cat: u16, safety: u8) -> Vec<usize> {
         .collect()
 }
 
-fn selected_item(app: &App) -> Option<&Item> {
+pub(crate) fn selected_item(app: &App) -> Option<&Item> {
     match rows(app).get(app.cleanup.cursor)? {
         Row::Item(i) => app.extras.cleanup.items.get(*i),
         Row::Group { .. } => None,
@@ -395,7 +396,11 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         }
         KeyCode::Char('a') => {
             let n = mark_recommended(app);
-            app.status = Some(format!("marked {n} recommended item{}", plural(n)));
+            app.status = Some(if n == 0 {
+                "every recommended item is marked already".into()
+            } else {
+                format!("marked {n} recommended item{}", plural(n))
+            });
         }
         KeyCode::Char('n') => return Some(open_pane(app)),
         _ => return None,
@@ -589,7 +594,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .collect();
         lines.push(Line::styled(format!(" {}", parts.join(" · ")), t.dim));
     }
-    let detail_h: u16 = 4;
+    // The rule text below gives way to the list on short terminals: three rows stay for it.
+    let detail_h: u16 = 4.min(area.height.saturating_sub(lines.len() as u16 + 1 + 3));
     let list_h = area
         .height
         .saturating_sub(lines.len() as u16 + detail_h + 1) as usize;
@@ -667,6 +673,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 for (flag, what) in [
                     (Class::IN_USE, "in use"),
                     (Class::VCS_TRACKED, "git-tracked"),
+                    (Class::VCS_UNKNOWN, "git unknown"),
                 ] {
                     if it.class.has(flag) {
                         v.push(Span::styled(format!("  {what}"), t.warn));
@@ -861,6 +868,41 @@ mod tests {
         // Back to the list.
         app.key(key(KeyCode::Char('1')), t0);
         assert!(!active(&app));
+    }
+
+    /// The details pane describes the item selected in the cleanup view, not the list's entry.
+    #[test]
+    fn details_follow_the_cleanup_selection() {
+        let fx = classified();
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        sync(&mut app, &fx.m, t0);
+        app.key(key(KeyCode::Char('3')), t0);
+        sync(&mut app, &fx.m, t0);
+        app.key(key(KeyCode::Enter), t0);
+        app.key(key(KeyCode::Down), t0);
+        app.key(key(KeyCode::Char('i')), t0);
+        sync(&mut app, &fx.m, t0);
+        let want = selected_item(&app).unwrap().path.clone();
+        let facts = app.extras.details.facts.as_ref().expect("details read");
+        assert_eq!(facts.path, want);
+        // On a group row there is nothing to describe.
+        app.key(key(KeyCode::Up), t0);
+        sync(&mut app, &fx.m, t0);
+        assert!(app.extras.details.facts.is_none());
+    }
+
+    /// On a short terminal the rule text gives way so that the list still shows rows.
+    #[test]
+    fn a_short_terminal_still_shows_the_groups() {
+        let fx = classified();
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        sync(&mut app, &fx.m, t0);
+        app.key(key(KeyCode::Char('3')), t0);
+        sync(&mut app, &fx.m, t0);
+        let frame = render(&mut app, t0, 100, 10);
+        assert!(frame.contains("▸ OS and user caches"), "{frame}");
     }
 
     #[test]

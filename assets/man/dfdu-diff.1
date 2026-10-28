@@ -1,0 +1,53 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-diff 1  "dfdu-diff " 
+.SH NAME
+dfdu\-diff \- What grew: a directory now against its last recorded scan (or one from \-\-since ago), or two saved scans
+.SH SYNOPSIS
+\fBdfdu diff\fR [\fB\-\-since\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-min\-change\fR] [\fB\-\-format\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+What grew: a directory now against its last recorded scan (or one from \-\-since ago), or two saved scans
+.SH OPTIONS
+.TP
+\fB\-\-since\fR \fI<AGE>\fR
+Compare with the recorded scan closest to this long ago (`7d`, `2w`, `12h`) instead of the last one
+.TP
+\fB\-\-depth\fR \fI<DEPTH>\fR [default: 3]
+Levels below the root to list
+.TP
+\fB\-\-top\fR \fI<TOP>\fR [default: 30]
+Changes to list, largest first
+.TP
+\fB\-\-min\-change\fR \fI<SIZE>\fR [default: 1M]
+Leave out changes smaller than this (`1M`, `500K`)
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: table]
+Output: table or json (schema/diff.v1.json)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+table
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Worker threads
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR]
+A directory, scanned now and compared with its last recorded scan; or two files (a snapshot or an ncdu export each), the older first

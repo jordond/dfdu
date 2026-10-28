@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: jordond.dfdu
+PackageVersion: @VERSION@
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: dfdu.exe
+    PortableCommandAlias: dfdu
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/jordond/dfdu/releases/download/v@VERSION@/dfdu-x86_64-pc-windows-msvc.zip
+    InstallerSha256: @SHA256_x86_64-pc-windows-msvc@
+ManifestType: installer
+ManifestVersion: 1.10.0

@@ -296,7 +296,38 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 /// True when the pane shows something other than what [`read`] last read. A read ([`read`],
 /// then [`apply`]) must make it false: while it is true, the run loop reads again at once.
 pub fn stale(app: &App) -> bool {
-    app.details.open && app.details.read_for != Some(app.selected_entry().map(|e| e.node))
+    app.details.open && app.details.read_for != Some(subject(app).map(|e| e.node))
+}
+
+/// What the pane describes.
+struct Subject {
+    node: NodeRef,
+    pseudo: bool,
+    compressed: bool,
+    mark: Mark,
+}
+
+/// The cleanup view's selected item while that view is shown, else the list's selected entry.
+fn subject(app: &App) -> Option<Subject> {
+    if crate::cleanup::active(app) {
+        let it = crate::cleanup::selected_item(app)?;
+        return Some(Subject {
+            node: it.node,
+            pseudo: false,
+            compressed: false,
+            mark: if it.scanning {
+                Mark::Scanning
+            } else {
+                Mark::None
+            },
+        });
+    }
+    app.selected_entry().map(|e| Subject {
+        node: e.node,
+        pseudo: e.pseudo,
+        compressed: e.compressed,
+        mark: e.mark,
+    })
 }
 
 /// Reads the selected entry's details; runs under the read lock. Costs a walk up to the root
@@ -311,7 +342,7 @@ fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
     if !app.details.open {
         return Info::default();
     }
-    let Some(e) = app.selected_entry() else {
+    let Some(e) = subject(app) else {
         return Info::default();
     };
     let tree = &m.tree;
@@ -395,8 +426,7 @@ pub fn apply(app: &mut App) {
         app.details.scroll = 0;
     }
     app.details.read_for = Some(node);
-    let row = app
-        .selected_entry()
+    let row = subject(app)
         .filter(|e| Some(e.node) == node)
         .map(|e| (e.mark, e.compressed));
     if let (Some((mark, compressed)), Some(f)) = (row, &mut app.extras.details.facts) {
@@ -495,7 +525,10 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         }
     };
     let Some(f) = &app.extras.details.facts else {
-        let note = match app.selected_entry() {
+        let listed = app
+            .selected_entry()
+            .filter(|_| !crate::cleanup::active(app));
+        let note = match listed {
             Some(e) if e.ghost => "deleted".to_string(),
             Some(e) if e.pseudo => format!(
                 "{} of data that entries of this directory share, counted here once. Not an \
@@ -542,6 +575,15 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         human(f.total.referenced)
     );
     text(&mut out, &other, plain);
+    let size = app.size_mode.of(&f.total);
+    if let Some((d, then, at)) = crate::growth::since(app, &f.path, size, f.mark) {
+        let s = if d == 0 {
+            format!("the same as on {}", dfdu_store::history::day(at))
+        } else {
+            format!("{} (was {})", crate::growth::describe(d, at), human(then))
+        };
+        text(&mut out, &s, if d > 0 { t.warn } else { t.dim });
+    }
     if f.total.shared_out > 0 {
         let s = format!(
             "{} also used outside the scan: deleting it frees less",
@@ -580,6 +622,13 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         }
         if c.flags & dfdu_tree::Class::IN_USE != 0 {
             text(&mut out, "a program that uses it was running", t.warn);
+        }
+        if c.flags & dfdu_tree::Class::VCS_UNKNOWN != 0 {
+            text(
+                &mut out,
+                "git could not tell whether it tracks files in it: not recommended",
+                t.warn,
+            );
         }
     }
     // A match counts as one category; the breakdown is for directories with matches below.

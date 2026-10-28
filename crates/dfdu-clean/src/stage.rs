@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use dfdu_tree::Meta;
 
-use crate::PlanItem;
+use crate::{Identity, PlanItem};
 
 /// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists, atomically where the
 /// system can (`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS,
@@ -130,32 +130,49 @@ pub(crate) fn put_back(from: &Path, original: &Path) -> io::Result<PathBuf> {
     Err(io::ErrorKind::AlreadyExists.into())
 }
 
-/// Takes `item` back out of the trash, where it went at `trashed_at` (seconds since the epoch)
-/// or later.
-pub(crate) fn restore_from_trash(item: &PlanItem, trashed_at: i64) -> Result<PathBuf, String> {
-    imp::restore(item, trashed_at)
+/// Takes the item that was at `path` with identity `id` back out of the trash, where it went
+/// at `trashed_at` (seconds since the epoch) or later.
+pub(crate) fn restore_from_trash(
+    path: &Path,
+    id: &Identity,
+    trashed_at: i64,
+) -> Result<PathBuf, String> {
+    imp::restore(path, id, trashed_at)
+}
+
+/// Whether that item is in the trash; `Err` when the trash cannot be read.
+pub(crate) fn in_trash(path: &Path, id: &Identity, trashed_at: i64) -> Result<bool, String> {
+    imp::find(path, id, trashed_at).map(|f| f.is_some())
 }
 
 #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
 mod imp {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    use crate::PlanItem;
+    use crate::Identity;
 
     /// The freedesktop trash and the Recycle Bin keep each item's original path and deletion
-    /// time; the latest match is restored. The `trash` crate refuses to replace anything.
-    pub fn restore(item: &PlanItem, trashed_at: i64) -> Result<PathBuf, String> {
-        let found = trash::os_limited::list()
+    /// time; the latest match is the item.
+    pub fn find(
+        path: &Path,
+        _id: &Identity,
+        trashed_at: i64,
+    ) -> Result<Option<trash::TrashItem>, String> {
+        Ok(trash::os_limited::list()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .filter(|t| t.original_path() == item.path && t.time_deleted >= trashed_at - 1)
-            .max_by_key(|t| t.time_deleted)
-            .ok_or("not found in the trash")?;
+            .filter(|t| t.original_path() == path && t.time_deleted >= trashed_at - 1)
+            .max_by_key(|t| t.time_deleted))
+    }
+
+    /// The `trash` crate refuses to replace anything.
+    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> Result<PathBuf, String> {
+        let found = find(path, id, trashed_at)?.ok_or("not found in the trash")?;
         match trash::os_limited::restore_all([found]) {
-            Ok(()) => Ok(item.path.clone()),
+            Ok(()) => Ok(path.to_path_buf()),
             Err(trash::Error::RestoreCollision { .. }) => Err(format!(
                 "something now exists at {}; restore it from the trash by hand",
-                item.path.display()
+                path.display()
             )),
             Err(e) => Err(e.to_string()),
         }
@@ -168,19 +185,23 @@ mod imp {
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
 
-    use crate::PlanItem;
+    use crate::Identity;
+
+    pub fn restore(path: &Path, id: &Identity, trashed_at: i64) -> Result<PathBuf, String> {
+        let found = find(path, id, trashed_at)?.ok_or("not found in the Trash")?;
+        super::put_back(&found, path).map_err(|e| e.to_string())
+    }
 
     /// The macOS trash keeps no record of where an item came from that the system exposes, but
     /// moving to it is a rename on the item's volume (`~/.Trash`, or `.Trashes/<uid>` at the
     /// volume's root), so the item keeps its inode: it is found by `(dev, ino)`, which is never
     /// another file's.
-    pub fn restore(item: &PlanItem, _trashed_at: i64) -> Result<PathBuf, String> {
-        let id = &item.identity;
+    pub fn find(path: &Path, id: &Identity, _trashed_at: i64) -> Result<Option<PathBuf>, String> {
         let mut dirs = vec![];
         if let Some(h) = std::env::var_os("HOME") {
             dirs.push(Path::new(&h).join(".Trash"));
         }
-        if let Some(root) = volume_root(&item.path, id.dev) {
+        if let Some(root) = volume_root(path, id.dev) {
             dirs.push(
                 root.join(".Trashes")
                     .join(rustix::process::getuid().as_raw().to_string()),
@@ -198,16 +219,16 @@ mod imp {
             for e in rd.flatten() {
                 let p = e.path();
                 if fs::symlink_metadata(&p).is_ok_and(|m| m.dev() == id.dev && m.ino() == id.ino) {
-                    return super::put_back(&p, &item.path).map_err(|e| e.to_string());
+                    return Ok(Some(p));
                 }
             }
         }
-        Err(if denied {
+        if denied {
             // Reading the Trash needs Full Disk Access for the terminal.
-            "the Trash cannot be read here; use Put Back in the Finder".into()
+            Err("the Trash cannot be read here; use Put Back in the Finder".into())
         } else {
-            "not found in the Trash".into()
-        })
+            Ok(None)
+        }
     }
 
     /// The highest existing ancestor of `path` on device `dev`.
@@ -226,11 +247,15 @@ mod imp {
 
 #[cfg(not(any(windows, unix)))]
 mod imp {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    use crate::PlanItem;
+    use crate::Identity;
 
-    pub fn restore(_item: &PlanItem, _trashed_at: i64) -> Result<PathBuf, String> {
+    pub fn find(_path: &Path, _id: &Identity, _trashed_at: i64) -> Result<Option<()>, String> {
+        Err("the trash cannot be read here".into())
+    }
+
+    pub fn restore(_path: &Path, _id: &Identity, _trashed_at: i64) -> Result<PathBuf, String> {
         Err("undo from the trash is not supported here".into())
     }
 }

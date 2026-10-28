@@ -148,3 +148,56 @@ fn staged_items_are_restored_or_finished() {
     assert!(!root.join("b").exists());
     assert_eq!(recover(&journals, &[]), "nothing unfinished\n");
 }
+
+/// A move to the trash whose end the journal lacks is looked for in the trash, found there,
+/// and put back. Linux only: on macOS the test would use the user's own Trash.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_interrupted_trash_delete_is_found_in_the_trash() {
+    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
+    let tmp = tempfile::tempdir_in(base).unwrap();
+    let root = tmp.path().join("root");
+    let state = tmp.path().join("state");
+    fs::create_dir_all(root.join("web/node_modules/pkg")).unwrap();
+    fs::write(root.join("web/package.json"), "{}").unwrap();
+    fs::write(root.join("web/node_modules/pkg/index.js"), b"x").unwrap();
+    let run = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_dfdu"))
+            .args(args)
+            .env("DFDU_STATE_DIR", &state)
+            .env("XDG_DATA_HOME", tmp.path().join("data"))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let r = root.to_str().unwrap();
+    run(&[
+        "clean", r, "--yes", "--all", "--safety", "review", "--mode", "trash",
+    ]);
+    assert!(!root.join("web/node_modules").exists());
+    let journals = state.join("ops");
+    let journal = fs::read_dir(&journals)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let text = fs::read_to_string(&journal).unwrap();
+    let cut: String = text
+        .lines()
+        .filter(|l| !l.contains("\"done\""))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    fs::write(&journal, cut).unwrap();
+
+    let list = run(&["recover"]);
+    assert!(
+        list.contains("node_modules: interrupted (trash); it is in the trash"),
+        "{list}"
+    );
+    let done = run(&["recover", "--restore", "1"]);
+    assert!(done.contains("restored at"), "{done}");
+    assert!(root.join("web/node_modules/pkg/index.js").exists());
+    assert_eq!(run(&["recover"]), "nothing unfinished\n");
+}

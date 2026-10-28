@@ -15,7 +15,8 @@ use crate::journal::Journal;
 use crate::recover;
 use crate::stage::Stager;
 use crate::{
-    DeleteResult, DeleterMsg, DeleterReq, Mode, Plan, PlanItem, Refusal, rename_noreplace, verify,
+    DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal,
+    rename_noreplace, verify,
 };
 
 pub struct DeleterHandle {
@@ -226,7 +227,8 @@ impl State {
                 .map_err(|e| format!("journal: {e}"))
                 .and_then(|()| {
                     fault::commit_hang(staged);
-                    crate::remove(staged, k.item.identity.kind).map_err(|e| {
+                    let id = &k.item.identity;
+                    crate::remove_verified(staged, id.kind, id.dev, id.ino).map_err(|e| {
                         format!(
                             "{} stays staged at {}: {e}",
                             k.item.path.display(),
@@ -254,7 +256,7 @@ impl State {
         for k in mine {
             let result = match &k.staged {
                 Some(s) => crate::stage::put_back(s, &k.item.path).map_err(|e| e.to_string()),
-                None => crate::stage::restore_from_trash(&k.item, k.at),
+                None => crate::stage::restore_from_trash(&k.item.path, &k.item.identity, k.at),
             };
             if let (Ok(to), Some(j)) = (&result, self.journal.as_mut()) {
                 let _ = j.restored(plan, &k.item, to);
@@ -330,12 +332,13 @@ fn run_item(
             None,
         );
     }
-    let result = execute(&item.path, item.identity.kind, plan.mode, stage.as_deref());
+    let result = execute(&item.path, &item.identity, plan.mode, stage.as_deref());
     let _ = journal.result(plan.id, item, &result);
     (result, stage)
 }
 
-fn execute(path: &Path, kind: Kind, mode: Mode, stage: Option<&Path>) -> DeleteResult {
+fn execute(path: &Path, id: &Identity, mode: Mode, stage: Option<&Path>) -> DeleteResult {
+    let kind = id.kind;
     let r = match (mode, stage) {
         (Mode::Trash, _) => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
         // A rename: all or nothing.
@@ -344,9 +347,8 @@ fn execute(path: &Path, kind: Kind, mode: Mode, stage: Option<&Path>) -> DeleteR
         }
         (Mode::Stage, None) => Err((ErrKind::Other, "no staging path".into())),
         // Never crosses into another mount; destroys btrfs subvolumes where allowed.
-        (Mode::Permanent, _) => {
-            crate::remove(path, kind).map_err(|e| (ErrKind::from(&e), e.to_string()))
-        }
+        (Mode::Permanent, _) => crate::remove_verified(path, kind, id.dev, id.ino)
+            .map_err(|e| (ErrKind::from(&e), e.to_string())),
     };
     match r {
         Ok(()) => DeleteResult::Deleted,

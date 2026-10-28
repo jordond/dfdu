@@ -90,6 +90,9 @@ impl Class {
     pub const VCS_TRACKED: u8 = 4;
     /// A process the rule names (`guard.not_running`) was running when checked.
     pub const IN_USE: u8 = 8;
+    /// `guard.not_vcs_tracked` asked, but git could not tell (not installed, an error, a
+    /// repository it refuses): never recommended or cleaned.
+    pub const VCS_UNKNOWN: u8 = 16;
 
     pub fn has(self, flag: u8) -> bool {
         self.flags & flag != 0
