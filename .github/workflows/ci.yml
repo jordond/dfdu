@@ -41,7 +41,7 @@ jobs:
           toolchain: stable
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all --check
+        run: cargo xtask fmt --check
 
   clippy:
     name: Clippy (${{ matrix.os }})
@@ -64,7 +64,7 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo xtask clippy
 
   docs:
     name: Docs
@@ -79,9 +79,7 @@ jobs:
           toolchain: stable
       - *cache
       - name: Build docs, warnings as errors
-        run: cargo doc --workspace --all-features --no-deps --locked
-        env:
-          RUSTDOCFLAGS: "-D warnings"
+        run: cargo xtask doc
 
   test:
     name: Test (${{ matrix.os }})
@@ -99,10 +97,8 @@ jobs:
         uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest
-      - name: Run tests
-        run: cargo nextest run --workspace --cargo-profile ci --profile ci --locked
-      - name: Run doc tests
-        run: cargo test --workspace --doc --profile ci --locked
+      - name: Run tests and doc tests
+        run: cargo xtask test --ci
 
   coverage:
     name: Test and coverage (ubuntu-latest)
@@ -127,7 +123,7 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
       - name: Run tests with coverage
-        run: cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci
+        run: cargo xtask coverage --no-fail
       - name: Write coverage report, summary and PR comment
         env:
           BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
@@ -218,9 +214,7 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.version }}
       - *cache
       - name: Check the workspace builds on the MSRV
-        env:
-          MSRV: ${{ steps.msrv.outputs.version }}
-        run: cargo "+$MSRV" check --workspace --all-targets --all-features --locked
+        run: cargo xtask msrv
 
   deny:
     name: Dependencies
@@ -242,22 +236,18 @@ jobs:
       - *stable
       - *cache
       - name: Run simulation, 5000 seeds per suite
-        run: cargo test --profile ci --locked -p dfdu-sim
-        env:
-          DFDU_SIM_SEEDS: "5000"
+        run: cargo xtask sim --seeds 5000
 
   loom:
     name: Loom
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      RUSTFLAGS: "--cfg loom"
     steps:
       - *checkout
       - *stable
       - *cache
       - name: Run loom model tests
-        run: cargo test --profile ci --locked -p dfdu-scan -p dfdu-engine --test loom
+        run: cargo xtask loom
 
   fuse:
     name: FUSE
@@ -330,7 +320,7 @@ jobs:
         with:
           tool: cargo-machete
       - name: Find unused dependencies
-        run: cargo machete
+        run: cargo xtask machete
 
   binaries:
     name: Binary (${{ matrix.os }})
