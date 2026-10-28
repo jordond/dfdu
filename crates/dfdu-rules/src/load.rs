@@ -264,6 +264,12 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
     if (larger_than > 0 || not_modified_days > 0) && kind != Kind::File {
         return Err("match.larger_than and match.not_modified_days need `kind = \"file\"`".into());
     }
+    if m.broken_link && kind != Kind::File {
+        return Err("match.broken_link needs `kind = \"file\"`".into());
+    }
+    if m.empty && kind != Kind::Dir {
+        return Err("match.empty needs `kind = \"dir\"`".into());
+    }
     let rule = Rule {
         id: def.id,
         category,
@@ -297,6 +303,8 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
             .collect(),
         larger_than,
         not_modified_days,
+        empty: m.empty,
+        broken_link: m.broken_link,
         guard: Guard {
             not_running: def.guard.not_running.get(p),
             not_vcs_tracked: def.guard.not_vcs_tracked,
@@ -424,6 +432,14 @@ names = ["x"]
             (
                 "[rule.match]\nnames = [\"x\"]\nnot_modified_days = 9",
                 "need `kind = \"file\"`",
+            ),
+            (
+                "[rule.match]\nnames = [\"x\"]\nempty = true",
+                "match.empty needs `kind = \"dir\"`",
+            ),
+            (
+                "[rule.match]\nkind = \"dir\"\nnames = [\"x\"]\nbroken_link = true",
+                "match.broken_link needs `kind = \"file\"`",
             ),
             (
                 "[rule.match]\nkind = \"file\"\nnames = [\"x\"]\nlarger_than = \"big\"",

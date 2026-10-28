@@ -73,6 +73,7 @@ fn hits_stat(
         protection: set.protected().state_of(l.path.as_bytes()),
         partial: false,
         stat,
+        link: None,
     };
     match set.classify(&c) {
         Verdict::None => Vec::new(),
@@ -95,7 +96,7 @@ fn inside_ok(set: &RuleSet, id: &str, name: &str, children: &[&str], tag: Option
             .flatten()
             .map(|t| t.as_bytes()[..len.min(t.len())].to_vec())
     };
-    set.check_inside(i, name.as_bytes(), &child, &marker)
+    set.check_inside(i, name.as_bytes(), &child, &marker, children.is_empty())
 }
 
 const TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n# cache";
@@ -220,6 +221,7 @@ fn siblings_in_other_blocks_leave_the_hit_open() {
         protection: Default::default(),
         partial: true,
         stat: None,
+        link: None,
     };
     let Verdict::Hits(hits) = set.classify(&c) else {
         panic!("no hit");
@@ -567,6 +569,7 @@ fn classify_cost() {
             protection: Default::default(),
             partial: false,
             stat: None,
+            link: None,
         };
         if dir.classify(&c) != Verdict::None {
             matched += 1;
@@ -636,6 +639,7 @@ fn reach_handed_down_matches_trying_every_pattern() {
                         protection: prot,
                         partial: false,
                         stat: None,
+                        link: None,
                     };
                     let v = full.classify(&c);
                     match &v {
@@ -660,6 +664,7 @@ fn reach_handed_down_matches_trying_every_pattern() {
                     protection: prot,
                     partial: false,
                     stat: None,
+                    link: None,
                 }) {
                     Verdict::Protected(s) => s,
                     _ => protected::State::Off,
@@ -672,4 +677,64 @@ fn reach_handed_down_matches_trying_every_pattern() {
         matched >= 5 && protected >= 20,
         "{matched} path matches, {protected} protected"
     );
+}
+
+#[test]
+fn empty_and_broken_link_conditions() {
+    let text = r#"schema_version = 1
+[[rule]]
+id = "t.empty"
+category = "content.empty"
+name = "E"
+safety = "review"
+[rule.match]
+kind = "dir"
+paths = ["/home/u/**"]
+empty = true
+
+[[rule]]
+id = "t.broken"
+category = "content.broken-links"
+name = "B"
+safety = "review"
+[rule.match]
+kind = "file"
+paths = ["/home/u/**"]
+broken_link = true
+"#;
+    let env = Env::with(Platform::Linux, &[("HOME", "/home/u")]);
+    let (set, errors) =
+        crate::load_from(&env, &[(crate::Source::File("t.toml".into()), text.into())]);
+    assert!(errors.is_empty(), "{errors:?}");
+    // An empty directory is a hit to check inside; the check wants no entries at all.
+    let l = Listing {
+        path: "/home/u/x",
+        names: &["d/", "link"],
+    };
+    assert_eq!(hits(&set, &l, "d", &[]), ["t.empty review"]);
+    assert!(inside_ok(&set, "t.empty", "d", &[], None));
+    assert!(!inside_ok(&set, "t.empty", "d", &[".DS_Store"], None));
+    // A broken link needs a link whose target is missing.
+    let sibling = |n: &[u8]| l.has(n);
+    let classify = |link: Option<&dyn Fn() -> bool>| {
+        let c = Candidate {
+            parent: l.path.as_bytes(),
+            name: b"link",
+            is_dir: false,
+            sibling: &sibling,
+            inside: &[],
+            protection: Default::default(),
+            partial: false,
+            stat: None,
+            link,
+        };
+        match set.classify(&c) {
+            Verdict::Hits(h) => h.iter().map(|h| set.rule(h.rule).id.clone()).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let (missing, there) = (|| true, || false);
+    assert_eq!(classify(Some(&missing)), ["t.broken"]);
+    assert!(classify(Some(&there)).is_empty());
+    assert!(classify(None).is_empty());
 }

@@ -7,7 +7,8 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 installers = ["shell", "powershell", "homebrew"]
 tap = "jordond/homebrew-tap"
-publish-jobs = ["homebrew"]
+# "./publish-homebrew" is dist's Homebrew job with the man pages and completions linked.
+publish-jobs = ["./publish-homebrew"]
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",

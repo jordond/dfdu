@@ -65,8 +65,21 @@ pub(crate) fn classify_loaded<B: Backend>(
             let loc = loc.get_or_init(|| backend.loc_from_path(&tree.path_buf(dir)));
             backend.read_prefix(loc, n, len)
         };
+        let missing = |n: &[u8]| {
+            let loc = loc.get_or_init(|| backend.loc_from_path(&tree.path_buf(dir)));
+            backend.link_target_missing(loc, n)
+        };
         let listing = Listing::new(opts.rules.clone(), DirId(0), task);
-        let out = listing.block(&names, &files, &subdirs, &others, DirId(1), true, &read);
+        let out = listing.block(
+            &names,
+            &files,
+            &subdirs,
+            &others,
+            DirId(1),
+            true,
+            &read,
+            &missing,
+        );
         let closes = listing.finish();
         for (e, mark) in out.marks {
             let node = match e {

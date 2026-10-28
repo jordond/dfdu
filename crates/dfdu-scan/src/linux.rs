@@ -256,6 +256,10 @@ impl Backend for LinuxBackend {
         crate::backend::read_prefix_at(dir, name, len)
     }
 
+    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
+        crate::backend::link_target_missing_at(dir, name)
+    }
+
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         path.to_path_buf()
     }

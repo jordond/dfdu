@@ -14,3 +14,11 @@ rules:
   unpinned-images:
     ignore:
       - release.yml
+  # dist calls custom publish jobs (publish-homebrew.yml, which needs the tap token) with
+  # `secrets: inherit` and a `./` path.
+  secrets-inherit:
+    ignore:
+      - release.yml
+  self-repository:
+    ignore:
+      - release.yml

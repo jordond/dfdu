@@ -94,6 +94,7 @@ impl ClassOpts {
                 protection: rules.protected().state_of(&parent_path),
                 partial: false,
                 stat: None,
+                link: None,
             });
             match verdict {
                 Verdict::Hits(h) => chain = h,
@@ -206,6 +207,8 @@ struct ListState {
     marker: Vec<Option<Vec<u8>>>,
     /// The chain was decided.
     decided: bool,
+    /// Some block had an entry.
+    entries: bool,
     /// A wide listing's names some rule may ask about as a sibling.
     siblings: HashSet<Vec<u8>>,
     open: Vec<OpenEntry>,
@@ -227,6 +230,10 @@ pub struct Listing {
 
 /// Reads the first bytes of a file in the directory being listed (`Backend::read_prefix`).
 pub type ReadPrefix<'a> = &'a dyn Fn(&[u8], usize) -> Option<Vec<u8>>;
+
+/// Whether a symbolic link in the directory being listed points at nothing
+/// (`Backend::link_target_missing`).
+pub type TargetMissing<'a> = &'a dyn Fn(&[u8]) -> bool;
 
 /// What classifying a block produced.
 #[derive(Default)]
@@ -282,6 +289,7 @@ impl Listing {
         first_subdir: DirId,
         whole: bool,
         read: ReadPrefix,
+        missing: TargetMissing,
     ) -> BlockClass {
         let name = |s: NameSpan| &names[s.off as usize..s.off as usize + s.len as usize];
         let all = || {
@@ -294,6 +302,7 @@ impl Listing {
         let set: OnceCell<HashSet<&[u8]>> = OnceCell::new();
         let in_block = |n: &[u8]| set.get_or_init(|| all().map(name).collect()).contains(n);
         let mut st = self.state.lock();
+        st.entries |= all().next().is_some();
         for s in all() {
             let n = name(s);
             if let Some(k) = self.wanted.iter().position(|w| w.0[..] == *n) {
@@ -324,18 +333,20 @@ impl Listing {
         let reach = (!subdirs.is_empty()).then(|| Arc::new(dir.reach().clone()));
         let mut out = BlockClass::default();
         let parent_protected = self.task.protection.protected();
-        let classify = |n: &[u8], is_dir: bool, stat: Option<Stat>| {
-            dir.classify(&Candidate {
-                parent: &self.task.path,
-                name: n,
-                is_dir,
-                sibling: &in_block,
-                inside: &inside,
-                protection: self.task.protection,
-                partial: !whole,
-                stat,
-            })
-        };
+        let classify =
+            |n: &[u8], is_dir: bool, stat: Option<Stat>, link: Option<&dyn Fn() -> bool>| {
+                dir.classify(&Candidate {
+                    parent: &self.task.path,
+                    name: n,
+                    is_dir,
+                    sibling: &in_block,
+                    inside: &inside,
+                    protection: self.task.protection,
+                    partial: !whole,
+                    stat,
+                    link,
+                })
+            };
         for (i, f) in files.iter().enumerate() {
             let n = name(f.name);
             let entry = Entry::File(i as u32);
@@ -343,7 +354,10 @@ impl Listing {
                 disk: f.meta.alloc,
                 mtime: f.meta.mtime,
             };
-            match classify(n, false, Some(stat)) {
+            let target_missing = || missing(n);
+            let link =
+                (f.meta.kind == Kind::Symlink).then_some(&target_missing as &dyn Fn() -> bool);
+            match classify(n, false, Some(stat), link) {
                 Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
                 Verdict::None => {}
                 Verdict::Protected(_) if !parent_protected => {
@@ -380,7 +394,7 @@ impl Listing {
                 rv: None,
                 reach: reach.clone(),
             };
-            match classify(n, true, None) {
+            match classify(n, true, None, None) {
                 Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
                 Verdict::None => {}
                 Verdict::Protected(state) => {
@@ -436,7 +450,8 @@ impl Listing {
                     let at = |n: &[u8]| self.wanted.iter().position(|w| w.0[..] == *n);
                     let child = |n: &[u8]| at(n).is_some_and(|k| st.seen[k]);
                     let marker = |f: &[u8], _: usize| st.marker[at(f)?].clone();
-                    self.rules.check_inside(h.rule, name, &child, &marker)
+                    self.rules
+                        .check_inside(h.rule, name, &child, &marker, !st.entries)
                 }
             })
             .collect();

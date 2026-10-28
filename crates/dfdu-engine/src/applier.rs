@@ -679,6 +679,7 @@ fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> C
             protection: protection(p),
             partial: false,
             stat: None,
+            link: None,
         });
         if let dfdu_rules::Verdict::Hits(h) = v {
             chain = h;

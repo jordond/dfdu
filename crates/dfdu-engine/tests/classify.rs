@@ -33,6 +33,17 @@ fn touch(p: &Path) {
 
 /// Scans `root` with blocks of `block` entries and returns the model's answer to `f`.
 fn scan<T>(root: &Path, block: usize, workers: usize, f: impl FnOnce(&Model) -> T) -> T {
+    scan_with(root, rules(), block, workers, f)
+}
+
+/// [`scan`] classifying against `rules`.
+fn scan_with<T>(
+    root: &Path,
+    rules: Arc<RuleSet>,
+    block: usize,
+    workers: usize,
+    f: impl FnOnce(&Model) -> T,
+) -> T {
     let engine = Engine::start(
         PortableBackend::default(),
         EngineOptions {
@@ -51,7 +62,7 @@ fn scan<T>(root: &Path, block: usize, workers: usize, f: impl FnOnce(&Model) -> 
     engine.send(Command::Scan {
         path: root.to_path_buf(),
         opts: JobOptions {
-            class: Some(ClassOpts::for_root(rules(), root)),
+            class: Some(ClassOpts::for_root(rules, root)),
             ..JobOptions::default()
         },
     });
@@ -431,4 +442,80 @@ not_modified_days = 30
     let got = engine.read(|m| ["big-old.bin", "big-new.bin", "small-old.bin"].map(|n| class(m, n)));
     engine.shutdown(Duration::from_millis(200));
     assert_eq!(got, [Some("test.big-old review".to_string()), None, None]);
+}
+
+/// `empty` decides on a directory's whole listing, however many blocks it came in, and
+/// `broken_link` follows each link it matches.
+#[cfg(unix)]
+#[test]
+fn empty_directories_and_broken_links() {
+    let tmp = tmp();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let text = format!(
+        r#"schema_version = 1
+[[rule]]
+id = "test.empty"
+category = "content.empty"
+name = "Empty"
+safety = "review"
+[rule.match]
+kind = "dir"
+paths = ["{root}/**"]
+empty = true
+
+[[rule]]
+id = "test.broken"
+category = "content.broken-links"
+name = "Broken"
+safety = "review"
+[rule.match]
+kind = "file"
+paths = ["{root}/**"]
+broken_link = true
+"#,
+        root = root.display()
+    );
+    let (set, errors) = dfdu_rules::load_from(
+        &Env::current(),
+        &[(dfdu_rules::Source::File("t.toml".into()), text)],
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let set = Arc::new(set);
+    fs::create_dir_all(root.join("a/empty")).unwrap();
+    fs::create_dir_all(root.join("a/only-empty/inner")).unwrap();
+    for i in 0..5 {
+        touch(&root.join(format!("a/full/f{i}")));
+    }
+    fs::create_dir_all(root.join("a/link-only")).unwrap();
+    std::os::unix::fs::symlink("nowhere", root.join("a/link-only/dangling")).unwrap();
+    std::os::unix::fs::symlink("../full/f0", root.join("a/link-only/fine")).unwrap();
+    std::os::unix::fs::symlink("full", root.join("a/to-dir")).unwrap();
+    std::os::unix::fs::symlink("gone/x", root.join("a/to-gone")).unwrap();
+    let paths = [
+        "a/empty",
+        "a/only-empty",
+        "a/only-empty/inner",
+        "a/full",
+        "a/link-only",
+        "a/link-only/dangling",
+        "a/link-only/fine",
+        "a/to-dir",
+        "a/to-gone",
+    ];
+    let want = [
+        Some("test.empty review"),
+        None,
+        Some("test.empty review"),
+        None,
+        None,
+        Some("test.broken review"),
+        None,
+        None,
+        Some("test.broken review"),
+    ]
+    .map(|c| c.map(String::from));
+    for block in [1, 2, 4096] {
+        let got = scan_with(&root, set.clone(), block, 3, |m| paths.map(|p| class(m, p)));
+        assert_eq!(got, want, "blocks of {block}");
+    }
 }

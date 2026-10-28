@@ -304,6 +304,7 @@ mod tests {
         let a = tmp.path().join("a");
         std::fs::write(&a, vec![7u8; 1 << 20]).unwrap();
         let open = |p: &std::path::Path| std::fs::File::open(p).unwrap();
+        open(&a).sync_all().unwrap();
         let Some(alone) = clone_info(open(&a).as_fd()) else {
             return;
         };
@@ -320,11 +321,15 @@ mod tests {
             clone_info(open(&b).as_fd()).unwrap(),
         );
         assert_eq!((ia.private_size, ib.private_size), (0, 0));
-        // Writing to a clone gives it private data of its own.
+        // Writing to a clone gives it private data of its own, once the write reaches the disk
+        // (until then the private size can still be 0, seen under load).
         std::fs::OpenOptions::new()
             .write(true)
             .open(&b)
-            .and_then(|mut f| std::io::Write::write_all(&mut f, &[1u8; 4096]))
+            .and_then(|mut f| {
+                std::io::Write::write_all(&mut f, &[1u8; 4096])?;
+                f.sync_all()
+            })
             .unwrap();
         let ib = clone_info(open(&b).as_fd()).unwrap();
         assert!(ib.private_size >= 4096, "{ib:?}");

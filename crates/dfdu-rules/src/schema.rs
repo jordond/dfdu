@@ -124,6 +124,12 @@ pub struct MatchDef {
     /// Files only: matches a file not modified for this many days.
     #[serde(default)]
     pub not_modified_days: Option<u32>,
+    /// Directories only: matches a directory with nothing in it.
+    #[serde(default)]
+    pub empty: bool,
+    /// Files only: matches a symbolic link whose target does not exist.
+    #[serde(default)]
+    pub broken_link: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

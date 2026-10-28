@@ -1203,10 +1203,32 @@ impl Default for SimConfig {
 }
 
 /// The built-in rules for a Linux home at `/home/u`, so that nothing below [`ROOT_NAME`] is a
-/// protected or a known path, and only rules matched by name apply.
+/// protected or a known path, and only rules matched by name apply; and a rule for empty
+/// directories anywhere below it, decided when their listings end.
 pub fn sim_rules() -> Arc<RuleSet> {
+    const EMPTY: &str = r#"schema_version = 1
+[[rule]]
+id = "sim.empty"
+category = "content.empty"
+name = "Empty"
+safety = "review"
+priority = -10
+[rule.match]
+kind = "dir"
+paths = ["/sim/**"]
+empty = true
+"#;
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
-    let (set, errors) = dfdu_rules::builtin(&env);
+    let (set, errors) = dfdu_rules::load_from(
+        &env,
+        &[
+            (
+                dfdu_rules::Source::Builtin,
+                dfdu_rules::load::BUILTIN.into(),
+            ),
+            (dfdu_rules::Source::File("sim.toml".into()), EMPTY.into()),
+        ],
+    );
     assert!(errors.is_empty(), "{errors:?}");
     Arc::new(set)
 }
@@ -2121,6 +2143,7 @@ fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, Str
                     disk: cn.meta.alloc,
                     mtime: cn.meta.mtime,
                 }),
+                link: None,
             });
             let (mut cprot, mut own) = (State::Off, None);
             match verdict {
@@ -2147,7 +2170,14 @@ fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, Str
                         let ok = match h.inside {
                             Inside::Done => true,
                             Inside::Check => {
-                                is_dir && rules.check_inside(h.rule, &cn.name, &child, &marker)
+                                is_dir
+                                    && rules.check_inside(
+                                        h.rule,
+                                        &cn.name,
+                                        &child,
+                                        &marker,
+                                        inner.is_empty(),
+                                    )
                             }
                         };
                         ok.then_some(Class {

@@ -18,7 +18,7 @@ nix run github:jordond/dfdu
 
 On Windows: `powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.ps1 | iex"`. Manifests for Scoop, winget and the AUR (`dfdu-bin`) are in `pkg/`; `scripts/package-manifests.sh VERSION` fills them in from a release.
 
-The release archives carry `man/` and `completions/`; Homebrew puts them under `$(brew --prefix)/share/dfdu`. `dfdu completions SHELL` prints the same scripts and `dfdu man DIR` writes the same pages.
+The release archives carry `man/` and `completions/`; Homebrew installs them as man pages and bash, zsh and fish completions. `dfdu completions SHELL` prints the same scripts and `dfdu man DIR` writes the same pages.
 
 ## Trying it
 

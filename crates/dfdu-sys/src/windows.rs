@@ -35,13 +35,16 @@ use windows_sys::Win32::Foundation::{
     STATUS_NOT_SUPPORTED, UNICODE_STRING,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_TAG_INFO, FILE_FULL_DIR_INFO, FILE_ID_BOTH_DIR_INFO,
+    BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+    FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_FULL_DIR_INFO, FILE_ID_BOTH_DIR_INFO,
     FILE_ID_EXTD_DIR_INFO, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
     FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FileAttributeTagInfo, FileFullDirectoryInfo, FileFullDirectoryRestartInfo,
-    FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdExtdDirectoryInfo,
-    FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, MoveFileExW, SYNCHRONIZE,
+    FileAttributeTagInfo, FileDispositionInfo, FileDispositionInfoEx, FileFullDirectoryInfo,
+    FileFullDirectoryRestartInfo, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+    FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
+    MoveFileExW, SYNCHRONIZE, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -197,6 +200,18 @@ fn nt_open(
     access: u32,
     options: u32,
 ) -> io::Result<OwnedHandle> {
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    nt_open_shared(root, name, access, options, share)
+}
+
+/// [`nt_open`] with the sharing given.
+fn nt_open_shared(
+    root: Option<BorrowedHandle<'_>>,
+    name: &[u16],
+    access: u32,
+    options: u32,
+    share: u32,
+) -> io::Result<OwnedHandle> {
     let us = unicode(name)?;
     // Absolute paths are looked up as `CreateFileW` does; names read from a directory are
     // looked up exactly (case-sensitive directories may hold names differing only in case).
@@ -219,7 +234,7 @@ fn nt_open(
             &mut iosb,
             null(),
             0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            share,
             FILE_OPEN,
             options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
             null(),
@@ -355,6 +370,73 @@ pub fn stat_path(path: &Path, follow: bool) -> io::Result<WinStat> {
         reparse,
     )?;
     stat_handle(h.as_handle())
+}
+
+/// Opens the entry at `path` itself (a reparse point is not followed) to delete it through the
+/// handle ([`delete_open`]). Others may go on reading and writing it, but not delete or rename
+/// it while the handle is open, nor rename a directory above it.
+pub fn open_for_delete(path: &Path) -> io::Result<OwnedHandle> {
+    nt_open_shared(
+        None,
+        &nt_path(path)?,
+        DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_OPEN_REPARSE_POINT,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+    )
+}
+
+/// [`stat_path`] of an entry already open.
+pub fn stat_open(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
+    stat_handle(h)
+}
+
+/// Deletes the entry open as `h` (from [`open_for_delete`]; a directory must be empty): its name
+/// goes at once where the filesystem has POSIX semantics (NTFS on Windows 10 1809 and later),
+/// otherwise when the handle is closed. A read-only file is deleted too.
+pub fn delete_open(h: BorrowedHandle<'_>) -> io::Result<()> {
+    let ex = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    };
+    // SAFETY: the buffer is a `FILE_DISPOSITION_INFO_EX` of the size passed, read only for the
+    // duration of the call.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            h.as_raw_handle(),
+            FileDispositionInfoEx,
+            (&raw const ex).cast(),
+            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    };
+    if ok != 0 {
+        return Ok(());
+    }
+    let code = last_error_code();
+    if ![
+        ERROR_INVALID_PARAMETER,
+        ERROR_INVALID_FUNCTION,
+        ERROR_NOT_SUPPORTED,
+    ]
+    .contains(&code)
+    {
+        return Err(win32_error(code));
+    }
+    // Older systems and other filesystems: the plain disposition, which refuses read-only files.
+    let plain = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // SAFETY: as above, for a `FILE_DISPOSITION_INFO`.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            h.as_raw_handle(),
+            FileDispositionInfo,
+            (&raw const plain).cast(),
+            size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(win32_error(last_error_code()));
+    }
+    Ok(())
 }
 
 /// The volume an open file is on.

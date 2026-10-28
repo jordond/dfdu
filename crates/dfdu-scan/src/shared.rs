@@ -1409,6 +1409,13 @@ impl<B: Backend> Worker<B> {
                 slot.syscall_since.store(0, SeqCst);
                 got
             };
+            // Following a link may wait on another mount, so it is watched too.
+            let missing = |name: &[u8]| {
+                slot.begin_syscall(clock.now());
+                let got = sh.backend.link_target_missing(loc, name);
+                slot.syscall_since.store(0, SeqCst);
+                got
+            };
             l.block(
                 &block.names,
                 &files,
@@ -1417,6 +1424,7 @@ impl<B: Backend> Worker<B> {
                 DirId(first),
                 whole,
                 &read,
+                &missing,
             )
         });
         let mut tasks = Vec::new();

@@ -135,6 +135,12 @@ pub trait Backend: Send + Sync + 'static {
         let _ = (dir, name, len);
         None
     }
+    /// Whether the symbolic link `name` in the directory at `dir` points at nothing, for rules
+    /// on broken links; `false` when that cannot be told.
+    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
+        let _ = (dir, name);
+        false
+    }
     /// Mount ids of mounts below `scope` that show data reachable inside `scope` through
     /// another mount ([`crate::duplicate_mounts`]). `None` when the system has no mount table;
     /// the scanner then recognises a second mount only by its root's `(dev, ino)`.
@@ -324,6 +330,10 @@ impl Backend for PortableBackend {
         read_prefix_at(dir, name, len)
     }
 
+    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
+        link_target_missing_at(dir, name)
+    }
+
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         path.to_path_buf()
     }
@@ -414,6 +424,12 @@ impl Backend for PortableBackend {
             qgroup,
         }))
     }
+}
+
+/// [`Backend::link_target_missing`] for backends whose location is a path.
+pub(crate) fn link_target_missing_at(dir: &Path, name: &[u8]) -> bool {
+    fs::metadata(dir.join(dfdu_tree::name_os(name)))
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// [`Backend::read_prefix`] for backends whose location is a path.

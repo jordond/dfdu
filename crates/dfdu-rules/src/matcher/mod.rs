@@ -7,8 +7,9 @@
 //! directory are picked once per listing ([`RuleSet::dir`]), so most entries never build their
 //! full path. Conditions on what is inside the entry (`child`,
 //! required `marker`) are left to [`RuleSet::check_inside`], called once the entry's own
-//! listing is known. A file's own size and age (`larger_than`, `not_modified_days`) are
-//! checked here from its stat; a rule's `min_size`, `min_age_days` and guards are checked by
+//! listing is known, as is `empty`. A file's own size and age (`larger_than`,
+//! `not_modified_days`) are checked here from its stat, and a broken link (`broken_link`) by
+//! following the link once its path matched; a rule's `min_size`, `min_age_days` and guards are checked by
 //! the cleanup step.
 
 use std::borrow::Cow;
@@ -36,6 +37,9 @@ pub struct Candidate<'a> {
     /// A file's stat, for `larger_than` and `not_modified_days`; `None` for a directory or
     /// when not known, which fails those conditions.
     pub stat: Option<Stat>,
+    /// A symbolic link: tells whether its target is missing, for `broken_link`. `None` for
+    /// anything else, or when that cannot be found out, which fails that condition.
+    pub link: Option<&'a dyn Fn() -> bool>,
 }
 
 /// What a rule may ask of a file's own metadata.
@@ -365,6 +369,9 @@ impl RuleSet {
         if !self.fits(r, c) || (r.top_most && c.inside.contains(&i)) {
             return None;
         }
+        if r.broken_link && !c.link.is_some_and(|missing| missing()) {
+            return None;
+        }
         if !r.exclude.is_empty() || !r.not_inside.is_empty() {
             let path = path();
             if r.exclude.iter().any(|g| g.matches(&path))
@@ -438,17 +445,21 @@ impl RuleSet {
         ))
     }
 
-    /// The `child` and required `marker` conditions of rule `i` for the entry named `name`:
-    /// `child` tells whether its listing has an entry, `marker` reads the first bytes of a
-    /// file in it.
+    /// The `child`, required `marker` and `empty` conditions of rule `i` for the entry named
+    /// `name`: `child` tells whether its listing has an entry, `marker` reads the first bytes
+    /// of a file in it, `empty` whether the listing had no entries at all.
     pub fn check_inside(
         &self,
         i: u16,
         name: &[u8],
         child: &dyn Fn(&[u8]) -> bool,
         marker: ReadMarker,
+        empty: bool,
     ) -> bool {
         let r = self.rule(i);
+        if r.empty && !empty {
+            return false;
+        }
         let children_ok = r
             .child
             .iter()

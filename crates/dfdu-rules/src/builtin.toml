@@ -755,3 +755,40 @@ larger_than = "1 GiB"
 not_modified_days = 180
 [rule.guard]
 not_vcs_tracked = true
+
+[[rule]]
+id = "content.empty-dirs"
+category = "content.empty"
+name = "Empty folders"
+enabled = false
+safety = "review"
+action = "trash"
+priority = 10
+verified = ["macos"]
+explanation = "Folders in your home folder with nothing in them. They take almost no space; this tidies up. Off by default: turn it on with `enabled = true` in a rule file."
+lost = "The empty folder. An app or build may expect it to exist and recreate it, or fail without it."
+[rule.match]
+kind = "dir"
+paths = ["{home}/**"]
+exclude = { macos = ["{home}/Library/**", "{home}/.*/**", "{home}/.*"], linux = ["{home}/.*/**", "{home}/.*"], windows = ["{home}/AppData/**", "{home}/.*/**", "{home}/.*"] }
+empty = true
+[rule.guard]
+not_vcs_tracked = true
+
+[[rule]]
+id = "content.broken-links"
+category = "content.broken-links"
+name = "Broken symbolic links"
+safety = "review"
+action = "delete"
+priority = 10
+verified = ["macos"]
+explanation = "Symbolic links in your home folder whose target no longer exists. They take no space; this tidies up."
+lost = "The link. If its target comes back (a drive not mounted, a file being replaced), the link is gone."
+[rule.match]
+kind = "file"
+paths = ["{home}/**"]
+exclude = { macos = ["{home}/Library/**", "{home}/.*/**", "{home}/.*"], linux = ["{home}/.*/**", "{home}/.*"], windows = ["{home}/AppData/**", "{home}/.*/**", "{home}/.*"] }
+broken_link = true
+[rule.guard]
+not_vcs_tracked = true

@@ -207,6 +207,11 @@ pub const CATEGORIES: &[Category] = &[
         Colour::Download,
     ),
     cat("content.empty", "Empty files and folders", Colour::Other),
+    cat(
+        "content.broken-links",
+        "Broken symbolic links",
+        Colour::Other,
+    ),
 ];
 
 /// The number of category `id`, `None` for an id outside the taxonomy.
@@ -283,6 +288,10 @@ pub struct Rule {
     pub larger_than: u64,
     /// Files only: the file was not modified for this many days (0: any age).
     pub not_modified_days: u32,
+    /// Directories only: the directory has no entries.
+    pub empty: bool,
+    /// Files only: the entry is a symbolic link whose target does not exist.
+    pub broken_link: bool,
     pub guard: Guard,
     pub degrade: Vec<Degrade>,
     pub native: Option<schema::NativeDef>,
@@ -296,7 +305,7 @@ impl Rule {
 
     /// Whether some condition can only be checked once the candidate's own listing is known.
     pub fn looks_inside(&self) -> bool {
-        !self.child.is_empty() || self.markers.iter().any(|m| m.required)
+        !self.child.is_empty() || self.markers.iter().any(|m| m.required) || self.empty
     }
 }
 
