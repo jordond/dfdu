@@ -7,18 +7,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dfdu_clean::{DeleteResult, DeleterMsg, Identity, Mode, Plan, PlanItem};
+use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
-    Backend, Chunk, ChunkStatus, DirId, JobId, JobOptions, ListingStatus, ScanMsg, Shared,
-    SkipReason,
+    Backend, Chunk, ChunkStatus, DirId, Entry, JobId, JobOptions, ListingStatus, Mark, ScanMsg,
+    Shared, SkipReason,
 };
 use dfdu_tree::{
-    DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Pages, Subvol, Totals, Tree,
+    Class, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, NodeRef, Pages, Subvol, Totals, Tree,
 };
 
+use crate::classifier::{CheckMsg, CheckReq};
 use crate::extents::{ExtentTable, Inode};
 use crate::links::{LinkTable, Scope, VISIBLE};
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use crate::recent::{Event, Recent};
+
+/// A `Close` that arrived before some of its directory's chunks: their number, the status, and
+/// the classes it carries.
+type HeldClose = (u32, (ListingStatus, Vec<(DirId, Class)>));
 
 /// What readers see under the read lock: the tree and the engine status, always consistent with
 /// each other.
@@ -31,6 +37,10 @@ pub struct Model {
     pub subvols: HashMap<NodeRef, Subvol>,
     /// The last messages and commands applied, for crash reports.
     pub recent: Recent,
+    /// The rules the scan classifies against; a node's [`dfdu_tree::Class`] indexes them.
+    pub rules: Option<Arc<dfdu_rules::RuleSet>>,
+    /// What each rule's native `size_command` reported, by rule ([`Command::NativeSizes`]).
+    pub native_sizes: HashMap<u16, Result<u64, String>>,
 }
 
 impl Model {
@@ -313,6 +323,8 @@ pub enum Command {
         node: NodeRef,
     },
     AbandonAllStalled,
+    /// Run the native `size_command` of every rule that matched something.
+    NativeSizes,
 }
 
 struct Job {
@@ -323,7 +335,7 @@ struct Job {
     scope: Scope,
     opts: JobOptions,
     map: Pages<Slot>,
-    held_close: HashMap<u32, (u32, ListingStatus)>,
+    held_close: HashMap<u32, HeldClose>,
     stalled: HashMap<u32, u64>,
     submitted_seq: u64,
     phase: JobPhase,
@@ -424,6 +436,10 @@ pub struct Applier<B: Backend> {
     extent_devs: HashSet<u64>,
     measure_stack: Vec<NodeRef>,
     outgoing_measure: Vec<MeasureReq>,
+    /// Requests for the classifier pool, taken by the runtime after each slice.
+    outgoing_checks: Vec<CheckReq>,
+    /// A classifier pool answers them; without one nothing is queued.
+    pub checks: bool,
     measure_inflight: usize,
     /// Results of earlier rounds (abandoned after a timeout) are ignored.
     measure_round: u64,
@@ -468,6 +484,80 @@ fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     }
 }
 
+/// What a rescan of directory `ix` classifies against: the rules decided above it, whether it
+/// is protected, and its own hits, from its parent's listing as the tree has it. `job` is what
+/// the job that scanned `ix` classified against, and `job_root` that job's root.
+fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> ClassOpts {
+    let rules = job.rules.clone();
+    // The rule path: the job root's, then the names below it.
+    let mut names = Vec::new();
+    let mut cur = Some(ix);
+    while let Some(i) = cur
+        && Some(i) != job_root
+    {
+        names.push(tree.name(i));
+        cur = tree.parent(i);
+    }
+    let path_of = |names: &[&[u8]]| {
+        let mut p = job.path.clone();
+        for n in names.iter().rev() {
+            if !p.ends_with(b"/") {
+                p.push(b'/');
+            }
+            p.extend_from_slice(n);
+        }
+        p
+    };
+    let path = if cur.is_some() {
+        path_of(&names)
+    } else {
+        dfdu_scan::classify::rule_path(&tree.path_buf(ix))
+    };
+    let mut inside = Vec::new();
+    let mut cur = tree.parent(ix);
+    while let Some(p) = cur {
+        inside.extend(tree.class(p).map(|c| c.rule));
+        cur = tree.parent(p);
+    }
+    inside.reverse();
+    let protection = |i: Ix| {
+        if tree.is_protected(i) {
+            dfdu_rules::protected::State::On
+        } else {
+            dfdu_rules::protected::State::Off
+        }
+    };
+    let mut chain = Vec::new();
+    if let Some(p) = tree.parent(ix) {
+        let cut = path.iter().rposition(|&b| b == b'/').unwrap_or(0);
+        let parent = if cut == 0 {
+            b"/".to_vec()
+        } else {
+            path[..cut].to_vec()
+        };
+        let sibling = |n: &[u8]| tree.children(p).any(|c| tree.name(c) == n);
+        let v = rules.classify(&dfdu_rules::Candidate {
+            parent: &parent,
+            name: tree.name(ix),
+            is_dir: true,
+            sibling: &sibling,
+            inside: &inside,
+            protection: protection(p),
+            partial: false,
+        });
+        if let dfdu_rules::Verdict::Hits(h) = v {
+            chain = h;
+        }
+    }
+    ClassOpts {
+        rules,
+        path,
+        inside,
+        protection: protection(ix),
+        chain,
+    }
+}
+
 fn empty_dir_meta() -> Meta {
     Meta {
         kind: Kind::Dir,
@@ -501,6 +591,8 @@ impl<B: Backend> Applier<B> {
             extent_devs: HashSet::new(),
             measure_stack: Vec::new(),
             outgoing_measure: Vec::new(),
+            outgoing_checks: Vec::new(),
+            checks: false,
             measure_inflight: 0,
             measure_round: 0,
             measure_last: 0,
@@ -558,6 +650,10 @@ impl<B: Backend> Applier<B> {
                 self.next_job += 1;
                 let name = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
                 let root = m.tree.new_root(&name, &empty_dir_meta(), true);
+                if let Some(c) = &opts.class {
+                    m.rules = Some(c.rules.clone());
+                    m.tree.set_protection(root, c.protection.protected(), false);
+                }
                 self.start(m, id, JobKind::Initial, root, root, VISIBLE, path, opts);
             }
             Command::Rescan { node } => self.rescan(m, node),
@@ -575,6 +671,7 @@ impl<B: Backend> Applier<B> {
                 }
             }
             Command::Delete { items, mode } => self.submit_plan(m, items, mode),
+            Command::NativeSizes => self.native_sizes(m),
             #[cfg(feature = "fault-injection")]
             Command::InjectPanic => panic!("injected applier panic"),
             Command::AbortDelete => {
@@ -710,17 +807,24 @@ impl<B: Backend> Applier<B> {
         if m.tree.flags(ix).has(NodeFlags::MOUNT_ROOT) {
             m.tree.set_flag(shadow, NodeFlags::MOUNT_ROOT, true);
         }
-        let mut opts = self
-            .jobs
-            .get(&m.tree.dir(ix).expect("dir").job)
-            .map(|j| j.opts.clone())
-            .unwrap_or_default();
+        let owner = self.jobs.get(&m.tree.dir(ix).expect("dir").job);
+        let owner_root = owner.and_then(|j| m.tree.resolve(j.root));
+        let mut opts = owner.map(|j| j.opts.clone()).unwrap_or_default();
         // Duplicate mounts are judged against the whole visible tree, not just this part.
         let mut top = ix;
         while let Some(p) = m.tree.parent(top) {
             top = p;
         }
         opts.scope = Some(m.tree.path_buf(top));
+        if let Some(c) = &mut opts.class {
+            *c = rescan_class(&m.tree, ix, owner_root, c);
+            let f = m.tree.flags(ix);
+            m.tree.set_protection(
+                shadow,
+                f.has(NodeFlags::PROTECTED),
+                f.has(NodeFlags::EXCEPTED),
+            );
+        }
         self.start(m, id, JobKind::Rescan, ix, shadow, id, path, opts);
     }
 
@@ -851,7 +955,8 @@ impl<B: Backend> Applier<B> {
                 dir,
                 chunks,
                 status,
-            } => self.apply_close(m, job, dir, chunks, status),
+                classes,
+            } => self.apply_close(m, job, dir, chunks, (status, classes)),
             ScanMsg::Stalled { job, dir } => {
                 m.status.stats.stalled += 1;
                 match self.gate(m, job, dir, None) {
@@ -984,6 +1089,10 @@ impl<B: Backend> Applier<B> {
         let j = self.jobs.get_mut(&c.job.0).expect("gated job");
         let scope = j.scope;
         let mut delta = Totals::default();
+        // Nodes of the entries that have marks, by entry, only when some have.
+        let mut file_ix = Vec::new();
+        let mut subdir_ix = Vec::new();
+        let marked = !c.marks.is_empty();
         for f in &c.files {
             let name = c.name(f.name);
             let fx = if f.meta.is_hardlink() {
@@ -997,6 +1106,9 @@ impl<B: Backend> Applier<B> {
             } else {
                 m.tree.add_file(ix, name, &f.meta, false, None)
             };
+            if marked {
+                file_ix.push(fx);
+            }
             delta.add(&m.tree.own(fx));
         }
         for e in &c.errors {
@@ -1023,6 +1135,9 @@ impl<B: Backend> Applier<B> {
                 _ => {}
             }
             let cx = m.tree.add_dir_flagged(ix, c.name(s.name), &s.meta, flags);
+            if marked {
+                subdir_ix.push(cx);
+            }
             let r = m.tree.node_ref(cx);
             j.set(id, r);
             let crec = m.tree.dir_mut(cx).expect("dir");
@@ -1037,6 +1152,21 @@ impl<B: Backend> Applier<B> {
                 new_pending += 1;
             }
             delta.add(&m.tree.own(cx));
+        }
+        for (e, mark) in &c.marks {
+            let node = match *e {
+                Entry::File(i) => file_ix.get(i as usize),
+                Entry::Subdir(i) => subdir_ix.get(i as usize),
+            };
+            let Some(&node) = node else {
+                m.status.stats.corrupt += 1;
+                continue;
+            };
+            match *mark {
+                Mark::Class(class) => m.tree.set_class(node, Some(class)),
+                Mark::Protected => m.tree.set_protection(node, true, false),
+                Mark::Excepted => m.tree.set_protection(node, false, true),
+            }
         }
         m.tree.propagate_add(ix, &delta);
         m.status.stats.entries += (c.files.len() + c.errors.len() + c.subdirs.len()) as u64;
@@ -1060,7 +1190,7 @@ impl<B: Backend> Applier<B> {
         job: JobId,
         dir: DirId,
         chunks: u32,
-        status: ListingStatus,
+        status: (ListingStatus, Vec<(DirId, Class)>),
     ) {
         m.status.stats.closes += 1;
         let Some(ix) = self.gate(m, job, dir, None) else {
@@ -1097,7 +1227,21 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    fn close_with_status(&mut self, m: &mut Model, job: u32, ix: Ix, status: ListingStatus) {
+    fn close_with_status(
+        &mut self,
+        m: &mut Model,
+        job: u32,
+        ix: Ix,
+        (status, classes): (ListingStatus, Vec<(DirId, Class)>),
+    ) {
+        // Every chunk is in, so the subdirectories the classes name have nodes.
+        if let Some(j) = self.jobs.get(&job) {
+            for (d, c) in classes {
+                if let Some(cx) = j.get(d).and_then(|r| m.tree.resolve(r)) {
+                    m.tree.set_class(cx, Some(c));
+                }
+            }
+        }
         let outcome = match status {
             ListingStatus::Complete => DirState::Complete,
             ListingStatus::Partial {
@@ -1396,6 +1540,7 @@ impl<B: Backend> Applier<B> {
         // Every job's end (done or cancelled) settles the visible charges to the lowest path, so
         // per-directory totals never depend on scan order.
         self.work.push_back(Work::FinalPassVisible);
+        self.queue_checks(m);
         // Keep finished jobs out of the status list once nothing refers to them.
         if self.jobs.len() > 64 {
             let done: Vec<u32> = self
@@ -1509,6 +1654,93 @@ impl<B: Backend> Applier<B> {
     /// Requests for the measurers, taken by the runtime after each slice.
     pub fn take_measure_requests(&mut self) -> Vec<MeasureReq> {
         std::mem::take(&mut self.outgoing_measure)
+    }
+
+    /// Requests for the classifier pool.
+    pub fn take_check_requests(&mut self) -> Vec<CheckReq> {
+        std::mem::take(&mut self.outgoing_checks)
+    }
+
+    /// Queues the guard checks of every visible class not checked or queued yet. Classes are
+    /// few (one per match, nothing below it), so this walks all of them.
+    fn queue_checks(&mut self, m: &mut Model) {
+        let Some(rules) = m.rules.clone().filter(|_| self.checks) else {
+            return;
+        };
+        let todo: Vec<(Ix, Class)> = m
+            .tree
+            .classes()
+            .filter(|(ix, c)| !c.has(Class::QUEUED | Class::CHECKED) && m.tree.is_visible(*ix))
+            .collect();
+        for (ix, mut c) in todo {
+            let g = &rules.rule(c.rule).guard;
+            if !g.not_vcs_tracked && g.not_running.is_empty() {
+                continue;
+            }
+            self.outgoing_checks.push(CheckReq::Guards {
+                node: m.tree.node_ref(ix),
+                rule: c.rule,
+                path: m.tree.path_buf(ix),
+                vcs: g.not_vcs_tracked,
+                processes: g.not_running.clone(),
+            });
+            c.flags |= Class::QUEUED;
+            m.tree.set_class(ix, Some(c));
+        }
+    }
+
+    fn native_sizes(&mut self, m: &mut Model) {
+        let Some(rules) = m.rules.clone().filter(|_| self.checks) else {
+            return;
+        };
+        let mut matched: Vec<u16> = m.tree.classes().map(|(_, c)| c.rule).collect();
+        matched.sort_unstable();
+        matched.dedup();
+        for rule in matched {
+            if let Some(n) = &rules.rule(rule).native
+                && !n.size_command.is_empty()
+            {
+                self.outgoing_checks.push(CheckReq::NativeSize {
+                    rule,
+                    check: n.check.clone(),
+                    command: n.size_command.clone(),
+                });
+            }
+        }
+    }
+
+    /// Applies an answer of the classifier pool. One for a node freed since, or whose class
+    /// changed (a rescan), is dropped.
+    pub fn apply_check(&mut self, m: &mut Model, msg: CheckMsg) {
+        match msg {
+            CheckMsg::Guards {
+                node,
+                rule,
+                tracked,
+                running,
+            } => {
+                let Some(ix) = m.tree.resolve(node) else {
+                    return;
+                };
+                let Some(mut c) = m.tree.class(ix).filter(|c| c.rule == rule) else {
+                    return;
+                };
+                c.flags = (c.flags & !Class::QUEUED) | Class::CHECKED;
+                if tracked == Some(true) {
+                    c.flags |= Class::VCS_TRACKED;
+                    c.safety = dfdu_rules::Safety::Protected as u8;
+                }
+                if running.is_some() {
+                    c.flags |= Class::IN_USE;
+                }
+                m.tree.set_class(ix, Some(c));
+                m.tree.touch(ix);
+            }
+            CheckMsg::NativeSize { rule, result } => {
+                m.native_sizes.insert(rule, result);
+                m.tree.bump_version();
+            }
+        }
     }
 
     pub fn apply_measure(&mut self, m: &mut Model, msg: MeasureMsg, now: u64) {

@@ -8,22 +8,22 @@ L0 0-5 bold | 7-14 bold
 L1 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan | 98-99 fg=darkgray
  ⠋┃ Navigate                                        Act                                          ┃
 L2 0-1 fg=darkgray reversed | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan
- ⠙┃ ↑ k            move up                          r      rescan the selected directory         ┃
+ ⠙┃ ↑ k              move up                        r      rescan the selected directory         ┃
 L3 0-1 fg=darkgray | 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ ↓ j            move down                        x      skip directories that are not         ┃
+  ┃ ↓ j              move down                      x      skip directories that are not         ┃
 L4 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ PgUp           page up                                 responding                            ┃
+  ┃ PgUp             page up                               responding                            ┃
 L5 2-2 fg=cyan | 4-7 bold | 97-97 fg=cyan
- !┃ PgDn           page down                        Space  mark or unmark, then move down        ┃
+ !┃ PgDn             page down                      Space  mark or unmark, then move down        ┃
 L6 0-1 fg=red | 2-2 fg=cyan | 4-7 bold | 52-56 bold | 97-97 fg=cyan
- ~┃ g Home         first entry                      :      clear all marks (in the palette)      ┃
+ ~┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
 L7 0-1 fg=yellow | 2-2 fg=cyan | 4-9 bold | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃ G End          last entry                       d      move to Trash                         ┃
+  ┃ G End            last entry                     d      move to Trash                         ┃
 L8 2-2 fg=cyan | 4-8 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ → l Enter      open directory                   D      delete permanently (type delete)      ┃
+  ┃ → l Enter        open directory                 D      delete permanently (type delete)      ┃
 L9 2-2 fg=cyan | 4-12 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ ← h Backspace  parent directory                                                              ┃
-L10 2-2 fg=cyan | 4-16 bold | 97-97 fg=cyan
+  ┃ ← h Backspace <  parent directory                                                            ┃
+L10 2-2 fg=cyan | 4-18 bold | 97-97 fg=cyan
   ┃                                                 Panels                                       ┃
 L11 2-2 fg=cyan | 51-57 bold | 97-97 fg=cyan
   ┃ Sort                                            /         filter this directory              ┃
@@ -44,7 +44,7 @@ L18 2-2 fg=cyan | 4-4 bold | 52-55 bold | 97-97 fg=cyan
 L19 2-2 fg=cyan | 52-59 bold | 97-97 fg=cyan
   ┃ Display                                         F12       debug overlay                      ┃
 L20 2-2 fg=cyan | 3-10 bold | 52-54 bold | 97-97 fg=cyan
- 1┃ a  toggle apparent size / disk usage                                                         ┃
+ 1┃ 1  list view                                                                                 ┃
 L21 0-1 fg=yellow | 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=darkgray | 2-88 fg=cyan | 89-96 fg=darkgray | 97-97 fg=cyan

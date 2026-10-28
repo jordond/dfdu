@@ -129,6 +129,12 @@ pub trait Backend: Send + Sync + 'static {
     fn data_profile(&self, _loc: &Self::Loc) -> Option<(&'static str, f64)> {
         None
     }
+    /// The first `len` bytes (fewer if the file is shorter) of the regular file `name` in the
+    /// directory at `dir`, for rule markers such as CACHEDIR.TAG; `None` when it cannot be read.
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        let _ = (dir, name, len);
+        None
+    }
     /// Mount ids of mounts below `scope` that show data reachable inside `scope` through
     /// another mount ([`crate::duplicate_mounts`]). `None` when the system has no mount table;
     /// the scanner then recognises a second mount only by its root's `(dev, ino)`.
@@ -314,6 +320,10 @@ impl Backend for PortableBackend {
     type Loc = PathBuf;
     type Stream = PortableStream;
 
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        read_prefix_at(dir, name, len)
+    }
+
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         path.to_path_buf()
     }
@@ -404,4 +414,15 @@ impl Backend for PortableBackend {
             qgroup,
         }))
     }
+}
+
+/// [`Backend::read_prefix`] for backends whose location is a path.
+pub(crate) fn read_prefix_at(dir: &Path, name: &[u8], len: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let f = fs::File::open(dir.join(dfdu_tree::name_os(name)))
+        .ok()
+        .filter(|f| f.metadata().is_ok_and(|m| m.is_file()))?;
+    let mut buf = Vec::with_capacity(len);
+    f.take(len as u64).read_to_end(&mut buf).ok()?;
+    Some(buf)
 }

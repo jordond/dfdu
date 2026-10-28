@@ -34,6 +34,7 @@ mod problems;
 mod setup;
 mod snapshot;
 mod theme;
+mod treemap;
 mod view;
 
 use std::io;
@@ -52,7 +53,7 @@ pub use app::{App, Effect, Overlay};
 pub use debug::summary as debug_summary;
 pub use picker::{DISK_TIMEOUT, Picked, Picker};
 pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
-pub use setup::{ThemeChoice, UiSettings, theme_dir};
+pub use setup::{ThemeChoice, UiSettings, rules_dir, theme_dir};
 pub use snapshot::{SizeMode, Snapshot, Target, subvol_label};
 pub use theme::{ColorLevel, Theme, ThemeError, ThemeFile, human, parse_color_flag};
 
@@ -72,6 +73,8 @@ pub struct RunOptions {
     pub path: Option<PathBuf>,
     /// Options of the scan (which mounts it descends into).
     pub job: JobOptions,
+    /// The rules entries are classified against; `None` classifies nothing.
+    pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
     pub engine: EngineOptions,
     pub ui: UiSettings,
 }
@@ -166,10 +169,11 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         ..opts.engine
     };
     let engine = Engine::start(dfdu_scan::native_backend(storage), engine_opts);
-    engine.send(Command::Scan {
-        path,
-        opts: opts.job,
-    });
+    let mut job = opts.job;
+    job.class = opts
+        .rules
+        .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
+    engine.send(Command::Scan { path, opts: job });
     let (tx, input) = unbounded();
     let spawned = thread::Builder::new()
         .name("dfdu-input".into())

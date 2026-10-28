@@ -252,6 +252,10 @@ impl Backend for LinuxBackend {
     type Loc = PathBuf;
     type Stream = LinuxStream;
 
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        crate::backend::read_prefix_at(dir, name, len)
+    }
+
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         path.to_path_buf()
     }

@@ -185,6 +185,10 @@ impl Backend for WindowsBackend {
     type Loc = WinLoc;
     type Stream = WindowsStream;
 
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        crate::backend::read_prefix_at(dir.path(), name, len)
+    }
+
     fn loc_from_path(&self, path: &Path) -> WinLoc {
         WinLoc {
             path: dfdu_sys::verbatim_path(path).unwrap_or_else(|_| path.to_path_buf()),

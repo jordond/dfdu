@@ -58,6 +58,7 @@ impl Event {
                 dir,
                 chunks,
                 status,
+                ..
             } => Event::Close {
                 job: job.0,
                 dir: dir.0,
@@ -86,6 +87,7 @@ impl Event {
             Command::InjectPanic => "InjectPanic",
             Command::Abandon { .. } => "Abandon",
             Command::AbandonAllStalled => "AbandonAllStalled",
+            Command::NativeSizes => "NativeSizes",
         })
     }
 }

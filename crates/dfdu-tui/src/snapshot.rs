@@ -120,6 +120,44 @@ impl<const N: usize> PartialEq<&[u8; N]> for Name {
     }
 }
 
+/// What a row counts as for cleanup: the class of the rule it matched, or of the match above
+/// it that covers it (`Tree::class_in_effect`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tag {
+    pub class: dfdu_tree::Class,
+    /// The match is above the row, not the row itself.
+    pub inherited: bool,
+}
+
+impl Tag {
+    /// The short name of its category (`build` for `dev.build`) and the theme's colour slot.
+    pub fn category(self, rules: &dfdu_rules::RuleSet) -> (&'static str, usize) {
+        let c = rules.rule(self.class.rule).category();
+        (c.id.rsplit('.').next().unwrap_or(c.id), c.colour as usize)
+    }
+
+    /// A match offered for cleanup without review: safe or regenerable (a match version
+    /// control tracks is protected).
+    pub fn candidate(self) -> bool {
+        self.class.safety <= dfdu_rules::Safety::Regenerable as u8
+    }
+}
+
+/// The tag of node `c` of a directory whose own class in effect is `dir`. Without classes
+/// this is one check of an empty map.
+pub fn tag_of(tree: &Tree, dir: Option<dfdu_tree::Class>, c: Ix) -> Option<Tag> {
+    match dir {
+        Some(class) => Some(Tag {
+            class,
+            inherited: true,
+        }),
+        None => tree.class(c).map(|class| Tag {
+            class,
+            inherited: false,
+        }),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EntryData {
     pub node: NodeRef,
@@ -139,6 +177,7 @@ pub struct EntryData {
     pub errors_inside: u64,
     /// btrfs subvolume label ([`subvol_label`]).
     pub label: Option<String>,
+    pub tag: Option<Tag>,
     /// Bytes of its disk usage that data outside the scan also uses: deleting it frees less.
     pub shared_out: u64,
     /// A file with compressed extents whose on-disk size is not known (an upper bound).
@@ -234,6 +273,8 @@ pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
 
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    /// The rules the scan classifies against, when it does: rows have a category column.
+    pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
     pub dir_path: PathBuf,
     /// Path of the scan root; `dir_path` is below it or equal to it.
     pub root_path: PathBuf,
@@ -348,6 +389,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
         compressed_upper_bound: m.status.compressed_upper_bound,
         profile: m.status.profile,
         version: m.fingerprint(),
+        rules: m.rules.clone(),
         ..Default::default()
     };
     let Some(root) = tree.roots().next() else {
@@ -382,6 +424,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     snap.at_root = dir == root;
     snap.dir_total = tree.total(dir);
     snap.dir_mark = Some(mark_of(tree, dir, &rescanning));
+    let dir_class = tree.class_in_effect(dir).map(|(_, c)| c);
     // This runs under the read lock for every entry of the directory, which can have a
     // million: each lookup is done once, and the error and subvolume lookups only when the
     // entry has an error or the scan has subvolumes.
@@ -408,6 +451,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
                 } else {
                     subvol_label(m, c)
                 },
+                tag: tag_of(tree, dir_class, c),
                 shared_out: t.shared_out,
                 compressed: tree.flags(c).has(dfdu_tree::NodeFlags::COMPRESSED),
                 pseudo: false,
@@ -432,6 +476,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
             problem: None,
             errors_inside: 0,
             label: None,
+            tag: None,
             shared_out: 0,
             compressed: false,
             pseudo: true,
@@ -479,6 +524,7 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         problem: None,
         errors_inside: 0,
         label: None,
+        tag: None,
         shared_out: 0,
         compressed: false,
         pseudo: false,

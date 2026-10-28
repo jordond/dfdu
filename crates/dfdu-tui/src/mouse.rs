@@ -1,6 +1,7 @@
 //! Mouse input: clicks, double clicks and the wheel, mapped through `App::areas`.
 //!
-//! A click selects a list row and a second click on it within [`DOUBLE_CLICK`] opens it; a click
+//! A click selects a list row (or treemap tile) and a second click on it within [`DOUBLE_CLICK`]
+//! opens it; a click
 //! on the "new entries" row sorts, one on a breadcrumb goes to its directory, and one outside an
 //! open overlay closes it. The delete dialog ignores the mouse, so a stray click never confirms
 //! or cancels a delete. The wheel moves the selection, or scrolls the details pane. Over the
@@ -102,6 +103,10 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     let list = app.areas.list;
     if !list.contains(at) {
         return None;
+    }
+    if crate::treemap::active(app) {
+        app.mouse.last_click = None;
+        return crate::treemap::click(app, at, now);
     }
     // The rows as the list drew them: entries from `scroll`, then the "new entries" row.
     let line = (at.y - list.y) as usize;

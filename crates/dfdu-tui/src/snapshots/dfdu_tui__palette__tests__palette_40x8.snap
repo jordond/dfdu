@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/palette.rs
 expression: frame
 ---
  dfdu  /r              ⠋ scanning 00:00
- 3┌ Commands 35/35 ──────────────────┐sa
+ 3┌ Commands 40/40 ──────────────────┐sa
   │ : ▌                              │
   │ Theme: ansi              setting │li
   │ Theme: mono              setting │

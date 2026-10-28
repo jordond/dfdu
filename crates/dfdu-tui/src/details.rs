@@ -76,6 +76,81 @@ pub struct Facts {
     pub largest: Largest,
     /// What the sizes of `largest` are.
     pub size_mode: SizeMode,
+    /// The rule it matched, or the match it is in.
+    pub matched: Option<Matched>,
+    /// The matches at or below it, by category: name, colour slot, size, count; largest first.
+    pub categories: Vec<(&'static str, usize, u64, u64)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Matched {
+    pub rule: String,
+    pub category: &'static str,
+    pub slot: usize,
+    pub safety: &'static str,
+    /// The path of the match above, when it is not the entry itself.
+    pub above: Option<PathBuf>,
+    pub explanation: String,
+    pub lost: String,
+    /// The `degrade` condition that holds.
+    pub degraded: Option<String>,
+    pub flags: u8,
+}
+
+/// The rule node `ix` matched, or the match above it.
+fn matched(m: &Model, ix: Ix) -> Option<Matched> {
+    let rules = m.rules.as_ref()?;
+    let (at, c) = m.tree.class_in_effect(ix)?;
+    let r = rules.rule(c.rule);
+    let cat = r.category();
+    Some(Matched {
+        rule: r.name.clone(),
+        category: cat.name,
+        slot: cat.colour as usize,
+        safety: dfdu_rules::Safety::ALL[c.safety as usize].as_str(),
+        above: (at != ix).then(|| m.tree.path_buf(at)),
+        explanation: r.explanation.clone(),
+        lost: r.lost.clone(),
+        degraded: c.degraded.map(|d| r.degrade[d as usize].reason.clone()),
+        flags: c.flags,
+    })
+}
+
+/// The matches at or below `ix` that no other match covers, summed by category. Matches are
+/// few (one per match, nothing below it), so this looks at all of them.
+fn categories(m: &Model, ix: Ix, mode: SizeMode) -> Vec<(&'static str, usize, u64, u64)> {
+    let Some(rules) = &m.rules else {
+        return Vec::new();
+    };
+    let tree = &m.tree;
+    let mut by: Vec<(&'static str, usize, u64, u64)> = Vec::new();
+    let mut add = |cx: Ix, rule: u16| {
+        let cat = rules.rule(rule).category();
+        let size = mode.of(&tree.total(cx));
+        match by.iter_mut().find(|b| b.0 == cat.name) {
+            Some(b) => (b.2, b.3) = (b.2 + size, b.3 + 1),
+            None => by.push((cat.name, cat.colour as usize, size, 1)),
+        }
+    };
+    if let Some((at, c)) = tree.class_in_effect(ix) {
+        add(at, c.rule);
+    } else {
+        for (cx, c) in tree.classes() {
+            let (mut cur, mut covered) = (Some(cx), false);
+            while let Some(i) = cur {
+                if i == ix {
+                    break;
+                }
+                covered |= i != cx && tree.class(i).is_some();
+                cur = tree.parent(i);
+            }
+            if cur == Some(ix) && !covered && tree.is_visible(cx) {
+                add(cx, c.rule);
+            }
+        }
+    }
+    by.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(b.0)));
+    by
 }
 
 #[derive(Clone, Debug)]
@@ -265,6 +340,12 @@ fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
             },
             largest: largest::<MAX>(tree, ix, app.size_mode),
             size_mode: app.size_mode,
+            matched: matched(m, ix),
+            categories: if tree.dir(ix).is_some() {
+                categories(m, ix, app.size_mode)
+            } else {
+                Vec::new()
+            },
         }),
         _ => None,
     };
@@ -474,6 +555,43 @@ fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     if f.errors_below > 0 {
         let s = format!("{} below", plural(f.errors_below, "error", "errors"));
         text(&mut out, &s, t.error);
+    }
+    if let Some(c) = &f.matched {
+        out.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(c.category.to_string(), t.cat[c.slot]),
+            Span::styled(format!(" · {}", c.safety), plain),
+        ]));
+        text(&mut out, &c.rule, t.title);
+        if let Some(p) = &c.above {
+            text(&mut out, &format!("in {}", p.display()), t.dim);
+        }
+        text(&mut out, &c.explanation, plain);
+        text(&mut out, &format!("lost: {}", c.lost), t.dim);
+        if let Some(d) = &c.degraded {
+            text(&mut out, d, t.warn);
+        }
+        if c.flags & dfdu_tree::Class::VCS_TRACKED != 0 {
+            text(
+                &mut out,
+                "version control tracks files in it: protected",
+                t.warn,
+            );
+        }
+        if c.flags & dfdu_tree::Class::IN_USE != 0 {
+            text(&mut out, "a program that uses it was running", t.warn);
+        }
+    }
+    // A match counts as one category; the breakdown is for directories with matches below.
+    if !f.categories.is_empty() && f.matched.is_none() {
+        text(&mut out, "by category", t.title);
+        for &(name, slot, size, n) in &f.categories {
+            out.push(Line::from(vec![
+                Span::raw(format!(" {:>10}  ", human(size))),
+                Span::styled(name.to_string(), t.cat[slot]),
+                Span::styled(format!(" · {n}"), t.dim),
+            ]));
+        }
     }
     match &f.largest {
         Largest::None => {}

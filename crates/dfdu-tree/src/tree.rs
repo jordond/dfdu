@@ -55,12 +55,44 @@ impl NodeFlags {
     pub const NETWORK: u16 = 4096;
     /// Mount of a kernel filesystem (`/proc`, `/sys`), never descended into.
     pub const KERNEL: u16 = 8192;
+    /// Top of a protected subtree (`dfdu-rules` protected paths): nothing in it is offered for
+    /// deletion, except below an [`NodeFlags::EXCEPTED`] node.
+    pub const PROTECTED: u16 = 16384;
+    /// Top of a subtree an exception lifts out of the protected subtree around it.
+    pub const EXCEPTED: u16 = 32768;
 
     pub fn has(self, f: u16) -> bool {
         self.0 & f != 0
     }
     fn set(&mut self, f: u16, on: bool) {
         if on { self.0 |= f } else { self.0 &= !f }
+    }
+}
+
+/// The rule a node matched (`dfdu-rules`): its index in the scan's rule set, and the safety
+/// level and `degrade` condition that hold for this node.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Class {
+    pub rule: u16,
+    /// A `dfdu_rules::Safety`, as its number.
+    pub safety: u8,
+    pub degraded: Option<u16>,
+    /// What the classifier pool found (`Class::CHECKED` and the others).
+    pub flags: u8,
+}
+
+impl Class {
+    /// Queued for the classifier pool's checks.
+    pub const QUEUED: u8 = 1;
+    /// The pool's checks ran.
+    pub const CHECKED: u8 = 2;
+    /// Version control tracks files in it, so it is protected.
+    pub const VCS_TRACKED: u8 = 4;
+    /// A process the rule names (`guard.not_running`) was running when checked.
+    pub const IN_USE: u8 = 8;
+
+    pub fn has(self, flag: u8) -> bool {
+        self.flags & flag != 0
     }
 }
 
@@ -294,6 +326,8 @@ pub struct Tree {
     big_errors: std::collections::HashMap<u32, i32>,
     /// Allocations a node's block count cannot hold, by slot.
     big_allocs: std::collections::HashMap<u32, u64>,
+    /// The rule each classified node matched, by slot; few nodes have one.
+    classes: std::collections::HashMap<u32, Class>,
     dirs: Pages<DirRec>,
     kids: KidArena,
     free_nodes: Vec<u32>,
@@ -715,6 +749,7 @@ impl Tree {
             Some(i) => {
                 self.nodes[i as usize] = node;
                 self.big_errors.remove(&i);
+                self.classes.remove(&i);
                 i
             }
             None => {
@@ -880,6 +915,68 @@ impl Tree {
         self.restate(ix, |t| t.nodes[ix.0 as usize].flags.set(flag, on));
     }
 
+    /// Sets or clears the rule node `ix` matched.
+    pub fn set_class(&mut self, ix: Ix, class: Option<Class>) {
+        match class {
+            Some(c) => self.classes.insert(ix.0, c),
+            None => self.classes.remove(&ix.0),
+        };
+    }
+
+    pub fn class(&self, ix: Ix) -> Option<Class> {
+        if self.classes.is_empty() {
+            return None;
+        }
+        self.classes.get(&ix.0).copied()
+    }
+
+    /// Every classified node, in no order.
+    pub fn classes(&self) -> impl Iterator<Item = (Ix, Class)> + '_ {
+        self.classes.iter().map(|(&i, &c)| (Ix(i), c))
+    }
+
+    /// Marks node `ix` as the top of a protected subtree, of an exception in one, or neither.
+    /// These flags are not counted in totals, so no ancestor changes.
+    pub fn set_protection(&mut self, ix: Ix, protected: bool, excepted: bool) {
+        let f = &mut self.nodes[ix.0 as usize].flags;
+        f.set(NodeFlags::PROTECTED, protected);
+        f.set(NodeFlags::EXCEPTED, excepted);
+    }
+
+    /// Whether node `ix` is in a protected subtree: the nearest node at or above it marked
+    /// [`NodeFlags::PROTECTED`] or [`NodeFlags::EXCEPTED`] is a protected one.
+    pub fn is_protected(&self, ix: Ix) -> bool {
+        let mut cur = Some(ix);
+        while let Some(i) = cur {
+            let f = self.flags(i);
+            if f.has(NodeFlags::PROTECTED) {
+                return true;
+            }
+            if f.has(NodeFlags::EXCEPTED) {
+                return false;
+            }
+            cur = self.parent(i);
+        }
+        false
+    }
+
+    /// The class that applies to node `ix`: that of the highest classified node at or above
+    /// it, since a match covers everything below it, and the node it is on.
+    pub fn class_in_effect(&self, ix: Ix) -> Option<(Ix, Class)> {
+        if self.classes.is_empty() {
+            return None;
+        }
+        let mut found = None;
+        let mut cur = Some(ix);
+        while let Some(i) = cur {
+            if let Some(c) = self.classes.get(&i.0) {
+                found = Some((i, *c));
+            }
+            cur = self.parent(i);
+        }
+        found
+    }
+
     /// Records a file's measured unshared bytes ([`NodeFlags::MEASURED`]).
     pub fn set_measured(&mut self, ix: Ix, excl: u64, compressed: bool) {
         self.restate(ix, |t| {
@@ -954,6 +1051,11 @@ impl Tree {
     }
 
     /// Marks a directory changed without changing totals (state changes the UI should see).
+    /// Marks the tree changed, for readers comparing versions, without changing a node.
+    pub fn bump_version(&mut self) {
+        self.bump();
+    }
+
     pub fn touch(&mut self, ix: Ix) {
         let v = self.bump();
         if let Some(d) = self.dir_mut(ix) {
@@ -1076,6 +1178,7 @@ impl Tree {
                 measured: n.flags.has(NodeFlags::MEASURED),
             });
         }
+        self.classes.remove(&i);
         let n = &mut self.nodes[i as usize];
         self.names_garbage += NameArena::len_of(n.name);
         n.generation = n.generation.wrapping_add(1);
@@ -1243,6 +1346,32 @@ mod tests {
         assert_eq!(g.0, f.0, "slot reused");
         assert!(t.resolve(old).is_none());
         assert!(t.resolve(t.node_ref(g)).is_some());
+    }
+
+    #[test]
+    fn a_reused_slot_has_no_class_or_protection() {
+        let mut t = Tree::new();
+        let root = t.new_root(b"/r", &dir_meta(), true);
+        let d = t.add_dir(root, b"target", &dir_meta());
+        let f = add_file(&mut t, d, "f", 1);
+        let class = Class {
+            rule: 3,
+            safety: 1,
+            degraded: None,
+            flags: 0,
+        };
+        t.set_class(d, Some(class));
+        t.set_protection(root, true, false);
+        t.set_protection(d, false, true);
+        assert_eq!(t.class_in_effect(f), Some((d, class)));
+        assert!(t.is_protected(root) && !t.is_protected(f));
+        t.detach(d);
+        t.free_step(usize::MAX, |_| {});
+        assert_eq!(t.classes().count(), 0);
+        let e = t.add_dir(root, b"e", &dir_meta());
+        assert!([d.0, f.0].contains(&e.0), "slot reused");
+        assert_eq!(t.class(e), None);
+        assert!(t.is_protected(e), "only the root's mark applies");
     }
 
     #[test]

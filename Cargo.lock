@@ -530,6 +530,7 @@ dependencies = [
  "clap",
  "dfdu-engine",
  "dfdu-hangfs",
+ "dfdu-rules",
  "dfdu-scan",
  "dfdu-sys",
  "dfdu-tree",
@@ -575,6 +576,7 @@ dependencies = [
  "dfdu-clean",
  "dfdu-engine",
  "dfdu-hangfs",
+ "dfdu-rules",
  "dfdu-scan",
  "dfdu-sys",
  "dfdu-tree",
@@ -595,12 +597,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfdu-rules"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "dfdu-scan"
 version = "0.1.0"
 dependencies = [
  "crossbeam-deque",
+ "dfdu-rules",
  "dfdu-sys",
  "dfdu-tree",
+ "dunce",
  "fixedbitset 0.5.7",
  "loom",
  "parking_lot 0.13.0",
@@ -614,6 +627,7 @@ version = "0.1.0"
 dependencies = [
  "dfdu-clean",
  "dfdu-engine",
+ "dfdu-rules",
  "dfdu-scan",
  "dfdu-tree",
  "dfdu-tui",
@@ -647,6 +661,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "dfdu-engine",
+ "dfdu-rules",
  "dfdu-scan",
  "dfdu-sys",
  "dfdu-tree",

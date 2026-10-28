@@ -47,6 +47,11 @@ impl Marks {
         &self.items
     }
 
+    /// True when `node` is marked.
+    pub fn contains(&self, node: NodeRef) -> bool {
+        self.nodes.contains(&node)
+    }
+
     /// True when nothing is marked.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
@@ -157,7 +162,7 @@ pub fn clear(app: &mut App) {
 
 /// The first cell of a row: `●` when the entry is marked.
 pub fn gutter(app: &App, e: &EntryData) -> Span<'static> {
-    if !e.pseudo && app.marks.nodes.contains(&e.node) {
+    if !e.pseudo && app.marks.contains(e.node) {
         Span::styled("●", app.theme.mark)
     } else {
         Span::raw(" ")

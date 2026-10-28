@@ -66,6 +66,13 @@ pub fn theme_dir() -> Option<PathBuf> {
     Some(dirs.config_dir().join("dfdu").join("themes"))
 }
 
+/// Where the user's rule files are (`dfdu-rules`), beside the themes.
+pub fn rules_dir() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
+    let dirs = etcetera::choose_base_strategy().ok()?;
+    Some(dirs.config_dir().join("dfdu").join("rules"))
+}
+
 /// The user's home directory with symbolic links resolved, as the scan's paths are.
 pub(crate) fn home_dir() -> Option<PathBuf> {
     let home = etcetera::home_dir().ok()?;

@@ -11,9 +11,7 @@ expression: frame
 
 
 
-
-
-            ┌ Commands 35/35 ──────────────────────────────────────────────────────────┐
+            ┌ Commands 40/40 ──────────────────────────────────────────────────────────┐
             │ : ▌                                                                      │
             │ move up                                                    navigate  ↑ k │
             │ move down                                                  navigate  ↓ j │
@@ -22,12 +20,17 @@ expression: frame
             │ first entry                                             navigate  g Home │
             │ last entry                                               navigate  G End │
             │ open directory                                       navigate  → l Enter │
-            │ parent directory                                 navigate  ← h Backspace │
+            │ parent directory                               navigate  ← h Backspace < │
             │ sort by size (again: reverse)                                    sort  s │
             │ sort by name (again: reverse)                                    sort  n │
             │ sort by items (again: reverse)                                   sort  C │
             │ sort by modification time (again: reverse)                       sort  M │
             │ re-sort now                                                      sort  S │
+            │ list view                                                     display  1 │
+            │ treemap view                                                  display  2 │
+            │ treemap: one level deeper                                     display  + │
+            │ treemap: one level less                                       display  - │
+            │ treemap: colour by top folder or age                          display  p │
             │ toggle apparent size / disk usage                             display  a │
             │ toggle disk usage like du (shared data once per file)         display  u │
             │ hide or show hidden files                                     display  e │
@@ -51,9 +54,6 @@ expression: frame
             │ Theme: mono                                                      setting │
             │ Theme: high-contrast                                             setting │
             └──────────────────────────────────────────────────────────────────────────┘
-
-
-
 
 
 

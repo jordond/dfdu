@@ -15,6 +15,7 @@ use dfdu_scan::{Backend, Batch, Budget, Clock, Limits, ScanMsg, Shared, Sink};
 use parking_lot::{RwLock, RwLockWriteGuard};
 
 use crate::applier::{Applier, Command, Model, Timing};
+use crate::classifier::{CheckMsg, CheckReq, spawn_classifiers};
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 
 /// The applier's inbox: one channel, so control messages keep their order relative to data,
@@ -158,6 +159,9 @@ pub struct EngineOptions {
     /// Threads measuring extents on filesystems that share them; 0 turns measurement off and
     /// sizes are what `du` reports.
     pub measure_workers: usize,
+    /// Classifier threads checking matches against their guards (git tracking, running
+    /// processes); 0 turns the checks off.
+    pub classifiers: usize,
 }
 
 /// Worker threads for data on `storage`: two on a spinning disk, where more threads only add
@@ -190,6 +194,7 @@ impl Default for EngineOptions {
             } else {
                 0
             },
+            classifiers: 2,
         }
     }
 }
@@ -254,6 +259,14 @@ impl<B: Backend> Engine<B> {
         } else {
             crossbeam_channel::never()
         };
+        let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
+        let classifiers =
+            (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, chk_tx));
+        let chk_rx = if classifiers.is_some() {
+            chk_rx
+        } else {
+            crossbeam_channel::never()
+        };
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
         let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
@@ -264,6 +277,8 @@ impl<B: Backend> Engine<B> {
             plans: deleter.plans,
             meas_rx,
             measure: measurers,
+            chk_rx,
+            classify: classifiers,
             wake_tx,
         };
         let wake = chans.wake_tx.clone();
@@ -420,6 +435,9 @@ struct Channels {
     meas_rx: Receiver<Vec<MeasureMsg>>,
     /// `None` when measurement is off. Dropping it ends the measurer threads.
     measure: Option<Sender<MeasureReq>>,
+    chk_rx: Receiver<Vec<CheckMsg>>,
+    /// `None` when the classifier pool is off.
+    classify: Option<Sender<Vec<CheckReq>>>,
     wake_tx: Sender<()>,
 }
 
@@ -438,12 +456,16 @@ fn applier_loop<B: Backend>(
         plans,
         meas_rx,
         measure,
+        chk_rx,
+        classify,
         wake_tx,
     } = ch;
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
     applier.read_only = opts.read_only;
     applier.measure = measure.is_some();
+    applier.checks = classify.is_some();
+    let mut chks: VecDeque<CheckMsg> = VecDeque::new();
     let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
     let mut meas: VecDeque<MeasureMsg> = VecDeque::new();
     let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
@@ -455,11 +477,13 @@ fn applier_loop<B: Backend>(
             && cmds.is_empty()
             && dels.is_empty()
             && meas.is_empty()
+            && chks.is_empty()
         {
             select! {
                 recv(cmd_rx) -> c => if let Ok(c) = c { cmds.push_back(c) },
                 recv(del_rx) -> d => if let Ok(d) = d { dels.push_back(d) },
                 recv(meas_rx) -> r => if let Ok(r) = r { meas.extend(r) },
+                recv(chk_rx) -> r => if let Ok(r) = r { chks.extend(r) },
                 recv(inbox_rx) -> b => if let Ok(b) = b { cur = Some((b.msgs.into(), b.bytes)) },
                 default(Duration::from_millis(50)) => {},
             }
@@ -480,6 +504,10 @@ fn applier_loop<B: Backend>(
         dels.extend(del_rx.try_iter());
         for d in dels.drain(..) {
             applier.apply_delete(&mut g, d);
+        }
+        chks.extend(chk_rx.try_iter().flatten());
+        for c in chks.drain(..) {
+            applier.apply_check(&mut g, c);
         }
         meas.extend(meas_rx.try_iter().flatten());
         while let Some(r) = meas.pop_front() {
@@ -521,6 +549,7 @@ fn applier_loop<B: Backend>(
         }
         let outgoing = applier.take_plans();
         let requests = applier.take_measure_requests();
+        let checks = applier.take_check_requests();
         let changed = g.fingerprint() != before;
         let held = started.elapsed();
         let t = &mut g.status.timing;
@@ -540,6 +569,11 @@ fn applier_loop<B: Backend>(
             for r in requests {
                 let _ = tx.send(r);
             }
+        }
+        if let Some(tx) = &classify
+            && !checks.is_empty()
+        {
+            let _ = tx.send(checks);
         }
         if changed {
             let _ = wake_tx.try_send(());

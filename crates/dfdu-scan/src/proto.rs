@@ -1,6 +1,6 @@
 //! Messages from the scanner to the applier.
 
-use dfdu_tree::{ErrKind, Meta, Subvol};
+use dfdu_tree::{Class, ErrKind, Meta, Subvol};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u32);
@@ -68,6 +68,23 @@ pub enum SkipReason {
     Excluded,
 }
 
+/// An entry of a chunk, by its index in `files` or `subdirs`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Entry {
+    File(u32),
+    Subdir(u32),
+}
+
+/// What classification found for an entry (`crate::classify`).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Mark {
+    Class(Class),
+    /// The top of a protected subtree.
+    Protected,
+    /// The top of a subtree an exception lifts out of the protected one around it.
+    Excepted,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChunkStatus {
     Ok,
@@ -103,6 +120,8 @@ pub struct Chunk {
     pub first_subdir: DirId,
     pub subdirs: Vec<SubdirRec>,
     pub errors: Vec<EntryError>,
+    /// Classes and protection of entries, for the few that have one.
+    pub marks: Vec<(Entry, Mark)>,
     pub status: ChunkStatus,
 }
 
@@ -119,6 +138,7 @@ impl Chunk {
             + self.files.capacity() * size_of::<FileRec>()
             + self.subdirs.capacity() * size_of::<SubdirRec>()
             + self.errors.capacity() * size_of::<EntryError>()
+            + self.marks.capacity() * size_of::<(Entry, Mark)>()
     }
 }
 
@@ -131,6 +151,10 @@ pub enum ScanMsg {
         dir: DirId,
         chunks: u32,
         status: ListingStatus,
+        /// Classes decided once a listing was complete: the directory's own, which needed a
+        /// look inside it, and its subdirectories' that needed its whole listing (a wide
+        /// directory). Applied with the `Close`, when every chunk is in.
+        classes: Vec<(DirId, Class)>,
     },
     /// Goes through the stalled worker's outbox, in order.
     Stalled {

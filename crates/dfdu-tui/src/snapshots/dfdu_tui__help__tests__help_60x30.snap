@@ -5,14 +5,14 @@ expression: frame
  dfdu  /r                                  ⠋ scanning 00:00
  3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
   ┃ Navigate                                             ┃
-  ┃ ↑ k            move up                               ┃
-  ┃ ↓ j            move down                             ┃
-  ┃ PgUp           page up                               ┃
-  ┃ PgDn           page down                             ┃
-  ┃ g Home         first entry                           ┃
-  ┃ G End          last entry                            ┃
-  ┃ → l Enter      open directory                        ┃
-  ┃ ← h Backspace  parent directory                      ┃
+  ┃ ↑ k              move up                             ┃
+  ┃ ↓ j              move down                           ┃
+  ┃ PgUp             page up                             ┃
+  ┃ PgDn             page down                           ┃
+  ┃ g Home           first entry                         ┃
+  ┃ G End            last entry                          ┃
+  ┃ → l Enter        open directory                      ┃
+  ┃ ← h Backspace <  parent directory                    ┃
   ┃                                                      ┃
   ┃ Sort                                                 ┃
   ┃ s  sort by size (again: reverse)                     ┃
@@ -22,13 +22,13 @@ expression: frame
   ┃ S  re-sort now                                       ┃
   ┃                                                      ┃
   ┃ Display                                              ┃
+  ┃ 1  list view                                         ┃
+  ┃ 2  treemap view                                      ┃
+  ┃ +  treemap: one level deeper                         ┃
+  ┃ -  treemap: one level less                           ┃
+  ┃ p  treemap: colour by top folder or age              ┃
   ┃ a  toggle apparent size / disk usage                 ┃
   ┃ u  toggle disk usage like du (shared data once per   ┃
   ┃    file)                                             ┃
-  ┃ e  hide or show hidden files                         ┃
-  ┃                                                      ┃
-  ┃ Act                                                  ┃
-  ┃ r      rescan the selected directory                 ┃
-  ┃ x      skip directories that are not responding      ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

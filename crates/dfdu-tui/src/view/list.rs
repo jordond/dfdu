@@ -137,6 +137,15 @@ fn entry_line(
         format!("  {:>5.1}%", e.size as f64 * 100.0 / total as f64)
     }));
     spans.push(Span::styled(format!("  {:>6}", count(e.items)), t.dim));
+    if let Some(rules) = &app.snap.rules {
+        // Inside a match, rows show its category dim: the match is the directory above.
+        let (text, style) = match e.tag.map(|g| (g, g.category(rules))) {
+            Some((g, (name, _))) if g.inherited => (name, t.dim),
+            Some((_, (name, slot))) => (name, t.cat[slot]),
+            None => ("", Style::new()),
+        };
+        spans.push(Span::styled(format!("  {text:<10}"), style));
+    }
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let name_style = if e.is_dir { t.dir } else { Style::new() };
     spans.push(Span::styled("  ", name_style));

@@ -1,7 +1,7 @@
 //! Seeded simulation runs. Set `DFDU_SIM_SEEDS` to run more
 //! seeds and `DFDU_SIM_SEED` to rerun one.
 
-use dfdu_sim::{SimConfig, SpecConfig, quiet_injected_panics, run};
+use dfdu_sim::{SimConfig, SpecConfig, quiet_injected_panics, run, sim_rules};
 
 fn seeds(default: u64) -> Vec<u64> {
     if let Ok(s) = std::env::var("DFDU_SIM_SEED") {
@@ -44,6 +44,10 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> dfdu_sim::SimRepo
                 t.deferred += r.deferred;
                 t.revoked += r.revoked;
                 t.at_limit += r.at_limit;
+                t.classified += r.classified;
+                t.pool_answers += r.pool_answers;
+                t.tracked += r.tracked;
+                t.in_use += r.in_use;
                 t.max_budget_used = t.max_budget_used.max(r.max_budget_used);
             }
             Err(e) => failures.push(e),
@@ -188,5 +192,50 @@ fn mount_limits() {
     assert!(
         t.gates > 200 && t.deferred > 1000 && t.revoked > 10 && t.at_limit > 1000,
         "mount limits not exercised: {t:?}"
+    );
+}
+
+/// Classification on the workers against a reference classifier, with names the built-in rules
+/// match. Blocks of 3 entries put markers and siblings in other blocks than what they classify
+/// (scenario 12). Nothing is deleted, since a class is not revised when a sibling it depended
+/// on is deleted later.
+#[test]
+fn classification() {
+    for (name, max_files, workers) in [("classification", 7, 3), ("classification_wide", 20, 6)] {
+        let cfg = SimConfig {
+            workers,
+            deletes: 0,
+            rules: Some(sim_rules()),
+            spec: SpecConfig {
+                rule_names: true,
+                max_files,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let t = run_all(name, &cfg, 300);
+        assert!(t.classified > 300, "classification not exercised: {t:?}");
+    }
+}
+
+/// The classifier pool answering at random points, interleaved with rescans and cancels, so
+/// answers arrive for nodes freed or reclassified since (scenario 13 at random).
+#[test]
+fn classifier_pool() {
+    let cfg = SimConfig {
+        deletes: 0,
+        rescans: 6,
+        rules: Some(sim_rules()),
+        checks: true,
+        spec: SpecConfig {
+            rule_names: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let t = run_all("classifier_pool", &cfg, 300);
+    assert!(
+        t.pool_answers > 100 && t.tracked > 10 && t.in_use > 10,
+        "classifier pool not exercised: {t:?}"
     );
 }

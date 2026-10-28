@@ -251,3 +251,29 @@ fn opening_a_directory_with_panels_open_draws_one_frame() {
         drop(tx);
     });
 }
+
+#[test]
+fn switching_to_the_treemap_draws_one_frame_then_nothing() {
+    settled_with_panels(|_, tx, frames| {
+        for code in [KeyCode::Char('2'), KeyCode::Right] {
+            let before = count(frames);
+            let sent = Instant::now();
+            press(&tx, code);
+            while count(frames) == before {
+                assert!(
+                    sent.elapsed() < Duration::from_millis(500),
+                    "no frame for {code:?}"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            thread::sleep(Duration::from_secs(2));
+            // That one frame already has the levels below the top: the read for them comes
+            // before it, and nothing is read or drawn after it.
+            let screen = frames.lock().expect("frames").screen.clone();
+            assert!(screen.contains("colour: top folder"), "{screen}");
+            assert!(screen.contains("sub/"), "{screen}");
+            assert_eq!(count(frames), before + 1, "{screen}");
+        }
+        drop(tx);
+    });
+}

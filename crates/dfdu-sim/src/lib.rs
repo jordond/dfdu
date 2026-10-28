@@ -12,12 +12,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 
 use dfdu_clean::{DeleteResult, DeleterMsg, Mode, Plan, Refusal};
-use dfdu_engine::{Applier, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model};
+use dfdu_engine::{
+    Applier, CheckMsg, CheckReq, Command, MeasureMsg, MeasureReq, MeasureResult, Measurement, Model,
+};
+use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
+use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
     Backend, Batch, Block, Budget, Clock, DirStream, FsClass, JobOptions, Limits, Raw, RawBlock,
     ScanMsg, Shared, Sink, StepResult, Storage, Worker,
 };
-use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
+use dfdu_tree::{Class, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, SEP, Subvol, Totals, Tree};
 use parking_lot::Mutex;
 use rand::rngs::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
@@ -85,6 +89,8 @@ pub struct SpecNode {
     pub pieces: Vec<SimPiece>,
     /// Measuring the file fails (it cannot be opened).
     pub unmeasurable: bool,
+    /// What reading the file gives (rule markers such as CACHEDIR.TAG).
+    pub content: Vec<u8>,
 }
 
 /// One extent of a simulated file. Compressed extents are identified by
@@ -168,6 +174,9 @@ pub struct SpecConfig {
     pub mount_per_mille: u64,
     /// Extent maps, reflinked copies and snapshots that share data.
     pub extents: bool,
+    /// Names the built-in rules match (`target`, `Cargo.toml`, CACHEDIR.TAG) among the
+    /// generated ones.
+    pub rule_names: bool,
 }
 
 impl Default for SpecConfig {
@@ -184,7 +193,38 @@ impl Default for SpecConfig {
             dup_mounts: true,
             mount_per_mille: 30,
             extents: true,
+            rule_names: false,
         }
+    }
+}
+
+/// Names that rules ask about, given to generated entries with [`SpecConfig::rule_names`]: the
+/// `i`th entry may get the `i`th name, so names stay unique in a directory.
+const DIR_NAMES: &[&str] = &[
+    "target",
+    "node_modules",
+    ".venv",
+    "debug",
+    "cache",
+    "release",
+];
+const FILE_NAMES: &[&str] = &[
+    "Cargo.toml",
+    "CACHEDIR.TAG",
+    "package.json",
+    "pyvenv.cfg",
+    "yarn.lock",
+    "requirements.txt",
+    ".rustc_info.json",
+];
+
+/// The CACHEDIR.TAG signature (bford.info/cachedir).
+pub const CACHEDIR_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n";
+
+fn pick_name(rng: &mut Rng, cfg: &SpecConfig, pool: &[&str], prefix: &str, i: u64) -> Vec<u8> {
+    match pool.get(i as usize) {
+        Some(n) if cfg.rule_names && rng.chance(600) => n.as_bytes().to_vec(),
+        _ => format!("{prefix}{i}").into_bytes(),
     }
 }
 
@@ -224,6 +264,7 @@ impl Spec {
             ][rng.below(4) as usize],
             pieces: vec![],
             unmeasurable: false,
+            content: vec![],
         }];
         let mut queue = VecDeque::from([(ROOT, 0u32)]);
         while let Some((d, depth)) = queue.pop_front() {
@@ -280,7 +321,7 @@ impl Spec {
                 };
                 kids.push(nodes.len() as u32);
                 nodes.push(SpecNode {
-                    name: format!("d{i}").into_bytes(),
+                    name: pick_name(rng, cfg, DIR_NAMES, "d", i),
                     meta: Meta {
                         kind: Kind::Dir,
                         apparent: 4096,
@@ -300,6 +341,7 @@ impl Spec {
                     storage,
                     pieces: vec![],
                     unmeasurable: false,
+                    content: vec![],
                 });
                 queue.push_back((*kids.last().expect("pushed"), depth + 1));
             }
@@ -312,8 +354,14 @@ impl Spec {
                     size.div_ceil(4096) * 4096
                 };
                 kids.push(nodes.len() as u32);
+                let name = pick_name(rng, cfg, FILE_NAMES, "f", i);
+                let content = match &name[..] {
+                    b"CACHEDIR.TAG" if rng.chance(700) => CACHEDIR_TAG.to_vec(),
+                    b"CACHEDIR.TAG" => b"Signature: not this one".to_vec(),
+                    _ => vec![],
+                };
                 nodes.push(SpecNode {
-                    name: format!("f{i}").into_bytes(),
+                    name,
                     meta: Meta {
                         kind: Kind::File,
                         apparent: size,
@@ -333,6 +381,7 @@ impl Spec {
                     storage: Storage::Unknown,
                     pieces: vec![],
                     unmeasurable: cfg.faults && rng.chance(30),
+                    content,
                 });
             }
             nodes[d as usize].children = kids;
@@ -504,6 +553,7 @@ impl SpecBuilder {
             storage: Storage::Unknown,
             pieces: vec![],
             unmeasurable: false,
+            content: vec![],
         });
         (self.nodes.len() - 1) as u32
     }
@@ -535,6 +585,11 @@ impl SpecBuilder {
         let i = self.add(parent, name, Kind::File, meta.apparent);
         self.nodes[i as usize].meta = meta;
         i
+    }
+
+    /// What reading file `i` gives.
+    pub fn content(&mut self, i: u32, bytes: &[u8]) {
+        self.nodes[i as usize].content = bytes.to_vec();
     }
 
     pub fn fault(&mut self, dir: u32, fault: Fault) {
@@ -943,6 +998,16 @@ impl Backend for SimBackend {
         Ok(self.spec.nodes[*loc as usize].meta)
     }
 
+    fn read_prefix(&self, dir: &u32, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        let c = self
+            .spec
+            .live_children(*dir)
+            .find(|&c| self.spec.nodes[c as usize].name == name)?;
+        let n = &self.spec.nodes[c as usize];
+        (n.meta.kind == Kind::File && !n.vanished)
+            .then(|| n.content[..len.min(n.content.len())].to_vec())
+    }
+
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
         let n = self.spec.nodes.iter().find(|n| {
             n.meta.kind == Kind::Dir
@@ -1100,6 +1165,11 @@ pub struct SimConfig {
     /// `Limits::rotational_parts` and `Limits::network_parts`; `None` picks them per seed
     /// (1-2 and 1-3).
     pub mount_limits: Option<(usize, usize)>,
+    /// Classify against these rules, and check every class against a reference at the end.
+    pub rules: Option<Arc<RuleSet>>,
+    /// Runs the classifier pool: its requests are answered at random points, with answers
+    /// that depend on the node's path ([`sim_check`]), and checked against them at the end.
+    pub checks: bool,
 }
 
 impl Default for SimConfig {
@@ -1126,13 +1196,31 @@ impl Default for SimConfig {
             cross_mounts: None,
             network: None,
             mount_limits: None,
+            rules: None,
+            checks: false,
         }
     }
+}
+
+/// The built-in rules for a Linux home at `/home/u`, so that nothing below [`ROOT_NAME`] is a
+/// protected or a known path, and only rules matched by name apply.
+pub fn sim_rules() -> Arc<RuleSet> {
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    let (set, errors) = dfdu_rules::builtin(&env);
+    assert!(errors.is_empty(), "{errors:?}");
+    Arc::new(set)
 }
 
 #[derive(Debug, Default)]
 pub struct SimReport {
     pub ticks: u64,
+    /// Nodes the reference classifier gave a class to, all checked.
+    pub classified: u64,
+    /// Classifier pool answers applied, and classes in the final tree flagged git-tracked or
+    /// in use by them.
+    pub pool_answers: u64,
+    pub tracked: u64,
+    pub in_use: u64,
     pub dirs: usize,
     pub rescans: u32,
     pub deletes: u32,
@@ -1191,6 +1279,7 @@ pub struct Sim {
     plans: VecDeque<(Plan, usize)>,
     del_q: VecDeque<DeleterMsg>,
     meas_q: Vec<MeasureReq>,
+    check_q: Vec<CheckReq>,
     pub cross_mounts: bool,
     pub network: bool,
     pub report: SimReport,
@@ -1259,7 +1348,8 @@ impl Sim {
         let workers = (0..cfg.workers)
             .map(|_| Worker::new(&shared, false))
             .collect();
-        let applier = Applier::new(shared.clone());
+        let mut applier = Applier::new(shared.clone());
+        applier.checks = cfg.checks;
         let mut sim = Sim {
             seed,
             rng,
@@ -1279,6 +1369,7 @@ impl Sim {
             plans: VecDeque::new(),
             del_q: VecDeque::new(),
             meas_q: Vec::new(),
+            check_q: Vec::new(),
             cross_mounts,
             network,
             report: SimReport::default(),
@@ -1294,6 +1385,13 @@ impl Sim {
                 opts: JobOptions {
                     cross_mounts,
                     network,
+                    class: cfg.rules.clone().map(|rules| ClassOpts {
+                        rules,
+                        path: ROOT_NAME.as_bytes().to_vec(),
+                        inside: vec![],
+                        protection: Default::default(),
+                        chain: vec![],
+                    }),
                     ..JobOptions::default()
                 },
             },
@@ -1494,6 +1592,23 @@ impl Sim {
         out
     }
 
+    /// Takes the first delivered message `pick` chooses out of the queue, so a script can
+    /// deliver it later ([`Sim::deliver`]). Its batch's budget is released with the rest of it.
+    pub fn take_queued(&mut self, pick: impl Fn(&ScanMsg) -> bool) -> Option<ScanMsg> {
+        let mut q = self.sink.q.lock();
+        for b in q.iter_mut() {
+            if let Some(i) = b.msgs.iter().position(&pick) {
+                return Some(b.msgs.remove(i));
+            }
+        }
+        None
+    }
+
+    /// Queues `m` for the applier, as if a worker had sent it.
+    pub fn deliver(&mut self, m: ScanMsg) {
+        self.sink.send_control(m);
+    }
+
     /// Applies the next delivered message. Returns it, or `None` when nothing is queued.
     pub fn apply_next(&mut self) -> Result<Option<ScanMsg>, String> {
         loop {
@@ -1540,6 +1655,7 @@ impl Sim {
 
     pub fn random_step(&mut self) -> Result<(), String> {
         self.report.ticks += 1;
+        self.check_q.extend(self.applier.take_check_requests());
         // One request per file, so answers can arrive in any order.
         for r in self.applier.take_measure_requests() {
             for f in r.files {
@@ -1556,6 +1672,18 @@ impl Sim {
                 let i = self.rng.below(self.workers.len() as u64) as usize;
                 self.step_worker(i);
                 self.check_mount_limits()?;
+            }
+            55..60 if !self.check_q.is_empty() && self.rng.chance(400) => {
+                for _ in 0..=self.rng.below(4) {
+                    if self.check_q.is_empty() {
+                        break;
+                    }
+                    let i = self.rng.below(self.check_q.len() as u64) as usize;
+                    let msg = sim_check(&self.check_q.swap_remove(i));
+                    self.report.pool_answers += 1;
+                    self.applier.apply_check(&mut self.model, msg);
+                    self.check(" after a classifier answer")?;
+                }
             }
             55..60 => {
                 // Answers in any order, interleaved with everything else.
@@ -1622,6 +1750,7 @@ impl Sim {
             }
             _ => self.random_command()?,
         }
+        self.check_q.extend(self.applier.take_check_requests());
         Ok(())
     }
 
@@ -1697,6 +1826,7 @@ impl Sim {
             && self.model.status.deleting.is_none()
             && self.meas_q.is_empty()
             && self.model.status.measuring.is_none()
+            && self.check_q.is_empty()
     }
 
     /// Steps in random order until everything has settled and no directory is left
@@ -1792,6 +1922,14 @@ impl Sim {
         self.applier
             .check_settled(model)
             .map_err(|e| format!("seed {seed}: settled: {e}"))?;
+        if let Some(rules) = &self.cfg.rules {
+            report.classified = check_classes(spec, model, rules)
+                .map_err(|e| format!("seed {seed}: classes: {e}"))?;
+            if self.cfg.checks {
+                (report.tracked, report.in_use) = check_pool_flags(model, rules)
+                    .map_err(|e| format!("seed {seed}: classifier pool: {e}"))?;
+            }
+        }
         if let Ok(v) = std::env::var("DFDU_SIM_INODE") {
             let mut it = v
                 .split(',')
@@ -1928,6 +2066,208 @@ fn deleter_step(
 }
 
 /// The visible directory closest to the root that a cancelled job left incomplete.
+/// Every node's class in effect and protection against a reference classifier run on the spec,
+/// over every directory whose listing and whose parents' listings completed (a directory left
+/// partial was classified on what was read). Comparing the class in effect, the match highest
+/// above a node, leaves out matches below another match, which the scan makes only when the
+/// match above was decided after its listing's subdirectories were queued (`dfdu_scan::classify`).
+/// Returns the number of classified nodes.
+fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, String> {
+    use dfdu_rules::protected::State;
+    let tree = &model.tree;
+    let Some(root) = tree.roots().next() else {
+        return Ok(0);
+    };
+    let complete = |ix: Ix| tree.dir(ix).is_some_and(|d| d.state == DirState::Complete);
+    // (spec node, tree node, its path, rules decided above, protection, class in effect)
+    let mut stack = vec![(
+        ROOT,
+        root,
+        ROOT_NAME.as_bytes().to_vec(),
+        Vec::<u16>::new(),
+        State::Off,
+        None::<Class>,
+    )];
+    let mut classified = 0;
+    while let Some((sn, ix, path, inside, prot, above)) = stack.pop() {
+        if !complete(ix) {
+            continue;
+        }
+        let kids: Vec<u32> = spec.live_children(sn).collect();
+        let names: HashSet<&[u8]> = kids
+            .iter()
+            .map(|&c| &spec.nodes[c as usize].name[..])
+            .collect();
+        let sibling = |n: &[u8]| names.contains(n);
+        let dir = rules.dir(&path);
+        for &c in &kids {
+            let cn = &spec.nodes[c as usize];
+            let is_dir = cn.meta.kind == Kind::Dir;
+            let cix = tree
+                .children(ix)
+                .find(|&t| tree.name(t) == &cn.name[..])
+                .ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&cn.name)))?;
+            let cpath = [&path[..], b"/", &cn.name].concat();
+            let show = || String::from_utf8_lossy(&cpath).into_owned();
+            let verdict = dir.classify(&Candidate {
+                parent: &path,
+                name: &cn.name,
+                is_dir,
+                sibling: &sibling,
+                inside: &inside,
+                protection: prot,
+                partial: false,
+            });
+            let (mut cprot, mut own) = (State::Off, None);
+            match verdict {
+                Verdict::Protected(st) => cprot = st,
+                Verdict::None => {}
+                Verdict::Hits(hits) => {
+                    // Its own listing as the scan saw it: vanished entries are listed but
+                    // not stat'ed, so they are there but are not files to read.
+                    let inner: Vec<u32> = if is_dir {
+                        spec.live_children(c).collect()
+                    } else {
+                        vec![]
+                    };
+                    let child = |n: &[u8]| inner.iter().any(|&k| spec.nodes[k as usize].name == n);
+                    let marker = |f: &[u8], len: usize| {
+                        let k = inner.iter().find(|&&k| spec.nodes[k as usize].name == f)?;
+                        let n = &spec.nodes[*k as usize];
+                        (n.meta.kind == Kind::File && !n.vanished)
+                            .then(|| n.content[..len.min(n.content.len())].to_vec())
+                    };
+                    // Listings below that are not complete were looked into on what was read.
+                    let looked = !is_dir || complete(cix);
+                    own = hits.iter().find_map(|h| {
+                        let ok = match h.inside {
+                            Inside::Done => true,
+                            Inside::Check => {
+                                is_dir && rules.check_inside(h.rule, &cn.name, &child, &marker)
+                            }
+                        };
+                        ok.then_some(Class {
+                            rule: h.rule,
+                            safety: h.safety as u8,
+                            degraded: h.degraded,
+                            flags: 0,
+                        })
+                    });
+                    if !looked {
+                        continue;
+                    }
+                }
+            }
+            let mut want = above.or(own);
+            // The classifier pool's flags, and the protection a git-tracked match gets, are not
+            // the scan's to decide (`check_pool_flags`).
+            let got = tree
+                .class_in_effect(cix)
+                .map(|(_, c)| Class { flags: 0, ..c });
+            if let (Some(w), Some((_, c))) = (want.as_mut(), tree.class_in_effect(cix))
+                && c.has(Class::VCS_TRACKED)
+            {
+                w.safety = c.safety;
+            }
+            if got != want {
+                return Err(format!("{}: class {got:?}, expected {want:?}", show()));
+            }
+            if tree.is_protected(cix) != cprot.protected() {
+                return Err(format!("{}: protected {}", show(), !cprot.protected()));
+            }
+            classified += own.is_some() as u64;
+            if is_dir {
+                let mut ci = inside.clone();
+                ci.extend(own.map(|c| c.rule));
+                stack.push((c, cix, cpath, ci, cprot, want));
+            }
+        }
+    }
+    Ok(classified)
+}
+
+/// The classifier pool's answer in the simulation, decided by a hash of the node's path: git
+/// tracks a third of guarded matches, cannot tell for another third, and a process a rule names
+/// runs for a quarter. An answer applied to another node than it was asked for shows up as
+/// flags that do not match that node's path.
+pub fn sim_check(req: &CheckReq) -> CheckMsg {
+    match req {
+        CheckReq::Guards {
+            node,
+            rule,
+            path,
+            vcs,
+            processes,
+        } => {
+            let (tracked, running) =
+                pool_answer(path.as_os_str().as_encoded_bytes(), *vcs, processes);
+            CheckMsg::Guards {
+                node: *node,
+                rule: *rule,
+                tracked,
+                running,
+            }
+        }
+        CheckReq::NativeSize { rule, .. } => CheckMsg::NativeSize {
+            rule: *rule,
+            result: Ok(0),
+        },
+    }
+}
+
+fn pool_answer(path: &[u8], vcs: bool, processes: &[String]) -> (Option<bool>, Option<String>) {
+    let h = path.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    });
+    let tracked = match (vcs, h % 3) {
+        (false, _) => Some(false),
+        (true, 0) => Some(true),
+        (true, 1) => Some(false),
+        _ => None,
+    };
+    let running = (h / 3 % 4 == 0)
+        .then(|| processes.first().cloned())
+        .flatten();
+    (tracked, running)
+}
+
+/// Every visible class with a guard was checked, has the flags [`sim_check`] gives its path,
+/// and is protected when git tracks it. Returns the classes flagged tracked and in use.
+fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u64), String> {
+    let tree = &model.tree;
+    let (mut tracked, mut in_use) = (0, 0);
+    for (ix, c) in tree.classes().filter(|(ix, _)| tree.is_visible(*ix)) {
+        let g = &rules.rule(c.rule).guard;
+        if !g.not_vcs_tracked && g.not_running.is_empty() {
+            continue;
+        }
+        // Hashed as the request had it.
+        let path = tree.path_buf(ix);
+        let show = || format!("{} ({c:?})", path.display());
+        if !c.has(Class::CHECKED) || c.has(Class::QUEUED) {
+            return Err(format!("{}: not checked", show()));
+        }
+        let (t, r) = pool_answer(
+            path.as_os_str().as_encoded_bytes(),
+            g.not_vcs_tracked,
+            &g.not_running,
+        );
+        let t = t == Some(true);
+        if c.has(Class::VCS_TRACKED) != t || c.has(Class::IN_USE) != r.is_some() {
+            return Err(format!(
+                "{}: flags do not match the answer for its path",
+                show()
+            ));
+        }
+        if t && c.safety != dfdu_rules::Safety::Protected as u8 {
+            return Err(format!("{}: git-tracked but not protected", show()));
+        }
+        tracked += t as u64;
+        in_use += r.is_some() as u64;
+    }
+    Ok((tracked, in_use))
+}
+
 fn topmost_incomplete(tree: &Tree) -> Option<Ix> {
     let root = tree.roots().next()?;
     let mut queue = VecDeque::from([root]);

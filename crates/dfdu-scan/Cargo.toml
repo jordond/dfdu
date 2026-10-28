@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
+dfdu-rules.workspace = true
+dunce.workspace = true
 crossbeam-deque.workspace = true
 parking_lot.workspace = true
 fixedbitset.workspace = true

@@ -16,7 +16,7 @@ L4 14-37 fg=cyan | 46-53 fg=darkgray | 54-64 fg=blue bold
 L5 14-37 fg=cyan | 46-53 fg=darkgray
  !       0 B                              0.0%       1  locked/  permission denied
 L6 0-1 fg=red | 2-11 fg=darkgray | 14-37 fg=cyan | 46-53 fg=darkgray | 54-62 fg=blue bold | 63-81 fg=red
- ~       0 B┌ Commands 8/35 ───────────────────────────────────────────────────────────┐
+ ~       0 B┌ Commands 8/40 ───────────────────────────────────────────────────────────┐
 L7 0-1 fg=yellow | 2-11 fg=darkgray
             │ : sort▌                                                                  │
 L8 13-14 bold | 20-20 bold

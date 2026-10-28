@@ -8,6 +8,7 @@
 
 mod backend;
 mod budget;
+pub mod classify;
 mod gate;
 pub mod late;
 #[cfg(target_os = "linux")]
@@ -55,8 +56,8 @@ pub fn native_backend(storage: dfdu_sys::Storage) -> NativeBackend {
     }
 }
 pub use proto::{
-    Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, NameSpan, Probe,
-    ScanMsg, SkipReason, SubdirRec,
+    Batch, Chunk, ChunkStatus, DirId, Entry, EntryError, FileRec, JobId, ListingStatus, Mark,
+    NameSpan, Probe, ScanMsg, SkipReason, SubdirRec,
 };
 pub use shared::{
     Clock, JobOptions, Limits, MAX_MOUNT_WORKERS, Outbox, Shared, Sink, StepResult, Task, TaskGate,

@@ -127,6 +127,21 @@ fn context(app: &App) -> Vec<Hint> {
     ]
     .map(first_key)
     .join(" ");
+    if crate::treemap::active(app) {
+        let mut hints = vec![
+            hint("←↑↓→", "move", 2),
+            hint("Enter", "zoom in", 3),
+            hint("Backspace", "zoom out", 4),
+            hint("+ -", "depth", 6),
+            hint(first_key(Action::TreemapColour), "colour", 7),
+            hint(first_key(Action::ToggleMark), "mark", 6),
+            hint(first_key(Action::Trash), "trash", 5),
+            hint(first_key(Action::ViewList), "list", 3),
+        ];
+        hints.push(help);
+        hints.push(quit);
+        return hints;
+    }
     let mut hints = vec![
         hint(arrows, "move", 2),
         hint(first_key(Action::Open), "open", 3),

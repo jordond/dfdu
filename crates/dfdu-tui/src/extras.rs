@@ -1,18 +1,19 @@
 //! What the features read from the engine model besides the directory snapshot: the marks, the
-//! details of the selected entry and the debug counters. Read with every snapshot, and on its
+//! details of the selected entry, the debug counters and the treemap's lower levels. Read with every snapshot, and on its
 //! own (without copying the directory again) when a feature needs it sooner.
 
 use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::{debug, details, marks};
+use crate::{debug, details, marks, treemap};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
     pub marked: marks::Marked,
     pub details: details::Info,
     pub debug: debug::Info,
+    pub treemap: treemap::Info,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree. `counters` are the
@@ -22,6 +23,7 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
         marked: marks::read(m, app),
         details: details::read(m, app),
         debug: debug::read(m, budget, counters),
+        treemap: treemap::read(m, app),
     }
 }
 

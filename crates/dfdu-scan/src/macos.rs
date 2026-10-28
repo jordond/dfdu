@@ -399,6 +399,10 @@ impl Backend for MacBackend {
 
     /// A root given as a symlink is resolved here, since directories are opened without
     /// following one.
+    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
+        crate::backend::read_prefix_at(dir, name, len)
+    }
+
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         match std::fs::symlink_metadata(path) {
             Ok(m) if m.file_type().is_symlink() => {

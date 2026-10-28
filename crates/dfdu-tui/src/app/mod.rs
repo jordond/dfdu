@@ -24,7 +24,7 @@ use crate::problems::ErrorList;
 use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
-use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette};
+use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette, treemap};
 
 /// Automatic re-sort after this long without input...
 const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -111,12 +111,15 @@ pub struct App {
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
+    pub treemap: treemap::Treemap,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
     pub areas: Areas,
     /// The user's home directory, shown as `~` in the breadcrumbs.
     pub home: Option<PathBuf>,
+    /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
+    pub sort_gen: u64,
     last_input: Instant,
     last_sort: Instant,
     sort_requested: bool,
@@ -193,9 +196,11 @@ impl App {
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
+            treemap: treemap::Treemap::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
+            sort_gen: 0,
             // No key pressed yet counts as idle.
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
             last_sort: now,
@@ -241,7 +246,7 @@ impl App {
     /// new snapshot is due. A read must make it false: while it is true, the run loop reads
     /// again at once.
     pub fn extras_stale(&self) -> bool {
-        marks::stale(self) || details::stale(self)
+        marks::stale(self) || details::stale(self) || treemap::stale(self)
     }
 
     fn auto_sort_due(&self, now: Instant) -> bool {
@@ -371,6 +376,7 @@ impl App {
         }
         let resorted = sorted.is_some();
         if resorted {
+            self.sort_gen += 1;
             self.last_sort = now;
             self.changed_since_sort = false;
         }
@@ -605,8 +611,8 @@ impl App {
     }
 
     /// Handles a key: the open overlay takes it first, then the filter input while it is
-    /// edited, then the details pane while it has the focus, and otherwise the action bound to
-    /// it in `keys::ACTIONS`.
+    /// edited, then the details pane while it has the focus, then the treemap's moves between
+    /// tiles, and otherwise the action bound to it in `keys::ACTIONS`.
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
         if k.kind == KeyEventKind::Release {
             return Vec::new();
@@ -628,6 +634,11 @@ impl App {
         }
         if details::focused(self)
             && let Some(fx) = details::key(self, &k)
+        {
+            return fx;
+        }
+        if treemap::active(self)
+            && let Some(fx) = treemap::key(self, &k)
         {
             return fx;
         }

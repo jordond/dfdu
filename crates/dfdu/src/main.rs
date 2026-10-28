@@ -2,12 +2,15 @@ use std::ffi::OsStr;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod inject;
 
 use clap::{Args, Parser, Subcommand};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, Timing};
+use dfdu_rules::RuleSet;
+use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, JobOptions, PortableBackend, native_backend};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
 use dfdu_tui::{ColorLevel, SizeMode, Theme, ThemeChoice, ThemeFile, UiSettings};
@@ -21,6 +24,8 @@ struct Cli {
     path: Option<PathBuf>,
     #[command(flatten)]
     mounts: MountArgs,
+    #[command(flatten)]
+    rules: RuleArgs,
     /// Choose a disk to browse from the mounted filesystems.
     #[arg(long, conflicts_with = "path")]
     disks: bool,
@@ -123,6 +128,30 @@ impl MountArgs {
     }
 }
 
+/// Classification of what the scan finds (categories and cleanup rules).
+#[derive(Args, Clone, Copy, Default)]
+struct RuleArgs {
+    /// Do not classify entries: no categories, no cleanup candidates.
+    #[arg(long)]
+    no_rules: bool,
+}
+
+impl RuleArgs {
+    /// The built-in rules with the user's rule files (dfdu/rules/*.toml in the configuration
+    /// directory). A rule that does not load is reported and left out.
+    fn load(self) -> Option<Arc<RuleSet>> {
+        if self.no_rules {
+            return None;
+        }
+        let dir = dfdu_tui::rules_dir();
+        let (set, errors) = dfdu_rules::load(&dfdu_rules::Env::current(), dir.as_deref());
+        for e in errors {
+            eprintln!("dfdu: {e}");
+        }
+        Some(Arc::new(set))
+    }
+}
+
 #[derive(Args)]
 struct ScanArgs {
     #[arg(default_value = ".")]
@@ -149,6 +178,8 @@ struct ScanArgs {
     measure_workers: Option<usize>,
     #[command(flatten)]
     mounts: MountArgs,
+    #[command(flatten)]
+    rules: RuleArgs,
     /// Print only the root total in bytes (for scripts and tests).
     #[arg(long)]
     bytes: bool,
@@ -247,6 +278,7 @@ fn main() -> ExitCode {
                     threads: None,
                     measure_workers: None,
                     mounts: cli.mounts,
+                    rules: cli.rules,
                     bytes: false,
                     errors: false,
                     stall_abandon: 30.0,
@@ -265,6 +297,7 @@ fn main() -> ExitCode {
             let opts = dfdu_tui::RunOptions {
                 path: (!cli.disks).then_some(path),
                 job: cli.mounts.job(),
+                rules: cli.rules.load(),
                 engine: EngineOptions {
                     read_only: cli.read_only,
                     ..Default::default()
@@ -374,16 +407,16 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         apparent,
         like_du,
         mounts,
+        rules,
         bytes,
         errors: list_errors,
         debug_stats,
         ..
     } = args;
     let t0 = Instant::now();
-    engine.send(Command::Scan {
-        path,
-        opts: mounts.job(),
-    });
+    let mut opts = mounts.job();
+    opts.class = rules.load().map(|r| ClassOpts::for_root(r, &path));
+    engine.send(Command::Scan { path, opts });
     engine.wait_idle(None);
     if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
         eprintln!("dfdu: {msg}");

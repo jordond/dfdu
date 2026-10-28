@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{App, Effect, Overlay};
 use crate::order::{SortKey, SortSpec};
 use crate::snapshot::SizeMode;
-use crate::{confirm, debug, details, filter, help, marks, palette};
+use crate::{confirm, debug, details, filter, help, marks, palette, treemap};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -45,6 +45,11 @@ pub enum Action {
     FocusDetails,
     Palette,
     Debug,
+    ViewList,
+    ViewTreemap,
+    TreemapDeeper,
+    TreemapShallower,
+    TreemapColour,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -86,7 +91,7 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(Action::Open, "→ l Enter", "open directory", Group::Navigate),
     row(
         Action::Parent,
-        "← h Backspace",
+        "← h Backspace <",
         "parent directory",
         Group::Navigate,
     ),
@@ -115,6 +120,26 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Sort,
     ),
     row(Action::Resort, "S", "re-sort now", Group::Sort),
+    row(Action::ViewList, "1", "list view", Group::Display),
+    row(Action::ViewTreemap, "2", "treemap view", Group::Display),
+    row(
+        Action::TreemapDeeper,
+        "+",
+        "treemap: one level deeper",
+        Group::Display,
+    ),
+    row(
+        Action::TreemapShallower,
+        "-",
+        "treemap: one level less",
+        Group::Display,
+    ),
+    row(
+        Action::TreemapColour,
+        "p",
+        "treemap: colour by top folder or age",
+        Group::Display,
+    ),
     row(
         Action::ToggleApparent,
         "a",
@@ -320,6 +345,11 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::FocusDetails => details::focus(app),
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
+        Action::ViewList => treemap::show(app, false),
+        Action::ViewTreemap => treemap::show(app, true),
+        Action::TreemapDeeper => treemap::deeper(app, 1),
+        Action::TreemapShallower => treemap::deeper(app, -1),
+        Action::TreemapColour => treemap::cycle_colour(app),
     }
     fx
 }
@@ -353,7 +383,7 @@ pub(crate) mod tests {
 
     use super::*;
 
-    const ALL: [Action; 31] = [
+    const ALL: [Action; 36] = [
         Action::Quit,
         Action::Up,
         Action::Down,
@@ -385,6 +415,11 @@ pub(crate) mod tests {
         Action::FocusDetails,
         Action::Palette,
         Action::Debug,
+        Action::ViewList,
+        Action::ViewTreemap,
+        Action::TreemapDeeper,
+        Action::TreemapShallower,
+        Action::TreemapColour,
     ];
 
     pub(crate) fn press(code: KeyCode) -> KeyEvent {
@@ -467,7 +502,7 @@ pub(crate) mod tests {
         assert_eq!(action_for(&ctrl_j), Some(Action::Down));
         let ctrl_p = KeyEvent::new(c('p'), KeyModifiers::CONTROL);
         assert_eq!(action_for(&ctrl_p), Some(Action::Palette));
-        assert_eq!(action_for(&press(c('p'))), None);
+        assert_eq!(action_for(&press(c('p'))), Some(Action::TreemapColour));
         for (code, want) in [
             (c(' '), Action::ToggleMark),
             (c('/'), Action::Filter),
@@ -476,10 +511,15 @@ pub(crate) mod tests {
             (c(':'), Action::Palette),
             (KeyCode::F(12), Action::Debug),
             (KeyCode::F(1), Action::Help),
+            (c('<'), Action::Parent),
+            (c('1'), Action::ViewList),
+            (c('2'), Action::ViewTreemap),
+            (c('+'), Action::TreemapDeeper),
+            (c('-'), Action::TreemapShallower),
         ] {
             assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
         }
-        for code in [c('z'), c('1'), KeyCode::F(2), KeyCode::Insert] {
+        for code in [c('z'), c('3'), KeyCode::F(2), KeyCode::Insert] {
             assert_eq!(action_for(&press(code)), None, "{code:?}");
         }
     }

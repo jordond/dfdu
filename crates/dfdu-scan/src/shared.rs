@@ -13,6 +13,7 @@ use dfdu_tree::{ErrKind, Kind};
 
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, Raw};
+use crate::classify::{ClassOpts, Listing, TaskClass};
 use crate::gate::{Gate, GateStats};
 use crate::proto::{
     Batch, Chunk, ChunkStatus, DirId, EntryError, FileRec, JobId, ListingStatus, Probe, ScanMsg,
@@ -85,6 +86,8 @@ pub struct JobOptions {
     /// The directory whose mounts are checked for duplicates: the visible scan root when a
     /// rescan covers only part of it. Defaults to the job root.
     pub scope: Option<PathBuf>,
+    /// Classify entries against these rules while scanning (`crate::classify`).
+    pub class: Option<ClassOpts>,
 }
 
 pub struct Task<L> {
@@ -107,6 +110,8 @@ pub struct Task<L> {
     /// What the directory's mount is stored on, as the backend reported it when the scan
     /// entered the mount; handed to [`Backend::open`]. A directory inherits its parent's.
     storage: dfdu_sys::Storage,
+    /// What the directory's entries are classified against, when the job classifies.
+    class: Option<Box<TaskClass>>,
 }
 
 /// A mount's concurrency limit, holding the tasks that wait for a permit.
@@ -132,6 +137,7 @@ pub struct ChunkWork<L> {
     raw: Raw<L>,
     seq: u32,
     parts: Arc<DirParts>,
+    class: Option<Arc<Listing>>,
 }
 
 /// The parts of a directory read by more than one task: its listing task and the chunk tasks it
@@ -487,6 +493,10 @@ impl<B: Backend> Shared<B> {
         self.outstanding.fetch_add(1, SeqCst);
         let seq = self.submitted_seq.fetch_add(1, SeqCst) + 1;
         let loc = self.backend.loc_from_path(root);
+        let class = self
+            .job(job)
+            .and_then(|j| j.opts.class.as_ref().map(TaskClass::root))
+            .map(Box::new);
         self.priority.push(Task {
             job,
             dir: DirId::ROOT,
@@ -499,6 +509,7 @@ impl<B: Backend> Shared<B> {
             chunk: None,
             gate: None,
             storage: dfdu_sys::Storage::Unknown,
+            class,
         });
         self.wake();
         seq
@@ -748,8 +759,8 @@ struct Running<B: Backend> {
     stream: Option<B::Stream>,
     /// A block this listing task is stat'ing itself: its seq and whether more blocks follow.
     /// Kept across "not ready" returns, and set while stat'ing so a panic there costs only
-    /// this block.
-    inline: Option<(Raw<B::Loc>, u32, bool)>,
+    /// this block. The last flag is set when the block is the whole listing.
+    inline: Option<(Raw<B::Loc>, u32, bool, bool)>,
     seq: u32,
     /// Entries read so far; a read error before any entry means the directory failed.
     entries: usize,
@@ -757,6 +768,8 @@ struct Running<B: Backend> {
     read_error: Option<ErrKind>,
     /// Set once the listing hands a block to a chunk task.
     parts: Option<Arc<DirParts>>,
+    /// The directory's classification, shared with its chunk tasks.
+    class: Option<Arc<Listing>>,
 }
 
 /// One worker's private state. `blocking` selects real-thread behaviour (flushes wait for
@@ -816,10 +829,11 @@ impl<B: Backend> Worker<B> {
             work.parts.panicked.fetch_add(1, SeqCst);
             let mut ob = self.slot.outbox.lock();
             ob.push(ScanMsg::Chunk(chunk), now);
-            self.finish_part(&mut ob, &r.task, &work.parts, work.seq + 1, now);
+            let class = work.class.as_deref();
+            self.finish_part(&mut ob, &r.task, &work.parts, class, work.seq + 1, now);
             return;
         }
-        if let Some((_, seq, more)) = r.inline.take() {
+        if let Some((_, seq, more, _)) = r.inline.take() {
             let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(msg));
             r.panicked += 1;
             self.slot.outbox.lock().push(ScanMsg::Chunk(chunk), now);
@@ -891,6 +905,7 @@ impl<B: Backend> Worker<B> {
         ob: &mut Outbox<B::Loc>,
         task: &Task<B::Loc>,
         parts: &DirParts,
+        class: Option<&Listing>,
         part: u32,
         now: u64,
     ) {
@@ -901,6 +916,7 @@ impl<B: Backend> Worker<B> {
                     dir: task.dir,
                     chunks: parts.chunks.load(SeqCst),
                     status: parts.status(),
+                    classes: class.map(Listing::finish).unwrap_or_default(),
                 },
                 now,
             );
@@ -922,6 +938,7 @@ impl<B: Backend> Worker<B> {
                         dir: r.task.dir,
                         chunks: r.seq,
                         status,
+                        classes: r.class.as_deref().map(Listing::finish).unwrap_or_default(),
                     },
                     now,
                 );
@@ -930,7 +947,8 @@ impl<B: Backend> Worker<B> {
             Some(parts) => {
                 *parts.listing.lock() = Some(status);
                 parts.chunks.store(r.seq, SeqCst);
-                self.finish_part(&mut ob, &r.task, parts, LISTING_PART, now);
+                let class = r.class.as_deref();
+                self.finish_part(&mut ob, &r.task, parts, class, LISTING_PART, now);
             }
         }
     }
@@ -1020,6 +1038,14 @@ impl<B: Backend> Worker<B> {
                 .is_some_and(|j| !j.ended.load(SeqCst) && !j.stopped(task.dir));
             match (job, live) {
                 (Some(job), true) => {
+                    let mut task = task;
+                    let class = match (&task.chunk, task.class.take(), &job.opts.class) {
+                        (Some(work), _, _) => work.class.clone(),
+                        (None, Some(tc), Some(opts)) => {
+                            Some(Arc::new(Listing::new(opts.rules.clone(), task.dir, *tc)))
+                        }
+                        _ => None,
+                    };
                     self.running = Some(Running {
                         task,
                         job,
@@ -1030,6 +1056,7 @@ impl<B: Backend> Worker<B> {
                         panicked: 0,
                         read_error: None,
                         parts: None,
+                        class,
                     });
                 }
                 _ => {
@@ -1041,7 +1068,8 @@ impl<B: Backend> Worker<B> {
                             let chunk = empty_chunk(&task, work.seq, ChunkStatus::Cancelled);
                             ob.push(ScanMsg::Chunk(chunk), now);
                             work.parts.cancelled.fetch_add(1, SeqCst);
-                            self.finish_part(&mut ob, &task, &work.parts, work.seq + 1, now);
+                            let class = work.class.as_deref();
+                            self.finish_part(&mut ob, &task, &work.parts, class, work.seq + 1, now);
                         }
                         None => {
                             ob.push(
@@ -1050,6 +1078,7 @@ impl<B: Backend> Worker<B> {
                                     dir: task.dir,
                                     chunks: 0,
                                     status: ListingStatus::Cancelled,
+                                    classes: Vec::new(),
                                 },
                                 now,
                             );
@@ -1163,6 +1192,7 @@ impl<B: Backend> Worker<B> {
                 return StepResult::Progress;
             }
         };
+        let whole = r.entries == 0 && !more;
         r.entries += raw.len();
         if raw.is_empty() {
             if !more {
@@ -1194,9 +1224,15 @@ impl<B: Backend> Worker<B> {
                 dev: r.task.dev,
                 mount: r.task.mount,
                 probe_subvol: false,
-                chunk: Some(Box::new(ChunkWork { raw, seq, parts })),
+                chunk: Some(Box::new(ChunkWork {
+                    raw,
+                    seq,
+                    parts,
+                    class: r.class.clone(),
+                })),
                 gate: r.task.gate.clone(),
                 storage: r.task.storage,
+                class: None,
             };
             let mut ob = self.slot.outbox.lock();
             sh.outstanding.fetch_add(1, SeqCst);
@@ -1206,21 +1242,21 @@ impl<B: Backend> Worker<B> {
             ob.has_chunk_task = true;
             return StepResult::Progress;
         }
-        r.inline = Some((raw, seq, more));
+        r.inline = Some((raw, seq, more, whole));
         self.inline_step(sh, clock)
     }
 
     /// The listing task stats a block itself.
     fn inline_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
         let r = self.running.as_mut().expect("running");
-        let (raw, _, _) = r.inline.as_mut().expect("inline block");
+        let (raw, ..) = r.inline.as_mut().expect("inline block");
         self.slot.begin_syscall(clock.now());
         let res = raw.stat(&mut self.block);
         if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
             return StepResult::Blocked;
         }
         self.slot.syscall_since.store(0, SeqCst);
-        let (_, seq, more) = r.inline.take().expect("inline block");
+        let (_, seq, more, whole) = r.inline.take().expect("inline block");
         if let Err(e) = res {
             // Only "not ready" is expected; anything else loses the block, as a panic would.
             let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(e.to_string()));
@@ -1231,7 +1267,7 @@ impl<B: Backend> Worker<B> {
                 .lock()
                 .push(ScanMsg::Chunk(chunk), clock.now());
         } else {
-            self.emit_block(sh, seq, clock);
+            self.emit_block(sh, seq, whole, clock);
         }
         if !more {
             let status = Self::ended_status(self.running.as_ref().expect("running"));
@@ -1254,7 +1290,7 @@ impl<B: Backend> Worker<B> {
         self.slot.syscall_since.store(0, SeqCst);
         let seq = work.seq;
         match res {
-            Ok(()) => self.emit_block(sh, seq, clock),
+            Ok(()) => self.emit_block(sh, seq, false, clock),
             Err(e) => {
                 self.block.clear();
                 let r = self.running.as_mut().expect("running");
@@ -1270,13 +1306,15 @@ impl<B: Backend> Worker<B> {
         let mut r = self.running.take().expect("running");
         let work = r.task.chunk.take().expect("chunk task");
         let mut ob = self.slot.outbox.lock();
-        self.finish_part(&mut ob, &r.task, &work.parts, seq + 1, clock.now());
+        let class = work.class.as_deref();
+        self.finish_part(&mut ob, &r.task, &work.parts, class, seq + 1, clock.now());
         StepResult::Progress
     }
 
     /// Turns the stat'ed block into chunk `seq`, creating tasks for subdirectories. Tasks go
     /// on the outbox's private stack; they become stealable when the outbox is flushed.
-    fn emit_block(&mut self, sh: &Shared<B>, seq: u32, clock: &dyn Clock) {
+    /// `whole` is set when the block is the directory's whole listing.
+    fn emit_block(&mut self, sh: &Shared<B>, seq: u32, whole: bool, clock: &dyn Clock) {
         let r = self.running.as_mut().expect("running");
         let block = std::mem::take(&mut self.block);
         let (cross, network) = (r.job.opts.cross_mounts, r.job.opts.network);
@@ -1361,6 +1399,26 @@ impl<B: Backend> Worker<B> {
             }
         }
         let first = r.job.next_dir.fetch_add(subdirs.len() as u32, SeqCst);
+        let mut class = r.class.as_ref().map(|l| {
+            let others: Vec<_> = errors.iter().map(|e: &EntryError| e.name).collect();
+            let (slot, loc) = (&self.slot, &r.task.loc);
+            // A marker file is read under the stall watch, like any other call.
+            let read = |name: &[u8], len: usize| {
+                slot.begin_syscall(clock.now());
+                let got = sh.backend.read_prefix(loc, name, len);
+                slot.syscall_since.store(0, SeqCst);
+                got
+            };
+            l.block(
+                &block.names,
+                &files,
+                &subdirs,
+                &others,
+                DirId(first),
+                whole,
+                &read,
+            )
+        });
         let mut tasks = Vec::new();
         for (i, loc) in child_locs.into_iter().enumerate() {
             if let Some((loc, dev, mount, probe_subvol, gate, storage)) = loc {
@@ -1376,6 +1434,7 @@ impl<B: Backend> Worker<B> {
                     chunk: None,
                     gate,
                     storage,
+                    class: class.as_mut().and_then(|c| c.subdirs[i].take()),
                 });
             }
         }
@@ -1390,6 +1449,7 @@ impl<B: Backend> Worker<B> {
             first_subdir: DirId(first),
             subdirs,
             errors,
+            marks: class.map(|c| c.marks).unwrap_or_default(),
             status: ChunkStatus::Ok,
         };
         let mut ob = self.slot.outbox.lock();
@@ -1415,6 +1475,7 @@ fn empty_chunk<L>(task: &Task<L>, seq: u32, status: ChunkStatus) -> Chunk {
         first_subdir: DirId(0),
         subdirs: Vec::new(),
         errors: Vec::new(),
+        marks: Vec::new(),
         status,
     }
 }

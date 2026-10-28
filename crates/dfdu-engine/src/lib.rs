@@ -2,6 +2,7 @@
 //! and the headless commands use.
 
 mod applier;
+mod classifier;
 mod extents;
 mod links;
 mod measure;
@@ -11,6 +12,9 @@ mod runtime;
 pub use applier::{
     Applier, Command, DeleteProgress, DeleteSummary, JobInfo, JobKind, JobPhase, MeasureProgress,
     Model, StalledInfo, Stats, Status, Timing,
+};
+pub use classifier::{
+    CheckMsg, CheckReq, check_batch, git_tracked, parse_reclaimable, spawn_classifiers,
 };
 pub use dfdu_clean::{DeleteResult, Mode};
 pub use extents::{Inode, Measurement};

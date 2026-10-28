@@ -1,6 +1,6 @@
 //! Drawing. Works only from [`App`] and its snapshot, never from the engine model, so it runs
-//! after the read lock is released. [`draw`] lays out the screen, draws the header, list and
-//! footer (modules here), the details pane, the debug panel and the open overlay (each in its
+//! after the read lock is released. [`draw`] lays out the screen, draws the header, the list
+//! or the treemap, and the footer (modules here, the treemap in its own), the details pane, the debug panel and the open overlay (each in its
 //! feature's module), and last lets motion effects work on the finished buffer.
 
 mod footer;
@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Overlay};
-use crate::{confirm, debug, details, error_list, filter, help, motion, palette};
+use crate::{confirm, debug, details, error_list, filter, help, motion, palette, treemap};
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
 #[derive(Copy, Clone, Debug, Default)]
@@ -63,7 +63,12 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let frame = now.duration_since(app.started).as_millis() as u64 / 100;
 
     header::draw(f, app, header, now, frame);
-    list::draw(f, app, list, now, frame);
+    app.treemap.shown = app.treemap.on && treemap::fits(area);
+    if app.treemap.shown {
+        treemap::draw(f, app, list, now);
+    } else {
+        list::draw(f, app, list, now, frame);
+    }
     if stalled_line > 0 {
         footer::stalled(f, app, prompt);
     }
