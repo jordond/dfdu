@@ -22,8 +22,9 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
     $completions = @(switch ($command) {
         'dfdu' {
             [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done')
-            [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only')
-            [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only')
+            [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
+            [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
+            [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)')
             [CompletionResult]::new('--theme', '--theme', [CompletionResultType]::ParameterName, 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown')
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set')
             [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
@@ -46,6 +47,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('clean', 'clean', [CompletionResultType]::ParameterValue, 'Delete what `report` recommends (dry run unless --yes)')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans')
             [CompletionResult]::new('history', 'history', [CompletionResultType]::ParameterValue, 'List the recorded scans')
+            [CompletionResult]::new('dupes', 'dupes', [CompletionResultType]::ParameterValue, 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first')
             [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
             [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
@@ -59,17 +61,19 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--depth', '--depth', [CompletionResultType]::ParameterName, 'Levels of directories to print below the root [default: 1; every level for ndjson]')
             [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first [default: 10; all for ndjson]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many')
-            [CompletionResult]::new('--measure-workers', '--measure-workers', [CompletionResultType]::ParameterName, 'Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does')
+            [CompletionResult]::new('--measure-workers', '--measure-workers', [CompletionResultType]::ParameterName, 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does')
+            [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them')
             [CompletionResult]::new('--stall-abandon', '--stall-abandon', [CompletionResultType]::ParameterName, 'Abandon directories stalled this many seconds')
             [CompletionResult]::new('--stall-after', '--stall-after', [CompletionResultType]::ParameterName, 'Report a directory as stalled after one call on it took this many seconds (tests)')
             [CompletionResult]::new('--backend', '--backend', [CompletionResultType]::ParameterName, 'Filesystem access: `native` (the fastest for this system) or `portable` (std::fs, the reference the native backends are tested against)')
             [CompletionResult]::new('--apparent', '--apparent', [CompletionResultType]::ParameterName, 'Show apparent sizes instead of disk usage')
-            [CompletionResult]::new('--like-du', '--like-du', [CompletionResultType]::ParameterName, 'Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once')
+            [CompletionResult]::new('--like-du', '--like-du', [CompletionResultType]::ParameterName, 'Count data shared between files (btrfs snapshots, reflinks, APFS clones) once per file, as du does, instead of once')
             [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
             [CompletionResult]::new('--no-rules', '--no-rules', [CompletionResultType]::ParameterName, 'Do not classify entries: no categories, no cleanup candidates')
+            [CompletionResult]::new('--by-type', '--by-type', [CompletionResultType]::ParameterName, 'After the tree, print disk usage by file type and the largest extensions')
             [CompletionResult]::new('--bytes', '--bytes', [CompletionResultType]::ParameterName, 'Print only the root total in bytes (for scripts and tests)')
             [CompletionResult]::new('--errors', '--errors', [CompletionResultType]::ParameterName, 'List every entry that could not be read, with the reason')
             [CompletionResult]::new('--no-history', '--no-history', [CompletionResultType]::ParameterName, 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)')
@@ -140,10 +144,24 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'dfdu;dupes' {
+            [CompletionResult]::new('--min-size', '--min-size', [CompletionResultType]::ParameterName, 'Compare only files of at least this size (`1MiB`, `100KB`)')
+            [CompletionResult]::new('--format', '--format', [CompletionResultType]::ParameterName, 'Output: table or json (schema/dupes.v1.json)')
+            [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Groups to print, the most space to free first [default: all]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Threads reading files [default: 4; 1 on spinning disks]')
+            [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--one-file-system', '--one-file-system', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
+            [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
+            [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'dfdu;export' {
             [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot''s')
             [CompletionResult]::new('--compress', '--compress', [CompletionResultType]::ParameterName, 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)')
             [CompletionResult]::new('--snapshot', '--snapshot', [CompletionResultType]::ParameterName, 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)')
             [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
@@ -157,7 +175,9 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
         'dfdu;import' {
             [CompletionResult]::new('--depth', '--depth', [CompletionResultType]::ParameterName, 'Levels of directories to print below the root')
             [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first')
+            [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them')
             [CompletionResult]::new('--apparent', '--apparent', [CompletionResultType]::ParameterName, 'Show apparent sizes instead of disk usage')
+            [CompletionResult]::new('--by-type', '--by-type', [CompletionResultType]::ParameterName, 'After the tree, print disk usage by file type and the largest extensions')
             [CompletionResult]::new('--bytes', '--bytes', [CompletionResultType]::ParameterName, 'Print only the root total in bytes')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
@@ -189,6 +209,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('clean', 'clean', [CompletionResultType]::ParameterValue, 'Delete what `report` recommends (dry run unless --yes)')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans')
             [CompletionResult]::new('history', 'history', [CompletionResultType]::ParameterValue, 'List the recorded scans')
+            [CompletionResult]::new('dupes', 'dupes', [CompletionResultType]::ParameterValue, 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first')
             [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
             [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
@@ -213,6 +234,9 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             break
         }
         'dfdu;help;history' {
+            break
+        }
+        'dfdu;help;dupes' {
             break
         }
         'dfdu;help;export' {

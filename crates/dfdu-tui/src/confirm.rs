@@ -158,6 +158,10 @@ pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
     if targets.is_empty() {
         return Vec::new();
     }
+    if app.marks.is_empty() && targets[0].is_dir && crate::types::active(app) {
+        app.status = Some(crate::types::NO_FOLDERS.into());
+        return Vec::new();
+    }
     let mut c = Confirm::new(targets, mode);
     app.estimates += 1;
     c.estimate = app.estimates;

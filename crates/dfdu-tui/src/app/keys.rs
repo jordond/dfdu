@@ -42,6 +42,7 @@ pub enum Action {
     ToggleMark,
     ClearMarks,
     Filter,
+    Types,
     Details,
     FocusDetails,
     Palette,
@@ -49,6 +50,7 @@ pub enum Action {
     ViewList,
     ViewTreemap,
     ViewCleanup,
+    ViewDupes,
     TreemapDeeper,
     TreemapShallower,
     TreemapColour,
@@ -131,6 +133,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Display,
     ),
     row(
+        Action::ViewDupes,
+        "4",
+        "duplicate files (compares the scanned files)",
+        Group::Display,
+    ),
+    row(
         Action::TreemapDeeper,
         "+",
         "treemap: one level deeper",
@@ -199,6 +207,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Act,
     ),
     row(Action::Filter, "/", "filter this directory", Group::Panels),
+    row(
+        Action::Types,
+        "t",
+        "show only files of some types (video, audio, .iso...)",
+        Group::Panels,
+    ),
     row(
         Action::Details,
         "i",
@@ -360,26 +374,33 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
-            if !filter::clear(app) {
+            if !filter::clear(app) && !crate::types::clear(app) {
                 app.overlay = Overlay::None;
             }
         }
         Action::ToggleMark => marks::toggle(app),
         Action::ClearMarks => marks::clear(app),
         Action::Filter => filter::open(app),
+        Action::Types => crate::types::open(app),
         Action::Details => details::toggle(app),
         Action::FocusDetails => details::focus(app),
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
         Action::ViewList => {
+            crate::dupes::show(app, false);
             crate::cleanup::show(app, false);
             treemap::show(app, false)
         }
         Action::ViewTreemap => {
+            crate::dupes::show(app, false);
             crate::cleanup::show(app, false);
             treemap::show(app, true)
         }
-        Action::ViewCleanup => fx.extend(crate::cleanup::show(app, true)),
+        Action::ViewCleanup => {
+            crate::dupes::show(app, false);
+            fx.extend(crate::cleanup::show(app, true))
+        }
+        Action::ViewDupes => fx.extend(crate::dupes::show(app, true)),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
         Action::TreemapColour => treemap::cycle_colour(app),
@@ -416,7 +437,7 @@ pub(crate) mod tests {
 
     use super::*;
 
-    const ALL: [Action; 38] = [
+    const ALL: [Action; 40] = [
         Action::Quit,
         Action::Up,
         Action::Down,
@@ -445,6 +466,7 @@ pub(crate) mod tests {
         Action::ToggleMark,
         Action::ClearMarks,
         Action::Filter,
+        Action::Types,
         Action::Details,
         Action::FocusDetails,
         Action::Palette,
@@ -452,6 +474,7 @@ pub(crate) mod tests {
         Action::ViewList,
         Action::ViewTreemap,
         Action::ViewCleanup,
+        Action::ViewDupes,
         Action::TreemapDeeper,
         Action::TreemapShallower,
         Action::TreemapColour,
@@ -551,12 +574,14 @@ pub(crate) mod tests {
             (c('1'), Action::ViewList),
             (c('2'), Action::ViewTreemap),
             (c('3'), Action::ViewCleanup),
+            (c('4'), Action::ViewDupes),
+            (c('t'), Action::Types),
             (c('+'), Action::TreemapDeeper),
             (c('-'), Action::TreemapShallower),
         ] {
             assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
         }
-        for code in [c('z'), c('4'), KeyCode::F(2), KeyCode::Insert] {
+        for code in [c('z'), c('5'), KeyCode::F(2), KeyCode::Insert] {
             assert_eq!(action_for(&press(code)), None, "{code:?}");
         }
     }

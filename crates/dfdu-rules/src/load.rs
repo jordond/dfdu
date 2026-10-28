@@ -249,6 +249,14 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
             return Err("match needs `names` or `paths`".into());
         }
     }
+    let larger_than = match &m.larger_than {
+        Some(s) => parse_size(s).ok_or_else(|| format!("match.larger_than: cannot read `{s}`"))?,
+        None => 0,
+    };
+    let not_modified_days = m.not_modified_days.unwrap_or(0);
+    if (larger_than > 0 || not_modified_days > 0) && kind != Kind::File {
+        return Err("match.larger_than and match.not_modified_days need `kind = \"file\"`".into());
+    }
     let rule = Rule {
         id: def.id,
         category,
@@ -280,6 +288,8 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
                 required: mk.required,
             })
             .collect(),
+        larger_than,
+        not_modified_days,
         guard: Guard {
             not_running: def.guard.not_running.get(p),
             not_vcs_tracked: def.guard.not_vcs_tracked,
@@ -404,6 +414,14 @@ names = ["x"]
                 "needs `native.command`",
             ),
             ("[rule.match]\nkind = \"dir\"", "needs `names` or `paths`"),
+            (
+                "[rule.match]\nnames = [\"x\"]\nnot_modified_days = 9",
+                "need `kind = \"file\"`",
+            ),
+            (
+                "[rule.match]\nkind = \"file\"\nnames = [\"x\"]\nlarger_than = \"big\"",
+                "match.larger_than: cannot read",
+            ),
             (
                 "[rule.match]\nnames = [\"x\"]\n[[rule.degrade.when]]\nsafety = \"safe\"\nreason = \"r\"",
                 "may only lower safety",

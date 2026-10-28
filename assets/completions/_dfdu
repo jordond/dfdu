@@ -16,8 +16,9 @@ _dfdu() {
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
 '(--disks -f --file)--resume-from=[Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done]:FILE:_files' \
-'(--disks)-f+[Browse a scan exported to FILE (ncdu JSON, plain or zstd; \`-\` for stdin), read-only]:FILE:_files' \
-'(--disks)--file=[Browse a scan exported to FILE (ncdu JSON, plain or zstd; \`-\` for stdin), read-only]:FILE:_files' \
+'(--disks)-f+[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
+'(--disks)--file=[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
+'--type=[Show only files of these types or extensions, comma-separated\: \`video,audio,.iso\` (\`t\` in the browser changes it)]:TYPES:_default' \
 '--theme=[Colour theme\: auto, dark, light, ansi (the terminal'\''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown]:THEME:_default' \
 '--color=[Colours\: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set]:WHEN:_default' \
 '-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
@@ -50,17 +51,19 @@ _arguments "${_arguments_options[@]}" : \
 '--depth=[Levels of directories to print below the root \[default\: 1; every level for ndjson\]]:DEPTH:_default' \
 '--top=[Entries to print per directory, largest first \[default\: 10; all for ndjson\]]:TOP:_default' \
 '--threads=[Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks\: 2, network\: 4) add that many]:THREADS:_default' \
-'--measure-workers=[Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does]:MEASURE_WORKERS:_default' \
+'--measure-workers=[Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does]:MEASURE_WORKERS:_default' \
+'--type=[Count only files of these types or extensions, comma-separated\: \`video,audio,.iso\`. Types\: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them]:TYPES:_default' \
 '--stall-abandon=[Abandon directories stalled this many seconds]:STALL_ABANDON:_default' \
 '--stall-after=[Report a directory as stalled after one call on it took this many seconds (tests)]:STALL_AFTER:_default' \
 '--backend=[Filesystem access\: \`native\` (the fastest for this system) or \`portable\` (std\:\:fs, the reference the native backends are tested against)]:BACKEND:(native portable)' \
 '(--like-du)--apparent[Show apparent sizes instead of disk usage]' \
-'--like-du[Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once]' \
+'--like-du[Count data shared between files (btrfs snapshots, reflinks, APFS clones) once per file, as du does, instead of once]' \
 '-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
 '--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
 '--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
 '--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
 '--no-rules[Do not classify entries\: no categories, no cleanup candidates]' \
+'--by-type[After the tree, print disk usage by file type and the largest extensions]' \
 '--bytes[Print only the root total in bytes (for scripts and tests)]' \
 '--errors[List every entry that could not be read, with the reason]' \
 '--no-history[Do not record the scan in the history (\`dfdu diff\`, \`dfdu history\`)]' \
@@ -141,11 +144,27 @@ _arguments "${_arguments_options[@]}" : \
 '::path -- Only scans of this directory:_files' \
 && ret=0
 ;;
+(dupes)
+_arguments "${_arguments_options[@]}" : \
+'--min-size=[Compare only files of at least this size (\`1MiB\`, \`100KB\`)]:SIZE:_default' \
+'--format=[Output\: table or json (schema/dupes.v1.json)]:FORMAT:(table json)' \
+'--top=[Groups to print, the most space to free first \[default\: all\]]:TOP:_default' \
+'--threads=[Threads reading files \[default\: 4; 1 on spinning disks\]]:THREADS:_default' \
+'-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--one-file-system[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
+'--cross-mounts[Descend into other local filesystems (disks, tmpfs)]' \
+'--network[Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::path:_files' \
+&& ret=0
+;;
 (export)
 _arguments "${_arguments_options[@]}" : \
 '-o+[Where to write (\`-\` for stdout)]:FILE:_files' \
 '--output=[Where to write (\`-\` for stdout)]:FILE:_files' \
 '--threads=[Worker threads]:THREADS:_default' \
+'--resume-from=[Start from this snapshot (\`--snapshot\`) and rescan only the directories changed since it was taken, when the volume'\''s change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot'\''s]:SNAPSHOT:_files' \
 '(--snapshot)--compress[Compress with zstd (ncdu reads it with \`-f\`; dfdu recognises it on import)]' \
 '--snapshot[Write dfdu'\''s own snapshot format instead (lossless, checked, compressed; for \`dfdu -f\` and \`--resume-from\`, not for ncdu)]' \
 '-x[Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)]' \
@@ -161,7 +180,9 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--depth=[Levels of directories to print below the root]:DEPTH:_default' \
 '--top=[Entries to print per directory, largest first]:TOP:_default' \
+'--type=[Count only files of these types or extensions, comma-separated\: \`video,audio,.iso\`. Types\: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them]:TYPES:_default' \
 '--apparent[Show apparent sizes instead of disk usage]' \
+'--by-type[After the tree, print disk usage by file type and the largest extensions]' \
 '--bytes[Print only the root total in bytes]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -228,6 +249,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(dupes)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (export)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -270,6 +295,7 @@ _dfdu_commands() {
 'clean:Delete what \`report\` recommends (dry run unless --yes)' \
 'diff:What grew\: a directory now against its last recorded scan (or one from --since ago), or two saved scans' \
 'history:List the recorded scans' \
+'dupes:Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first' \
 'export:Scan a directory and write it in ncdu'\''s JSON format' \
 'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
 'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
@@ -299,6 +325,11 @@ _dfdu__subcmd__disks_commands() {
     local commands; commands=()
     _describe -t commands 'dfdu disks commands' commands "$@"
 }
+(( $+functions[_dfdu__subcmd__dupes_commands] )) ||
+_dfdu__subcmd__dupes_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu dupes commands' commands "$@"
+}
 (( $+functions[_dfdu__subcmd__export_commands] )) ||
 _dfdu__subcmd__export_commands() {
     local commands; commands=()
@@ -313,6 +344,7 @@ _dfdu__subcmd__help_commands() {
 'clean:Delete what \`report\` recommends (dry run unless --yes)' \
 'diff:What grew\: a directory now against its last recorded scan (or one from --since ago), or two saved scans' \
 'history:List the recorded scans' \
+'dupes:Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first' \
 'export:Scan a directory and write it in ncdu'\''s JSON format' \
 'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
 'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
@@ -341,6 +373,11 @@ _dfdu__subcmd__help__subcmd__diff_commands() {
 _dfdu__subcmd__help__subcmd__disks_commands() {
     local commands; commands=()
     _describe -t commands 'dfdu help disks commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__dupes_commands] )) ||
+_dfdu__subcmd__help__subcmd__dupes_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help dupes commands' commands "$@"
 }
 (( $+functions[_dfdu__subcmd__help__subcmd__export_commands] )) ||
 _dfdu__subcmd__help__subcmd__export_commands() {

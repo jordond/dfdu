@@ -28,9 +28,15 @@ cargo run --release -- scan ~/some/dir     # headless summary
 cargo run --release -- --read-only /       # browse without the delete keys
 cargo run --release -- --disks             # choose a disk to browse
 cargo run --release -- disks               # list disks with size and free space, like df -h
+dfdu --type video ~                        # browse only video files: folders show what their videos use
+dfdu scan ~ --type audio,.iso --depth 2    # the same for the headless summary
+dfdu scan ~ --by-type                      # disk usage by file type and the largest extensions
+dfdu dupes ~ --min-size 10MiB              # identical files, the most space to free first
 ```
 
-Keys follow ncdu: arrows or `hjkl` to move and open, `s n C M` to sort, `a` apparent size, `r` rescan, `d` move to Trash, `D` delete permanently (asks you to type `delete`), `!` list what could not be read, `2` treemap (`1` back to the list, `+`/`-` depth, `p` colour), `?` help, `q` quit.
+File types come from the extension: video, audio, image, document, archive, disk-image, code, executable, font, data and other. With a type filter, a folder's size and item count are those of the matching files inside it, and folders without any are left out; folders cannot be marked or deleted then, since their size is not what deleting them would remove.
+
+Keys follow ncdu: arrows or `hjkl` to move and open, `s n C M` to sort, `a` apparent size, `r` rescan, `d` move to Trash, `D` delete permanently (asks you to type `delete`), `!` list what could not be read, `/` filter by name, `t` show only some file types (video, audio, image, `.iso`...), `2` treemap (`1` back to the list, `+`/`-` depth, `p` colour), `3` cleanup view, `4` duplicate files, `?` help, `q` quit.
 
 Entries that could not be read are marked `!` with the reason (permission denied, removed during the scan, an I/O error, not responding), and directories with such entries below them are marked `.` with a count, as in ncdu. `!` lists them all and jumps to the one you pick. `dfdu scan` prints the reason next to each entry, a breakdown at the end (with a hint to run as root when permissions were the cause), lists every one with `--errors`, and exits with status 3 when anything was not read.
 
@@ -45,6 +51,8 @@ dfdu clean ~/dev                               # what would be deleted (a dry ru
 dfdu clean ~/dev --yes --mode stage            # delete the recommended matches
 dfdu scan / --format ndjson > scan.ndjson      # one record per entry
 dfdu export ~ --snapshot -o home.snap          # save a scan; dfdu -f home.snap browses it
+dfdu --resume-from home.snap                   # show it at once; on macOS rescan only what changed
+dfdu -f scan.ncdu                              # browse an ncdu export (JSON, zstd or ncdu -O binary)
 dfdu diff ~ --since 7d                         # what grew in the last week
 dfdu recover                                   # what an interrupted session left behind
 ```

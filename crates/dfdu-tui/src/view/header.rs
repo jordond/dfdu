@@ -138,6 +138,18 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
             t.error,
         ));
     }
+    if !s.types.is_empty() {
+        let d = s.dir_total;
+        info.push(Span::styled(
+            format!(
+                " · only {}: {} in {} files here",
+                s.types,
+                human(app.size_mode.of(&d)),
+                count(d.items)
+            ),
+            t.warn,
+        ));
+    }
     if s.incomplete {
         info.push(Span::styled(" · incomplete", t.warn));
     }

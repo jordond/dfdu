@@ -45,6 +45,8 @@ pub struct UiSettings {
     pub mouse: bool,
     /// Start with the debug panel open, and print its numbers after the browser exits.
     pub debug_stats: bool,
+    /// Start with this file type filter (`t`).
+    pub types: dfdu_tree::filetype::TypeFilter,
 }
 
 impl Default for UiSettings {
@@ -54,6 +56,7 @@ impl Default for UiSettings {
             color: None,
             mouse: true,
             debug_stats: false,
+            types: Default::default(),
         }
     }
 }

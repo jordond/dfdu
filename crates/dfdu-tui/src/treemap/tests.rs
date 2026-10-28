@@ -184,10 +184,12 @@ fn read_stops_at_the_budget() {
         depth: 2,
         mode: SizeMode::Disk,
         hide_hidden: false,
+        types: 0,
     };
-    assert!(read_kids(&fx.m.tree, d, None, 1, &key, &mut budget).is_none());
+    let all = TypeFilter::default();
+    assert!(read_kids(&fx.m.tree, d, None, 1, &key, &all, &mut budget).is_none());
     budget = 1;
-    assert!(read_kids(&fx.m.tree, d, None, 1, &key, &mut budget).is_some());
+    assert!(read_kids(&fx.m.tree, d, None, 1, &key, &all, &mut budget).is_some());
     assert_eq!(budget, 0);
 }
 

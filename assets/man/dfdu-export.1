@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-export \- Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH SYNOPSIS
-\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-\-resume\-from\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH OPTIONS
@@ -20,6 +20,9 @@ Write dfdu\*(Aqs own snapshot format instead (lossless, checked, compressed; for
 .TP
 \fB\-\-threads\fR \fI<THREADS>\fR
 Worker threads
+.TP
+\fB\-\-resume\-from\fR \fI<SNAPSHOT>\fR
+Start from this snapshot (`\-\-snapshot`) and rescan only the directories changed since it was taken, when the volume\*(Aqs change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot\*(Aqs
 .TP
 \fB\-x\fR, \fB\-\-one\-file\-system\fR
 Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)

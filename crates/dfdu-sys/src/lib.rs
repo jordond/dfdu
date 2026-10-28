@@ -26,9 +26,13 @@ mod bulk;
 #[cfg(target_os = "macos")]
 pub use bulk::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG, parse_bulk_record};
 #[cfg(target_os = "macos")]
+pub mod fsevents;
+#[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::read_bulk;
+pub use macos::{
+    CloneAt, CloneInfo, clone_info, clone_info_at, performance_cores, read_bulk, shares_extents,
+};
 
 #[cfg(windows)]
 mod windows;

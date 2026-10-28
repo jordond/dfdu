@@ -259,7 +259,66 @@ fn from_errno(e: rustix::io::Errno) -> MeasureResult {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// APFS: a file's private bytes are its own, the rest it shares with clones. Clones made from
+/// one file keep its clone id until written to, so the shared part is keyed by the clone id
+/// and counted once for the group; a clone rewritten in part gets an id of its own, and its
+/// shared part counts as shared with something else (`Measurement::points` with one
+/// reference).
+#[cfg(target_os = "macos")]
+pub fn from_clone(fs: [u8; 16], c: &dfdu_sys::CloneAt) -> Measurement {
+    let excl = c.info.private_size.min(c.alloc);
+    let shared = c.alloc - excl;
+    Measurement {
+        fs,
+        excl,
+        points: if shared > 0 {
+            vec![(c.info.clone_id, shared)]
+        } else {
+            vec![]
+        },
+        ..Default::default()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Measurer {
+    fn measure_dir(&mut self, r: &MeasureReq) -> Vec<MeasureResult> {
+        use std::os::fd::AsFd;
+        // Something other than a directory there now fails each lookup with ENOTDIR.
+        let dir = match std::fs::File::open(&r.dir) {
+            Ok(d) => d,
+            Err(e) => return r.files.iter().map(|_| from_io(&e)).collect(),
+        };
+        r.files
+            .iter()
+            .map(|f| {
+                let Ok(name) = std::ffi::CString::new(f.name.clone()) else {
+                    return MeasureResult::Changed;
+                };
+                match dfdu_sys::clone_info_at(dir.as_fd(), &name) {
+                    Ok(c) if c.ino == f.inode.1 => {
+                        let mut fs = [0u8; 16];
+                        fs[..8].copy_from_slice(&f.inode.0.to_le_bytes());
+                        MeasureResult::Measured(from_clone(fs, &c))
+                    }
+                    Ok(_) => MeasureResult::Changed,
+                    Err(e) => from_io(&e),
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn from_io(e: &std::io::Error) -> MeasureResult {
+    // Gone, or replaced by a symlink: the scan's entry no longer exists.
+    match e.raw_os_error() {
+        Some(2 | 20 | 62) => MeasureResult::Changed,
+        _ => MeasureResult::Failed(ErrKind::from(e)),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl Measurer {
     fn measure_dir(&mut self, r: &MeasureReq) -> Vec<MeasureResult> {
         r.files

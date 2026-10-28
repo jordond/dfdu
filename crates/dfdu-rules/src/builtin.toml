@@ -698,3 +698,60 @@ paths = ["{downloads}/**", "{home}/Desktop/**"]
 names = ["*.dmg", "*.pkg", "*.mpkg", "*.iso", "*.xip", "*.msi", "*.msix", "*.msixbundle", "*.AppImage", "*.deb", "*.rpm", "*.apk", "*.ipa", "*setup*.exe", "*install*.exe"]
 [rule.guard]
 not_vcs_tracked = true
+
+[[rule]]
+id = "content.extracted-archives"
+category = "content.extracted"
+name = "Archives already extracted"
+safety = "review"
+action = "trash"
+verified = ["macos"]
+explanation = "An archive in Downloads or on the Desktop with a folder of the same name next to it, usually its extracted copy."
+lost = "The archive. Check that the folder holds everything it had; it may have been changed since."
+[rule.match]
+kind = "file"
+paths = ["{downloads}/**", "{home}/Desktop/**"]
+names = ["*.zip", "*.tar", "*.tar.gz", "*.tgz", "*.tar.bz2", "*.tbz2", "*.tar.xz", "*.txz", "*.tar.zst", "*.7z", "*.rar"]
+larger_than = "1 MiB"
+[[rule.match.sibling]]
+any_of = ["{name_stem}"]
+[rule.guard]
+not_vcs_tracked = true
+
+[[rule]]
+id = "content.large-videos"
+category = "content.media"
+name = "Large video files"
+safety = "review"
+action = "trash"
+priority = 45
+verified = ["macos"]
+explanation = "Video files over 1 GiB in your home folder: recordings, exports and downloads."
+lost = "The video. Keep a copy elsewhere if you still want it."
+[rule.match]
+kind = "file"
+paths = ["{home}/**"]
+names = ["*.mp4", "*.mov", "*.m4v", "*.mkv", "*.avi", "*.webm", "*.wmv", "*.mts", "*.m2ts", "*.mpg", "*.mpeg"]
+exclude = { macos = ["{home}/Library/**", "{home}/.*/**"], linux = ["{home}/.*/**"], windows = ["{home}/AppData/**", "{home}/.*/**"] }
+larger_than = "1 GiB"
+[rule.guard]
+not_vcs_tracked = true
+
+[[rule]]
+id = "content.large-old"
+category = "content.large-old"
+name = "Large files not modified in 6 months"
+safety = "review"
+action = "trash"
+priority = 40
+verified = ["macos"]
+explanation = "Files over 1 GiB in your home folder that have not been modified for 180 days or more. Old disk images, VM disks, exports and backups often end up here."
+lost = "The file. It may still be read by an app even though it has not changed; check what it is first."
+[rule.match]
+kind = "file"
+paths = ["{home}/**"]
+exclude = { macos = ["{home}/Library/**", "{home}/.*/**"], linux = ["{home}/.*/**"], windows = ["{home}/AppData/**", "{home}/.*/**"] }
+larger_than = "1 GiB"
+not_modified_days = 180
+[rule.guard]
+not_vcs_tracked = true

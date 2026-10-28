@@ -31,7 +31,12 @@ fn json(o: &Output) -> Value {
     })
 }
 
-const SCHEMAS: [&str; 3] = ["scan.v1.json", "scan-ndjson.v1.json", "report.v1.json"];
+const SCHEMAS: [&str; 4] = [
+    "scan.v1.json",
+    "scan-ndjson.v1.json",
+    "report.v1.json",
+    "dupes.v1.json",
+];
 const BASE: &str = "https://github.com/jordond/dfdu/schema/";
 
 /// The published schemas, compiled.
@@ -267,8 +272,10 @@ fn report_json_validates_and_fail_above_sets_the_exit_code() {
 }
 
 /// A native command is shown, in the table and in JSON, with the rule's variables filled in for
-/// the item: the AVD rule deletes `avdmanager delete avd -n pixel`.
+/// the item: the AVD rule deletes `avdmanager delete avd -n pixel`. The rule is verified on
+/// macOS only, so it is off elsewhere.
 #[test]
+#[cfg(target_os = "macos")]
 fn native_commands_are_shown_for_their_item() {
     let tmp = tempfile::tempdir().unwrap();
     let root = dunce::canonicalize(tmp.path()).unwrap();
@@ -300,4 +307,33 @@ fn native_commands_are_shown_for_their_item() {
         it["native_command"],
         serde_json::json!(["avdmanager", "delete", "avd", "-n", "pixel"])
     );
+}
+
+#[test]
+fn dupes_json_validates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let data: Vec<u8> = (0..200_000u32).map(|i| (i % 253) as u8).collect();
+    fs::create_dir_all(root.join("a/b")).unwrap();
+    fs::write(root.join("a/one.bin"), &data).unwrap();
+    fs::write(root.join("a/b/two.bin"), &data).unwrap();
+    fs::write(root.join("three.bin"), &data).unwrap();
+    fs::write(root.join("other.bin"), vec![9u8; 200_000]).unwrap();
+    let o = dfdu(&[
+        "dupes".as_ref(),
+        root.as_os_str(),
+        "--min-size".as_ref(),
+        "1KiB".as_ref(),
+        "--format".as_ref(),
+        "json".as_ref(),
+    ]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v = json(&o);
+    let (schemas, ix) = schemas();
+    valid(&schemas, ix[3], &v);
+    assert_eq!(v["compared"], 4);
+    let groups = v["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["files"].as_array().unwrap().len(), 3);
+    assert_eq!(groups[0]["size"], 200_000);
 }

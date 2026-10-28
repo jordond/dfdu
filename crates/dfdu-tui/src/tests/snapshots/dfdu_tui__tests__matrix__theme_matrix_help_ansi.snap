@@ -32,20 +32,20 @@ L12 2-2 fg=cyan | 3-7 bold | 97-97 fg=cyan
 L13 2-2 fg=cyan | 4-4 bold | 51-57 bold | 97-97 fg=cyan
   ┃ n  sort by name (again: reverse)                /         filter this directory              ┃
 L14 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ C  sort by items (again: reverse)               i         details of the selected entry      ┃
+  ┃ C  sort by items (again: reverse)               t         show only files of some types      ┃
 L15 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ M  sort by modification time (again:            Tab       move focus between the list and    ┃
-L16 2-2 fg=cyan | 4-4 bold | 52-54 bold | 97-97 fg=cyan
-  ┃    reverse)                                               the details                        ┃
-L17 2-2 fg=cyan | 97-97 fg=cyan
-  ┃ S  re-sort now                                  !         list what could not be read, and   ┃
-L18 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
-  ┃                                                           go to it                           ┃
+  ┃ M  sort by modification time (again:                      (video, audio, .iso...)            ┃
+L16 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
+  ┃    reverse)                                     i         details of the selected entry      ┃
+L17 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
+  ┃ S  re-sort now                                  Tab       move focus between the list and    ┃
+L18 2-2 fg=cyan | 4-4 bold | 52-54 bold | 97-97 fg=cyan
+  ┃                                                           the details                        ┃
 L19 2-2 fg=cyan | 97-97 fg=cyan
-  ┃ Display                                         ? F1      keys                               ┃
-L20 2-2 fg=cyan | 3-10 bold | 52-55 bold | 97-97 fg=cyan
- 1┃ 1  list view                                    : Ctrl-P  command palette                    ┃
-L21 0-1 fg=yellow | 2-2 fg=cyan | 4-4 bold | 52-59 bold | 97-97 fg=cyan
+  ┃ Display                                         !         list what could not be read, and   ┃
+L20 2-2 fg=cyan | 3-10 bold | 52-52 bold | 97-97 fg=cyan
+ 1┃ 1  list view                                              go to it                           ┃
+L21 0-1 fg=yellow | 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=darkgray | 2-88 fg=cyan | 89-96 fg=darkgray | 97-97 fg=cyan
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

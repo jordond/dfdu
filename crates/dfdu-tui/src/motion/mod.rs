@@ -91,7 +91,8 @@ impl Motion {
         }
         self.replaced = false;
         self.before.clear();
-        if old.dir_path != new.dir_path {
+        // Entries a type filter leaves out were not deleted.
+        if old.dir_path != new.dir_path || old.types != new.types {
             self.ghosts.clear();
             return;
         }

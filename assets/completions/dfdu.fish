@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_dfdu_global_optspecs
-    string join \n x/one-file-system cross-mounts network no-rules disks resume-from= f/file= read-only no-history theme= color= no-mouse debug-stats h/help V/version
+    string join \n x/one-file-system cross-mounts network no-rules disks resume-from= f/file= read-only type= no-history theme= color= no-mouse debug-stats h/help V/version
 end
 
 function __fish_dfdu_needs_command
@@ -25,7 +25,8 @@ function __fish_dfdu_using_subcommand
 end
 
 complete -c dfdu -n "__fish_dfdu_needs_command" -l resume-from -d 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done' -r -F
-complete -c dfdu -n "__fish_dfdu_needs_command" -s f -l file -d 'Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only' -r -F
+complete -c dfdu -n "__fish_dfdu_needs_command" -s f -l file -d 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only' -r -F
+complete -c dfdu -n "__fish_dfdu_needs_command" -l type -d 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l theme -d 'Colour theme: auto, dark, light, ansi (the terminal\'s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l color -d 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
@@ -45,6 +46,7 @@ complete -c dfdu -n "__fish_dfdu_needs_command" -a "report" -d 'Scan a directory
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "clean" -d 'Delete what `report` recommends (dry run unless --yes)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "diff" -d 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "history" -d 'List the recorded scans'
+complete -c dfdu -n "__fish_dfdu_needs_command" -a "dupes" -d 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
@@ -58,17 +60,19 @@ ncdu\t''"
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l depth -d 'Levels of directories to print below the root [default: 1; every level for ndjson]' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l top -d 'Entries to print per directory, largest first [default: 10; all for ndjson]' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l threads -d 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many' -r
-complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l measure-workers -d 'Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l measure-workers -d 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l type -d 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l stall-abandon -d 'Abandon directories stalled this many seconds' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l stall-after -d 'Report a directory as stalled after one call on it took this many seconds (tests)' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l backend -d 'Filesystem access: `native` (the fastest for this system) or `portable` (std::fs, the reference the native backends are tested against)' -r -f -a "native\t''
 portable\t''"
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l apparent -d 'Show apparent sizes instead of disk usage'
-complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l like-du -d 'Count data shared between files (btrfs snapshots, reflinks) once per file, as du does, instead of once'
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l like-du -d 'Count data shared between files (btrfs snapshots, reflinks, APFS clones) once per file, as du does, instead of once'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l cross-mounts -d 'Descend into other local filesystems (disks, tmpfs)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l network -d 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l no-rules -d 'Do not classify entries: no categories, no cleanup candidates'
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l by-type -d 'After the tree, print disk usage by file type and the largest extensions'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l bytes -d 'Print only the root total in bytes (for scripts and tests)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l errors -d 'List every entry that could not be read, with the reason'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l no-history -d 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)'
@@ -118,8 +122,18 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand diff" -l cross-mounts -d 'Desc
 complete -c dfdu -n "__fish_dfdu_using_subcommand diff" -l network -d 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
 complete -c dfdu -n "__fish_dfdu_using_subcommand diff" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand history" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l min-size -d 'Compare only files of at least this size (`1MiB`, `100KB`)' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l format -d 'Output: table or json (schema/dupes.v1.json)' -r -f -a "table\t''
+json\t''"
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l top -d 'Groups to print, the most space to free first [default: all]' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l threads -d 'Threads reading files [default: 4; 1 on spinning disks]' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l cross-mounts -d 'Descend into other local filesystems (disks, tmpfs)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -l network -d 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
+complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s o -l output -d 'Where to write (`-` for stdout)' -r -F
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l threads -d 'Worker threads' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l resume-from -d 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume\'s change journal can tell (macOS); otherwise everything. PATH and the mount options are the snapshot\'s' -r -F
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l compress -d 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l snapshot -d 'Write dfdu\'s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
@@ -128,7 +142,9 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l network -d 'Descend
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l depth -d 'Levels of directories to print below the root' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l top -d 'Entries to print per directory, largest first' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l type -d 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l apparent -d 'Show apparent sizes instead of disk usage'
+complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l by-type -d 'After the tree, print disk usage by file type and the largest extensions'
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l bytes -d 'Print only the root total in bytes'
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l finish -d 'Delete what is left of these staged items (numbers from the list)' -r
@@ -138,15 +154,16 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l journals -d 'The j
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand man" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand completions" -s h -l help -d 'Print help'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "scan" -d 'Scan a directory and print a summary'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "disks" -d 'List the mounted filesystems with their size and free space'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "report" -d 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "clean" -d 'Delete what `report` recommends (dry run unless --yes)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "diff" -d 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "history" -d 'List the recorded scans'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "man" -d 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "completions" -d 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history export import recover man completions help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "scan" -d 'Scan a directory and print a summary'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "disks" -d 'List the mounted filesystems with their size and free space'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "report" -d 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "clean" -d 'Delete what `report` recommends (dry run unless --yes)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "diff" -d 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "history" -d 'List the recorded scans'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "dupes" -d 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "man" -d 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "completions" -d 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'

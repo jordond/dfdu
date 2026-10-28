@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-import \- Read a scan in ncdu\*(Aqs JSON format and print a summary (`dfdu \-f FILE` browses it)
 .SH SYNOPSIS
-\fBdfdu import\fR [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-bytes\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
+\fBdfdu import\fR [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-type\fR] [\fB\-\-by\-type\fR] [\fB\-\-bytes\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILE\fR> 
 .SH DESCRIPTION
 Read a scan in ncdu\*(Aqs JSON format and print a summary (`dfdu \-f FILE` browses it)
 .SH OPTIONS
@@ -17,6 +17,12 @@ Entries to print per directory, largest first
 .TP
 \fB\-\-apparent\fR
 Show apparent sizes instead of disk usage
+.TP
+\fB\-\-type\fR \fI<TYPES>\fR
+Count only files of these types or extensions, comma\-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk\-image, code, executable, font, data, other. Folders show the size of the matching files inside them
+.TP
+\fB\-\-by\-type\fR
+After the tree, print disk usage by file type and the largest extensions
 .TP
 \fB\-\-bytes\fR
 Print only the root total in bytes

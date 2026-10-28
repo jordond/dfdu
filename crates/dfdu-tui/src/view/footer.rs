@@ -111,6 +111,14 @@ fn context(app: &App) -> Vec<Hint> {
                 hint("Esc", "close", 0),
             ];
         }
+        Overlay::Types(_) => {
+            return vec![
+                hint(arrows.clone(), "move", 1),
+                hint("Space", "toggle", 0),
+                hint("Enter", "done", 0),
+                hint("Esc", "close", 0),
+            ];
+        }
     }
     if filter::editing(app) {
         return editing("move");
@@ -132,6 +140,19 @@ fn context(app: &App) -> Vec<Hint> {
     ]
     .map(first_key)
     .join(" ");
+    if crate::dupes::active(app) {
+        return vec![
+            hint(arrows.clone(), "move", 3),
+            hint(first_key(Action::ToggleMark), "mark", 1),
+            hint("a", "all copies", 2),
+            hint("Enter", "go to", 4),
+            hint("r", "compare again", 5),
+            hint(first_key(Action::Trash), "trash marked", 0),
+            hint(first_key(Action::ViewList), "list", 3),
+            help.clone(),
+            quit.clone(),
+        ];
+    }
     if crate::cleanup::active(app) {
         return vec![
             hint(arrows, "move", 3),

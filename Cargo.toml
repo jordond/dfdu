@@ -4,6 +4,7 @@ members = ["crates/*"]
 default-members = [
     "crates/dfdu",
     "crates/dfdu-clean",
+    "crates/dfdu-dupes",
     "crates/dfdu-engine",
     "crates/dfdu-hangfs",
     "crates/dfdu-rules",
@@ -34,6 +35,7 @@ dfdu-tui = { path = "crates/dfdu-tui" }
 dfdu-sys = { path = "crates/dfdu-sys" }
 dfdu-store = { path = "crates/dfdu-store" }
 dfdu-bench = { path = "crates/dfdu-bench" }
+dfdu-dupes = { path = "crates/dfdu-dupes" }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"
@@ -45,6 +47,8 @@ os_str_bytes = { version = "7.2.1", features = ["conversions"] }
 dunce = "1.0.5"
 etcetera = "0.11.0"
 crc32c = "0.6.8"
+twox-hash = { version = "2.1.5", default-features = false, features = ["std", "xxhash3_128"] }
+sha2 = "0.10.9"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 hex = "0.4.3"

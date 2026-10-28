@@ -14,7 +14,7 @@ L3 0-11 fg=#8b94a7 | 14-37 fg=#88c0d0 | 46-53 fg=#8b94a7 | 54-59 fg=#8fbcf0 bold
 L4 14-37 fg=#88c0d0 | 46-53 fg=#8b94a7 | 54-64 fg=#8fbcf0 bold
    625.0 MiB  ▏                           0.3%       1  notes.sqlite
 L5 14-37 fg=#88c0d0 | 46-53 fg=#8b94a7
- !       0 B┌ Commands 9/42 ───────────────────────────────────────────────────────────┐
+ !       0 B┌ Commands 10/44 ──────────────────────────────────────────────────────────┐
 L6 0-1 fg=#ff8f8f | 2-11 fg=#8b94a7
  ~       0 B│ : sort▌                                                                  │
 L7 0-1 fg=#ebcb8b | 2-11 fg=#8b94a7 | 13-14 fg=#88c0d0 bold | 20-20 fg=#88c0d0 bold
@@ -34,10 +34,11 @@ L13 14-14 fg=#f0c674 underlined | 25-26 fg=#f0c674 underlined | 31-31 fg=#f0c674
 L14 53-53 fg=#f0c674 underlined | 56-57 fg=#f0c674 underlined | 60-60 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ close the overlay, or clear the filter                       global  Esc │
 L15 17-17 fg=#f0c674 underlined | 33-34 fg=#f0c674 underlined | 42-42 fg=#f0c674 underlined | 75-80 fg=#8b94a7 | 83-85 fg=#88c0d0 bold
+            │ duplicate files (compares the scanned files)                  display  4 │
+L16 28-28 fg=#f0c674 underlined | 32-32 fg=#f0c674 underlined | 36-36 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ list what could not be read, and go to it                      panels  ! │
-L16 16-16 fg=#f0c674 underlined | 25-25 fg=#f0c674 underlined | 37-37 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 77-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L17 16-16 fg=#f0c674 underlined | 25-25 fg=#f0c674 underlined | 37-37 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 77-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
 
 
  1 directory is not responding: wait, or press x to skip it

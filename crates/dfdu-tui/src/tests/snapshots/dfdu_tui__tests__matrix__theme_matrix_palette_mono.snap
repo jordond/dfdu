@@ -14,7 +14,7 @@ L3 0-11 dim | 46-53 dim | 54-59 bold
 L4 46-53 dim | 54-64 bold
    625.0 MiB  ▏                           0.3%       1  notes.sqlite
 L5 46-53 dim
- !       0 B┌ Commands 9/42 ───────────────────────────────────────────────────────────┐
+ !       0 B┌ Commands 10/44 ──────────────────────────────────────────────────────────┐
 L6 0-1 bold | 2-11 dim
  ~       0 B│ : sort▌                                                                  │
 L7 0-1 bold | 2-11 dim | 13-14 bold | 20-20 bold
@@ -34,10 +34,11 @@ L13 14-14 underlined | 25-26 underlined | 31-31 underlined | 80-82 dim | 85-85 b
 L14 53-53 underlined | 56-57 underlined | 60-60 underlined | 80-82 dim | 85-85 bold
             │ close the overlay, or clear the filter                       global  Esc │
 L15 17-17 underlined | 33-34 underlined | 42-42 underlined | 75-80 dim | 83-85 bold
+            │ duplicate files (compares the scanned files)                  display  4 │
+L16 28-28 underlined | 32-32 underlined | 36-36 underlined | 40-40 underlined | 76-82 dim | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
-L16 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
+L17 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
 
 
  1 directory is not responding: wait, or press x to skip it

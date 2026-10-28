@@ -24,6 +24,7 @@ dfdu-tui.workspace = true
 dfdu-sys.workspace = true
 dfdu-store.workspace = true
 dfdu-clean.workspace = true
+dfdu-dupes.workspace = true
 clap.workspace = true
 clap_mangen.workspace = true
 clap_complete.workspace = true

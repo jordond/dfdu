@@ -28,7 +28,9 @@ use crate::ImportError;
 use crate::ncdu::Limits;
 
 pub const MAGIC: &[u8; 8] = b"DFDUSNAP";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
+/// Version 1, the same without the change journal position.
+const VERSION_1: u32 = 1;
 /// Raw bytes per frame.
 pub const FRAME_RAW: usize = 1 << 20;
 /// Largest frame a reader accepts, raw or compressed.
@@ -54,7 +56,21 @@ pub struct Header {
     pub written: u64,
     pub cross_mounts: bool,
     pub network: bool,
+    /// Where the change journal of the root's volume stood when the scan started, so a resume
+    /// can rescan only what changed since.
+    pub journal: Option<Journal>,
 }
+
+/// A position in a volume's change journal (FSEvents on macOS).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Journal {
+    /// The journal's identity (the FSEvents store UUID): positions in another are meaningless.
+    pub volume: [u8; 16],
+    /// The last event before the scan.
+    pub event_id: u64,
+}
+
+const OPT_JOURNAL: u64 = 4;
 
 pub struct Loaded {
     pub tree: Tree,
@@ -164,8 +180,18 @@ pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Resul
     put_u(&mut fw.raw, header.written);
     put_u(
         &mut fw.raw,
-        header.cross_mounts as u64 | (header.network as u64) << 1,
+        header.cross_mounts as u64
+            | (header.network as u64) << 1
+            | if header.journal.is_some() {
+                OPT_JOURNAL
+            } else {
+                0
+            },
     );
+    if let Some(j) = &header.journal {
+        put_bytes(&mut fw.raw, &j.volume);
+        put_u(&mut fw.raw, j.event_id);
+    }
     let mut devs: Vec<u64> = vec![];
     let mut entries = 0u64;
     let mut stack: Vec<(Vec<Ix>, usize)> = vec![];
@@ -406,7 +432,7 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
         return Err(bad("not a dfdu snapshot"));
     }
     let version = u32::from_le_bytes(head[8..].try_into().expect("4 bytes"));
-    if version != VERSION {
+    if version != VERSION && version != VERSION_1 {
         return Err(bad(format!(
             "snapshot format {version}; this dfdu reads {VERSION}"
         )));
@@ -429,11 +455,22 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
         written: rec.u()?,
         cross_mounts: false,
         network: false,
+        journal: None,
     };
     let opts = rec.u()?;
+    let journal = if version != VERSION_1 && opts & OPT_JOURNAL != 0 {
+        let volume = rec.bytes(16)?;
+        Some(Journal {
+            volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
+            event_id: rec.u()?,
+        })
+    } else {
+        None
+    };
     let header = Header {
         cross_mounts: opts & 1 != 0,
         network: opts & 2 != 0,
+        journal,
         ..header
     };
 

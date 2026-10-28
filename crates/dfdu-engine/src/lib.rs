@@ -4,9 +4,11 @@
 mod applier;
 mod classifier;
 mod extents;
+mod journal;
 mod links;
 mod measure;
 mod recent;
+mod reclassify;
 mod runtime;
 
 pub use applier::{
@@ -19,6 +21,7 @@ pub use classifier::{
 };
 pub use dfdu_clean::{DeleteResult, Mode, STAGE_UNDO_WINDOW, shown_argv};
 pub use extents::{Inode, Measurement};
+pub use journal::changed_since;
 pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 #[cfg(target_os = "linux")]
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};

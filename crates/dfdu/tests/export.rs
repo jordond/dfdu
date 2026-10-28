@@ -88,3 +88,41 @@ fn export_then_import() {
     assert_eq!(o.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&o.stderr).contains("bad.json"));
 }
+
+/// `export --resume-from` gives what a new scan gives, whether it rescans only what the
+/// journal names (macOS) or everything.
+#[test]
+fn resumed_export_matches_a_new_scan() {
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tree = tmp.path().join("tree");
+    fs::create_dir_all(tree.join("a/b")).unwrap();
+    fs::create_dir_all(tree.join("quiet/deep")).unwrap();
+    fs::write(tree.join("a/one"), vec![1u8; 20_000]).unwrap();
+    fs::write(tree.join("quiet/deep/x"), vec![1u8; 7_000]).unwrap();
+    let (old, new) = (tmp.path().join("old.snap"), tmp.path().join("new.snap"));
+    let export = |extra: &[&std::ffi::OsStr], out: &std::path::Path| {
+        let mut args = vec!["export".as_ref(), tree.as_os_str(), "--snapshot".as_ref()];
+        args.extend(["-o".as_ref(), out.as_os_str()]);
+        args.extend(extra);
+        stdout(&dfdu(&args));
+    };
+    export(&[], &old);
+
+    fs::remove_file(tree.join("a/one")).unwrap();
+    fs::create_dir(tree.join("a/b/c")).unwrap();
+    fs::write(tree.join("a/b/c/new"), vec![1u8; 50_000]).unwrap();
+    export(&["--resume-from".as_ref(), old.as_os_str()], &new);
+    let total = |f: &std::path::Path| {
+        stdout(&dfdu(&[
+            "import".as_ref(),
+            f.as_os_str(),
+            "--bytes".as_ref(),
+            "--depth".as_ref(),
+            "3".as_ref(),
+        ]))
+    };
+    let fresh = tmp.path().join("fresh.snap");
+    export(&[], &fresh);
+    assert_eq!(total(&new), total(&fresh));
+    assert_ne!(total(&new), total(&old));
+}

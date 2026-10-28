@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model};
+use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, NodeRef, Totals, Tree, name_bytes};
 
 /// Which size the list shows.
@@ -310,6 +311,11 @@ pub struct Snapshot {
     pub focus: Option<(u32, u32)>,
     /// Cheap fingerprint of the model, to skip redraws when nothing changed.
     pub version: u64,
+    /// The file type filter the entries were read with ([`crate::types`]); empty: none. With
+    /// one, entries and `dir_total` count the matching files only.
+    pub types: TypeFilter,
+    /// The directory's files by type and extension, read while the type picker is open.
+    pub breakdown: Option<std::sync::Arc<Breakdown>>,
 }
 
 /// "subvolume" or "snapshot of NAME", with ", read-only", for btrfs subvolume roots.
@@ -381,7 +387,20 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
 
 /// Builds the snapshot for the directory `target` points at, updating `target` if the node had
 /// to be found again (rescan swap) or no longer exists (falls back to the nearest ancestor).
+#[cfg(test)]
 pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
+    build_view(m, target, mode, &TypeFilter::default(), false)
+}
+
+/// [`build`] counting only the files `types` matches (none left out when it is empty), and with
+/// the directory's [`Breakdown`] when `breakdown` is set. Both walk the directory's subtree.
+pub fn build_view(
+    m: &Model,
+    target: &mut Target,
+    mode: SizeMode,
+    types: &TypeFilter,
+    breakdown: bool,
+) -> Snapshot {
     let tree = &m.tree;
     let size = |t: &Totals| mode.of(t);
     let mut snap = Snapshot {
@@ -401,6 +420,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
         profile: m.status.profile,
         version: m.fingerprint(),
         rules: m.rules.clone(),
+        types: types.clone(),
         ..Default::default()
     };
     let Some(root) = tree.roots().next() else {
@@ -470,6 +490,15 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
             }
         })
         .collect();
+    if breakdown {
+        let mut b = Breakdown::default();
+        filetype::sum(tree, dir, &TypeFilter::default(), Some(&mut b));
+        snap.breakdown = Some(std::sync::Arc::new(b));
+    }
+    if !types.is_empty() {
+        only_types(tree, dir, types, mode, &mut snap);
+        return snap;
+    }
     // Data the entries share is counted at the directory: show it as its own row.
     let home = tree.home(dir);
     if mode == SizeMode::Disk && home > 0 {
@@ -495,6 +524,33 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
         });
     }
     snap
+}
+
+/// Keeps the entries with files `types` matches, sized by those files, and sets `dir_total` to
+/// their sum (errors and the rest of the directory's own totals kept).
+fn only_types(tree: &Tree, dir: Ix, types: &TypeFilter, mode: SizeMode, snap: &mut Snapshot) {
+    let mut sum = Totals::default();
+    snap.entries.retain_mut(|e| {
+        let Some(c) = tree.resolve_visible(e.node) else {
+            return false;
+        };
+        let t = filetype::sum(tree, c, types, None);
+        if t.items == 0 {
+            return false;
+        }
+        sum.add(&t);
+        e.size = mode.of(&t);
+        e.items = t.items;
+        e.shared_out = t.shared_out;
+        true
+    });
+    let d = tree.total(dir);
+    snap.dir_total = Totals {
+        errors: d.errors,
+        mounts: d.mounts,
+        ro_subvols: d.ro_subvols,
+        ..sum
+    };
 }
 
 /// An entry with a unique node reference, for tests that do not need a real tree.

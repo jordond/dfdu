@@ -374,3 +374,61 @@ fn a_target_git_cannot_answer_for_is_flagged() {
     });
     engine.shutdown(Duration::from_millis(200));
 }
+
+/// `larger_than` and `not_modified_days` see each file's stat on the workers.
+#[test]
+fn file_size_and_age_conditions() {
+    const RULE: &str = r#"schema_version = 1
+[[rule]]
+id = "test.big-old"
+category = "content.large-old"
+name = "Big old"
+safety = "review"
+[rule.match]
+kind = "file"
+names = ["*.bin"]
+larger_than = "32 KiB"
+not_modified_days = 30
+"#;
+    let (set, errors) = dfdu_rules::load_from(
+        &Env::current(),
+        &[(dfdu_rules::Source::Builtin, RULE.into())],
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let tmp = tmp();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(40 * 86_400);
+    for (name, len, aged) in [
+        ("big-old.bin", 64 << 10, true),
+        ("big-new.bin", 64 << 10, false),
+        ("small-old.bin", 1 << 10, true),
+    ] {
+        let f = fs::File::create(root.join(name)).unwrap();
+        std::io::Write::write_all(&mut &f, &vec![7u8; len]).unwrap();
+        if aged {
+            f.set_modified(old).unwrap();
+        }
+    }
+    let engine = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 2,
+            journal_dir: None,
+            crash_dir: None,
+            measure_workers: 0,
+            check_invariants: true,
+            ..Default::default()
+        },
+    );
+    engine.send(Command::Scan {
+        path: root.clone(),
+        opts: JobOptions {
+            class: Some(ClassOpts::for_root(Arc::new(set), &root)),
+            ..JobOptions::default()
+        },
+    });
+    assert!(engine.wait_idle(Some(Duration::from_secs(30))), "scan");
+    let got = engine.read(|m| ["big-old.bin", "big-new.bin", "small-old.bin"].map(|n| class(m, n)));
+    engine.shutdown(Duration::from_millis(200));
+    assert_eq!(got, [Some("test.big-old review".to_string()), None, None]);
+}

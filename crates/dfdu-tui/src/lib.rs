@@ -19,6 +19,7 @@ mod cleanup;
 mod confirm;
 mod debug;
 mod details;
+mod dupes;
 mod error_list;
 mod extras;
 mod filter;
@@ -37,6 +38,7 @@ mod setup;
 mod snapshot;
 mod theme;
 mod treemap;
+mod types;
 mod view;
 
 use std::io;
@@ -80,6 +82,9 @@ pub struct RunOptions {
     pub imported: Option<dfdu_tree::Tree>,
     /// A scan read from a file, shown at once while its root is rescanned (`path` is ignored).
     pub resumed: Option<dfdu_tree::Tree>,
+    /// Where the change journal stood when the resumed scan started: when it can tell what
+    /// changed since, only that is rescanned.
+    pub journal: Option<dfdu_store::snapshot::Journal>,
     /// Options of the scan (which mounts it descends into).
     pub job: JobOptions,
     /// The rules entries are classified against; `None` classifies nothing.
@@ -106,6 +111,8 @@ pub struct UiOptions {
     pub home: Option<PathBuf>,
     /// The scan history this browser reads and adds to.
     pub history: Option<HistoryLink>,
+    /// The file type filter to start with.
+    pub types: dfdu_tree::filetype::TypeFilter,
 }
 
 /// The browser's link to the scan history (`dfdu_store::history`): the last scan's sizes,
@@ -240,6 +247,7 @@ impl UiOptions {
             debug: false,
             home: None,
             history: None,
+            types: Default::default(),
         }
     }
 }
@@ -290,6 +298,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         debug: ui.debug_stats,
         home: setup::home_dir(),
         history,
+        types: ui.types.clone(),
     };
     // Only scans that count the same data are compared.
     let link = |root: &std::path::Path, job: &JobOptions, engine: &EngineOptions| {
@@ -331,7 +340,14 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             .rules
             .clone()
             .map(|r| dfdu_scan::classify::ClassOpts::for_root(r, &path));
-        engine.send(Command::Resume { node, opts: job });
+        let changed = opts
+            .journal
+            .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id));
+        engine.send(Command::Resume {
+            node,
+            opts: job,
+            changed,
+        });
         return browse(
             &mut terminal,
             engine,
@@ -444,6 +460,7 @@ where
     app.color_level = ui.color_level;
     app.background = ui.background;
     app.home = ui.home;
+    app.types = ui.types;
     motion::start(&mut app);
     if ui.debug {
         debug::toggle(&mut app);
@@ -479,7 +496,9 @@ where
             && (!shown_entries || last_read.is_none_or(|t| now.duration_since(t) >= data_interval));
         // Keys are drawn from the snapshot already held, except when they opened another
         // directory or changed the size mode.
-        let stale = app.target.path != app.snap.dir_path || app.size_mode != read_mode;
+        let stale = app.target.path != app.snap.dir_path
+            || app.size_mode != read_mode
+            || types::stale(&app);
         let read = extras::plan(data_ready || stale, app.extras_stale());
         let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
         let animating =
@@ -490,9 +509,11 @@ where
                 Read::Full => {
                     let mut target = app.target.clone();
                     let mode = app.size_mode;
+                    let breakdown = matches!(app.overlay, app::Overlay::Types(_));
                     let (snap, extras, cost) = engine.read(|m| {
                         let t = Instant::now();
-                        let snap = snapshot::build(m, &mut target, mode);
+                        let snap =
+                            snapshot::build_view(m, &mut target, mode, &app.types, breakdown);
                         let counters = debug::Counters::of(engine);
                         let extras = extras::read(m, &app, engine.budget(), counters);
                         (snap, extras, t.elapsed())
@@ -613,6 +634,16 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
     for fx in fx {
         match fx {
             Effect::Send(cmd) => engine.send(cmd),
+            Effect::FindDupes => {
+                let (root, cands) = engine.read(|m| match m.tree.roots().next() {
+                    Some(r) => (
+                        m.tree.path_buf(r),
+                        dfdu_dupes::candidates(&m.tree, r, dupes::MIN_SIZE),
+                    ),
+                    None => (std::path::PathBuf::new(), Vec::new()),
+                });
+                dupes::begin(app, root, cands);
+            }
             Effect::ShowErrors => {
                 let list = engine.read(|m| match m.tree.roots().next() {
                     Some(root) => errors(&m.tree, root, ERROR_LIST_MAX),
@@ -626,7 +657,7 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
 
 /// The header spinner and clock move while the engine is busy; nothing animates otherwise.
 fn spinners_visible(app: &App) -> bool {
-    app.snap.busy
+    app.snap.busy || dupes::running(app)
 }
 
 #[cfg(test)]

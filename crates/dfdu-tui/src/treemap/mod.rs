@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dfdu_engine::Model;
+use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{Class, Ix, NodeRef, Tree};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -103,6 +104,8 @@ struct Key {
     depth: u8,
     mode: SizeMode,
     hide_hidden: bool,
+    /// Hash of the type filter.
+    types: u64,
 }
 
 fn key_of(app: &App) -> Key {
@@ -112,6 +115,12 @@ fn key_of(app: &App) -> Key {
         depth: app.treemap.depth,
         mode: app.size_mode,
         hide_hidden: app.hide_hidden,
+        types: {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            app.types.hash(&mut h);
+            h.finish()
+        },
     }
 }
 
@@ -183,6 +192,7 @@ pub fn read(m: &Model, app: &App) -> Info {
                 m.tree.class_in_effect(ix).map(|(_, c)| c),
                 levels,
                 &key,
+                &app.types,
                 &mut budget,
             )
         {
@@ -202,13 +212,15 @@ fn largest_first<T: Ord>(v: &mut Vec<(u64, T)>, n: usize) {
     v.sort_unstable_by(by_size);
 }
 
-/// The children of `dir`, `levels` deep; `inside` is the class in effect for them.
+/// The children of `dir`, `levels` deep; `inside` is the class in effect for them. With a type
+/// filter, sizes count the matching files only and children without any are left out.
 fn read_kids(
     tree: &Tree,
     dir: Ix,
     inside: Option<Class>,
     levels: u8,
     key: &Key,
+    types: &TypeFilter,
     budget: &mut usize,
 ) -> Option<Kids> {
     let children = tree.children(dir);
@@ -218,12 +230,23 @@ fn read_kids(
     *budget -= children.len();
     let mut all: Vec<(u64, u32)> = children
         .filter(|&c| !(key.hide_hidden && tree.name(c).first() == Some(&b'.')))
-        .map(|c| (key.mode.of(&tree.total(c)), c.0))
+        .filter_map(|c| {
+            if types.is_empty() {
+                return Some((key.mode.of(&tree.total(c)), c.0));
+            }
+            let t = filetype::sum(tree, c, types, None);
+            (t.items > 0).then(|| (key.mode.of(&t), c.0))
+        })
         .collect();
     let total: u64 = all.iter().map(|a| a.0).sum();
+    let listed = all.len() as u64;
     largest_first(&mut all, MAX_TILES);
     let shown: u64 = all.iter().map(|a| a.0).sum();
-    let rest_n = tree.children(dir).len() as u64 - all.len() as u64;
+    let rest_n = if types.is_empty() {
+        tree.children(dir).len() as u64 - all.len() as u64
+    } else {
+        listed - all.len() as u64
+    };
     let items = all
         .into_iter()
         .map(|(size, c)| {
@@ -237,7 +260,7 @@ fn read_kids(
                 tag: tag_of(tree, inside, c),
                 kids: if is_dir {
                     let below = inside.or_else(|| tree.class(c));
-                    read_kids(tree, c, below, levels - 1, key, budget)
+                    read_kids(tree, c, below, levels - 1, key, types, budget)
                 } else {
                     None
                 },

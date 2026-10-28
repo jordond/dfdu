@@ -17,7 +17,7 @@ pub mod vars;
 
 pub use glob::{Glob, GlobError};
 pub use load::{LoadError, builtin, load, load_from};
-pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Verdict};
+pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Stat, Verdict, stem};
 pub use vars::Env;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -271,6 +271,10 @@ pub struct Rule {
     /// Each list needs one of its names inside the candidate.
     pub child: Vec<Vec<String>>,
     pub markers: Vec<Marker>,
+    /// Files only: the file uses more disk than this (0: any size).
+    pub larger_than: u64,
+    /// Files only: the file was not modified for this many days (0: any age).
+    pub not_modified_days: u32,
     pub guard: Guard,
     pub degrade: Vec<Degrade>,
     pub native: Option<schema::NativeDef>,

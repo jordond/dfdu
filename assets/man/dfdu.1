@@ -4,7 +4,7 @@
 .SH NAME
 dfdu \- Disk usage browser for the terminal
 .SH SYNOPSIS
-\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
+\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Disk usage browser for the terminal
 .SH OPTIONS
@@ -28,10 +28,13 @@ Choose a disk to browse from the mounted filesystems
 Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done
 .TP
 \fB\-f\fR, \fB\-\-file\fR \fI<FILE>\fR
-Browse a scan exported to FILE (ncdu JSON, plain or zstd; `\-` for stdin), read\-only
+Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu \-O`; `\-` for stdin), read\-only
 .TP
 \fB\-\-read\-only\fR
 Never delete anything (the delete keys are refused)
+.TP
+\fB\-\-type\fR \fI<TYPES>\fR
+Show only files of these types or extensions, comma\-separated: `video,audio,.iso` (`t` in the browser changes it)
 .TP
 \fB\-\-no\-history\fR
 Do not record the scan in the history, nor show what grew since the last one
@@ -72,6 +75,9 @@ What grew: a directory now against its last recorded scan (or one from \-\-since
 .TP
 dfdu\-history(1)
 List the recorded scans
+.TP
+dfdu\-dupes(1)
+Scan a directory and list the files with identical contents (size, then partial hash, then SHA\-256), the most space to free first
 .TP
 dfdu\-export(1)
 Scan a directory and write it in ncdu\*(Aqs JSON format

@@ -2117,6 +2117,10 @@ fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, Str
                 inside: &inside,
                 protection: prot,
                 partial: false,
+                stat: (!is_dir).then_some(dfdu_rules::Stat {
+                    disk: cn.meta.alloc,
+                    mtime: cn.meta.mtime,
+                }),
             });
             let (mut cprot, mut own) = (State::Off, None);
             match verdict {

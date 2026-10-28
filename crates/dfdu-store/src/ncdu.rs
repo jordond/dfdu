@@ -21,6 +21,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
 
+pub mod binary;
+
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
 use crate::ImportError;
@@ -225,6 +227,111 @@ fn set_state(tree: &mut Tree, ix: Ix, state: DirState) {
     }
 }
 
+fn check_entries(entries: u64, limits: &Limits) -> Result<(), ImportError> {
+    if entries > limits.max_entries {
+        return Err(ImportError::Limit(format!(
+            "more than {} entries",
+            limits.max_entries
+        )));
+    }
+    Ok(())
+}
+
+/// `depth` is the number of open directories, the root included.
+fn check_depth(depth: usize, limits: &Limits) -> Result<(), ImportError> {
+    if depth > limits.max_depth {
+        return Err(ImportError::Limit(format!(
+            "directories nested more than {} deep",
+            limits.max_depth
+        )));
+    }
+    Ok(())
+}
+
+/// Adds the export's root directory; returns it and its device.
+fn add_root(tree: &mut Tree, info: &Info) -> (Ix, u64) {
+    let dev = info.dev.unwrap_or(0);
+    let root = tree.new_root(&info.name, &meta_of(info, Kind::Dir, dev), true);
+    if info.read_error {
+        tree.set_error(root, ErrKind::Other);
+        set_state(tree, root, DirState::Partial);
+    }
+    (root, dev)
+}
+
+/// Adds one entry below `dir`, whose device is `pdev`. `listed`: a directory whose entries
+/// follow, left open for them (the caller closes it); otherwise the entry is complete.
+fn add_entry(
+    tree: &mut Tree,
+    links: &mut HashSet<(u64, u64)>,
+    dir: Ix,
+    pdev: u64,
+    info: &Info,
+    listed: bool,
+) -> Ix {
+    let dev = info.dev.unwrap_or(pdev);
+    if listed {
+        let flags = if dev != pdev {
+            NodeFlags::MOUNT_ROOT
+        } else {
+            0
+        };
+        let ix = tree.add_dir_flagged(dir, &info.name, &meta_of(info, Kind::Dir, dev), flags);
+        let own = tree.own(ix);
+        tree.propagate_add(dir, &own);
+        if info.read_error {
+            tree.set_error(ix, ErrKind::Other);
+            set_state(tree, ix, DirState::Partial);
+        }
+        return ix;
+    }
+    let ix = match &info.excluded {
+        Some(why) => {
+            let (kind, flags) = match why.as_slice() {
+                b"otherfs" | b"othfs" => (Kind::Dir, NodeFlags::MOUNT_ROOT),
+                b"kernfs" => (Kind::Dir, NodeFlags::KERNEL),
+                b"frmlink" => (Kind::Symlink, 0),
+                // Not stat'ed: a directory as far as anyone knows, unless `mode` says
+                // otherwise.
+                _ => match info.mode {
+                    Some(_) => (kind_of(info), 0),
+                    None => (Kind::Dir, 0),
+                },
+            };
+            let m = meta_of(info, kind, dev);
+            if kind == Kind::Dir {
+                let ix = tree.add_dir_flagged(dir, &info.name, &m, flags);
+                set_state(tree, ix, DirState::Skipped);
+                close_dir(tree, ix);
+                ix
+            } else {
+                tree.add_file(dir, &info.name, &m, true, None)
+            }
+        }
+        None => {
+            let kind = kind_of(info);
+            let m = meta_of(info, kind, dev);
+            if kind == Kind::Dir {
+                // A directory written as an info block: one that could not be read.
+                let ix = tree.add_dir(dir, &info.name, &m);
+                set_state(tree, ix, DirState::Failed);
+                close_dir(tree, ix);
+                ix
+            } else {
+                let charged = !m.is_hardlink() || links.insert((dev, info.ino));
+                let err = info.read_error.then_some(ErrKind::Other);
+                tree.add_file(dir, &info.name, &m, charged, err)
+            }
+        }
+    };
+    let own = tree.own(ix);
+    tree.propagate_add(dir, &own);
+    if info.read_error && tree.dir(ix).is_some() {
+        tree.set_error(ix, ErrKind::Other);
+    }
+    ix
+}
+
 fn import_plain<R: BufRead>(r: R, limits: &Limits) -> Result<Imported, ImportError> {
     let mut r = Reader::new(r);
     r.expect(b'[')?;
@@ -248,12 +355,7 @@ fn import_plain<R: BufRead>(r: R, limits: &Limits) -> Result<Imported, ImportErr
     if info.name.is_empty() || info.name.contains(&0) {
         return Err(r.error("bad root name"));
     }
-    let dev = info.dev.unwrap_or(0);
-    let root = tree.new_root(&info.name, &meta_of(&info, Kind::Dir, dev), true);
-    if info.read_error {
-        tree.set_error(root, ErrKind::Other);
-        set_state(&mut tree, root, DirState::Partial);
-    }
+    let (root, dev) = add_root(&mut tree, &info);
     let mut entries = 1u64;
     let mut stack: Vec<(Ix, u64)> = vec![(root, dev)];
     while let Some(&(dir, pdev)) = stack.last() {
@@ -263,12 +365,7 @@ fn import_plain<R: BufRead>(r: R, limits: &Limits) -> Result<Imported, ImportErr
             continue;
         }
         entries += 1;
-        if entries > limits.max_entries {
-            return Err(ImportError::Limit(format!(
-                "more than {} entries",
-                limits.max_entries
-            )));
-        }
+        check_entries(entries, limits)?;
         let nested = match r.peek()? {
             Some(b'[') => {
                 r.expect(b'[')?;
@@ -281,72 +378,12 @@ fn import_plain<R: BufRead>(r: R, limits: &Limits) -> Result<Imported, ImportErr
         if !valid_name(&info.name) {
             return Err(r.error(format!("bad name \"{}\"", info.name.escape_ascii())));
         }
-        let dev = info.dev.unwrap_or(pdev);
         if nested {
-            if stack.len() > limits.max_depth {
-                return Err(ImportError::Limit(format!(
-                    "directories nested more than {} deep",
-                    limits.max_depth
-                )));
-            }
-            let flags = if dev != pdev {
-                NodeFlags::MOUNT_ROOT
-            } else {
-                0
-            };
-            let ix = tree.add_dir_flagged(dir, &info.name, &meta_of(&info, Kind::Dir, dev), flags);
-            let own = tree.own(ix);
-            tree.propagate_add(dir, &own);
-            if info.read_error {
-                tree.set_error(ix, ErrKind::Other);
-                set_state(&mut tree, ix, DirState::Partial);
-            }
-            stack.push((ix, dev));
-            continue;
+            check_depth(stack.len(), limits)?;
         }
-        let ix = match &info.excluded {
-            Some(why) => {
-                let (kind, flags) = match why.as_slice() {
-                    b"otherfs" | b"othfs" => (Kind::Dir, NodeFlags::MOUNT_ROOT),
-                    b"kernfs" => (Kind::Dir, NodeFlags::KERNEL),
-                    b"frmlink" => (Kind::Symlink, 0),
-                    // Not stat'ed: a directory as far as anyone knows, unless `mode` says
-                    // otherwise.
-                    _ => match info.mode {
-                        Some(_) => (kind_of(&info), 0),
-                        None => (Kind::Dir, 0),
-                    },
-                };
-                let m = meta_of(&info, kind, dev);
-                if kind == Kind::Dir {
-                    let ix = tree.add_dir_flagged(dir, &info.name, &m, flags);
-                    set_state(&mut tree, ix, DirState::Skipped);
-                    close_dir(&mut tree, ix);
-                    ix
-                } else {
-                    tree.add_file(dir, &info.name, &m, true, None)
-                }
-            }
-            None => {
-                let kind = kind_of(&info);
-                let m = meta_of(&info, kind, dev);
-                if kind == Kind::Dir {
-                    // A directory written as an info block: one that could not be read.
-                    let ix = tree.add_dir(dir, &info.name, &m);
-                    set_state(&mut tree, ix, DirState::Failed);
-                    close_dir(&mut tree, ix);
-                    ix
-                } else {
-                    let charged = !m.is_hardlink() || links.insert((dev, info.ino));
-                    let err = info.read_error.then_some(ErrKind::Other);
-                    tree.add_file(dir, &info.name, &m, charged, err)
-                }
-            }
-        };
-        let own = tree.own(ix);
-        tree.propagate_add(dir, &own);
-        if info.read_error && tree.dir(ix).is_some() {
-            tree.set_error(ix, ErrKind::Other);
+        let ix = add_entry(&mut tree, &mut links, dir, pdev, &info, nested);
+        if nested {
+            stack.push((ix, info.dev.unwrap_or(pdev)));
         }
     }
     r.expect(b']')?;

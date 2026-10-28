@@ -64,7 +64,9 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
 
     header::draw(f, app, header, now, frame);
     app.treemap.shown = app.treemap.on && treemap::fits(area);
-    if crate::cleanup::active(app) {
+    if crate::dupes::active(app) {
+        crate::dupes::draw(f, app, list);
+    } else if crate::cleanup::active(app) {
         crate::cleanup::draw(f, app, list);
     } else if app.treemap.shown {
         treemap::draw(f, app, list, now);
@@ -90,6 +92,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::Errors { .. } => Some(error_list::draw(f, app, area)),
         Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
+        Overlay::Types(_) => Some(crate::types::draw(f, app, area)),
     };
     motion::post_process(app, f.buffer_mut(), now);
 }

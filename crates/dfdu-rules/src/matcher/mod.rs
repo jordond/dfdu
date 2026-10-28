@@ -7,7 +7,9 @@
 //! directory are picked once per listing ([`RuleSet::dir`]), so most entries never build their
 //! full path. Conditions on what is inside the entry (`child`,
 //! required `marker`) are left to [`RuleSet::check_inside`], called once the entry's own
-//! listing is known. Size, age and the guards are checked by the cleanup step.
+//! listing is known. A file's own size and age (`larger_than`, `not_modified_days`) are
+//! checked here from its stat; a rule's `min_size`, `min_age_days` and guards are checked by
+//! the cleanup step.
 
 use std::borrow::Cow;
 
@@ -31,6 +33,18 @@ pub struct Candidate<'a> {
     /// `sibling` knows only part of the listing (a wide directory read in several blocks), so
     /// a sibling it does not find may still be there: such a hit is marked [`Hit::open`].
     pub partial: bool,
+    /// A file's stat, for `larger_than` and `not_modified_days`; `None` for a directory or
+    /// when not known, which fails those conditions.
+    pub stat: Option<Stat>,
+}
+
+/// What a rule may ask of a file's own metadata.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct Stat {
+    /// Bytes allocated on disk.
+    pub disk: u64,
+    /// Modification time, seconds since the Unix epoch.
+    pub mtime: i64,
 }
 
 /// Reads the first `len` bytes of the file named by the first argument inside a candidate;
@@ -90,6 +104,8 @@ pub struct RuleSet {
     /// last variable of those with one (`.ini` for `{name_stem}.ini`).
     sibling_names: FastSet<Vec<u8>>,
     sibling_tails: Vec<Vec<u8>>,
+    /// Seconds since the Unix epoch that `not_modified_days` counts back from.
+    now: i64,
 }
 
 /// What a directory's entries are classified against: the rules and protected paths that can
@@ -114,11 +130,19 @@ pub struct Reach {
     protected: protected::Reach,
 }
 
-/// The name without its last extension: `pixel.avd` is `pixel`.
-fn stem(name: &[u8]) -> &[u8] {
-    match name.iter().rposition(|&b| b == b'.') {
-        Some(i) if i > 0 => &name[..i],
-        _ => name,
+/// The name without its last extension, and without `.tar` before it: `pixel.avd` is
+/// `pixel`, `src.tar.gz` is `src`.
+pub fn stem(name: &[u8]) -> &[u8] {
+    let cut = |n: &'_ [u8]| match n.iter().rposition(|&b| b == b'.') {
+        Some(i) if i > 0 => i,
+        _ => n.len(),
+    };
+    let s = &name[..cut(name)];
+    let inner = &s[..cut(s)];
+    if s.len() < name.len() && s[inner.len()..].eq_ignore_ascii_case(b".tar") {
+        inner
+    } else {
+        s
     }
 }
 
@@ -227,7 +251,15 @@ impl RuleSet {
             fold,
             sibling_names,
             sibling_tails,
+            now: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64),
         }
+    }
+
+    /// Sets the time `not_modified_days` counts back from (the clock when the set was made).
+    pub fn set_now(&mut self, now: i64) {
+        self.now = now;
     }
 
     /// Whether some rule may ask whether an entry named `name` is next to its candidate. A
@@ -313,12 +345,7 @@ impl RuleSet {
     /// The checks after the prefilter, on what the listing shows.
     fn check(&self, i: u16, c: &Candidate, path: &dyn Fn() -> Vec<u8>) -> Option<Hit> {
         let r = self.rule(i);
-        let kind_ok = match r.kind {
-            Kind::Dir => c.is_dir,
-            Kind::File => !c.is_dir,
-            Kind::Any => true,
-        };
-        if !kind_ok || (r.top_most && c.inside.contains(&i)) {
+        if !self.fits(r, c) || (r.top_most && c.inside.contains(&i)) {
             return None;
         }
         if !r.exclude.is_empty() || !r.not_inside.is_empty() {
@@ -347,6 +374,26 @@ impl RuleSet {
                 Inside::Done
             },
             open,
+        })
+    }
+
+    /// The checks on the entry's own kind and stat, cheap enough to run before its path is
+    /// built.
+    fn fits(&self, r: &Rule, c: &Candidate) -> bool {
+        let kind_ok = match r.kind {
+            Kind::Dir => c.is_dir,
+            Kind::File => !c.is_dir,
+            Kind::Any => true,
+        };
+        if !kind_ok {
+            return false;
+        }
+        if r.larger_than == 0 && r.not_modified_days == 0 {
+            return true;
+        }
+        c.stat.is_some_and(|st| {
+            let big = r.larger_than == 0 || st.disk > r.larger_than;
+            big && self.now - st.mtime >= i64::from(r.not_modified_days) * 86_400
         })
     }
 
@@ -438,12 +485,15 @@ impl Dir<'_> {
             }
         }
         if !self.paths.is_empty() {
-            let full = path();
+            let full = std::cell::OnceCell::new();
             for &k in &self.paths {
                 let (i, g) = &set.paths[k];
                 let r = set.rule(*i);
+                if found.contains(i) || !set.fits(r, c) {
+                    continue;
+                }
                 let name_ok = r.names.is_empty() || r.names.iter().any(|n| n.matches(c.name));
-                if !found.contains(i) && name_ok && g.matches(&full) {
+                if name_ok && g.matches(full.get_or_init(path)) {
                     found.push(*i);
                 }
             }

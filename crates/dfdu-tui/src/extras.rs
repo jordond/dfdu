@@ -15,6 +15,7 @@ pub struct Extras {
     pub debug: debug::Info,
     pub treemap: treemap::Info,
     pub cleanup: cleanup::Info,
+    pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree. `counters` are the
@@ -26,13 +27,17 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
         debug: debug::read(m, budget, counters),
         treemap: treemap::read(m, app),
         cleanup: cleanup::read(m, app),
+        dupes: crate::dupes::read(m, app),
     }
 }
 
 /// Stores what [`read`] found in `app.extras` and lets the features take it in. Called after
 /// every read, after [`App::refresh`] when the read brought a new snapshot.
 pub fn apply(app: &mut App, extras: Extras) {
+    let dupes = std::mem::take(&mut app.extras.dupes);
     app.extras = extras;
+    let nodes = std::mem::replace(&mut app.extras.dupes, dupes);
+    crate::dupes::apply(app, nodes);
     marks::apply(app);
     details::apply(app);
     cleanup::apply(app);

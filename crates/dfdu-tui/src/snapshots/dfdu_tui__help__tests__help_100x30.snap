@@ -17,18 +17,18 @@ expression: frame
   ┃ Sort                                                                                         ┃
   ┃ s  sort by size (again: reverse)                Panels                                       ┃
   ┃ n  sort by name (again: reverse)                /         filter this directory              ┃
-  ┃ C  sort by items (again: reverse)               i         details of the selected entry      ┃
-  ┃ M  sort by modification time (again:            Tab       move focus between the list and    ┃
-  ┃    reverse)                                               the details                        ┃
-  ┃ S  re-sort now                                  !         list what could not be read, and   ┃
-  ┃                                                           go to it                           ┃
-  ┃ Display                                         ? F1      keys                               ┃
-  ┃ 1  list view                                    : Ctrl-P  command palette                    ┃
-  ┃ 2  treemap view                                 F12       debug overlay                      ┃
-  ┃ 3  cleanup view: what the rules found, by                                                    ┃
-  ┃    safety                                       Global                                       ┃
+  ┃ C  sort by items (again: reverse)               t         show only files of some types      ┃
+  ┃ M  sort by modification time (again:                      (video, audio, .iso...)            ┃
+  ┃    reverse)                                     i         details of the selected entry      ┃
+  ┃ S  re-sort now                                  Tab       move focus between the list and    ┃
+  ┃                                                           the details                        ┃
+  ┃ Display                                         !         list what could not be read, and   ┃
+  ┃ 1  list view                                              go to it                           ┃
+  ┃ 2  treemap view                                 ? F1      keys                               ┃
+  ┃ 3  cleanup view: what the rules found, by       : Ctrl-P  command palette                    ┃
+  ┃    safety                                       F12       debug overlay                      ┃
+  ┃ 4  duplicate files (compares the scanned                                                     ┃
+  ┃    files)                                       Global                                       ┃
   ┃ +  treemap: one level deeper                    Esc       close the overlay, or clear the    ┃
-  ┃ -  treemap: one level less                                filter                             ┃
-  ┃ p  treemap: colour by top folder or age         q Ctrl-C  quit                               ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

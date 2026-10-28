@@ -12,6 +12,10 @@ fn header() -> Header {
         written: 1_793_000_000,
         cross_mounts: true,
         network: false,
+        journal: Some(Journal {
+            volume: [9; 16],
+            event_id: 123_456_789,
+        }),
     }
 }
 
@@ -76,4 +80,21 @@ fn many_frames() {
         ..Limits::default()
     };
     assert!(matches!(read(&out[..], &small), Err(ImportError::Limit(_))));
+}
+
+/// Version 1 files (no journal position) still read.
+#[test]
+fn version_1_reads() {
+    let (t, r) = sample();
+    let mut out = vec![];
+    let h = Header {
+        journal: None,
+        ..header()
+    };
+    write(&t, r, &mut out, &h).unwrap();
+    out[8..12].copy_from_slice(&1u32.to_le_bytes());
+    let l = read(&out[..], &Limits::default()).unwrap();
+    assert_eq!(l.header, h);
+    let l = read(&bytes(&t, r)[..], &Limits::default()).unwrap();
+    assert_eq!(l.header, header());
 }

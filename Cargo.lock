@@ -654,6 +654,7 @@ dependencies = [
  "clap_mangen",
  "crossbeam-channel",
  "dfdu-clean",
+ "dfdu-dupes",
  "dfdu-engine",
  "dfdu-hangfs",
  "dfdu-rules",
@@ -698,6 +699,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "trash",
+]
+
+[[package]]
+name = "dfdu-dupes"
+version = "0.1.0"
+dependencies = [
+ "dfdu-sys",
+ "dfdu-tree",
+ "libc",
+ "sha2",
+ "tempfile",
+ "twox-hash",
 ]
 
 [[package]]
@@ -813,6 +826,7 @@ name = "dfdu-tui"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "dfdu-dupes",
  "dfdu-engine",
  "dfdu-rules",
  "dfdu-scan",

@@ -17,6 +17,7 @@ dfdu-rules.workspace = true
 dfdu-engine.workspace = true
 dfdu-sys.workspace = true
 dfdu-store.workspace = true
+dfdu-dupes.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
 humansize.workspace = true

@@ -25,10 +25,10 @@ expression: frame
   ┃ 1  list view                                         ┃
   ┃ 2  treemap view                                      ┃
   ┃ 3  cleanup view: what the rules found, by safety     ┃
+  ┃ 4  duplicate files (compares the scanned files)      ┃
   ┃ +  treemap: one level deeper                         ┃
   ┃ -  treemap: one level less                           ┃
   ┃ p  treemap: colour by top folder or age              ┃
   ┃ a  toggle apparent size / disk usage                 ┃
-  ┃ u  toggle disk usage like du (shared data once per   ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

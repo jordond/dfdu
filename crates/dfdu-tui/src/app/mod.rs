@@ -36,6 +36,8 @@ pub enum Effect {
     Send(Command),
     /// Read the error list from the engine and pass it to [`App::show_errors`].
     ShowErrors,
+    /// Read the duplicate candidates and start comparing them ([`crate::dupes::begin`]).
+    FindDupes,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +51,8 @@ pub enum Overlay {
     },
     ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
+    /// The file type picker.
+    Types(crate::types::Picker),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -109,12 +113,15 @@ pub struct App {
     pub quit: bool,
     pub marks: marks::Marks,
     pub filter: filter::Filter,
+    /// The file type filter ([`crate::types`]); empty when off.
+    pub types: dfdu_tree::filetype::TypeFilter,
     pub details: details::Details,
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
     pub treemap: treemap::Treemap,
     pub cleanup: crate::cleanup::Cleanup,
+    pub dupes: crate::dupes::Dupes,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
@@ -206,12 +213,14 @@ impl App {
             quit: false,
             marks: marks::Marks::default(),
             filter: filter::Filter::default(),
+            types: Default::default(),
             details: details::Details::default(),
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
             treemap: treemap::Treemap::default(),
             cleanup: Default::default(),
+            dupes: Default::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
@@ -266,6 +275,7 @@ impl App {
             || details::stale(self)
             || treemap::stale(self)
             || crate::cleanup::stale(self)
+            || crate::dupes::stale(self)
     }
 
     fn auto_sort_due(&self, now: Instant) -> bool {
@@ -647,12 +657,21 @@ impl App {
             Overlay::Errors { .. } => return error_list::key(self, k),
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
+            Overlay::Types(_) => {
+                crate::types::key(self, k);
+                return Vec::new();
+            }
         }
         if filter::editing(self) {
             return filter::key(self, k, now);
         }
         if details::focused(self)
             && let Some(fx) = details::key(self, &k)
+        {
+            return fx;
+        }
+        if crate::dupes::active(self)
+            && let Some(fx) = crate::dupes::key(self, &k)
         {
             return fx;
         }

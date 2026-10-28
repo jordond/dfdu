@@ -122,6 +122,10 @@ pub fn toggle(app: &mut App) {
         app.status = Some("only entries can be marked".into());
         return;
     }
+    if e.is_dir && crate::types::active(app) {
+        app.status = Some(crate::types::NO_FOLDERS.into());
+        return;
+    }
     let path = app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name));
     let marks = &mut app.marks;
     match marks

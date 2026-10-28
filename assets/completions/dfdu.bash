@@ -28,6 +28,9 @@ _dfdu() {
             dfdu,disks)
                 cmd="dfdu__subcmd__disks"
                 ;;
+            dfdu,dupes)
+                cmd="dfdu__subcmd__dupes"
+                ;;
             dfdu,export)
                 cmd="dfdu__subcmd__export"
                 ;;
@@ -64,6 +67,9 @@ _dfdu() {
             dfdu__subcmd__help,disks)
                 cmd="dfdu__subcmd__help__subcmd__disks"
                 ;;
+            dfdu__subcmd__help,dupes)
+                cmd="dfdu__subcmd__help__subcmd__dupes"
+                ;;
             dfdu__subcmd__help,export)
                 cmd="dfdu__subcmd__help__subcmd__export"
                 ;;
@@ -95,7 +101,7 @@ _dfdu() {
 
     case "${cmd}" in
         dfdu)
-            opts="-x -f -h -V --one-file-system --cross-mounts --network --no-rules --disks --resume-from --file --read-only --no-history --theme --color --no-mouse --debug-stats --help --version scan disks report clean diff history export import recover man completions help"
+            opts="-x -f -h -V --one-file-system --cross-mounts --network --no-rules --disks --resume-from --file --read-only --type --no-history --theme --color --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover man completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -110,6 +116,10 @@ _dfdu() {
                     return 0
                     ;;
                 -f)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --type)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -236,8 +246,38 @@ _dfdu() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        dfdu__subcmd__dupes)
+            opts="-x -h --min-size --format --top --threads --one-file-system --cross-mounts --network --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --min-size)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "table json" -- "${cur}"))
+                    return 0
+                    ;;
+                --top)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         dfdu__subcmd__export)
-            opts="-o -x -h --output --compress --snapshot --threads --one-file-system --cross-mounts --network --help"
+            opts="-o -x -h --output --compress --snapshot --threads --resume-from --one-file-system --cross-mounts --network --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -255,6 +295,10 @@ _dfdu() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --resume-from)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -263,7 +307,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__help)
-            opts="scan disks report clean diff history export import recover man completions help"
+            opts="scan disks report clean diff history dupes export import recover man completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -319,6 +363,20 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__help__subcmd__disks)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        dfdu__subcmd__help__subcmd__dupes)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -459,7 +517,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__import)
-            opts="-h --depth --top --apparent --bytes --help"
+            opts="-h --depth --top --apparent --type --by-type --bytes --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -470,6 +528,10 @@ _dfdu() {
                     return 0
                     ;;
                 --top)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --type)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -567,7 +629,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__scan)
-            opts="-x -h --format --depth --top --apparent --like-du --threads --measure-workers --one-file-system --cross-mounts --network --no-rules --bytes --errors --no-history --stall-abandon --stall-after --debug-stats --backend --help"
+            opts="-x -h --format --depth --top --apparent --like-du --threads --measure-workers --one-file-system --cross-mounts --network --no-rules --type --by-type --bytes --errors --no-history --stall-abandon --stall-after --debug-stats --backend --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -590,6 +652,10 @@ _dfdu() {
                     return 0
                     ;;
                 --measure-workers)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --type)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

@@ -208,12 +208,24 @@ pub struct Opened {
     pub entries: u64,
     /// The program that wrote it and its version, when the file says.
     pub written_by: Option<String>,
+    /// Where the change journal stood when the scan started (snapshots only).
+    pub journal: Option<snapshot::Journal>,
 }
 
-/// Reads a dfdu snapshot or an ncdu export (plain or zstd), told apart by their first bytes.
+/// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by
+/// their first bytes. A binary export is read into memory first, since its reader seeks;
+/// [`open_file`] reads one from the file in place.
 pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
     let mut r = io::BufReader::with_capacity(1 << 16, r);
     let head = io::BufRead::fill_buf(&mut r)?;
+    if ncdu::binary::is_binary(head) {
+        let mut all = Vec::new();
+        io::Read::read_to_end(&mut r, &mut all)?;
+        return Ok(binary_opened(ncdu::binary::import(
+            io::Cursor::new(all),
+            limits,
+        )?));
+    }
     if snapshot::is_snapshot(head) {
         let l = snapshot::read(r, limits)?;
         return Ok(Opened {
@@ -221,6 +233,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
             root: l.root,
             entries: l.entries,
             written_by: Some(format!("dfdu {}", l.header.tool_version)),
+            journal: l.header.journal,
         });
     }
     let im = ncdu::import(r, limits)?;
@@ -233,5 +246,30 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
         root: im.root,
         entries: im.entries,
         written_by,
+        journal: None,
     })
+}
+
+/// [`open`] for a file, reading a binary export without loading it whole.
+pub fn open_file(mut f: std::fs::File, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+    let mut head = [0u8; 8];
+    let n = io::Read::read(&mut f, &mut head)?;
+    io::Seek::rewind(&mut f)?;
+    if ncdu::binary::is_binary(&head[..n]) {
+        return Ok(binary_opened(ncdu::binary::import(
+            io::BufReader::new(f),
+            limits,
+        )?));
+    }
+    open(f, limits)
+}
+
+fn binary_opened(im: ncdu::Imported) -> Opened {
+    Opened {
+        tree: im.tree,
+        root: im.root,
+        entries: im.entries,
+        written_by: Some("ncdu (binary export)".into()),
+        journal: None,
+    }
 }

@@ -104,6 +104,7 @@ fn resumed_snapshot_is_classified() {
             class: Some(dfdu_scan::classify::ClassOpts::for_root(rules, &root)),
             ..JobOptions::default()
         },
+        changed: None,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))));
     e.read(|m| {
@@ -121,5 +122,211 @@ fn resumed_snapshot_is_classified() {
             )]
         );
     });
+    e.shutdown(Duration::from_secs(1));
+}
+
+/// With the directories the change journal names, a resume classifies the loaded tree and
+/// rescans only those: what changed elsewhere stays as saved until it is rescanned itself.
+#[test]
+fn resume_rescans_only_changed_directories() {
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let root = tmp.path().join("tree");
+    fs::create_dir_all(root.join("web/node_modules/pkg")).unwrap();
+    fs::write(root.join("web/package.json"), "{}").unwrap();
+    fs::write(root.join("web/node_modules/pkg/index.js"), vec![1u8; 5_000]).unwrap();
+    fs::create_dir_all(root.join("a/b")).unwrap();
+    fs::write(root.join("a/b/two"), vec![1u8; 9_000]).unwrap();
+    fs::create_dir(root.join("quiet")).unwrap();
+    let (snap, _) = scan(&root);
+
+    fs::create_dir_all(root.join("a/b/c")).unwrap();
+    fs::write(root.join("a/b/c/new"), vec![1u8; 70_000]).unwrap();
+    fs::create_dir_all(root.join("a/b/node_modules/dep")).unwrap();
+    fs::write(root.join("a/b/package.json"), "{}").unwrap();
+    fs::write(root.join("a/b/node_modules/dep/i.js"), vec![1u8; 3_000]).unwrap();
+    fs::write(root.join("quiet/unseen"), vec![1u8; 40_000]).unwrap();
+
+    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let e = engine();
+    let node = loaded.tree.node_ref(loaded.root);
+    e.load(loaded.tree);
+    let (rules, errors) = dfdu_rules::builtin(&dfdu_rules::Env::current());
+    assert!(errors.is_empty(), "{errors:?}");
+    let rules = std::sync::Arc::new(rules);
+    e.send(Command::Resume {
+        node,
+        opts: JobOptions {
+            class: Some(dfdu_scan::classify::ClassOpts::for_root(rules, &root)),
+            ..JobOptions::default()
+        },
+        changed: Some(vec![
+            "a/b".into(),
+            "a/b/c".into(),
+            "a/b/node_modules/dep".into(),
+        ]),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    let find = |m: &dfdu_engine::Model, rel: &str| {
+        let mut at = m.tree.roots().next().unwrap();
+        for n in rel.split('/') {
+            at = m
+                .tree
+                .children(at)
+                .find(|&c| m.tree.name(c) == n.as_bytes())?;
+        }
+        Some(at)
+    };
+    let classes = |e: &Engine<PortableBackend>| {
+        e.read(|m| {
+            let rules = m.rules.as_ref().unwrap();
+            let mut v: Vec<_> = m
+                .tree
+                .classes()
+                .filter(|(ix, _)| m.tree.is_visible(*ix))
+                .map(|(ix, c)| (m.tree.path_buf(ix), rules.rule(c.rule).id.clone()))
+                .collect();
+            v.sort();
+            v
+        })
+    };
+    e.read(|m| {
+        assert!(
+            find(m, "a/b/c/new").is_some(),
+            "a changed directory is rescanned"
+        );
+        assert!(find(m, "quiet/unseen").is_none(), "an unchanged one is not");
+    });
+    let nm = "node.node_modules".to_string();
+    assert_eq!(
+        classes(&e),
+        [
+            (root.join("a/b/node_modules"), nm.clone()),
+            (root.join("web/node_modules"), nm.clone()),
+        ]
+    );
+
+    // A later rescan of a directory the resume did not touch keeps classifying.
+    let quiet = e.read(|m| m.tree.node_ref(find(m, "quiet").unwrap()));
+    e.send(Command::Rescan { node: quiet });
+    let web = e.read(|m| m.tree.node_ref(find(m, "web").unwrap()));
+    e.send(Command::Rescan { node: web });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    e.read(|m| assert!(find(m, "quiet/unseen").is_some()));
+    assert_eq!(classes(&e).len(), 2);
+    let t = root_total(&e);
+    let (_, now) = scan(&root);
+    assert_eq!(
+        (t.apparent, t.alloc, t.items),
+        (now.apparent, now.alloc, now.items)
+    );
+    e.shutdown(Duration::from_secs(1));
+}
+
+/// Classifying a loaded tree gives the classes and protection a scan of the same files gives,
+/// marker files (read from disk) included.
+#[test]
+fn a_loaded_tree_is_classified_as_a_scan_would() {
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let root = tmp.path().join("tree");
+    let tag = "Signature: 8a477f597d28d172789f06886806bc55\n";
+    for (f, data) in [
+        ("cache/CACHEDIR.TAG", tag),
+        ("cache/blob", "x"),
+        ("fake-cache/CACHEDIR.TAG", "not a tag"),
+        ("proj/Cargo.toml", "[package]"),
+        ("proj/target/CACHEDIR.TAG", tag),
+        ("proj/target/debug/out", "x"),
+        ("py/.venv/pyvenv.cfg", "home = /usr"),
+        ("py/.venv/lib/x.py", ""),
+        ("web/package.json", "{}"),
+        ("web/node_modules/m/i.js", ""),
+    ] {
+        let p = root.join(f);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, data).unwrap();
+    }
+    let (rules, errors) = dfdu_rules::builtin(&dfdu_rules::Env::current());
+    assert!(errors.is_empty(), "{errors:?}");
+    let rules = std::sync::Arc::new(rules);
+    let opts = || JobOptions {
+        class: Some(dfdu_scan::classify::ClassOpts::for_root(
+            rules.clone(),
+            &root,
+        )),
+        ..JobOptions::default()
+    };
+    let marks = |e: &Engine<PortableBackend>| {
+        e.read(|m| {
+            let mut v = Vec::new();
+            let mut stack: Vec<_> = m.tree.roots().collect();
+            while let Some(ix) = stack.pop() {
+                let f = m.tree.flags(ix);
+                let class = m.tree.class(ix).map(|c| (c.rule, c.safety, c.degraded));
+                if class.is_some() || f.has(dfdu_tree::NodeFlags::PROTECTED) {
+                    v.push((m.tree.path_buf(ix), class, m.tree.is_protected(ix)));
+                }
+                stack.extend(m.tree.children(ix));
+            }
+            v.sort();
+            v
+        })
+    };
+    let e = engine();
+    e.send(Command::Scan {
+        path: root.clone(),
+        opts: opts(),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    let scanned = marks(&e);
+    let snap = e.read(|m| {
+        let mut out = vec![];
+        let r = m.tree.roots().next().unwrap();
+        snapshot::write(&m.tree, r, &mut out, &Header::default()).unwrap();
+        out
+    });
+    e.shutdown(Duration::from_secs(1));
+    assert_eq!(scanned.len(), 4, "{scanned:?}");
+
+    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let e = engine();
+    let node = loaded.tree.node_ref(loaded.root);
+    e.load(loaded.tree);
+    e.send(Command::Resume {
+        node,
+        opts: opts(),
+        changed: Some(vec![]),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(20))));
+    assert_eq!(marks(&e), scanned);
+    e.shutdown(Duration::from_secs(1));
+}
+
+/// How long classifying a large loaded tree takes (`DFDU_TREE=path`, `--ignored`, release).
+#[test]
+#[ignore]
+fn classify_loaded_cost() {
+    let Some(root) = std::env::var_os("DFDU_TREE").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let root = dunce::canonicalize(root).unwrap();
+    let (snap, _) = scan(&root);
+    let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
+    let rules = std::sync::Arc::new(rules);
+    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let e = engine();
+    let node = loaded.tree.node_ref(loaded.root);
+    e.load(loaded.tree);
+    let t = std::time::Instant::now();
+    e.send(Command::Resume {
+        node,
+        opts: JobOptions {
+            class: Some(dfdu_scan::classify::ClassOpts::for_root(rules, &root)),
+            ..JobOptions::default()
+        },
+        changed: Some(vec![]),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(600))));
+    let n = e.read(|m| m.tree.live_nodes());
+    eprintln!("{n} nodes classified in {:?}", t.elapsed());
     e.shutdown(Duration::from_secs(1));
 }

@@ -43,6 +43,17 @@ fn classify(set: &RuleSet, l: &Listing, name: &str, inside: &[&str]) -> Vec<Stri
 /// The ids of the rules `name` in `l` matches, best first, with their safety; `protected` for
 /// a protected path. `inside` is the rules matched by the directories above.
 fn hits(set: &RuleSet, l: &Listing, name: &str, inside: &[&str]) -> Vec<String> {
+    hits_stat(set, l, name, inside, None)
+}
+
+/// [`hits`] for an entry with `stat`.
+fn hits_stat(
+    set: &RuleSet,
+    l: &Listing,
+    name: &str,
+    inside: &[&str],
+    stat: Option<Stat>,
+) -> Vec<String> {
     let entry = l
         .names
         .iter()
@@ -61,6 +72,7 @@ fn hits(set: &RuleSet, l: &Listing, name: &str, inside: &[&str]) -> Vec<String> 
         inside: &inside,
         protection: set.protected().state_of(l.path.as_bytes()),
         partial: false,
+        stat,
     };
     match set.classify(&c) {
         Verdict::None => Vec::new(),
@@ -207,6 +219,7 @@ fn siblings_in_other_blocks_leave_the_hit_open() {
         inside: &[],
         protection: Default::default(),
         partial: true,
+        stat: None,
     };
     let Verdict::Hits(hits) = set.classify(&c) else {
         panic!("no hit");
@@ -345,6 +358,91 @@ fn path_rules_on_macos() {
 }
 
 #[test]
+fn content_rules_check_size_age_and_extracted_copies() {
+    const NOW: i64 = 1_800_000_000;
+    const DAY: i64 = 86_400;
+    let mut set = mac();
+    set.set_now(NOW);
+    let gib = 1 << 30;
+    let file = |disk: u64, days: i64| {
+        Some(Stat {
+            disk,
+            mtime: NOW - days * DAY,
+        })
+    };
+    let home = Listing {
+        path: "/Users/u/Movies",
+        names: &["trip.mov", "disk.img", "small.mov"],
+    };
+    let got = |l: &Listing, name: &str, stat| {
+        let mut v = hits_stat(&set, l, name, &[], stat);
+        v.retain(|h| !h.starts_with("generic."));
+        v
+    };
+    // A large old video is both; the video rule comes first.
+    assert_eq!(
+        got(&home, "trip.mov", file(2 * gib, 400)),
+        ["content.large-videos review", "content.large-old review"]
+    );
+    assert_eq!(
+        got(&home, "trip.mov", file(2 * gib, 3)),
+        ["content.large-videos review"]
+    );
+    assert!(got(&home, "small.mov", file(gib, 400)).is_empty());
+    assert_eq!(
+        got(&home, "disk.img", file(5 * gib, 180)),
+        ["content.large-old review"]
+    );
+    assert!(got(&home, "disk.img", file(5 * gib, 179)).is_empty());
+    // Without a stat (a directory, or not known) the conditions fail.
+    assert!(got(&home, "disk.img", None).is_empty());
+    // Not in Library or hidden directories.
+    for path in [
+        "/Users/u/Library/Application Support/x",
+        "/Users/u/.colima/disks",
+    ] {
+        let l = Listing {
+            path,
+            names: &["disk.img"],
+        };
+        assert!(got(&l, "disk.img", file(5 * gib, 400)).is_empty(), "{path}");
+    }
+    // An archive with its extracted folder next to it; `.tar.gz` drops both extensions.
+    let dl = Listing {
+        path: "/Users/u/Downloads",
+        names: &[
+            "src.tar.gz",
+            "src/",
+            "app.zip",
+            "app/",
+            "lone.zip",
+            "tiny.zip",
+            "tiny/",
+        ],
+    };
+    for name in ["src.tar.gz", "app.zip"] {
+        assert_eq!(
+            got(&dl, name, file(50 << 20, 1)),
+            ["content.extracted-archives review"],
+            "{name}"
+        );
+    }
+    assert!(got(&dl, "lone.zip", file(50 << 20, 1)).is_empty());
+    assert!(got(&dl, "tiny.zip", file(4096, 1)).is_empty());
+}
+
+#[test]
+fn stems() {
+    assert_eq!(stem(b"pixel.avd"), b"pixel");
+    assert_eq!(stem(b"src.tar.gz"), b"src");
+    assert_eq!(stem(b"src.TAR.xz"), b"src");
+    assert_eq!(stem(b"src.tar"), b"src");
+    assert_eq!(stem(b"v1.2.zip"), b"v1.2");
+    assert_eq!(stem(b".tar.gz"), b".tar");
+    assert_eq!(stem(b"noext"), b"noext");
+}
+
+#[test]
 fn avd_needs_its_ini_next_to_it() {
     let set = mac();
     let l = Listing {
@@ -415,7 +513,12 @@ fn unverified_path_rules_are_off_on_linux_but_name_rules_are_on() {
 
 #[test]
 fn every_builtin_rule_is_in_the_verification_table() {
-    let doc = include_str!("../../../../docs/rules.md");
+    // docs/ is kept out of git, so checkouts without it (CI) skip this check.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/rules.md");
+    let Ok(doc) = std::fs::read_to_string(path) else {
+        eprintln!("skipped: {path} not found");
+        return;
+    };
     let ids: Vec<String> = crate::load::BUILTIN
         .lines()
         .filter_map(|l| l.strip_prefix("id = \""))
@@ -463,6 +566,7 @@ fn classify_cost() {
             inside: &[],
             protection: Default::default(),
             partial: false,
+            stat: None,
         };
         if dir.classify(&c) != Verdict::None {
             matched += 1;
@@ -531,6 +635,7 @@ fn reach_handed_down_matches_trying_every_pattern() {
                         inside: &[],
                         protection: prot,
                         partial: false,
+                        stat: None,
                     };
                     let v = full.classify(&c);
                     match &v {
@@ -554,6 +659,7 @@ fn reach_handed_down_matches_trying_every_pattern() {
                     inside: &[],
                     protection: prot,
                     partial: false,
+                    stat: None,
                 }) {
                     Verdict::Protected(s) => s,
                     _ => protected::State::Off,

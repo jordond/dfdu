@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jordond/dfdu/schema/dupes.v1.json",
+  "title": "dfdu dupes --format json",
+  "description": "Groups of files with identical contents below a directory, the most space to free first. Sizes are bytes; paths as in scan.v1.json. Fields may be added without changing schema_version.",
+  "type": "object",
+  "required": ["schema_version", "tool", "min_size", "compared", "skipped", "wasted", "groups"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": { "$ref": "scan.v1.json#/$defs/tool" },
+    "min_size": { "$ref": "scan.v1.json#/$defs/count", "description": "Files smaller than this were not compared." },
+    "compared": { "$ref": "scan.v1.json#/$defs/count", "description": "Files that shared their size with another and were read." },
+    "skipped": { "$ref": "scan.v1.json#/$defs/count", "description": "Files left out: unreadable, or changed since the scan." },
+    "wasted": { "$ref": "scan.v1.json#/$defs/count", "description": "The sum of every group's wasted." },
+    "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } }
+  },
+  "$defs": {
+    "group": {
+      "type": "object",
+      "required": ["size", "sha256", "wasted", "clones", "files"],
+      "properties": {
+        "size": { "$ref": "scan.v1.json#/$defs/count", "description": "Length of each file." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "wasted": { "$ref": "scan.v1.json#/$defs/count", "description": "What deleting all copies but one would free at most: APFS clones share their data, and a file with other names (hard links) frees nothing." },
+        "clones": { "type": "boolean", "description": "Every copy is an APFS clone of the others: deleting copies frees nothing." },
+        "files": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/file" } }
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "disk", "mtime", "links"],
+      "properties": {
+        "path": { "type": "string" },
+        "path_bytes_b64": { "$ref": "scan.v1.json#/$defs/b64" },
+        "disk": { "$ref": "scan.v1.json#/$defs/count", "description": "Bytes allocated." },
+        "private": { "$ref": "scan.v1.json#/$defs/count", "description": "Bytes no other file shares (APFS only): what deleting this file frees." },
+        "mtime": { "type": "integer", "description": "Modification time, seconds since 1970." },
+        "links": { "$ref": "scan.v1.json#/$defs/count", "description": "Other names of this file in the scan (hard links)." }
+      }
+    }
+  }
+}

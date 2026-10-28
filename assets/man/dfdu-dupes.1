@@ -1,0 +1,47 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-dupes 1  "dfdu-dupes " 
+.SH NAME
+dfdu\-dupes \- Scan a directory and list the files with identical contents (size, then partial hash, then SHA\-256), the most space to free first
+.SH SYNOPSIS
+\fBdfdu dupes\fR [\fB\-\-min\-size\fR] [\fB\-\-format\fR] [\fB\-\-top\fR] [\fB\-\-threads\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+.SH DESCRIPTION
+Scan a directory and list the files with identical contents (size, then partial hash, then SHA\-256), the most space to free first
+.SH OPTIONS
+.TP
+\fB\-\-min\-size\fR \fI<SIZE>\fR [default: 1MiB]
+Compare only files of at least this size (`1MiB`, `100KB`)
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR [default: table]
+Output: table or json (schema/dupes.v1.json)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+table
+.IP \(bu 2
+json
+.RE
+.TP
+\fB\-\-top\fR \fI<TOP>\fR
+Groups to print, the most space to free first [default: all]
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Threads reading files [default: 4; 1 on spinning disks]
+.TP
+\fB\-x\fR, \fB\-\-one\-file\-system\fR
+Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
+.TP
+\fB\-\-cross\-mounts\fR
+Descend into other local filesystems (disks, tmpfs)
+.TP
+\fB\-\-network\fR
+Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without \-\-cross\-mounts
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPATH\fR] [default: .]
+

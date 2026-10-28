@@ -16,6 +16,7 @@ use dfdu_engine::{Command, Engine, EngineOptions, Model, Timing};
 use dfdu_rules::RuleSet;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, JobOptions, PortableBackend, native_backend};
+use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
 use dfdu_tui::{ColorLevel, SizeMode, Theme, ThemeChoice, ThemeFile, UiSettings};
 
@@ -52,12 +53,17 @@ struct Cli {
     /// directory in the background, replacing it when done.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["path", "disks", "import"])]
     resume_from: Option<PathBuf>,
-    /// Browse a scan exported to FILE (ncdu JSON, plain or zstd; `-` for stdin), read-only.
+    /// Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu
+    /// binary export from `ncdu -O`; `-` for stdin), read-only.
     #[arg(short = 'f', long = "file", value_name = "FILE", conflicts_with_all = ["path", "disks"])]
     import: Option<PathBuf>,
     /// Never delete anything (the delete keys are refused).
     #[arg(long)]
     read_only: bool,
+    /// Show only files of these types or extensions, comma-separated: `video,audio,.iso`
+    /// (`t` in the browser changes it).
+    #[arg(long = "type", value_name = "TYPES", value_parser = type_filter)]
+    types: Option<TypeFilter>,
     /// Do not record the scan in the history, nor show what grew since the last one.
     #[arg(long)]
     no_history: bool,
@@ -138,6 +144,9 @@ enum Cmd {
     Diff(history::DiffArgs),
     /// List the recorded scans.
     History(history::HistoryArgs),
+    /// Scan a directory and list the files with identical contents (size, then partial hash,
+    /// then SHA-256), the most space to free first.
+    Dupes(dupes::DupesArgs),
     /// Scan a directory and write it in ncdu's JSON format.
     Export(ExportArgs),
     /// Read a scan in ncdu's JSON format and print a summary (`dfdu -f FILE` browses it).
@@ -211,6 +220,11 @@ struct ExportArgs {
     /// Worker threads.
     #[arg(long)]
     threads: Option<usize>,
+    /// Start from this snapshot (`--snapshot`) and rescan only the directories changed since
+    /// it was taken, when the volume's change journal can tell (macOS); otherwise everything.
+    /// PATH and the mount options are the snapshot's.
+    #[arg(long, value_name = "SNAPSHOT")]
+    resume_from: Option<PathBuf>,
     #[command(flatten)]
     mounts: MountArgs,
 }
@@ -228,6 +242,14 @@ struct ImportArgs {
     /// Show apparent sizes instead of disk usage.
     #[arg(long)]
     apparent: bool,
+    /// Count only files of these types or extensions, comma-separated: `video,audio,.iso`.
+    /// Types: video, audio, image, document, archive, disk-image, code, executable, font, data,
+    /// other. Folders show the size of the matching files inside them.
+    #[arg(long = "type", value_name = "TYPES", value_parser = type_filter)]
+    types: Option<TypeFilter>,
+    /// After the tree, print disk usage by file type and the largest extensions.
+    #[arg(long)]
+    by_type: bool,
     /// Print only the root total in bytes.
     #[arg(long)]
     bytes: bool,
@@ -301,21 +323,30 @@ struct ScanArgs {
     /// Show apparent sizes instead of disk usage.
     #[arg(long, conflicts_with = "like_du")]
     apparent: bool,
-    /// Count data shared between files (btrfs snapshots, reflinks) once per file, as du does,
-    /// instead of once.
+    /// Count data shared between files (btrfs snapshots, reflinks, APFS clones) once per file,
+    /// as du does, instead of once.
     #[arg(long)]
     like_du: bool,
     /// Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning
     /// disks: 2, network: 4) add that many.
     #[arg(long)]
     threads: Option<usize>,
-    /// Threads measuring shared extents (btrfs, XFS); 0 reports sizes as du does.
+    /// Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports
+    /// sizes as du does.
     #[arg(long)]
     measure_workers: Option<usize>,
     #[command(flatten)]
     mounts: MountArgs,
     #[command(flatten)]
     rules: RuleArgs,
+    /// Count only files of these types or extensions, comma-separated: `video,audio,.iso`.
+    /// Types: video, audio, image, document, archive, disk-image, code, executable, font, data,
+    /// other. Folders show the size of the matching files inside them.
+    #[arg(long = "type", value_name = "TYPES", value_parser = type_filter)]
+    types: Option<TypeFilter>,
+    /// After the tree, print disk usage by file type and the largest extensions.
+    #[arg(long)]
+    by_type: bool,
     /// Print only the root total in bytes (for scripts and tests).
     #[arg(long)]
     bytes: bool,
@@ -375,6 +406,9 @@ macro_rules! outln {
     }};
 }
 
+// After `outln!`, which it uses.
+mod dupes;
+
 /// Exit code when an entry could not be read or the scan is incomplete.
 const EXIT_PARTIAL: u8 = 3;
 /// Exit code when some deletions failed or were refused.
@@ -424,6 +458,7 @@ fn main() -> ExitCode {
         },
         Some(Cmd::Diff(args)) => history::diff(args),
         Some(Cmd::History(args)) => history::list(args),
+        Some(Cmd::Dupes(args)) => dupes::run(args),
         Some(Cmd::Export(args)) => export(args),
         Some(Cmd::Import(args)) => import(args),
         Some(Cmd::Recover(args)) => recover(args),
@@ -449,6 +484,8 @@ fn main() -> ExitCode {
                     mounts: cli.mounts,
                     rules: cli.rules,
                     bytes: false,
+                    types: cli.types,
+                    by_type: false,
                     errors: false,
                     no_history: false,
                     stall_abandon: 30.0,
@@ -471,17 +508,18 @@ fn main() -> ExitCode {
                 },
                 None => None,
             };
-            let resumed = match &cli.resume_from {
+            let (resumed, journal) = match &cli.resume_from {
                 Some(f) => match read_export(f) {
-                    Ok(im) => Some(im.tree),
+                    Ok(im) => (Some(im.tree), im.journal),
                     Err(code) => return code,
                 },
-                None => None,
+                None => (None, None),
             };
             let opts = dfdu_tui::RunOptions {
                 path: (!cli.disks).then_some(path),
                 imported,
                 resumed,
+                journal,
                 job: cli.mounts.job(),
                 rules: cli.rules.load(),
                 engine: EngineOptions {
@@ -494,6 +532,7 @@ fn main() -> ExitCode {
                     color: cli.color.0,
                     mouse: !cli.no_mouse,
                     debug_stats: cli.debug_stats,
+                    types: cli.types.unwrap_or_default(),
                 },
             };
             match dfdu_tui::run(opts) {
@@ -507,6 +546,26 @@ fn main() -> ExitCode {
     }
 }
 
+/// Where the change journal of `path`'s volume stands (FSEvents on macOS); `None` where there
+/// is none.
+fn journal_position(path: &Path) -> Option<dfdu_store::snapshot::Journal> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dev = std::fs::metadata(path).ok()?.dev() as u64;
+        let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
+        Some(dfdu_store::snapshot::Journal {
+            volume,
+            event_id: dfdu_sys::fsevents::current_event_id(),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
 fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
     let limits = dfdu_store::ncdu::Limits::default();
@@ -514,7 +573,7 @@ fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
         dfdu_store::open(std::io::stdin().lock(), &limits)
     } else {
         match std::fs::File::open(file) {
-            Ok(f) => dfdu_store::open(f, &limits),
+            Ok(f) => dfdu_store::open_file(f, &limits),
             Err(e) => {
                 eprintln!("dfdu: {}: {e}", file.display());
                 return Err(ExitCode::from(1));
@@ -611,10 +670,14 @@ fn import(args: ImportArgs) -> ExitCode {
         SizeMode::Disk
     };
     let total = m.tree.total(im.root);
+    let filter = args.types.as_ref();
     if args.bytes {
-        outln!("{}", mode.of(&total));
+        outln!("{}", mode.of(&shown_total(&m.tree, im.root, filter)));
     } else {
-        print_tree(&m, im.root, args.depth, args.top, mode);
+        print_tree(&m, im.root, args.depth, args.top, mode, filter);
+        if args.by_type {
+            print_by_type(&m.tree, im.root, mode, filter);
+        }
         let by = im
             .written_by
             .map(|w| format!(", written by {w}"))
@@ -630,7 +693,33 @@ fn import(args: ImportArgs) -> ExitCode {
 
 /// `dfdu export`: scans `path` and writes it in ncdu's format.
 fn export(args: ExportArgs) -> ExitCode {
-    let storage = dfdu_sys::storage(&args.path);
+    let resumed = match &args.resume_from {
+        Some(f) => {
+            let read = std::fs::File::open(f)
+                .map_err(dfdu_store::ImportError::from)
+                .and_then(|r| {
+                    dfdu_store::snapshot::read(std::io::BufReader::new(r), &Default::default())
+                });
+            match read {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    eprintln!("dfdu: {}: {e}", f.display());
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        None => None,
+    };
+    let mut job = args.mounts.job();
+    let path = match &resumed {
+        Some(l) => {
+            job.cross_mounts = l.header.cross_mounts;
+            job.network = l.header.network;
+            l.tree.path_buf(l.root)
+        }
+        None => args.path.clone(),
+    };
+    let storage = dfdu_sys::storage(&path);
     let opts = EngineOptions {
         workers: args
             .threads
@@ -641,10 +730,27 @@ fn export(args: ExportArgs) -> ExitCode {
         ..Default::default()
     };
     let engine = Engine::start(native_backend(storage), opts);
-    engine.send(Command::Scan {
-        path: args.path.clone(),
-        opts: args.mounts.job(),
-    });
+    // Taken before the scan, so that what changes during it is replayed on resume.
+    let journal = journal_position(&path);
+    match resumed {
+        Some(l) => {
+            let changed = l
+                .header
+                .journal
+                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id));
+            let node = l.tree.node_ref(l.root);
+            engine.load(l.tree);
+            engine.send(Command::Resume {
+                node,
+                opts: job.clone(),
+                changed,
+            });
+        }
+        None => engine.send(Command::Scan {
+            path: path.clone(),
+            opts: job.clone(),
+        }),
+    }
     engine.wait_idle(None);
     if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
         eprintln!("dfdu: {msg}");
@@ -664,8 +770,9 @@ fn export(args: ExportArgs) -> ExitCode {
                 let header = dfdu_store::snapshot::Header {
                     tool_version: env!("CARGO_PKG_VERSION").into(),
                     written: meta.timestamp.unwrap_or(0),
-                    cross_mounts: args.mounts.job().cross_mounts,
-                    network: args.mounts.job().network,
+                    cross_mounts: job.cross_mounts,
+                    network: job.network,
+                    journal,
                 };
                 let entries = dfdu_store::snapshot::write(&m.tree, root, w, &header)?;
                 Ok(dfdu_store::ncdu::ExportStats {
@@ -814,12 +921,18 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
         mounts,
         rules,
         bytes,
+        types,
+        by_type,
         errors: list_errors,
         no_history,
         debug_stats,
         measure_workers,
         ..
     } = args;
+    if (types.is_some() || by_type) && format != Format::Table && !bytes {
+        eprintln!("dfdu: --type and --by-type work with the table output and --bytes only");
+        return ExitCode::from(2);
+    }
     let t0 = Instant::now();
     let started = report::now_secs();
     let mut opts = mounts.job();
@@ -845,8 +958,9 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
             return ExitCode::from(1);
         };
         let total = m.tree.total(root);
+        let filter = types.as_ref();
         if bytes {
-            outln!("{}", mode.of(&total));
+            outln!("{}", mode.of(&shown_total(&m.tree, root, filter)));
         } else if format != Format::Table {
             let out = json::ScanOut {
                 mode,
@@ -872,7 +986,10 @@ fn scan_with<B: Backend>(engine: Engine<B>, args: ScanArgs) -> ExitCode {
                 print_errors(m, root);
             }
         } else {
-            print_tree(m, root, depth.unwrap_or(1), top.unwrap_or(10), mode);
+            print_tree(m, root, depth.unwrap_or(1), top.unwrap_or(10), mode, filter);
+            if by_type {
+                print_by_type(&m.tree, root, mode, filter);
+            }
             if list_errors {
                 print_errors(m, root);
             }
@@ -907,22 +1024,43 @@ fn size(tree: &Tree, ix: Ix, mode: SizeMode) -> u64 {
     mode.of(&tree.total(ix))
 }
 
-fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
+/// The totals shown for `ix`: everything, or with a filter only the matching files below it.
+fn shown_total(tree: &Tree, ix: Ix, filter: Option<&TypeFilter>) -> dfdu_tree::Totals {
+    match filter {
+        Some(f) => filetype::sum(tree, ix, f, None),
+        None => tree.total(ix),
+    }
+}
+
+/// The tree `depth` levels deep, `top` entries per directory. With a type filter, sizes count
+/// the matching files only and entries without any are left out.
+fn print_tree(
+    m: &Model,
+    root: Ix,
+    depth: usize,
+    top: usize,
+    mode: SizeMode,
+    filter: Option<&TypeFilter>,
+) {
     let tree = &m.tree;
+    let root_total = shown_total(tree, root, filter);
+    if let Some(f) = filter {
+        outln!("only {f}: {} files", root_total.items);
+    }
     outln!(
         "{:>10}  {}{}",
-        dfdu_tui::human(size(tree, root, mode)),
+        dfdu_tui::human(mode.of(&root_total)),
         String::from_utf8_lossy(tree.name(root)),
         note(m, root)
     );
     // Depth first, largest first, `top` entries per directory.
-    let mut stack = vec![(root, 0usize)];
-    while let Some((ix, d)) = stack.pop() {
+    let mut stack = vec![(root, 0usize, 0u64)];
+    while let Some((ix, d, bytes)) = stack.pop() {
         if ix != root {
             let slash = if tree.dir(ix).is_some() { "/" } else { "" };
             outln!(
                 "{:>10}  {}{}{}{}",
-                dfdu_tui::human(size(tree, ix, mode)),
+                dfdu_tui::human(bytes),
                 "  ".repeat(d),
                 String::from_utf8_lossy(tree.name(ix)),
                 slash,
@@ -933,19 +1071,81 @@ fn print_tree(m: &Model, root: Ix, depth: usize, top: usize, mode: SizeMode) {
             continue;
         }
         // Data the entries share is counted at the directory.
-        if mode == SizeMode::Disk && tree.home(ix) > 0 {
+        if mode == SizeMode::Disk && filter.is_none() && tree.home(ix) > 0 {
             outln!(
                 "{:>10}  {}(shared between entries)",
                 dfdu_tui::human(tree.home(ix)),
                 "  ".repeat(d + 1)
             );
         }
-        let mut kids: Vec<Ix> = tree.children(ix).collect();
-        kids.sort_by_key(|&c| std::cmp::Reverse(size(tree, c, mode)));
-        for &c in kids.iter().take(top).rev() {
-            stack.push((c, d + 1));
+        let mut kids: Vec<(Ix, u64)> = tree
+            .children(ix)
+            .filter_map(|c| match filter {
+                Some(f) => {
+                    let t = filetype::sum(tree, c, f, None);
+                    (t.items > 0).then(|| (c, mode.of(&t)))
+                }
+                None => Some((c, size(tree, c, mode))),
+            })
+            .collect();
+        kids.sort_by_key(|&(_, b)| std::cmp::Reverse(b));
+        for &(c, b) in kids.iter().take(top).rev() {
+            stack.push((c, d + 1, b));
         }
     }
+}
+
+/// Disk usage by file type, then the largest extensions, of the files below `root` (those
+/// `filter` matches, with one).
+fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&TypeFilter>) {
+    let mut b = filetype::Breakdown::default();
+    let all = TypeFilter::default();
+    filetype::sum(tree, root, filter.unwrap_or(&all), Some(&mut b));
+    let files = |n: u64| {
+        if n == 1 {
+            "1 file".into()
+        } else {
+            format!("{n} files")
+        }
+    };
+    outln!();
+    outln!("By type:");
+    let mut types: Vec<_> = filetype::FileType::ALL
+        .iter()
+        .map(|&t| (t, b.by_type[t as usize]))
+        .filter(|(_, t)| t.items > 0)
+        .collect();
+    types.sort_by_key(|(_, t)| std::cmp::Reverse(mode.of(t)));
+    for (ty, t) in types {
+        outln!(
+            "{:>10}  {:<12}{:>14}",
+            dfdu_tui::human(mode.of(&t)),
+            ty.name(),
+            files(t.items)
+        );
+    }
+    let exts = b.exts_by(|t| mode.of(t));
+    if !exts.is_empty() {
+        outln!();
+        outln!("Largest extensions:");
+        for (e, t) in exts.iter().take(15) {
+            outln!(
+                "{:>10}  {:<12}{:>14}  {}",
+                dfdu_tui::human(mode.of(t)),
+                format!(".{e}"),
+                files(t.items),
+                e.file_type()
+            );
+        }
+    }
+}
+
+fn type_filter(s: &str) -> Result<TypeFilter, String> {
+    let f = TypeFilter::parse(s)?;
+    if f.is_empty() {
+        return Err("name at least one type or extension".into());
+    }
+    Ok(f)
 }
 
 /// [`notes`] in brackets after a name, or nothing.

@@ -4,6 +4,7 @@
 //! lock or holds [`NodeRef`]s.
 
 mod check;
+pub mod filetype;
 mod meta;
 mod names;
 mod pages;

@@ -467,7 +467,7 @@ fn plural(n: u64, one: &str, many: &str) -> String {
 }
 
 /// Seconds since the Unix epoch as a UTC date and time ("2026-10-24 09:42 UTC").
-fn date(secs: i64) -> String {
+pub(crate) fn date(secs: i64) -> String {
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Days to a civil date, in 400-year eras starting on 1 March.
     let z = days + 719_468;

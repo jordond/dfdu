@@ -164,3 +164,76 @@ fn ncdu_and_dfdu_agree() {
         (t.apparent, t.alloc, t.items)
     );
 }
+
+/// ncdu's binary export (`-O`), with and without the extended fields, reads with the same
+/// totals as its JSON export and dfdu's own scan, from a file and from memory. The tree is big
+/// enough for several data blocks.
+#[test]
+fn ncdu_binary_export_reads() {
+    if !have_ncdu() {
+        eprintln!("skipped: ncdu is not installed");
+        return;
+    }
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let root = tmp.path().join("tree");
+    fixture(&root);
+    for d in 0..40 {
+        let dir = root.join(format!("many/d{d}"));
+        fs::create_dir_all(&dir).unwrap();
+        for f in 0..150 {
+            fs::write(
+                dir.join(format!("file-with-a-longer-name-{f}")),
+                vec![1u8; f],
+            )
+            .unwrap();
+        }
+    }
+    let (_, scanned) = scan(&root);
+    let json = tmp.path().join("ncdu.json");
+    let ok = Proc::new("ncdu")
+        .args(["-x", "-o"])
+        .arg(&json)
+        .arg(&root)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(ok.status.success());
+    let n = totals(&fs::read(&json).unwrap());
+    for extended in [false, true] {
+        let bin = tmp.path().join("ncdu.bin");
+        let mut cmd = Proc::new("ncdu");
+        cmd.arg("-x");
+        if extended {
+            cmd.arg("-e");
+        }
+        let ok = cmd
+            .arg("-O")
+            .arg(&bin)
+            .arg(&root)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        let from_file =
+            dfdu_store::open_file(fs::File::open(&bin).unwrap(), &Limits::default()).unwrap();
+        let bytes = fs::read(&bin).unwrap();
+        let from_mem = dfdu_store::open(&bytes[..], &Limits::default()).unwrap();
+        for o in [from_file, from_mem] {
+            let t = o.tree.total(o.root);
+            assert_eq!(
+                (t.apparent, t.alloc, t.items),
+                (n.apparent, n.alloc, n.items),
+                "binary (extended {extended}) against JSON"
+            );
+            assert_eq!(
+                (t.apparent, t.alloc, t.items),
+                (scanned.apparent, scanned.alloc, scanned.items)
+            );
+            assert_eq!(o.entries, scanned.items);
+        }
+    }
+}

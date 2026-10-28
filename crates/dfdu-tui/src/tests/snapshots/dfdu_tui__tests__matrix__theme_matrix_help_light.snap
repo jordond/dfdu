@@ -32,20 +32,20 @@ L12 2-2 fg=#2a6f97 | 3-7 fg=#1f2329 bold | 97-97 fg=#2a6f97
 L13 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 51-57 fg=#1f2329 bold | 97-97 fg=#2a6f97
   ┃ n  sort by name (again: reverse)                /         filter this directory              ┃
 L14 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ C  sort by items (again: reverse)               i         details of the selected entry      ┃
+  ┃ C  sort by items (again: reverse)               t         show only files of some types      ┃
 L15 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ M  sort by modification time (again:            Tab       move focus between the list and    ┃
-L16 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-54 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃    reverse)                                               the details                        ┃
-L17 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
-  ┃ S  re-sort now                                  !         list what could not be read, and   ┃
-L18 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃                                                           go to it                           ┃
+  ┃ M  sort by modification time (again:                      (video, audio, .iso...)            ┃
+L16 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃    reverse)                                     i         details of the selected entry      ┃
+L17 2-2 fg=#2a6f97 | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ S  re-sort now                                  Tab       move focus between the list and    ┃
+L18 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-54 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃                                                           the details                        ┃
 L19 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
-  ┃ Display                                         ? F1      keys                               ┃
-L20 2-2 fg=#2a6f97 | 3-10 fg=#1f2329 bold | 52-55 fg=#1b6b8c bold | 97-97 fg=#2a6f97
- 1┃ 1  list view                                    : Ctrl-P  command palette                    ┃
-L21 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-59 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ Display                                         !         list what could not be read, and   ┃
+L20 2-2 fg=#2a6f97 | 3-10 fg=#1f2329 bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+ 1┃ 1  list view                                              go to it                           ┃
+L21 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=#6c7180 | 2-88 fg=#2a6f97 | 89-96 fg=#6c7180 | 97-97 fg=#2a6f97
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

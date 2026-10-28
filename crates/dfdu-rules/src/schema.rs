@@ -118,6 +118,12 @@ pub struct MatchDef {
     pub child: Vec<AnyOf>,
     #[serde(default)]
     pub marker: Vec<MarkerDef>,
+    /// Files only: matches a file using more disk than this (`1 GiB`).
+    #[serde(default)]
+    pub larger_than: Option<String>,
+    /// Files only: matches a file not modified for this many days.
+    #[serde(default)]
+    pub not_modified_days: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

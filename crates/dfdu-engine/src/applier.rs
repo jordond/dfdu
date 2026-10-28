@@ -381,10 +381,13 @@ pub enum Command {
         node: NodeRef,
     },
     /// Rescan the root of a tree loaded from a file ([`Engine::load`](crate::Engine::load))
-    /// with these options, which no scan job of this session holds.
+    /// with these options, which no scan job of this session holds. With `changed` (paths
+    /// relative to the root, as [`changed_since`](crate::changed_since) gives them), the tree
+    /// is classified as loaded and only those directories are rescanned.
     Resume {
         node: NodeRef,
         opts: JobOptions,
+        changed: Option<Vec<PathBuf>>,
     },
     Cancel {
         job: JobId,
@@ -520,6 +523,8 @@ enum Work {
 pub struct Applier<B: Backend> {
     pub scan: Arc<Shared<B>>,
     jobs: BTreeMap<u32, Job>,
+    /// Options of finished jobs dropped from `jobs`, for rescans of what they scanned.
+    retired: HashMap<u32, JobOptions>,
     next_job: u32,
     links: LinkTable,
     work: VecDeque<Work>,
@@ -543,6 +548,8 @@ pub struct Applier<B: Backend> {
     pub imported: bool,
     /// Measure extents after each job.
     pub measure: bool,
+    /// Files allocating less are not measured ([`MEASURE_MIN`] in the engine).
+    pub measure_min: u64,
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
     extent_devs: HashSet<u64>,
@@ -562,6 +569,13 @@ pub struct Applier<B: Backend> {
 const MEASURE_INFLIGHT: usize = 32768;
 /// Files per measurement request (one directory per request).
 const MEASURE_BATCH: usize = 256;
+/// Smallest allocation the engine measures on macOS: on APFS each file costs a lookup of its
+/// private size, and the clones that matter are large. Elsewhere every file with data is.
+pub const MEASURE_MIN: u64 = if cfg!(target_os = "macos") {
+    1 << 20
+} else {
+    1
+};
 /// A measurement round without any result for this long is abandoned.
 const MEASURE_TIMEOUT_NS: u64 = 60_000_000_000;
 
@@ -582,7 +596,7 @@ const STEP_UNITS: usize = 4096;
 /// where each link's walk up the tree misses the cache.
 const LINKS_PER_STEP: usize = 128;
 
-fn meta_of(tree: &Tree, ix: Ix) -> Meta {
+pub(crate) fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     let (apparent, alloc) = tree.raw_size(ix);
     let (dev, ino) = tree.dev_ino(ix);
     Meta {
@@ -657,6 +671,7 @@ fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> C
             inside: &inside,
             protection: protection(p),
             partial: false,
+            stat: None,
         });
         if let dfdu_rules::Verdict::Hits(h) = v {
             chain = h;
@@ -669,6 +684,51 @@ fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> C
         protection: protection(ix),
         chain,
     }
+}
+
+/// More changed directories than this and a resume rescans the whole tree.
+const MAX_RESUME_RESCANS: usize = 10_000;
+
+/// The directories of the tree at `root` that `paths` (relative to it) name, or the nearest
+/// existing ancestor of one not in the tree.
+fn changed_dirs(tree: &Tree, root: Ix, paths: &[PathBuf]) -> Vec<Ix> {
+    let mut out = Vec::new();
+    for p in paths {
+        let mut at = root;
+        for c in p.components() {
+            let std::path::Component::Normal(n) = c else {
+                continue;
+            };
+            let n = dfdu_tree::name_bytes(n);
+            match tree
+                .children(at)
+                .find(|&k| tree.dir(k).is_some() && tree.name(k) == &n[..])
+            {
+                Some(k) => at = k,
+                None => break,
+            }
+        }
+        out.push(at);
+    }
+    out
+}
+
+/// `dirs` without duplicates and without those below another of them.
+fn topmost(tree: &Tree, mut dirs: Vec<Ix>) -> Vec<Ix> {
+    dirs.sort_unstable_by_key(|d| d.0);
+    dirs.dedup();
+    let set: HashSet<Ix> = dirs.iter().copied().collect();
+    dirs.retain(|&d| {
+        let mut cur = tree.parent(d);
+        while let Some(p) = cur {
+            if set.contains(&p) {
+                return false;
+            }
+            cur = tree.parent(p);
+        }
+        true
+    });
+    dirs
 }
 
 fn empty_dir_meta() -> Meta {
@@ -689,6 +749,7 @@ impl<B: Backend> Applier<B> {
         Applier {
             scan,
             jobs: BTreeMap::new(),
+            retired: HashMap::new(),
             next_job: 1,
             links: LinkTable::default(),
             work: VecDeque::new(),
@@ -704,6 +765,7 @@ impl<B: Backend> Applier<B> {
             read_only: false,
             imported: false,
             measure: true,
+            measure_min: 1,
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
             measure_stack: Vec::new(),
@@ -790,7 +852,16 @@ impl<B: Backend> Applier<B> {
                 self.start(m, id, JobKind::Initial, root, root, VISIBLE, path, opts);
             }
             Command::Rescan { node } => self.rescan(m, node, None),
-            Command::Resume { node, opts } => self.rescan(m, node, Some(opts)),
+            Command::Resume {
+                node,
+                opts,
+                changed: None,
+            } => self.rescan(m, node, Some(opts)),
+            Command::Resume {
+                node,
+                opts,
+                changed: Some(dirs),
+            } => self.resume_changed(m, node, opts, &dirs),
             Command::Cancel { job } => self.cancel(job.0),
             Command::CancelAll => {
                 let ids: Vec<u32> = self.jobs.keys().copied().collect();
@@ -958,11 +1029,13 @@ impl<B: Backend> Applier<B> {
         if m.tree.flags(ix).has(NodeFlags::MOUNT_ROOT) {
             m.tree.set_flag(shadow, NodeFlags::MOUNT_ROOT, true);
         }
-        let owner = self.jobs.get(&m.tree.dir(ix).expect("dir").job);
+        let owner_id = m.tree.dir(ix).expect("dir").job;
+        let owner = self.jobs.get(&owner_id);
         let owner_root = owner.and_then(|j| m.tree.resolve(j.root));
         let resumed = given.is_some();
         let mut opts = given
             .or_else(|| owner.map(|j| j.opts.clone()))
+            .or_else(|| self.retired.get(&owner_id).cloned())
             .unwrap_or_default();
         // Duplicate mounts are judged against the whole visible tree, not just this part.
         let mut top = ix;
@@ -984,6 +1057,90 @@ impl<B: Backend> Applier<B> {
             );
         }
         self.start(m, id, JobKind::Rescan, ix, shadow, id, path, opts);
+    }
+
+    /// Takes over a tree loaded from a snapshot when the volume's change journal says which
+    /// directories changed since (`changed`, relative to the root): the tree is classified as
+    /// it stands, held by a finished job with `opts`, and only the topmost changed directories
+    /// are rescanned, each with its subtree. A changed root, or too many changes, rescan it all.
+    fn resume_changed(
+        &mut self,
+        m: &mut Model,
+        node: NodeRef,
+        opts: JobOptions,
+        changed: &[PathBuf],
+    ) {
+        let Some(root) = m
+            .tree
+            .resolve_visible(node)
+            .filter(|&r| m.tree.dir(r).is_some() && m.tree.parent(r).is_none())
+        else {
+            return self.rescan(m, node, Some(opts));
+        };
+        let mut targets = changed_dirs(&m.tree, root, changed);
+        if targets.len() > MAX_RESUME_RESCANS || targets.contains(&root) {
+            return self.rescan(m, node, Some(opts));
+        }
+        let id = self.next_job;
+        self.next_job += 1;
+        // Other volumes mounted below keep their own journals: their mount roots are rescanned.
+        let mut mounts = Vec::new();
+        let mut own = |tree: &mut Tree, ix: Ix| {
+            if let Some(d) = tree.dir_mut(ix) {
+                d.job = id;
+                d.dir_id = 0;
+            }
+            if ix != root
+                && tree.flags(ix).has(NodeFlags::MOUNT_ROOT)
+                && tree.dir(ix).is_some_and(|d| d.state != DirState::Skipped)
+            {
+                mounts.push(ix);
+            }
+        };
+        match &opts.class {
+            Some(c) => {
+                m.rules = Some(c.rules.clone());
+                m.tree.set_protection(root, c.protection.protected(), false);
+                crate::reclassify::classify_loaded(
+                    &mut m.tree,
+                    root,
+                    c,
+                    &self.scan.backend,
+                    &mut own,
+                );
+            }
+            None => {
+                let mut stack = vec![root];
+                while let Some(ix) = stack.pop() {
+                    own(&mut m.tree, ix);
+                    stack.extend(m.tree.children(ix).filter(|&c| m.tree.dir(c).is_some()));
+                }
+            }
+        }
+        targets.extend(mounts);
+        let targets = topmost(&m.tree, targets);
+        self.jobs.insert(
+            id,
+            Job {
+                id: JobId(id),
+                kind: JobKind::Initial,
+                target: node,
+                root: node,
+                scope: VISIBLE,
+                opts,
+                map: Pages::default(),
+                held_close: HashMap::new(),
+                stalled: HashMap::new(),
+                submitted_seq: 0,
+                phase: JobPhase::Done,
+            },
+        );
+        m.tree.bump_version();
+        self.queue_checks(m);
+        for t in targets {
+            let r = m.tree.node_ref(t);
+            self.rescan(m, r, None);
+        }
     }
 
     /// Cuts a directory its job is still scanning: its job's tasks for it are stopped, and it
@@ -1709,7 +1866,9 @@ impl<B: Backend> Applier<B> {
                 .take(self.jobs.len() - 64)
                 .collect();
             for k in done {
-                self.jobs.remove(&k);
+                if let Some(j) = self.jobs.remove(&k) {
+                    self.retired.insert(k, j.opts);
+                }
             }
         }
     }
@@ -1750,7 +1909,7 @@ impl<B: Backend> Applier<B> {
                 let inode = tree.dev_ino(c);
                 if tree.kind(c) != Kind::File
                     || f.has(NodeFlags::MEASURED)
-                    || tree.raw_size(c).1 == 0
+                    || tree.raw_size(c).1 < self.measure_min.max(1)
                     || !self.extent_devs.contains(&inode.0)
                     || (f.has(NodeFlags::HARDLINK) && !f.has(NodeFlags::CHARGED))
                     || self
@@ -2624,7 +2783,8 @@ pub fn native_argv(argv: &[String], path: &Path) -> Vec<String> {
 /// `{parent}`, `{name}` and `{name_stem}`.
 fn native_var(arg: &str, path: &Path) -> String {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let raw = dfdu_tree::name_bytes(path.file_name().unwrap_or_default());
+    let stem = String::from_utf8_lossy(dfdu_rules::stem(&raw));
     arg.replace("{path}", &path.to_string_lossy())
         .replace("{parent}", &path.parent().unwrap_or(path).to_string_lossy())
         .replace("{name_stem}", &stem)

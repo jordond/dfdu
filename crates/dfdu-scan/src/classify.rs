@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use dfdu_rules::hash::FastSet as HashSet;
 use dfdu_rules::protected::State;
-use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Safety, Verdict};
+use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Safety, Stat, Verdict};
 use dfdu_tree::{Class, Kind};
 
 use crate::proto::{DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
@@ -93,6 +93,7 @@ impl ClassOpts {
                 inside: &[],
                 protection: rules.protected().state_of(&parent_path),
                 partial: false,
+                stat: None,
             });
             match verdict {
                 Verdict::Hits(h) => chain = h,
@@ -323,7 +324,7 @@ impl Listing {
         let reach = (!subdirs.is_empty()).then(|| Arc::new(dir.reach().clone()));
         let mut out = BlockClass::default();
         let parent_protected = self.task.protection.protected();
-        let classify = |n: &[u8], is_dir: bool| {
+        let classify = |n: &[u8], is_dir: bool, stat: Option<Stat>| {
             dir.classify(&Candidate {
                 parent: &self.task.path,
                 name: n,
@@ -332,12 +333,17 @@ impl Listing {
                 inside: &inside,
                 protection: self.task.protection,
                 partial: !whole,
+                stat,
             })
         };
         for (i, f) in files.iter().enumerate() {
             let n = name(f.name);
             let entry = Entry::File(i as u32);
-            match classify(n, false) {
+            let stat = Stat {
+                disk: f.meta.alloc,
+                mtime: f.meta.mtime,
+            };
+            match classify(n, false, Some(stat)) {
                 Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
                 Verdict::None => {}
                 Verdict::Protected(_) if !parent_protected => {
@@ -374,7 +380,7 @@ impl Listing {
                 rv: None,
                 reach: reach.clone(),
             };
-            match classify(n, true) {
+            match classify(n, true, None) {
                 Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
                 Verdict::None => {}
                 Verdict::Protected(state) => {
