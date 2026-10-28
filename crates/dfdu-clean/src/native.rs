@@ -1,4 +1,4 @@
-//! Native cleanup commands (architecture §7, D7): the owning tool's own command (`cargo clean`,
+//! Native cleanup commands: the owning tool's own command (`cargo clean`,
 //! `docker system prune`), run with no shell, stdin closed, a time limit and never with sudo.
 //! The tool is checked first (`native.check`); a dry run or inspect step runs on its own
 //! request, before the user confirms the real one. Output is sent line by line.

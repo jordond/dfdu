@@ -1,5 +1,5 @@
 //! `dfdu agent`: the scanner run for a local dfdu on another host, over the agent's stdin and
-//! stdout (`data-pipeline.md` §9.4; the frames are [`crate::wire`]'s).
+//! stdout (the frames are [`crate::wire`]'s).
 //!
 //! The agent runs the scanner alone (workers, watchdog, classification with the rules the local
 //! side sent, [`Down::Rules`]) and sends what it produces as [`Up::Batch`] frames; the local

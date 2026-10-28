@@ -1,4 +1,4 @@
-//! The remote scan's wire format (`data-pipeline.md` §9.4): what `dfdu agent` on another host
+//! The remote scan's wire format: what `dfdu agent` on another host
 //! and the local side say to each other over the agent's stdin and stdout.
 //!
 //! A frame is a little-endian `u32` payload length, the payload's CRC32C as a little-endian

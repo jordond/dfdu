@@ -1,4 +1,4 @@
-//! Categories and cleanup rules (architecture §6, `categories-and-cleanup.md §9`).
+//! Categories and cleanup rules (format: `docs/rules.md`).
 //!
 //! A rule names a kind of disk use (a Rust `target/`, the npm cache), how safe it is to delete
 //! and how. Rules are TOML: a built-in pack ships in the binary ([`builtin`]) and users add or
@@ -56,7 +56,7 @@ impl Platform {
     }
 }
 
-/// What deleting loses (`categories-and-cleanup.md §2`). Ordered from least to most to lose,
+/// What deleting loses. Ordered from least to most to lose,
 /// so a runtime condition may only move a rule to a greater level.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Safety {
@@ -148,7 +148,7 @@ pub enum Colour {
     Other,
 }
 
-/// One category of the taxonomy (`categories-and-cleanup.md §3`).
+/// One category of the taxonomy.
 #[derive(Debug)]
 pub struct Category {
     pub id: &'static str,

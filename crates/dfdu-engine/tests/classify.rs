@@ -1,6 +1,6 @@
-//! Classification during a real scan (architecture §6): the rules the built-in pack decides on
+//! Classification during a real scan: the rules the built-in pack decides on
 //! the workers reach the tree, including directories wide enough to be read in several blocks,
-//! whose markers and siblings are in other blocks (scenario 12 in `data-pipeline.md` §10.2).
+//! whose markers and siblings are in other blocks.
 
 use std::fs;
 use std::path::Path;

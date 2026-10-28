@@ -1,4 +1,4 @@
-//! Generated plans against the deleter (ROADMAP M6): whatever a plan asks for, nothing outside
+//! Generated plans against the deleter: whatever a plan asks for, nothing outside
 //! the scan root is deleted, nothing inside a filesystem mounted below an item, and no item that
 //! is a protected path or below one. Each case builds a random tree with protected names in it
 //! and symlinks out of the root, takes the identities a scan would record, then changes the tree

@@ -1,4 +1,4 @@
-//! JSON output of `scan`, `report` and `clean` (`safety-persistence-ops.md §4.2`). Every
+//! JSON output of `scan`, `report` and `clean`. Every
 //! document has a top-level `schema_version`; sizes are integers in bytes; paths and names are
 //! UTF-8 strings, with the raw bytes in base64 beside them (`path_bytes_b64`, `name_bytes_b64`)
 //! when they are not valid UTF-8. The schemas are in `schema/` at the top of the repository.

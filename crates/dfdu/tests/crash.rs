@@ -1,4 +1,4 @@
-//! Crash consistency (ROADMAP M7, `data-pipeline.md §10.5`): `dfdu` is killed with SIGKILL at
+//! Crash consistency: `dfdu` is killed with SIGKILL at
 //! random points while it writes a snapshot, while it records a scan in the history, and while
 //! `dfdu clean` deletes (permanently, staged with the commit that follows, and on Linux to the
 //! trash). After each kill the previous snapshot still loads, the history opens, and every

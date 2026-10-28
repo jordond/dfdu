@@ -1,4 +1,4 @@
-//! Matching entries against a rule set (`categories-and-cleanup.md §9.2`, evaluation order).
+//! Matching entries against a rule set, in the evaluation order of `docs/rules.md`.
 //!
 //! [`Dir::classify`] runs for each entry of a directory listing, with the listing at hand for
 //! `sibling` checks: the protected-path check, then the name and path prefilter, then

@@ -366,7 +366,7 @@ mod fault {
     use std::path::Path;
 
     /// With `DFDU_FAULT_COMMIT_HANG` set, a staged commit deletes one entry of the item and
-    /// then never returns, so a test can kill the process part-way through (scenario 17).
+    /// then never returns, so a test can kill the process part-way through.
     #[cfg(feature = "fault-injection")]
     pub fn commit_hang(staged: &Path) {
         if std::env::var_os("DFDU_FAULT_COMMIT_HANG").is_none() {

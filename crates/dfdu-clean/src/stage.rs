@@ -1,5 +1,5 @@
 //! Staging, and putting items back. A staged item is renamed into this session's staging
-//! directory on its own filesystem (`data-pipeline.md` §9.2): `stage/<session>/` beside the
+//! directory on its own filesystem: `stage/<session>/` beside the
 //! journals when that is on the item's filesystem, else `.dfdu-stage/<session>/` in the scan
 //! root or, failing that, next to the item. Every rename that puts something back refuses to
 //! replace what is at the target.

@@ -1,7 +1,5 @@
 name: audit
 
-# RustSec advisories, apart from ci so a new advisory never blocks a merge; a failure shows
-# here instead. Weekly, so advisories surface without a push.
 on:
   push:
     branches: [main]

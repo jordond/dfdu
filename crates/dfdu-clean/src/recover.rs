@@ -1,7 +1,7 @@
-//! What earlier sessions left unfinished (`data-pipeline.md` §9.2): items staged and not yet
+//! What earlier sessions left unfinished: items staged and not yet
 //! deleted, staged deletes cut short, and intents with no result. Only journals whose lock can
 //! be taken are read, which means their process has exited; a running instance's journal and
-//! staging directories are never touched (scenario 16). The locks are held for as long as the
+//! staging directories are never touched. The locks are held for as long as the
 //! [`Recovery`] lives, and what is done is recorded in the same journal.
 
 use std::collections::HashMap;

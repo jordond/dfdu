@@ -1,11 +1,11 @@
-//! The classifier pool (architecture §6, `data-pipeline.md` §4.4): checks too slow for the
+//! The classifier pool: checks too slow for the
 //! scan workers, run on matched nodes after their job ends. A rule's `guard.not_vcs_tracked`
 //! asks whether version control tracks files in the match (a `target/` committed to git is
 //! protected); `guard.not_running` whether a process it names runs. A native `size_command`
 //! (what `docker system df` reports) runs only when asked for (`Command::NativeSizes`). Like
 //! the deleter and the measurers, the pool never touches the tree: the applier sends it
 //! requests and applies its answers, which name nodes by [`NodeRef`], so an answer for a node
-//! freed since is dropped (scenario 13 in `data-pipeline.md` §10.2).
+//! freed since is dropped.
 
 use std::collections::HashMap;
 use std::io::Read;

@@ -1,5 +1,5 @@
-//! The reclaimable estimate against the free space a delete actually gives back (ROADMAP M6:
-//! within 1% on fixtures without clones). It needs a filesystem nothing else writes to: on
+//! The reclaimable estimate against the free space a delete actually gives back (within
+//! 1% on fixtures without clones). It needs a filesystem nothing else writes to: on
 //! macOS the test makes an HFS+ disk image (no clones) and mounts it; elsewhere it runs in
 //! `DFDU_QUIET_FS` if that is set (a tmpfs, say) and is skipped otherwise.
 

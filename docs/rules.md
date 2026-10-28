@@ -1,6 +1,6 @@
 # Rules
 
-Rules label what the scan finds (a Rust `target/`, the npm cache) with a category, a safety level and a way to clean it up. The format and the reasons behind it are in `docs/research/categories-and-cleanup.md §9`; the code is `crates/dfdu-rules`, and the built-in pack is `crates/dfdu-rules/src/builtin.toml`.
+Rules label what the scan finds (a Rust `target/`, the npm cache) with a category, a safety level and a way to clean it up. The code is `crates/dfdu-rules`, and the built-in pack is `crates/dfdu-rules/src/builtin.toml`.
 
 ## Writing rules
 
@@ -17,7 +17,7 @@ enabled = false
 # A new rule, or a replacement for a built-in one with the same id.
 [[rule]]
 id = "me.renders"
-category = "content.media"          # from the taxonomy in categories-and-cleanup.md §3
+category = "content.media"          # a built-in category
 name = "Render output"
 safety = "regenerable"              # safe | regenerable | review | manual
 action = "trash"                    # delete | trash | native | report (default delete)
@@ -37,13 +37,13 @@ stop_descent = true
 - Unknown keys, categories, safety levels and variables are errors. A rule with an error is left out and reported with its file and id; the other rules still load.
 - `degrade` conditions may only lower safety (move it towards `review`), never raise it.
 - `action = "native"` needs `[rule.native]` with `command`, the owning tool's own cleanup (argv, no shell). `check` is run first to see that the tool is there, `dry_run` shows what would go and runs before the user confirms, `pre` runs before the command (stopping a daemon), `cwd` sets where it runs, `size_command` reports the tool's own count for the cleanup view (docker's JSON lines are parsed). Commands may use `{path}`, `{parent}`, `{name}` and `{name_stem}` of the matched node. `[[rule.native.variant]]` entries (`name`, `command`, optional `dry_run`) are further-reaching forms, offered separately and confirmed twice.
-- Protected paths (`crates/dfdu-rules/src/protected.rs`, from `categories-and-cleanup.md §8`) win over every rule and cannot be changed by rule files.
+- Protected paths (`crates/dfdu-rules/src/protected.rs`) win over every rule and cannot be changed by rule files.
 
 ## Verification
 
 A built-in rule whose paths depend on the platform is enabled by default only where those paths were checked on a real machine (its `verified` list); elsewhere it loads disabled and a user can turn it on with `enabled = true`. Rules that match by name or marker (`any`) work the same everywhere and are always on.
 
-"checked": the path exists with the layout the rule expects on macOS 26.6.2 (2026-10-27). Linux and Windows are still to be checked (`docs/research/categories-and-cleanup.md §11` lists the paths known to be uncertain).
+"checked": the path exists with the layout the rule expects on macOS 26.6.2 (2026-10-27). Linux and Windows are still to be checked.
 
 | Rule | Category | Safety | macOS | Linux | Windows |
 |---|---|---|---|---|---|

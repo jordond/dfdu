@@ -249,8 +249,8 @@ impl<B: Backend> Engine<B> {
         Self::start_inner(backend, opts, None)
     }
 
-    /// An engine whose scans run on another host, by the `dfdu agent` at the other end of `io`
-    /// (`data-pipeline.md` §9.4); `backend` is only consulted for local reads. Fails when the
+    /// An engine whose scans run on another host, by the `dfdu agent` at the other end of `io`;
+    /// `backend` is only consulted for local reads. Fails when the
     /// agent does not answer the greeting or speaks no common protocol version. With `rules`,
     /// the agent classifies with them; the answer says what the scan root classifies against,
     /// to put in [`Command::Scan`]'s options.

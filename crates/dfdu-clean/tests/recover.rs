@@ -1,7 +1,6 @@
-//! Staging across sessions (`data-pipeline.md` §10.2): scenario 16, a second instance started
-//! while the first has items staged, and scenario 17, a session killed part-way through a
-//! staged delete, then recovery. Scenario 17 re-runs this binary as the session to kill, with
-//! the `fault-injection` hook that stops a staged delete after its first entry.
+//! Staging across sessions: a second instance started while the first has items staged, and a
+//! session killed part-way through a staged delete, then recovery. The second re-runs this
+//! binary as the session to kill, with the `fault-injection` hook that stops a staged delete after its first entry.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +70,7 @@ fn staged_dir(state: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Scenario 16: while the first session holds its journal, recovery in a second one sees
+/// While the first session holds its journal, recovery in a second one sees
 /// nothing of it and leaves its staged item alone; once it has exited, the item is reported as
 /// staged and can be put back.
 #[test]
@@ -109,7 +108,7 @@ fn second_instance_leaves_a_live_session_alone() {
     assert!(recover::scan(&state.join("ops")).unwrap().items.is_empty());
 }
 
-/// Scenario 17: killed during a staged delete, the item is reported as partly deleted; it can
+/// Killed during a staged delete, the item is reported as partly deleted; it can
 /// be finished, never restored as if whole.
 #[test]
 fn killed_during_a_staged_delete() {
@@ -171,8 +170,8 @@ fn killed_during_a_staged_delete() {
     assert!(recover::scan(&ops).unwrap().items.is_empty());
 }
 
-/// The session scenario 17 kills: stages `junk`, then deletes it with the hook that stops
-/// part-way.
+/// The session `killed_during_a_staged_delete` kills: stages `junk`, then deletes it with the
+/// hook that stops part-way.
 #[test]
 fn child_session() {
     let Some(base) = std::env::var_os(CHILD).map(PathBuf::from) else {

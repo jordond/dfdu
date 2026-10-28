@@ -1,5 +1,5 @@
 //! `dfdu report`: the rules' matches in a scan, largest first, with what each is, how safe it
-//! is to delete and how (`safety-persistence-ops.md §4.2`). `dfdu clean` deletes a selection of
+//! is to delete and how. `dfdu clean` deletes a selection of
 //! the same list.
 
 use std::path::{Path, PathBuf};

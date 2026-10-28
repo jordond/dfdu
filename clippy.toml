@@ -1,0 +1,4 @@
+# Tests fail by panicking; `desloppify` runs clippy with `unwrap_used`, `expect_used` and `panic`.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

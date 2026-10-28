@@ -1,5 +1,5 @@
 //! Scan history in the CLI: `dfdu scan` records each scan, `dfdu history` lists them and
-//! `dfdu diff` prints what grew (`safety-persistence-ops.md §3.4`).
+//! `dfdu diff` prints what grew.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

@@ -1,4 +1,4 @@
-//! Persistence: ncdu JSON import and export (`safety-persistence-ops.md` §3.1), native
+//! Persistence: ncdu JSON import and export, native
 //! snapshots, scan history, zstd streams and atomic file writes.
 
 pub mod history;

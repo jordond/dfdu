@@ -1,6 +1,5 @@
 name: fuzz
 
-# Longer runs than ci.yml's minute per target. The corpus they grow is restored by ci.yml.
 on:
   schedule:
     - cron: "17 4 * * 0"
@@ -22,7 +21,6 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
   RUST_BACKTRACE: "1"
-  # The same as ci.yml's, so both use one build cache.
   NIGHTLY: nightly-2026-10-27
 
 defaults:

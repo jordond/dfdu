@@ -1,4 +1,4 @@
-//! The local side of a remote scan (`data-pipeline.md` §9.4): the applier's scanner calls go
+//! The local side of a remote scan: the applier's scanner calls go
 //! to a `dfdu agent` as [`Down`] frames, and a reader thread puts the agent's batches into the
 //! applier's inbox as if local workers had sent them. The inbox's byte budget blocks the
 //! reader, which stops reading the pipe, which blocks the agent's workers.

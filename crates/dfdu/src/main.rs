@@ -20,7 +20,7 @@ use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
 use dfdu_tui::{ColorLevel, SizeMode, Theme, ThemeChoice, ThemeFile, UiSettings};
 
-/// The exit codes, for `--help` and the man page (architecture §8).
+/// The exit codes, for `--help` and the man page.
 const EXIT_CODES: &str = "Exit codes:
   0    success
   1    fatal error (the directory could not be read, an output could not be written)

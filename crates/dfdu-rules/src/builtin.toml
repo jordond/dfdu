@@ -1,4 +1,4 @@
-# Built-in rules, first version (ROADMAP M5). Schema: categories-and-cleanup.md §9.2.
+# Built-in rules. The format is described in docs/rules.md.
 #
 # `verified` lists the platforms where a rule's paths were checked on a real machine
 # (docs/rules.md); a path rule is enabled by default only there. Rules that match by name or

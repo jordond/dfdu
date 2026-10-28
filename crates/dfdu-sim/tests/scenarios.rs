@@ -863,7 +863,7 @@ fn delete_while_scanning_then_late_messages() {
     );
 }
 
-/// The results scenario 10 runs through, and how each counts in the plan's summary
+/// The results the unfinished-delete scenarios run through, and how each counts in the plan's summary
 /// `(stale, refused, failed, aborted)`.
 fn unfinished_results() -> Vec<(dfdu_clean::DeleteResult, (usize, usize, usize, usize))> {
     use dfdu_clean::{DeleteResult, Refusal};
@@ -944,7 +944,7 @@ fn answer_plan(
     );
 }
 
-/// Scenario 10: deletes that are refused, aborted, stale and failed (whole or part-way), on a
+/// Deletes that are refused, aborted, stale and failed (whole or part-way), on a
 /// directory and a file the scan had finished. Each stays in the tree with its totals; only a
 /// directory a delete emptied part-way is rescanned, and the random tail checks it against the
 /// filesystem.
@@ -983,7 +983,7 @@ fn unfinished_deletes_on_uncut_nodes() {
     });
 }
 
-/// Scenario 10 on cut nodes: a directory the scan is still reading is cut by the delete, so
+/// Unfinished deletes on cut nodes: a directory the scan is still reading is cut by the delete, so
 /// whatever the result, its totals are unknown and it is rescanned once the plan no longer
 /// holds it; until then it stays marked cut.
 #[test]
@@ -1265,7 +1265,7 @@ fn list_project(sim: &mut Sim) -> (JobId, DirId) {
     w
 }
 
-/// Scenario 12, the subdirectories first: `target` and `node_modules` are read to the end
+/// Classification across blocks, the subdirectories first: `target` and `node_modules` are read to the end
 /// before `w`'s last block, which holds the siblings they need. Their `Close`s cannot decide,
 /// and the last part of `w` does: its `Close` carries both classes.
 #[test]
@@ -1301,7 +1301,7 @@ fn markers_in_other_chunks_subdirectories_first() {
     });
 }
 
-/// Scenario 12, the parent first: `w`'s listing ends before `target` and `node_modules` are
+/// Classification across blocks, the parent first: `w`'s listing ends before `target` and `node_modules` are
 /// read, so their own `Close`s decide.
 #[test]
 fn markers_in_other_chunks_parent_first() {
@@ -1348,7 +1348,7 @@ fn small_project() -> Spec {
     b.build()
 }
 
-/// Scenario 13: the `Close` carrying `target`'s class is held back while `Cargo.toml` is
+/// A late class for a freed slot: the `Close` carrying `target`'s class is held back while `Cargo.toml` is
 /// deleted, `p` is rescanned twice and the slots of the first `p` are freed and reused. The
 /// class arrives for a slot that now holds another node, and must not be applied to it.
 #[test]
@@ -1395,7 +1395,7 @@ fn class_for_a_freed_and_reused_slot() {
     });
 }
 
-/// Scenario 13 for the classifier pool: its answer for `target` (tracked by git, so protected)
+/// A late class for a freed slot, from the classifier pool: its answer for `target` (tracked by git, so protected)
 /// is held back while `Cargo.toml` is deleted and `p` is rescanned twice, so the slot `target`
 /// had holds another node when the answer arrives. The answer names the old node and is
 /// dropped.

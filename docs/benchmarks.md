@@ -1,7 +1,7 @@
 # Benchmarks
 
-Measured results for ROADMAP M2: scan time and memory against other tools, the applier's
-throughput and lock times (D1), and the soak test (`data-pipeline.md` §10.4). Each table says
+Measured results: scan time and memory against other tools, the applier's
+throughput and lock times, and the soak test. Each table says
 how it was taken; rerun with the commands in the last section.
 
 ## Machine and trees
@@ -67,8 +67,8 @@ tree), load 0.7-1.2 before the runs, 1-3 during.
 | pdu (one thread here) | 9.9 min (8.6-11.3) | 4 MiB |
 | du | 10.2 min (10.1-10.2) | 6 MiB |
 
-dfdu's peak is 764 MiB (801 MB) for 10M entries, 80 bytes per entry: the target in
-architecture §4 is under 800 MB, so it is at the limit in MB and under it in MiB. The node is 56
+dfdu's peak is 764 MiB (801 MB) for 10M entries, 80 bytes per entry: the target
+is under 800 MB, so it is at the limit in MB and under it in MiB. The node is 56
 bytes; names take 74 MiB.
 
 ### 10M entries in one directory
@@ -86,9 +86,9 @@ measured but its result was lost with the log when the VM restarted.
 | ncdu | 8.8 min (7.3-10.3) | 115 MiB |
 | du | 11.9 min (11.8-12.0) | 31 MiB |
 
-## Classification (M5)
+## Classification
 
-The rules run on the scan workers (architecture §6). The 1M-entry tree (`dfdu-bench gen`, seed
+The rules run on the scan workers. The 1M-entry tree (`dfdu-bench gen`, seed
 1), scanned by `dfdu scan --bytes` with the built-in rules and with `--no-rules`, 8 interleaved
 runs each, on an M-series Mac (APFS, warm cache, `MacBackend`, 10 workers), load 19-21 from
 other work:
@@ -110,7 +110,7 @@ reach them (`dfdu_rules::Reach`), so a directory deep in a tree no longer tries 
 protected path (this was the largest user-space cost in a profile, 3 µs per listing), and a
 glob's depth is computed once instead of on every check.
 
-## Applier (D1)
+## Applier
 
 `examples/apply_rate.rs` records the scanner's messages once and times only the applier
 applying them, on one thread (best of the runs in brackets):
@@ -124,7 +124,7 @@ At 10M the applier alone is under the 5M entries/s threshold in most runs. `perf
 runs: `_int_malloc` 16% (10% from `Vec` growth in `dfdu-tree`: each directory's child list and
 the arena's vectors), page faults for the 1.2 GB the model grows to (about 300k faults per run),
 `LinkTable::reelect` 8% (the final pass over 95k hard links) and `Tree::top` 8% (ancestor walks
-that miss the cache). The remedies in `data-pipeline.md` §11 are not where this time goes:
+that miss the cache). The obvious remedies are not where this time goes:
 larger blocks and moved name buffers cut per-chunk and per-name copying, but the average chunk
 here is 61 entries (one per small directory) and copying names is not in the profile. The
 allocator is: with jemalloc the same runs are 20-40% faster. The example also allocates
@@ -138,8 +138,8 @@ lock time, so it includes time the applier spent preempted while holding the loc
 
 Commit "Applier at 10M: no allocation per directory or inode, fewer walks": child lists in a
 shared arena, directory records and job maps in pages, no per-directory duplicate-filter
-allocation, hard-link lists that hold two without allocating, and fused ancestor walks
-(`data-pipeline.md` §11.1). Measured with `apply_rate --synth` (the `dfdu-bench` tree served
+allocation, hard-link lists that hold two without allocating, and fused ancestor walks.
+Measured with `apply_rate --synth` (the `dfdu-bench` tree served
 from memory, `dfdu_bench::synth`), so no 10M tree on disk is needed. Interleaved runs of each
 build, 3 rounds of 3-5 runs, load average 1.4-4 (another agent's btrfs timings ran at the same
 time):
@@ -224,7 +224,7 @@ Tried and not kept: lowering the workers' priority (`setpriority`, no privilege 
 7% (nice 2), 5% (nice 5) and 3% (nice 10) of slices over 2 ms at 1M; three workers instead of
 four kept slices short (0.4-3% over 2 ms) but scanned 20% slower.
 
-## Soak test (§10.4)
+## Soak test
 
 `crates/dfdu-tui/src/soak.rs`: a reader holding the read lock for 5 ms in a loop, the real UI
 loop drawing to a terminal blocked for 3 s at a time with 500 ms open in between, totals checked

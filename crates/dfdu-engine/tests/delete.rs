@@ -419,7 +419,7 @@ fn undo_puts_staged_items_back() {
     );
 }
 
-/// The scan-to-delete race inside a directory item (ROADMAP M6): a file added, a file replaced
+/// The scan-to-delete race inside a directory item: a file added, a file replaced
 /// by another of the same name, a directory replaced, and a directory swapped for a symlink,
 /// each deep inside, right after the scan (in the same second, so modification times do not
 /// tell). None of the items is deleted, permanently or staged, and each is reported.

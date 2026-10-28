@@ -3,7 +3,7 @@ name = "dfdu-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
-description = "cargo-fuzz targets for dfdu's decoders and loaders (data-pipeline.md §10.4)"
+description = "cargo-fuzz targets for dfdu's decoders and loaders"
 
 [package.metadata]
 cargo-fuzz = true

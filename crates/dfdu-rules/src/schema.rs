@@ -1,4 +1,4 @@
-//! The rule file format as written (`categories-and-cleanup.md §9.2`). Unknown fields are
+//! The rule file format as written (`docs/rules.md`). Unknown fields are
 //! errors, so a misspelt key is reported instead of silently ignored. [`crate::load`] checks
 //! the values and compiles a file into [`crate::Rule`]s.
 

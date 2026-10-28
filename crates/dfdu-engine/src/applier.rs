@@ -268,7 +268,7 @@ pub struct MeasureProgress {
     pub requested: u64,
 }
 
-/// What deleting a set of nodes is expected to free (architecture §7): their disk usage,
+/// What deleting a set of nodes is expected to free: their disk usage,
 /// less what stays because other files use it too.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Estimate {

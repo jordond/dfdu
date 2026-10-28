@@ -196,8 +196,8 @@ fn mount_limits() {
 }
 
 /// Classification on the workers against a reference classifier, with names the built-in rules
-/// match. Blocks of 3 entries put markers and siblings in other blocks than what they classify
-/// (scenario 12). Nothing is deleted, since a class is not revised when a sibling it depended
+/// match. Blocks of 3 entries put markers and siblings in other blocks than what they classify.
+/// Nothing is deleted, since a class is not revised when a sibling it depended
 /// on is deleted later.
 #[test]
 fn classification() {
@@ -219,7 +219,7 @@ fn classification() {
 }
 
 /// The classifier pool answering at random points, interleaved with rescans and cancels, so
-/// answers arrive for nodes freed or reclassified since (scenario 13 at random).
+/// answers arrive for nodes freed or reclassified since.
 #[test]
 fn classifier_pool() {
     let cfg = SimConfig {

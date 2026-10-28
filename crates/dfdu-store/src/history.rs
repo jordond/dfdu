@@ -1,4 +1,4 @@
-//! Scan history (`safety-persistence-ops.md §3.4`): a SQLite database in the state directory
+//! Scan history: a SQLite database in the state directory
 //! with one summary row per scan and the sizes of a few thousand directories of it, the top
 //! levels, the big ones and every match of the rules. It is written after a scan finishes,
 //! never during it, in one transaction. Growth is only measured between scans of the same root

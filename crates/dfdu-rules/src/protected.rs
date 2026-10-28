@@ -1,4 +1,4 @@
-//! Protected paths (`categories-and-cleanup.md §8`): never offered for deletion, whatever the
+//! Protected paths: never offered for deletion, whatever the
 //! rules say. Fixed in the code; rule files cannot change them. A protected entry protects
 //! everything below it, except where an exception says otherwise (`/usr/local` below `/usr`).
 //!

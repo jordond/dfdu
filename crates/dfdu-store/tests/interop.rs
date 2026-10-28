@@ -1,4 +1,4 @@
-//! Interop with ncdu 2 (ROADMAP M7): a directory scanned by dfdu and by ncdu gives the same
+//! Interop with ncdu 2: a directory scanned by dfdu and by ncdu gives the same
 //! totals, and an export goes through ncdu (`ncdu -e -f FILE -o FILE`) and back unchanged.
 //! Skipped when `ncdu` is not installed.
 

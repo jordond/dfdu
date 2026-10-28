@@ -1,4 +1,4 @@
-//! Classification on the scan workers (architecture §6, `data-pipeline.md` §5.2-§5.3).
+//! Classification on the scan workers.
 //!
 //! The worker that stats a block classifies its entries against the job's rules before it sends
 //! the chunk, so categories appear during the scan and the cost is spread over the workers. What
@@ -12,7 +12,7 @@
 //!   subdirectory decides them, in its block when the listing is one block, or when the last
 //!   part of the listing ends. The class goes in the subdirectory's `Close`.
 //! - **When a wide parent's listing ends,** when a sibling may be in another block of the
-//!   parent (scenario 12 in `data-pipeline.md` §10.2): the parent keeps the names rules may ask
+//!   parent: the parent keeps the names rules may ask
 //!   about, and its last part checks the siblings. Such a subdirectory needs both its own
 //!   listing and its parent's, which end in either order; whichever ends second decides, under
 //!   the [`Rendezvous`] lock, and sends the class in its `Close`. Files in a wide directory do

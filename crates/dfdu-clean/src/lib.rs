@@ -37,7 +37,7 @@ pub struct Identity {
 pub enum Mode {
     Trash,
     /// Renamed into a staging directory on the item's filesystem, which takes no time, and
-    /// deleted in the background once the undo window has passed (architecture §7).
+    /// deleted in the background once the undo window has passed.
     Stage,
     Permanent,
 }

@@ -1,4 +1,4 @@
-//! The cleanup view (`3`, `tui-design.md` §2.4): every match of the rules, grouped by category
+//! The cleanup view (`3`): every match of the rules, grouped by category
 //! and safety, with the reclaimable total of each level. A group opens to its items (size,
 //! entries, age, path); the selected item's explanation and what deleting it loses are shown
 //! below. Marks are the list's: `d` and `D` delete what is marked through the same dialog.
@@ -201,7 +201,7 @@ fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// Whether `it` is marked by default (ROADMAP M6 preselection).
+/// Whether `it` is marked by default.
 fn recommended(app: &App, it: &Item, now: i64) -> bool {
     let Some(rules) = &app.snap.rules else {
         return false;

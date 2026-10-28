@@ -12,7 +12,7 @@ use crate::{DeleteResult, Mode, PlanItem, Refusal};
 
 /// Paths never deleted, whatever a plan or rule says: filesystem roots, top-level system
 /// directories, the kernel filesystems, the user's home directory itself, and everything at or
-/// below a protected path or name of `dfdu_rules::protected` (`categories-and-cleanup.md §8`).
+/// below a protected path or name of `dfdu_rules::protected`.
 /// Files tracked by version control are protected by the classifier, in the tree.
 pub fn is_protected(path: &Path) -> bool {
     static RULES: LazyLock<Protected> = LazyLock::new(|| Protected::new(&Env::current()));
