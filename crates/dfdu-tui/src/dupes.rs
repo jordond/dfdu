@@ -110,7 +110,7 @@ pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
                 min_size: MIN_SIZE,
                 threads: 4,
             };
-            let _ = result.set(dfdu_dupes::find(cands, &opts, &progress, &cancel));
+            let _ = result.set(dfdu_dupes::find(&cands, &opts, &progress, &cancel));
         });
     match spawned {
         Ok(_) => app.dupes.run = Some(run),
@@ -274,16 +274,16 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 return Some(Vec::new());
             };
             match rows.get(app.dupes.cursor) {
-                Some(&Row::File(g, i)) => {
-                    let c = f.groups[g].files[i].clone();
+                Some(&Row::File(group, file)) => {
+                    let c = f.groups[group].files[file].clone();
                     if let Some(n) = live(app, &c) {
                         let on = !app.marks.contains(n);
                         marks::set(app, mark_of(&c, n), on);
                     }
                     app.dupes.cursor = (app.dupes.cursor + 1).min(last);
                 }
-                Some(&Row::Group(g)) => {
-                    let picks = copies(app, &f.groups[g]);
+                Some(&Row::Group(group)) => {
+                    let picks = copies(app, &f.groups[group]);
                     let on = !picks.iter().all(|(_, n)| app.marks.contains(*n));
                     for (c, n) in &picks {
                         marks::set(app, mark_of(c, *n), on);
@@ -367,7 +367,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         count(found.compared)
     );
     if found.skipped > 0 {
-        summary += &format!(" · {} skipped", count(found.skipped));
+        summary.push_str(" · ");
+        summary.push_str(&count(found.skipped));
+        summary.push_str(" skipped");
     }
     let mut lines = vec![Line::styled(summary, t.fg_dim)];
     if rows.is_empty() {
@@ -384,8 +386,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width as usize;
     for (i, row) in rows.iter().enumerate().skip(scroll).take(fit) {
         let mut line = match *row {
-            Row::Group(g) => {
-                let gr = &found.groups[g];
+            Row::Group(group) => {
+                let gr = &found.groups[group];
                 let n = gr.files.iter().filter(|c| live(app, c).is_some()).count();
                 let free = if gr.all_clones() {
                     "clones: deleting copies frees nothing".to_string()
@@ -397,8 +399,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(format!(" · {free}"), t.fg_dim),
                 ])
             }
-            Row::File(g, j) => {
-                let c = &found.groups[g].files[j];
+            Row::File(group, file) => {
+                let c = &found.groups[group].files[file];
                 let marked = live(app, c).is_some_and(|n| app.marks.contains(n));
                 let mark = if marked { "●" } else { " " };
                 let date = crate::details::date(c.mtime);
@@ -444,7 +446,7 @@ mod tests {
         let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let dir = tmp.path().to_path_buf();
         fs::create_dir_all(dir.join("photos/old")).unwrap();
-        let data: Vec<u8> = (0..(MIN_SIZE as u32 + 5000))
+        let data: Vec<u8> = (0..(u32::try_from(MIN_SIZE).unwrap() + 5000))
             .map(|i| (i % 249) as u8)
             .collect();
         fs::write(dir.join("photos/a.jpg"), &data).unwrap();

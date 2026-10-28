@@ -1,13 +1,17 @@
 //! Applying scanner messages: the gate, chunks, closes, and pending accounting up to each
 //! job's root.
 
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+
 use dfdu_scan::{
-    Backend, Chunk, ChunkStatus, DirId, Entry, JobId, ListingStatus, Mark, ScanMsg, SkipReason,
+    Backend, Chunk, ChunkStatus, DirId, Entry, JobId, ListingStatus, Mark, Probe, ScanMsg,
+    SkipReason,
 };
-use dfdu_tree::{Class, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Totals};
+use dfdu_tree::{Class, DirRec, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Totals, Tree};
 
 use super::work::Work;
-use super::{Applier, JobPhase, Model, Slot, empty_dir_meta};
+use super::{Applier, Job, JobPhase, Model, Slot, empty_dir_meta};
 use crate::recent::Event;
 
 impl<B: Backend> Applier<B> {
@@ -16,7 +20,7 @@ impl<B: Backend> Applier<B> {
         m.status.stats.messages += 1;
         m.recent.push(Event::of_msg(&msg));
         match msg {
-            ScanMsg::Chunk(c) => self.apply_chunk(m, c),
+            ScanMsg::Chunk(c) => self.apply_chunk(m, &c),
             ScanMsg::Close {
                 job,
                 dir,
@@ -28,7 +32,7 @@ impl<B: Backend> Applier<B> {
                 m.status.stats.stalled += 1;
                 match self.gate(m, job, dir, None) {
                     Some(ix) => {
-                        let rec = m.tree.dir_mut(ix).expect("dir");
+                        let rec = dir_rec(&mut m.tree, ix);
                         if !rec.listing_closed {
                             rec.stalled = true;
                             if let Some(j) = self.jobs.get_mut(&job.0) {
@@ -100,9 +104,9 @@ impl<B: Backend> Applier<B> {
         st.discarded_cut += 1;
         let mut stop = vec![dir];
         if let Some((first, n)) = subdirs {
-            stop.extend((0..n as u32).map(|i| DirId(first.0 + i)));
+            stop.extend(subdir_ids(first, n));
         }
-        let j = self.jobs.get_mut(&job.0).expect("checked above");
+        let j = gated(&mut self.jobs, job);
         for &d in &stop[1..] {
             j.put(d, Slot::Dead);
         }
@@ -113,21 +117,19 @@ impl<B: Backend> Applier<B> {
         None
     }
 
-    fn apply_chunk(&mut self, m: &mut Model, c: Chunk) {
+    fn apply_chunk(&mut self, m: &mut Model, c: &Chunk) {
         m.status.stats.chunks += 1;
         let Some(ix) = self.gate(m, c.job, c.dir, Some((c.first_subdir, c.subdirs.len()))) else {
             return;
         };
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         if rec.listing_closed {
             // From a part that returned after the directory was abandoned. Its subdirectories
             // were never added, but tasks for them exist: stop them, and drop what they send
             // (as under a cut).
             m.status.stats.late += 1;
-            let ids: Vec<DirId> = (0..c.subdirs.len() as u32)
-                .map(|i| DirId(c.first_subdir.0 + i))
-                .collect();
-            let j = self.jobs.get_mut(&c.job.0).expect("gated job");
+            let ids: Vec<DirId> = subdir_ids(c.first_subdir, c.subdirs.len()).collect();
+            let j = gated(&mut self.jobs, c.job);
             for &d in &ids {
                 j.put(d, Slot::Dead);
             }
@@ -141,30 +143,18 @@ impl<B: Backend> Applier<B> {
             m.status.stats.duplicate += 1;
             return;
         }
-        if let Some(meta) = c.root_meta {
-            m.tree.update_meta(ix, &meta);
+        if let Some(meta) = &c.root_meta {
+            m.tree.update_meta(ix, meta);
         }
         if let Some(p) = c.probe.as_deref() {
-            if p.shares_extents {
-                self.extent_devs.insert(m.tree.dev_ino(ix).0);
-            }
-            if p.profile.is_some() && m.tree.flags(ix).has(NodeFlags::VISIBLE_ROOT) {
-                m.status.profile = p.profile;
-            }
-            if let Some(sv) = p.subvol.clone() {
-                m.tree.set_flag(ix, NodeFlags::SUBVOL, true);
-                m.tree.set_flag(ix, NodeFlags::RO_SUBVOL, sv.read_only);
-                m.subvols.insert(m.tree.node_ref(ix), sv);
-            }
+            self.apply_probe(m, ix, p);
         }
         m.tree
             .reserve_children(ix, c.files.len() + c.errors.len() + c.subdirs.len());
-        let j = self.jobs.get_mut(&c.job.0).expect("gated job");
-        let scope = j.scope;
+        let scope = gated(&mut self.jobs, c.job).scope;
         let mut delta = Totals::default();
         // Nodes of the entries that have marks, by entry, only when some have.
         let mut file_ix = Vec::new();
-        let mut subdir_ix = Vec::new();
         let marked = !c.marks.is_empty();
         for f in &c.files {
             let name = c.name(f.name);
@@ -194,66 +184,39 @@ impl<B: Backend> Applier<B> {
                 .add_file(ix, c.name(e.name), &meta, false, Some(e.err));
             delta.add(&m.tree.own(fx));
         }
-        let mut new_pending = 0;
-        for (i, s) in c.subdirs.iter().enumerate() {
-            let id = DirId(c.first_subdir.0 + i as u32);
-            let mut flags = 0;
-            if s.mount_root {
-                flags |= NodeFlags::MOUNT_ROOT;
-            }
-            match s.skip {
-                Some(SkipReason::DuplicateMount) => flags |= NodeFlags::DUP_MOUNT,
-                Some(SkipReason::Network) => flags |= NodeFlags::NETWORK,
-                Some(SkipReason::Kernel) => flags |= NodeFlags::KERNEL,
-                _ => {}
-            }
-            let cx = m.tree.add_dir_flagged(ix, c.name(s.name), &s.meta, flags);
-            if marked {
-                subdir_ix.push(cx);
-            }
-            let r = m.tree.node_ref(cx);
-            j.set(id, r);
-            let crec = m.tree.dir_mut(cx).expect("dir");
-            crec.job = c.job.0;
-            crec.dir_id = id.0;
-            if s.skip.is_some() {
-                crec.state = DirState::Skipped;
-                crec.close(DirState::Skipped);
-                crec.pending = 0;
-                crec.reported = true;
-            } else {
-                new_pending += 1;
-            }
-            delta.add(&m.tree.own(cx));
-        }
-        for (e, mark) in &c.marks {
-            let node = match *e {
-                Entry::File(i) => file_ix.get(i as usize),
-                Entry::Subdir(i) => subdir_ix.get(i as usize),
-            };
-            let Some(&node) = node else {
-                m.status.stats.corrupt += 1;
-                continue;
-            };
-            match *mark {
-                Mark::Class(class) => m.tree.set_class(node, Some(class)),
-                Mark::Protected => m.tree.set_protection(node, true, false),
-                Mark::Excepted => m.tree.set_protection(node, false, true),
-            }
-        }
+        let j = gated(&mut self.jobs, c.job);
+        let (new_pending, subdir_ix) = add_subdirs(&mut m.tree, ix, c, j, marked, &mut delta);
+        apply_marks(m, c, &file_ix, &subdir_ix);
         m.tree.propagate_add(ix, &delta);
         m.status.stats.entries += (c.files.len() + c.errors.len() + c.subdirs.len()) as u64;
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         rec.pending += new_pending;
         rec.chunks_seen += 1;
+        let seen = rec.chunks_seen;
         if c.status != ChunkStatus::Ok {
             m.tree.touch(ix);
         }
-        let seen = m.tree.dir(ix).expect("dir").chunks_seen;
-        let j = self.jobs.get_mut(&c.job.0).expect("gated job");
-        if j.held_close.get(&c.dir.0).is_some_and(|(n, _)| *n == seen) {
-            let (_, status) = j.held_close.remove(&c.dir.0).expect("held");
+        let j = gated(&mut self.jobs, c.job);
+        if j.held_close.get(&c.dir.0).is_some_and(|(n, _)| *n == seen)
+            && let Some((_, status)) = j.held_close.remove(&c.dir.0)
+        {
             self.close_with_status(m, c.job.0, ix, status);
+        }
+    }
+
+    /// What a chunk's probe says of its directory: whether it shares extents, its btrfs data
+    /// profile and subvolume.
+    fn apply_probe(&mut self, m: &mut Model, ix: Ix, p: &Probe) {
+        if p.shares_extents {
+            self.extent_devs.insert(m.tree.dev_ino(ix).0);
+        }
+        if p.profile.is_some() && m.tree.flags(ix).has(NodeFlags::VISIBLE_ROOT) {
+            m.status.profile = p.profile;
+        }
+        if let Some(sv) = p.subvol.clone() {
+            m.tree.set_flag(ix, NodeFlags::SUBVOL, true);
+            m.tree.set_flag(ix, NodeFlags::RO_SUBVOL, sv.read_only);
+            m.subvols.insert(m.tree.node_ref(ix), sv);
         }
     }
 
@@ -269,7 +232,7 @@ impl<B: Backend> Applier<B> {
         let Some(ix) = self.gate(m, job, dir, None) else {
             return;
         };
-        let rec = m.tree.dir(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         if rec.listing_closed {
             // After an abandon, the stuck worker's own Close is expected and late.
             if rec.outcome == DirState::Abandoned {
@@ -280,23 +243,25 @@ impl<B: Backend> Applier<B> {
             return;
         }
         let seen = rec.chunks_seen;
-        let j = self.jobs.get_mut(&job.0).expect("gated job");
+        let j = gated(&mut self.jobs, job);
         if j.held_close.contains_key(&dir.0) {
             m.status.stats.duplicate += 1;
             return;
         }
-        if seen == chunks {
-            self.close_with_status(m, job.0, ix, status);
-        } else if seen > chunks {
-            m.status.stats.corrupt += 1;
-            m.status.incomplete = true;
-            m.status.anomaly(format!(
-                "close with {chunks} chunks after {seen}: job {} dir {}",
-                job.0, dir.0
-            ));
-            self.close_with_status(m, job.0, ix, status);
-        } else {
-            j.held_close.insert(dir.0, (chunks, status));
+        match seen.cmp(&chunks) {
+            Ordering::Equal => self.close_with_status(m, job.0, ix, status),
+            Ordering::Greater => {
+                m.status.stats.corrupt += 1;
+                m.status.incomplete = true;
+                m.status.anomaly(format!(
+                    "close with {chunks} chunks after {seen}: job {} dir {}",
+                    job.0, dir.0
+                ));
+                self.close_with_status(m, job.0, ix, status);
+            }
+            Ordering::Less => {
+                j.held_close.insert(dir.0, (chunks, status));
+            }
         }
     }
 
@@ -340,7 +305,7 @@ impl<B: Backend> Applier<B> {
 
     /// Closes the directory's own listing and decrements its pending count.
     pub(super) fn close_listing(&mut self, m: &mut Model, job: u32, ix: Ix, outcome: DirState) {
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         debug_assert!(!rec.listing_closed);
         rec.close(outcome);
         let dir = rec.dir_id;
@@ -356,7 +321,7 @@ impl<B: Backend> Applier<B> {
 
     /// Decrements `ix`'s pending count and cascades completion upward.
     fn dec_pending(&mut self, m: &mut Model, job: u32, ix: Ix) {
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         debug_assert!(rec.pending > 0, "pending underflow");
         rec.pending = rec.pending.saturating_sub(1);
         if rec.pending > 0 {
@@ -364,7 +329,7 @@ impl<B: Backend> Applier<B> {
         }
         rec.state = rec.outcome;
         m.tree.touch(ix);
-        let rec = m.tree.dir_mut(ix).expect("dir");
+        let rec = dir_rec(&mut m.tree, ix);
         if rec.reported {
             return;
         }
@@ -404,4 +369,102 @@ impl<B: Backend> Applier<B> {
         });
         self.work.push_back(Work::FinishJob { job });
     }
+}
+
+/// The ids of a chunk's `n` subdirectories, the first `first`.
+fn subdir_ids(first: DirId, n: usize) -> impl Iterator<Item = DirId> {
+    (first.0..).take(n).map(DirId)
+}
+
+/// Adds the chunk's subdirectories below `ix`, recording them in job `j`; the number added
+/// that are to be scanned (not skipped), and their nodes by entry if the chunk has marks.
+fn add_subdirs(
+    tree: &mut Tree,
+    ix: Ix,
+    c: &Chunk,
+    j: &mut Job,
+    marked: bool,
+    delta: &mut Totals,
+) -> (u32, Vec<Ix>) {
+    let mut new_pending = 0;
+    let mut subdir_ix = Vec::new();
+    for (s, id) in c
+        .subdirs
+        .iter()
+        .zip(subdir_ids(c.first_subdir, c.subdirs.len()))
+    {
+        let mut flags = 0;
+        if s.mount_root {
+            flags |= NodeFlags::MOUNT_ROOT;
+        }
+        match s.skip {
+            Some(SkipReason::DuplicateMount) => flags |= NodeFlags::DUP_MOUNT,
+            Some(SkipReason::Network) => flags |= NodeFlags::NETWORK,
+            Some(SkipReason::Kernel) => flags |= NodeFlags::KERNEL,
+            _ => {}
+        }
+        let cx = tree.add_dir_flagged(ix, c.name(s.name), &s.meta, flags);
+        if marked {
+            subdir_ix.push(cx);
+        }
+        j.set(id, tree.node_ref(cx));
+        let crec = dir_rec(tree, cx);
+        crec.job = c.job.0;
+        crec.dir_id = id.0;
+        if s.skip.is_some() {
+            crec.state = DirState::Skipped;
+            crec.close(DirState::Skipped);
+            crec.pending = 0;
+            crec.reported = true;
+        } else {
+            new_pending += 1;
+        }
+        delta.add(&tree.own(cx));
+    }
+    (new_pending, subdir_ix)
+}
+
+/// Applies the chunk's marks to the nodes of its entries; a mark naming no entry is corrupt.
+fn apply_marks(m: &mut Model, c: &Chunk, file_ix: &[Ix], subdir_ix: &[Ix]) {
+    for (e, mark) in &c.marks {
+        let node = match *e {
+            Entry::File(i) => file_ix.get(i as usize),
+            Entry::Subdir(i) => subdir_ix.get(i as usize),
+        };
+        let Some(&node) = node else {
+            m.status.stats.corrupt += 1;
+            continue;
+        };
+        match *mark {
+            Mark::Class(class) => m.tree.set_class(node, Some(class)),
+            Mark::Protected => m.tree.set_protection(node, true, false),
+            Mark::Excepted => m.tree.set_protection(node, false, true),
+        }
+    }
+}
+
+/// The record of directory `ix`.
+///
+/// # Panics
+///
+/// If `ix` is not a directory.
+#[expect(
+    clippy::expect_used,
+    reason = "job slots, gated messages and pending counts only ever name directories"
+)]
+fn dir_rec(tree: &mut Tree, ix: Ix) -> &mut DirRec {
+    tree.dir_mut(ix).expect("a directory")
+}
+
+/// Job `job`, which [`Applier::gate`] found running.
+///
+/// # Panics
+///
+/// If there is no such job.
+#[expect(
+    clippy::expect_used,
+    reason = "called for a job the gate found, which nothing removes while its message applies"
+)]
+fn gated(jobs: &mut BTreeMap<u32, Job>, job: JobId) -> &mut Job {
+    jobs.get_mut(&job.0).expect("a gated job")
 }

@@ -74,6 +74,10 @@ const EXIT_CODES: &str = "Exit codes:
     args_conflicts_with_subcommands = true,
     after_long_help = EXIT_CODES
 )]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "command-line flags, each an independent switch"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -116,6 +120,10 @@ struct Cli {
     theme: String,
     /// Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given
     /// here is used even when NO_COLOR is set.
+    #[expect(
+        clippy::doc_markdown,
+        reason = "clap prints this as the help text, where backticks would show"
+    )]
     #[arg(long, value_name = "WHEN", default_value = "auto", value_parser = color_flag)]
     color: ColorFlag,
     /// Do not capture the mouse (click to select, double-click to open, wheel to scroll). While
@@ -185,7 +193,7 @@ fn man(dir: &Path) -> ExitCode {
         clap_mangen::Man::new(cmd.clone()).render(&mut out)?;
         for sub in cmd.get_subcommands().filter(|s| !s.is_hide_set()) {
             let name: &'static str = format!("dfdu-{}", sub.get_name()).leak();
-            let page = sub.clone().name(name).bin_name(name.replacen("-", " ", 1));
+            let page = sub.clone().name(name).bin_name(name.replacen('-', " ", 1));
             let mut out = std::fs::File::create(dir.join(format!("{name}.1")))?;
             clap_mangen::Man::new(page).render(&mut out)?;
         }
@@ -203,6 +211,10 @@ fn man(dir: &Path) -> ExitCode {
 /// Which mounts below the scanned directory are descended into. Kernel filesystems (`/proc`,
 /// `/sys`, cgroups) never are.
 #[derive(Args, Clone, Copy, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "command-line flags, each an independent switch"
+)]
 struct MountArgs {
     /// Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts
     /// and --network given before it).
@@ -271,7 +283,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_tui::rules_dir();
+        let dir = dfdu_engine::rules_dir();
         let (set, errors) = dfdu_rules::load(&dfdu_rules::Env::current(), dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");
@@ -285,7 +297,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_tui::rules_dir();
+        let dir = dfdu_engine::rules_dir();
         let (files, errors) = dfdu_rules::sources(dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");
@@ -306,7 +318,7 @@ fn seconds(s: &str) -> Result<f64, String> {
 }
 
 fn type_filter(s: &str) -> Result<TypeFilter, String> {
-    let f = TypeFilter::parse(s)?;
+    let f = TypeFilter::parse(s).map_err(|e| e.to_string())?;
     if f.is_empty() {
         return Err("name at least one type or extension".into());
     }
@@ -353,18 +365,18 @@ fn main() -> ExitCode {
         Some(Cmd::Scan(args)) => scan::run(args),
         Some(Cmd::Disks) => disks::run(),
         Some(Cmd::Report(args)) => match (RuleArgs::default()).load() {
-            Some(rules) => report::run(args, rules),
+            Some(rules) => report::run(&args, &rules),
             None => ExitCode::from(1),
         },
         Some(Cmd::Clean(args)) => match (RuleArgs::default()).load() {
-            Some(rules) => clean::run(args, rules),
+            Some(rules) => clean::run(&args, &rules),
             None => ExitCode::from(1),
         },
-        Some(Cmd::Diff(args)) => history::diff(args),
+        Some(Cmd::Diff(args)) => history::diff(&args),
         Some(Cmd::History(args)) => history::list(args),
-        Some(Cmd::Dupes(args)) => dupes::run(args),
-        Some(Cmd::Export(args)) => transfer::export(args),
-        Some(Cmd::Import(args)) => transfer::import(args),
+        Some(Cmd::Dupes(args)) => dupes::run(&args),
+        Some(Cmd::Export(args)) => transfer::export(&args),
+        Some(Cmd::Import(args)) => transfer::import(&args),
         Some(Cmd::Recover(args)) => recover::run(args),
         Some(Cmd::Man { dir }) => man(&dir),
         Some(Cmd::Agent { threads }) => remote::agent(threads),

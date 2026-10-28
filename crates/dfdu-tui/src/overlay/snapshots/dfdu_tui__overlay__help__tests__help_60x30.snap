@@ -1,0 +1,34 @@
+---
+source: crates/dfdu-tui/src/overlay/help.rs
+expression: frame
+---
+ dfdu  /r                                  ⠋ scanning 00:00
+ 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+  ┃ Navigate                                             ┃
+  ┃ ↑ k              move up                             ┃
+  ┃ ↓ j              move down                           ┃
+  ┃ PgUp             page up                             ┃
+  ┃ PgDn             page down                           ┃
+  ┃ g Home           first entry                         ┃
+  ┃ G End            last entry                          ┃
+  ┃ → l Enter        open directory                      ┃
+  ┃ ← h Backspace <  parent directory                    ┃
+  ┃                                                      ┃
+  ┃ Sort                                                 ┃
+  ┃ s  sort by size (again: reverse)                     ┃
+  ┃ n  sort by name (again: reverse)                     ┃
+  ┃ C  sort by items (again: reverse)                    ┃
+  ┃ M  sort by modification time (again: reverse)        ┃
+  ┃ S  re-sort now                                       ┃
+  ┃                                                      ┃
+  ┃ Display                                              ┃
+  ┃ 1  list view                                         ┃
+  ┃ 2  treemap view                                      ┃
+  ┃ 3  cleanup view: what the rules found, by safety     ┃
+  ┃ 4  duplicate files (compares the scanned files)      ┃
+  ┃ +  treemap: one level deeper                         ┃
+  ┃ -  treemap: one level less                           ┃
+  ┃ p  treemap: colour by top folder or age              ┃
+  ┃ a  toggle apparent size / disk usage                 ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
+ ↑↓ scroll  PgUp PgDn page  / search  Esc close

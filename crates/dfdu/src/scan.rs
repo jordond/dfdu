@@ -6,20 +6,21 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::Args;
-use dfdu_engine::{Command, Engine, EngineOptions};
+use dfdu_engine::{Command, Engine, EngineOptions, SizeMode};
 use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tui::SizeMode;
 
 use crate::launch::{self, Local};
 use crate::table::{
     notes, print_by_type, print_debug_stats, print_errors, print_footer, print_tree, shown_total,
 };
-use crate::{
-    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, remote, report, transfer, written,
-};
+use crate::{EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, remote, transfer, written};
 
 #[derive(Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "command-line flags, each an independent switch"
+)]
 pub struct ScanArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
@@ -84,6 +85,10 @@ pub struct ScanArgs {
     pub debug_stats: bool,
     /// Filesystem access: `native` (the fastest for this system) or `portable` (std::fs, the
     /// reference the native backends are tested against).
+    #[expect(
+        clippy::doc_markdown,
+        reason = "clap prints this as the help text, where backticks would show"
+    )]
     #[arg(long, value_enum, default_value_t = BackendArg::Native, hide = true)]
     pub backend: BackendArg,
 }
@@ -104,6 +109,10 @@ pub enum BackendArg {
 
 impl ScanArgs {
     /// What `dfdu scan` gets without arguments.
+    #[expect(
+        clippy::expect_used,
+        reason = "every argument of `dfdu scan` has a default, so no arguments parse"
+    )]
     pub fn defaults() -> ScanArgs {
         use clap::FromArgMatches;
         let matches = ScanArgs::augment_args(clap::Command::new("scan")).get_matches_from(["scan"]);
@@ -120,7 +129,8 @@ pub fn run(args: ScanArgs) -> ExitCode {
         auto_abandon: Some(Duration::from_secs_f64(args.stall_abandon)),
         ..EngineOptions::from_env()
     };
-    opts.limits.stall_ns = Duration::from_secs_f64(args.stall_after).as_nanos() as u64;
+    opts.limits.stall_ns =
+        u64::try_from(Duration::from_secs_f64(args.stall_after).as_nanos()).unwrap_or(u64::MAX);
     if let Some(n) = args.measure_workers {
         opts.measure_workers = n;
     }
@@ -194,7 +204,7 @@ fn scan_with<B: Backend>(
     // The history is about this host's files.
     let no_history = no_history || remote.is_some();
     let t0 = Instant::now();
-    let started = report::now_secs();
+    let started = dfdu_tree::now_secs();
     let engine = match launch::run_scan(engine, Command::Scan { path, opts: job }) {
         Ok(e) => e,
         Err(code) => return code,
@@ -220,7 +230,7 @@ fn scan_with<B: Backend>(
                 mode,
                 depth,
                 top,
-                elapsed_ms: elapsed.as_millis() as u64,
+                elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
                 note: &|ix| notes(m, ix),
             };
             let w = &mut std::io::BufWriter::new(std::io::stdout().lock());

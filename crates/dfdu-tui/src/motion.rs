@@ -3,7 +3,7 @@
 //!
 //! Every animation ends: a bar stops easing within a sixteenth of a cell of its target, rank
 //! markers go after [`MARKERS`], the flash of moved rows after [`FLASH`] and the fade of a
-//! deleted row after [`FADE`]. The colour effects ([`effects`]) run only at TrueColor, on a
+//! deleted row after [`FADE`]. The colour effects ([`effects`]) run only at `TrueColor`, on a
 //! background that is known or that the theme's RGB text colour was chosen for
 //! ([`effects::rgb_effects`]); otherwise moved rows flash reversed (except the selected one,
 //! which keeps its highlight) and deleted rows are only struck through.
@@ -15,13 +15,15 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use dfdu_engine::SizeMode;
 use dfdu_tree::NodeRef;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::snapshot::{EntryData, Mark, SizeMode, Snapshot};
+use crate::snapshot::{EntryData, Mark, Snapshot};
+use crate::theme::ratio;
 
 /// Time between animation frames.
 const FRAME: Duration = Duration::from_millis(33);
@@ -240,7 +242,7 @@ fn moves(old_rows: &[usize], new_rows: &[usize], len: usize) -> Vec<i32> {
     let mut r = 0;
     for &i in new_rows {
         if rank[i] < IN_NEW {
-            moves[i] = rank[i] as i32 - r;
+            moves[i] = i32::try_from(rank[i]).unwrap_or(i32::MAX).saturating_sub(r);
             r += 1;
         }
     }
@@ -283,14 +285,14 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     }
 
     let entries = &app.snap.entries;
-    let largest = app.rows_largest.max(1) as f64;
+    let largest = app.rows_largest.max(1);
     let step = 1.0 - (-dt.as_secs_f64() / TAU).exp();
     let mut easing = false;
     let mut bars = std::mem::take(&mut m.spare);
     bars.clear();
     for &i in visible {
         let e = &entries[i];
-        let target = e.size as f64 / largest;
+        let target = ratio(e.size, largest);
         let shown = match m.bars.get(&e.node) {
             Some(&s) => {
                 let s = s + (target - s) * step;
@@ -374,7 +376,7 @@ pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
     let m = &app.motion;
     let rgb = effects::rgb_effects(&app.theme);
     let flash = m.flash_at.map(|t| now.saturating_duration_since(t));
-    if !m.on || (flash.is_none() && !(rgb && !m.ghosts.is_empty())) {
+    if !m.on || (flash.is_none() && (!rgb || m.ghosts.is_empty())) {
         return;
     }
     // Reversing the selected row would take its highlight off.

@@ -42,6 +42,7 @@ impl FileType {
         FileType::Other,
     ];
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             FileType::Video => "video",
@@ -60,6 +61,7 @@ impl FileType {
 
     /// The type named `s`; also accepts a few plural and common names (`videos`, `pictures`,
     /// `photo`, `docs`).
+    #[must_use]
     pub fn parse(s: &str) -> Option<FileType> {
         let s = s.trim().to_ascii_lowercase();
         let s = s.strip_suffix('s').filter(|t| !t.is_empty()).unwrap_or(&s);
@@ -103,6 +105,7 @@ impl Ext {
     /// The extension of a file named `name`: the text after the last `.`, if the name has
     /// something before the dot and the extension is 1 to [`Ext::MAX`] ASCII letters and
     /// digits. `archive.tar.gz` gives `gz`; `.bashrc` and `notes.` give none.
+    #[must_use]
     pub fn of(name: &[u8]) -> Option<Ext> {
         let dot = name.iter().rposition(|&b| b == b'.')?;
         Ext::new(&name[dot + 1..]).filter(|_| dot > 0)
@@ -119,16 +122,18 @@ impl Ext {
             *d = b.to_ascii_lowercase();
         }
         Some(Ext {
-            len: s.len() as u8,
+            len: u8::try_from(s.len()).ok()?,
             bytes,
         })
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         // Only ASCII letters and digits are stored.
         std::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 
+    #[must_use]
     pub fn file_type(&self) -> FileType {
         type_of_ext(self.as_str())
     }
@@ -147,12 +152,15 @@ impl fmt::Display for Ext {
 }
 
 /// The type of a file named `name`.
+#[must_use]
 pub fn type_of(name: &[u8]) -> FileType {
     Ext::of(name).map_or(FileType::Other, |e| e.file_type())
 }
 
 fn type_of_ext(e: &str) -> FileType {
-    use FileType::*;
+    use FileType::{
+        Archive, Audio, Code, Data, DiskImage, Document, Executable, Font, Image, Other, Video,
+    };
     match e {
         "mp4" | "m4v" | "mov" | "mkv" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "m2v"
         | "mts" | "m2ts" | "3gp" | "ogv" | "vob" | "mxf" | "rmvb" | "braw" | "r3d" => Video,
@@ -193,6 +201,20 @@ fn type_of_ext(e: &str) -> FileType {
     }
 }
 
+/// A word in a type filter that is neither a type name nor a valid extension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeFilterError {
+    pub word: String,
+}
+
+impl fmt::Display for TypeFilterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`{}` is neither a file type nor an extension", self.word)
+    }
+}
+
+impl std::error::Error for TypeFilterError {}
+
 /// Which files to count: those of any of the chosen types or with any of the chosen
 /// extensions. An empty filter matches every file.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
@@ -204,28 +226,37 @@ pub struct TypeFilter {
 impl TypeFilter {
     /// Reads a comma- or space-separated list of type names and extensions: `video, .iso,
     /// pdf`. A word with a leading dot, or that is not a type name, is an extension.
-    pub fn parse(s: &str) -> Result<TypeFilter, String> {
+    ///
+    /// # Errors
+    ///
+    /// A word is neither a type name nor a valid extension.
+    pub fn parse(s: &str) -> Result<TypeFilter, TypeFilterError> {
         let mut f = TypeFilter::default();
         for w in s.split([',', ' ']).filter(|w| !w.is_empty()) {
             match FileType::parse(w).filter(|_| !w.starts_with('.')) {
                 Some(t) => f.toggle_type(t),
                 None => match Ext::new(w.as_bytes()) {
                     Some(e) => f.add_ext(e),
-                    None => return Err(format!("`{w}` is neither a file type nor an extension")),
+                    None => {
+                        return Err(TypeFilterError { word: w.to_owned() });
+                    }
                 },
             }
         }
         Ok(f)
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.types == 0 && self.exts.is_empty()
     }
 
+    #[must_use]
     pub fn has_type(&self, t: FileType) -> bool {
         self.types & t.bit() != 0
     }
 
+    #[must_use]
     pub fn has_ext(&self, e: &Ext) -> bool {
         self.exts.contains(e)
     }
@@ -253,11 +284,13 @@ impl TypeFilter {
         FileType::ALL.into_iter().filter(|&t| self.has_type(t))
     }
 
+    #[must_use]
     pub fn exts(&self) -> &[Ext] {
         &self.exts
     }
 
     /// Whether a file named `name` counts.
+    #[must_use]
     pub fn matches(&self, name: &[u8]) -> bool {
         if self.is_empty() {
             return true;
@@ -318,6 +351,10 @@ impl Breakdown {
 /// symlinks and other entries count nothing themselves; data shared between files that is
 /// counted at a directory (btrfs extents, hard links charged once) is left out. Linear in the
 /// size of the subtree.
+#[expect(
+    clippy::must_use_candidate,
+    reason = "a caller may want only the breakdown it fills in"
+)]
 pub fn sum(
     tree: &Tree,
     ix: Ix,
@@ -325,7 +362,7 @@ pub fn sum(
     mut breakdown: Option<&mut Breakdown>,
 ) -> Totals {
     let mut out = Totals::default();
-    let mut add = |c: Ix| {
+    let add = |c: Ix| {
         if tree.kind(c) == Kind::File {
             let name = tree.name(c);
             if filter.matches(name) {
@@ -342,20 +379,7 @@ pub fn sum(
             }
         }
     };
-    if tree.dir(ix).is_none() {
-        add(ix);
-        return out;
-    }
-    let mut stack = vec![ix];
-    while let Some(d) = stack.pop() {
-        for c in tree.children(d) {
-            if tree.dir(c).is_some() {
-                stack.push(c);
-            } else {
-                add(c);
-            }
-        }
-    }
+    tree.for_each_leaf(ix, add);
     out
 }
 
@@ -402,7 +426,11 @@ mod tests {
         // A type name with a dot is an extension.
         let f = TypeFilter::parse(".data").unwrap();
         assert!(f.matches(b"x.data") && !f.matches(b"x.csv"));
-        assert!(TypeFilter::parse("a/b").is_err());
+        let err = TypeFilter::parse("a/b").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`a/b` is neither a file type nor an extension"
+        );
         assert!(TypeFilter::default().matches(b"anything"));
         let other = TypeFilter::parse("other").unwrap();
         assert!(other.matches(b"README") && other.matches(b"a.xyz") && !other.matches(b"a.mp3"));
@@ -445,8 +473,11 @@ mod tests {
     /// for the picker's breakdown), on 1M entries in 10k directories.
     /// `cargo test --release -p dfdu-tree sum_cost -- --ignored --nocapture`.
     #[test]
-    #[ignore]
+    #[ignore = "benchmark: run in release with --nocapture"]
     fn sum_cost() {
+        const NAMES: [&str; 8] = [
+            "a.mp4", "b.txt", "c.rs", "d.jpg", "Makefile", "e.tar.gz", "f.json", "g.o",
+        ];
         let meta = |kind| Meta {
             kind,
             apparent: 1000,
@@ -457,9 +488,6 @@ mod tests {
             nlink: 1,
             mount: 0,
         };
-        const NAMES: [&str; 8] = [
-            "a.mp4", "b.txt", "c.rs", "d.jpg", "Makefile", "e.tar.gz", "f.json", "g.o",
-        ];
         let mut t = Tree::new();
         let root = t.new_root(b"/r", &meta(Kind::Dir), true);
         for d in 0..100 {

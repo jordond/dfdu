@@ -1,12 +1,12 @@
 //! The tables `dfdu scan` and `dfdu import` print: the tree, disk usage by type, the entries
 //! not read, and the summary on stderr.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
-use dfdu_engine::{Model, Timing};
+use dfdu_engine::{Model, SizeMode, Timing};
 use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
-use dfdu_tui::SizeMode;
 
 fn size(tree: &Tree, ix: Ix, mode: SizeMode) -> u64 {
     mode.of(&tree.total(ix))
@@ -37,7 +37,7 @@ pub fn print_tree(
     }
     outln!(
         "{:>10}  {}{}",
-        dfdu_tui::human(mode.of(&root_total)),
+        dfdu_engine::human(mode.of(&root_total)),
         String::from_utf8_lossy(tree.name(root)),
         note(m, root)
     );
@@ -48,7 +48,7 @@ pub fn print_tree(
             let slash = if tree.dir(ix).is_some() { "/" } else { "" };
             outln!(
                 "{:>10}  {}{}{}{}",
-                dfdu_tui::human(bytes),
+                dfdu_engine::human(bytes),
                 "  ".repeat(d),
                 String::from_utf8_lossy(tree.name(ix)),
                 slash,
@@ -62,7 +62,7 @@ pub fn print_tree(
         if mode == SizeMode::Disk && filter.is_none() && tree.home(ix) > 0 {
             outln!(
                 "{:>10}  {}(shared between entries)",
-                dfdu_tui::human(tree.home(ix)),
+                dfdu_engine::human(tree.home(ix)),
                 "  ".repeat(d + 1)
             );
         }
@@ -107,7 +107,7 @@ pub fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&Type
     for (ty, t) in types {
         outln!(
             "{:>10}  {:<12}{:>14}",
-            dfdu_tui::human(mode.of(&t)),
+            dfdu_engine::human(mode.of(&t)),
             ty.name(),
             files(t.items)
         );
@@ -119,7 +119,7 @@ pub fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&Type
         for (e, t) in exts.iter().take(15) {
             outln!(
                 "{:>10}  {:<12}{:>14}  {}",
-                dfdu_tui::human(mode.of(t)),
+                dfdu_engine::human(mode.of(t)),
                 format!(".{e}"),
                 files(t.items),
                 e.file_type()
@@ -138,10 +138,10 @@ pub fn note(m: &Model, ix: Ix) -> String {
 pub fn notes(m: &Model, ix: Ix) -> String {
     let tree = &m.tree;
     let mut parts = vec![];
-    if let Some(p) = dfdu_tui::problem(tree, ix) {
+    if let Some(p) = dfdu_engine::problem(tree, ix) {
         parts.push(p);
     }
-    match dfdu_tui::errors_below(tree, ix) {
+    match dfdu_engine::errors_below(tree, ix) {
         0 => {}
         1 => parts.push("1 error inside".into()),
         n => parts.push(format!("{n} errors inside")),
@@ -155,7 +155,7 @@ pub fn notes(m: &Model, ix: Ix) -> String {
     } else if tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped) {
         parts.push("other filesystem, not scanned (--cross-mounts)".to_string());
     }
-    if let Some(l) = dfdu_tui::subvol_label(m, ix) {
+    if let Some(l) = dfdu_engine::subvol_label(m, ix) {
         parts.push(l);
     }
     if tree.flags(ix).has(NodeFlags::COMPRESSED) {
@@ -165,7 +165,7 @@ pub fn notes(m: &Model, ix: Ix) -> String {
     if out > 0 {
         parts.push(format!(
             "{} also used outside the scan",
-            dfdu_tui::human(out)
+            dfdu_engine::human(out)
         ));
     }
     parts.join("; ")
@@ -173,7 +173,7 @@ pub fn notes(m: &Model, ix: Ix) -> String {
 
 /// Every entry that could not be read, in path order.
 pub fn print_errors(m: &Model, root: Ix) {
-    let list = dfdu_tui::errors(&m.tree, root, usize::MAX);
+    let list = dfdu_engine::errors(&m.tree, root, usize::MAX);
     if list.items.is_empty() {
         return;
     }
@@ -208,10 +208,10 @@ pub fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
         }
     );
     if t.errors > 0 {
-        let list = dfdu_tui::errors(&m.tree, root, 0);
+        let list = dfdu_engine::errors(&m.tree, root, 0);
         let mut line = format!("not read: {}", list.summary());
         if let Some(h) = list.hint() {
-            line += &format!("; {h}");
+            let _ = write!(line, "; {h}");
         }
         if !listed {
             line += "; --errors lists them";
@@ -226,12 +226,12 @@ pub fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
         };
         eprintln!(
             "{} less than du ({}): {why} (--like-du for du's number)",
-            dfdu_tui::human(t.referenced - t.alloc),
-            dfdu_tui::human(t.referenced)
+            dfdu_engine::human(t.referenced - t.alloc),
+            dfdu_engine::human(t.referenced)
         );
     }
     if let Some((name, ratio)) = m.status.profile
-        && ratio != 1.0
+        && (ratio - 1.0).abs() > f64::EPSILON
     {
         eprintln!("btrfs data profile {name}: each byte is stored {ratio:.1} times");
     }
@@ -257,6 +257,10 @@ pub fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
 
 /// `--debug-stats`: what went through the pipeline and how the applier spent its time (entries
 /// applied per second of lock time, hold and wait times per slice).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "counts shown as rates and MiB to one or two decimals"
+)]
 pub fn print_debug_stats(m: &Model) {
     let s = &m.status.stats;
     let t = &m.status.timing;
@@ -278,10 +282,10 @@ pub fn print_debug_stats(m: &Model) {
         "tree: {} nodes, {:.1} MiB of names ({:.1} MiB freed), {:.1} MiB of child lists \
          ({:.1} MiB freed)",
         m.tree.live_nodes(),
-        names as f64 / 1048576.0,
-        garbage as f64 / 1048576.0,
-        kids as f64 * 4.0 / 1048576.0,
-        kids_freed as f64 * 4.0 / 1048576.0
+        names as f64 / 1_048_576.0,
+        garbage as f64 / 1_048_576.0,
+        kids as f64 * 4.0 / 1_048_576.0,
+        kids_freed as f64 * 4.0 / 1_048_576.0
     );
     let locked = Duration::from_nanos(t.locked_ns);
     let rate = s.entries as f64 / locked.as_secs_f64().max(1e-9);

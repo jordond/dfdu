@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::*;
 use crate::snapshot::test_entry;
-use crate::tests::render_buffer;
+use crate::tests::{render_buffer, row_names};
 use crate::theme::{ColorLevel, Theme};
 
 const W: u16 = 80;
@@ -43,13 +43,6 @@ fn shown(app: &App, name: &str) -> f64 {
         .find(|e| &e.name[..] == name.as_bytes())
         .expect("entry");
     bar(app, e, f64::NAN)
-}
-
-fn names(app: &App) -> Vec<String> {
-    app.rows
-        .iter()
-        .map(|&i| String::from_utf8_lossy(&app.snap.entries[i].name).into_owned())
-        .collect()
 }
 
 /// The list rows of a frame `H` lines high, without the header, status line and footer (they

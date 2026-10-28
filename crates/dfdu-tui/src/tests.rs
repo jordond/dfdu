@@ -14,6 +14,7 @@ mod frames;
 mod matrix;
 mod soak;
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -86,7 +87,7 @@ pub(crate) fn styled(buf: &Buffer) -> String {
             }
         }
         if !runs.is_empty() {
-            out.push_str(&format!("L{} {}\n", row - area.y, runs.join(" | ")));
+            let _ = writeln!(out, "L{} {}", row - area.y, runs.join(" | "));
         }
     }
     out
@@ -245,6 +246,22 @@ pub(crate) fn shared_model() -> dfdu_engine::Model {
 }
 
 /// A press of `code` without modifiers.
+/// Types `s` into whatever has the keyboard (an overlay's search, the filter), checking that no
+/// key had an effect for the run loop.
+pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
+    for c in s.chars() {
+        assert!(app.key(press(KeyCode::Char(c)), now).is_empty());
+    }
+}
+
+/// The names of the list rows, in display order.
+pub(crate) fn row_names(app: &App) -> Vec<String> {
+    app.rows
+        .iter()
+        .map(|&i| String::from_utf8_lossy(&app.snap.entries[i].name).into_owned())
+        .collect()
+}
+
 pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }

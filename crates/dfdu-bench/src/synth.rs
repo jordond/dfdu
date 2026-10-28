@@ -15,7 +15,7 @@ use std::sync::Arc;
 use dfdu_scan::{Backend, Block, DirStream, FsClass, Raw, RawBlock, Storage};
 use dfdu_tree::{Kind, Meta};
 
-use crate::{Entry, Plan};
+use crate::{Entry, Plan, index};
 
 /// Path of the root of a synthetic tree.
 pub const ROOT: &str = "/synth";
@@ -39,6 +39,7 @@ pub struct SynthTree {
 }
 
 impl SynthTree {
+    #[must_use]
     pub fn new(plan: Plan) -> SynthTree {
         let n = plan.dirs.len();
         let mut count = vec![0u32; n + 1];
@@ -53,7 +54,7 @@ impl SynthTree {
         let mut next = count;
         for (i, d) in plan.dirs.iter().enumerate().skip(1) {
             let p = d.parent as usize;
-            subdirs[next[p] as usize] = i as u32;
+            subdirs[next[p] as usize] = index(i);
             next[p] += 1;
         }
         let mut first_ino = Vec::with_capacity(n);
@@ -79,6 +80,7 @@ impl SynthTree {
     }
 
     /// Entries in the tree, the root not included.
+    #[must_use]
     pub fn entries(&self) -> u64 {
         (self.plan.dirs.len() - 1) as u64
             + self
@@ -101,8 +103,8 @@ impl SynthTree {
             alloc: 4096,
             mtime: MTIME,
             dev: DEV,
-            ino: d as u64 + 1,
-            nlink: 2 + self.subdirs(d).len() as u32,
+            ino: u64::from(d) + 1,
+            nlink: 2 + index(self.subdirs(d).len()),
             mount: MOUNT,
         }
     }
@@ -116,7 +118,7 @@ impl SynthTree {
                     Kind::File,
                     size,
                     alloc(size),
-                    self.first_ino[d as usize] + k as u64,
+                    self.first_ino[d as usize] + u64::from(k),
                     nlink,
                 )
             }
@@ -128,7 +130,7 @@ impl SynthTree {
                     Kind::File,
                     size,
                     alloc(size),
-                    self.first_ino[ld as usize] + lf as u64,
+                    self.first_ino[ld as usize] + u64::from(lf),
                     self.nlink[&(ld, lf)],
                 )
             }
@@ -136,7 +138,7 @@ impl SynthTree {
                 Kind::Symlink,
                 t.len() as u64,
                 0,
-                self.first_ino[d as usize] + k as u64,
+                self.first_ino[d as usize] + u64::from(k),
                 1,
             ),
         };
@@ -164,6 +166,7 @@ pub struct SynthBackend(pub Arc<SynthTree>);
 
 impl SynthBackend {
     /// The tree `dfdu-bench gen --entries ENTRIES --seed SEED --wide WIDE` creates.
+    #[must_use]
     pub fn generate(entries: u64, seed: u64, wide: u64) -> SynthBackend {
         SynthBackend(Arc::new(SynthTree::new(Plan::generate(
             entries, seed, wide,
@@ -173,6 +176,15 @@ impl SynthBackend {
     /// Makes each entry cost `ns` of CPU time to stat, as a real `statx` does (1-2 µs with a
     /// warm cache), so workers compete with the applier for CPUs as in a real scan. Without
     /// it workers produce entries much faster than the applier takes them.
+    ///
+    /// # Panics
+    ///
+    /// If the backend was cloned before this call: the cost is set on the tree the clones share.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "setting the cost on a shared tree would change the clones too; a builder misuse"
+    )]
     pub fn with_stat_ns(mut self, ns: u64) -> SynthBackend {
         Arc::get_mut(&mut self.0).expect("not shared yet").stat_ns = ns;
         self
@@ -234,7 +246,7 @@ impl RawBlock<u32> for SynthRaw {
                 let name = t.plan.dirs[c as usize].name.as_bytes();
                 out.push(name, Ok(t.dir_meta(c)), Some(c));
             } else {
-                let k = (i - subs.len()) as u32;
+                let k = index(i - subs.len());
                 self.name.clear();
                 let _ = match t.plan.dirs[self.dir as usize].entries[k as usize] {
                     Entry::Data(_) => write!(self.name, "f{k:x}.dat"),
@@ -298,7 +310,7 @@ mod tests {
                 for e in &block.entries {
                     seen += 1;
                     let m = e.meta.as_ref().unwrap();
-                    links += m.is_hardlink() as u64;
+                    links += u64::from(m.is_hardlink());
                     if let Some(c) = e.child {
                         assert_eq!(
                             block.name(e.name),

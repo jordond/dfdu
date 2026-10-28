@@ -15,6 +15,7 @@ use crate::{DeleteResult, Mode, PlanItem, Refusal};
 /// `dfdu_rules::protected`, with its exceptions, so the tree
 /// and this check agree on what may be deleted. Files tracked by version control are protected
 /// by the classifier, in the tree.
+#[must_use]
 pub fn is_protected(path: &Path) -> bool {
     // One snapshot of the environment for the protected paths and the home directory.
     static RULES: LazyLock<(Protected, Option<String>)> = LazyLock::new(|| {
@@ -141,6 +142,11 @@ fn mount_inside(dir: &Path, dev: u64) -> Option<std::path::PathBuf> {
 }
 
 /// Checks an item before deletion. `Ok` means it may be deleted now.
+///
+/// # Errors
+///
+/// The result to report instead of deleting: refused (outside the scan root, protected, on
+/// another filesystem), gone, or changed since the scan.
 pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), DeleteResult> {
     let path = &item.path;
     if !path.is_absolute() || !scan_root.is_absolute() {

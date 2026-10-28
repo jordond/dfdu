@@ -74,6 +74,10 @@ impl<W: io::Write> ZstdWriter<W> {
     }
 
     /// Writes the last frame and flushes.
+    ///
+    /// # Errors
+    ///
+    /// When the inner writer fails to write or flush.
     pub fn finish(mut self) -> io::Result<W> {
         self.frame()?;
         self.inner.flush()?;
@@ -121,9 +125,17 @@ impl<R: io::BufRead> io::Read for ZstdReader<R> {
                     return Ok(n);
                 }
                 // The frame ended; another may follow.
-                self.src = Some(self.frame.take().expect("frame").into_inner());
+                if let Some(d) = self.frame.take() {
+                    self.src = Some(d.into_inner());
+                }
             }
-            let mut src = self.src.take().expect("source");
+            // A frame that failed to start took the source with it.
+            let Some(mut src) = self.src.take() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "read past a bad zstd frame",
+                ));
+            };
             if src.fill_buf()?.is_empty() {
                 self.src = Some(src);
                 return Ok(0);
@@ -139,6 +151,12 @@ impl<R: io::BufRead> io::Read for ZstdReader<R> {
 /// renamed over it, and the directory synced, so a crash leaves the old file or the new one.
 /// The temporary file is locked while it is written; those of writers that died (unlocked)
 /// are removed first.
+///
+/// # Errors
+///
+/// `InvalidInput` when `path` has no file name, the error of `f`, and any error creating,
+/// syncing or renaming the temporary file or syncing the directory. The temporary file is
+/// removed when `f`, the sync or the rename fails.
 pub fn write_atomic<T>(
     path: &std::path::Path,
     f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
@@ -216,6 +234,10 @@ pub struct Opened {
 /// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by
 /// their first bytes. A binary export is read into memory first, since its reader seeks;
 /// [`open_file`] reads one from the file in place.
+///
+/// # Errors
+///
+/// When `r` fails, the data is in neither format or malformed, or it exceeds `limits`.
 pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
     let mut r = io::BufReader::with_capacity(1 << 16, r);
     let head = io::BufRead::fill_buf(&mut r)?;
@@ -252,6 +274,10 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
 }
 
 /// [`open`] for a file, reading a binary export without loading it whole.
+///
+/// # Errors
+///
+/// As [`open`], and when the file cannot be read or rewound.
 pub fn open_file(mut f: std::fs::File, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
     let mut head = [0u8; 8];
     let n = io::Read::read(&mut f, &mut head)?;
@@ -274,3 +300,6 @@ fn binary_opened(im: ncdu::Imported) -> Opened {
         journal: None,
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -176,6 +176,7 @@ pub enum State {
 }
 
 impl State {
+    #[must_use]
     pub fn protected(self) -> bool {
         self != State::Off
     }
@@ -249,6 +250,17 @@ pub struct Protected {
 }
 
 impl Protected {
+    /// The protected names and paths for `env`'s platform, with its variables expanded.
+    ///
+    /// # Panics
+    ///
+    /// A built-in protected pattern names an unknown variable or is not a valid glob; the
+    /// lists are constants and the tests build them for every platform.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "the protected lists are constants; a bad entry is a bug the tests catch"
+    )]
     pub fn new(env: &Env) -> Protected {
         let fold = glob::platform_folds_case(env.platform);
         let (paths, except) = match env.platform {
@@ -294,12 +306,14 @@ impl Protected {
 
     /// What can protect the entries of the directory `dir` (its path with a `/` at the end):
     /// the literal paths that are its entries, by name, and the globs that can match there.
+    #[must_use]
     pub fn dir(&self, dir: &[u8]) -> Dir {
         self.dir_in(dir, None).0
     }
 
     /// [`Protected::dir`] trying only the paths in `reach` (all with `None`), and the paths
     /// that can reach the directory's subdirectories.
+    #[must_use]
     pub fn dir_in(&self, dir: &[u8], reach: Option<&Reach>) -> (Dir, Reach) {
         let fold = self.paths.fold;
         let depth = crate::matcher::depth_below(dir);
@@ -308,6 +322,10 @@ impl Protected {
         } else {
             dir.to_vec()
         };
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a set holds the constant protected patterns, a few hundred at most"
+        )]
         let pick = |set: &Set, r: Option<&SetReach>| {
             let mut names = HashSet::default();
             let mut below = SetReach::default();
@@ -393,6 +411,7 @@ impl Protected {
 
     /// The state of the entry at `path` (`/`-separated, absolute), whose last component is
     /// `name`, in a directory whose state is `parent`.
+    #[must_use]
     pub fn step(&self, parent: State, path: &[u8], name: &[u8]) -> State {
         if parent == State::Sticky || self.names.matches(name) {
             return State::Sticky;
@@ -406,11 +425,13 @@ impl Protected {
 
     /// Whether the entry at `path` is protected, by its own name or path or by those of a
     /// directory above it: [`Protected::step`] down every prefix of the path.
+    #[must_use]
     pub fn covers(&self, path: &[u8]) -> bool {
         self.state_of(path).protected()
     }
 
     /// The state of the entry at `path`, from the root down.
+    #[must_use]
     pub fn state_of(&self, path: &[u8]) -> State {
         let mut state = State::Off;
         for prefix in prefixes(path) {
@@ -423,11 +444,7 @@ impl Protected {
 
 /// Every ancestor path of `path` and then the path itself (`/a`, `/a/b`, `/a/b/c`).
 fn prefixes(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-    path.iter()
-        .enumerate()
-        .filter(|&(i, &b)| b == b'/' && i > 0)
-        .map(|(i, _)| &path[..i])
-        .chain(std::iter::once(path))
+    crate::matcher::ancestors(path).chain(std::iter::once(path))
 }
 
 #[cfg(test)]

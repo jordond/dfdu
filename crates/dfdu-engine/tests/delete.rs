@@ -2,6 +2,8 @@
 //! test runs with the portable backend, and on Windows with the Windows backend too, whose
 //! file ids and volume serial numbers the deleter checks against.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,10 +13,13 @@ use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_tree::NodeRef;
 use tempfile::TempDir;
 
+mod common;
+use common::{node, wait_for};
+
 /// A temporary directory under the canonical temp dir: the engine canonicalises scan roots
 /// (on macOS the temp dir is behind the /var symlink), and paths compared with the tree's must
 /// match.
-fn tempdir(tag: &str) -> TempDir {
+fn tagged_tempdir(tag: &str) -> TempDir {
     let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
     tempfile::Builder::new()
         .prefix(&format!("dfdu-del-{tag}-"))
@@ -28,7 +33,7 @@ fn write(p: &Path, bytes: usize) {
 }
 
 fn fixture() -> TempDir {
-    let dir = tempdir("tree");
+    let dir = tagged_tempdir("tree");
     let root = dir.path();
     write(&root.join("keep/a.bin"), 10_000);
     write(&root.join("junk/b.bin"), 50_000);
@@ -56,20 +61,6 @@ fn scan<B: Backend>(e: &Engine<B>, root: &Path) {
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
-}
-
-fn node<B: Backend>(e: &Engine<B>, rel: &str) -> NodeRef {
-    e.read(|m| {
-        let mut ix = m.tree.roots().next().unwrap();
-        for part in rel.split('/') {
-            ix = m
-                .tree
-                .children(ix)
-                .find(|&c| m.tree.name(c) == part.as_bytes())
-                .unwrap_or_else(|| panic!("{rel}"));
-        }
-        m.tree.node_ref(ix)
-    })
 }
 
 fn delete<B: Backend>(e: &Engine<B>, items: Vec<NodeRef>, mode: Mode) -> DeleteSummary {
@@ -107,7 +98,7 @@ fn permanent_delete_updates_tree_and_journal() {
 fn permanent_delete<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
-    let jdir = tempdir("journal");
+    let jdir = tagged_tempdir("journal");
     let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let before = root_alloc(&e);
@@ -126,7 +117,7 @@ fn permanent_delete<B: Backend>(backend: fn() -> B) {
             m.tree
                 .children(m.tree.roots().next().unwrap())
                 .all(|c| m.tree.name(c) != b"junk")
-        )
+        );
     });
     // Read the journal after shutdown: the deleter closes it then (Windows locks are mandatory).
     e.shutdown(Duration::from_secs(5));
@@ -143,7 +134,7 @@ fn changed_items_are_not_deleted() {
 fn changed_items<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
-    let jdir = tempdir("journal");
+    let jdir = tagged_tempdir("journal");
     let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let (file, keep, junk) = (node(&e, "file.bin"), node(&e, "keep"), node(&e, "junk"));
@@ -152,7 +143,7 @@ fn changed_items<B: Backend>(backend: fn() -> B) {
     write(&root.join("file.bin"), 4_000);
     fs::rename(root.join("keep"), root.join("keep.old")).unwrap();
     fs::create_dir(root.join("keep")).unwrap();
-    let elsewhere_dir = tempdir("elsewhere");
+    let elsewhere_dir = tagged_tempdir("elsewhere");
     let elsewhere = elsewhere_dir.path();
     write(&elsewhere.join("precious"), 100);
     fs::remove_dir_all(root.join("junk")).unwrap();
@@ -194,7 +185,7 @@ fn refusals_with<B: Backend>(backend: fn() -> B) {
     let tree = fixture();
     let root = tree.path();
     // The scan root itself.
-    let jdir = tempdir("journal");
+    let jdir = tagged_tempdir("journal");
     let e = engine(backend(), Some(jdir.path().to_path_buf()), false);
     scan(&e, root);
     let r = e.read(|m| m.tree.node_ref(m.tree.roots().next().unwrap()));
@@ -227,7 +218,7 @@ fn refusals_with<B: Backend>(backend: fn() -> B) {
     e.shutdown(Duration::from_secs(1));
 
     // Read-only: the request is dropped before a plan exists.
-    let jdir = tempdir("journal");
+    let jdir = tagged_tempdir("journal");
     let e = engine(backend(), Some(jdir.path().to_path_buf()), true);
     scan(&e, root);
     e.send(Command::Delete {
@@ -253,15 +244,6 @@ fn engine_staging<B: Backend>(backend: B, state: &Path, window: Duration) -> Eng
     )
 }
 
-/// Waits until `cond` holds of the model, for at most 20 s.
-fn wait_for<B: Backend>(e: &Engine<B>, cond: impl Fn(&dfdu_engine::Model) -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while !e.read(&cond) {
-        assert!(std::time::Instant::now() < deadline, "timed out");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 fn staged_files(state: &Path) -> Vec<String> {
     let mut out = vec![];
     for s in fs::read_dir(state.join("stage"))
@@ -281,7 +263,7 @@ fn staged_files(state: &Path) -> Vec<String> {
 fn staged_items_are_deleted_on_commit() {
     let tree = fixture();
     let root = tree.path();
-    let state = tempdir("state");
+    let state = tagged_tempdir("state");
     let e = engine_staging(
         PortableBackend::default(),
         state.path(),
@@ -310,7 +292,7 @@ fn staged_items_are_deleted_on_commit() {
     assert!(e.read(|m| m.status.undo.as_ref().is_some_and(|u| u.items == 1)));
     e.send(Command::CommitStaged);
     wait_for(&e, |m| m.status.staged.items == 0);
-    assert!(staged_files(state.path()).is_empty());
+    assert_eq!(staged_files(state.path()), [] as [std::string::String; 0]);
     assert!(
         e.read(|m| m.status.undo.is_none()),
         "nothing left to put back"
@@ -327,7 +309,7 @@ fn staged_items_are_deleted_on_commit() {
 fn a_new_session_reports_what_an_earlier_one_left() {
     let tree = fixture();
     let root = tree.path();
-    let state = tempdir("state");
+    let state = tagged_tempdir("state");
     let e = engine_staging(
         PortableBackend::default(),
         state.path(),
@@ -360,7 +342,7 @@ fn a_new_session_reports_what_an_earlier_one_left() {
 #[test]
 fn staged_items_are_deleted_when_the_window_ends() {
     let tree = fixture();
-    let state = tempdir("state");
+    let state = tagged_tempdir("state");
     let e = engine_staging(
         PortableBackend::default(),
         state.path(),
@@ -373,7 +355,7 @@ fn staged_items_are_deleted_when_the_window_ends() {
         Mode::Stage,
     );
     wait_for(&e, |m| m.status.staged.items == 0);
-    assert!(staged_files(state.path()).is_empty());
+    assert_eq!(staged_files(state.path()), [] as [std::string::String; 0]);
     e.shutdown(Duration::from_secs(5));
 }
 
@@ -383,7 +365,7 @@ fn staged_items_are_deleted_when_the_window_ends() {
 fn undo_puts_staged_items_back() {
     let tree = fixture();
     let root = tree.path();
-    let state = tempdir("state");
+    let state = tagged_tempdir("state");
     let e = engine_staging(
         PortableBackend::default(),
         state.path(),
@@ -410,7 +392,7 @@ fn undo_puts_staged_items_back() {
         3_000
     );
     assert_eq!(fs::read(root.join("file.bin")).unwrap().len(), 10);
-    assert!(staged_files(state.path()).is_empty());
+    assert_eq!(staged_files(state.path()), [] as [std::string::String; 0]);
     assert_eq!(e.read(|m| m.status.staged), Count::default());
     // The rescans found everything: what was put back, and the new file.bin.
     assert!(root_alloc(&e) > before);
@@ -439,13 +421,13 @@ fn changes_inside_items_stop_their_delete() {
 }
 
 fn changes_inside<B: Backend>(backend: fn() -> B, mode: Mode) {
-    let tree = tempdir("inside");
+    let tree = tagged_tempdir("inside");
     let root = tree.path();
     for d in ["added", "replaced", "dir", "swapped"] {
         write(&root.join(d).join("x/y/f.bin"), 1_000);
         write(&root.join(d).join("g.bin"), 1_000);
     }
-    let state = tempdir("state");
+    let state = tagged_tempdir("state");
     let e = engine_staging(backend(), state.path(), Duration::from_secs(3600));
     scan(&e, root);
     let items: Vec<NodeRef> = ["added", "replaced", "dir", "swapped"]
@@ -461,7 +443,7 @@ fn changes_inside<B: Backend>(backend: fn() -> B, mode: Mode) {
     .unwrap();
     fs::rename(root.join("dir/x/y"), root.join("dir/y.old")).unwrap();
     write(&root.join("dir/x/y/f.bin"), 1_000);
-    let elsewhere_dir = tempdir("elsewhere");
+    let elsewhere_dir = tagged_tempdir("elsewhere");
     write(&elsewhere_dir.path().join("f.bin"), 1_000);
     fs::remove_dir_all(root.join("swapped/x/y")).unwrap();
     #[cfg(unix)]

@@ -33,6 +33,10 @@ const _: () = {
 ///
 /// Each call continues where the previous one on the same descriptor stopped. Entries `.` and
 /// `..` are not returned.
+///
+/// # Errors
+///
+/// The error `getattrlistbulk` reports, such as `ENOTDIR` or `EBADF`.
 #[allow(unsafe_code)]
 pub fn read_bulk(dir: BorrowedFd<'_>, buf: &mut [u8]) -> io::Result<u32> {
     let mut list = libc::attrlist {
@@ -60,7 +64,7 @@ pub fn read_bulk(dir: BorrowedFd<'_>, buf: &mut [u8]) -> io::Result<u32> {
             )
         };
         if n >= 0 {
-            return Ok(n as u32);
+            return Ok(n.cast_unsigned());
         }
         let e = io::Error::last_os_error();
         if e.kind() != io::ErrorKind::Interrupted {
@@ -72,6 +76,7 @@ pub fn read_bulk(dir: BorrowedFd<'_>, buf: &mut [u8]) -> io::Result<u32> {
 /// Performance cores (`hw.perflevel0.physicalcpu`) on a chip with more than one kind; `None`
 /// when all cores are alike or the system does not say.
 #[allow(unsafe_code)]
+#[must_use]
 pub fn performance_cores() -> Option<usize> {
     let get = |name: &std::ffi::CStr| -> Option<u32> {
         let mut v: u32 = 0;
@@ -82,7 +87,7 @@ pub fn performance_cores() -> Option<usize> {
             libc::sysctlbyname(
                 name.as_ptr(),
                 (&raw mut v).cast(),
-                &mut len,
+                &raw mut len,
                 std::ptr::null_mut(),
                 0,
             )
@@ -110,6 +115,7 @@ pub struct CloneInfo {
 /// The clone information of the open file `f`, from `ATTR_CMNEXT_PRIVATESIZE` and
 /// `ATTR_CMNEXT_CLONEID`; `None` when the filesystem does not report them (not APFS).
 #[allow(unsafe_code)]
+#[must_use]
 pub fn clone_info(f: BorrowedFd<'_>) -> Option<CloneInfo> {
     let mut list = libc::attrlist {
         bitmapcount: ATTR_BIT_MAP_COUNT,
@@ -152,6 +158,11 @@ pub struct CloneAt {
 /// [`clone_info`] for `name` in the directory `dir`, without opening the file (a symlink is not
 /// followed), with its inode number to check it is still the file scanned. `Unsupported` when
 /// the filesystem does not report clone information (not APFS).
+///
+/// # Errors
+///
+/// The error `getattrlistat` reports (`ENOENT` when `name` is gone), or `Unsupported` when
+/// the filesystem does not report clone information.
 #[allow(unsafe_code)]
 pub fn clone_info_at(dir: BorrowedFd<'_>, name: &std::ffi::CStr) -> io::Result<CloneAt> {
     let mut list = libc::attrlist {
@@ -176,7 +187,7 @@ pub fn clone_info_at(dir: BorrowedFd<'_>, name: &std::ffi::CStr) -> io::Result<C
             (&raw mut list).cast(),
             buf.as_mut_ptr().cast(),
             buf.len(),
-            (libc::FSOPT_ATTR_CMN_EXTENDED | libc::FSOPT_NOFOLLOW) as _,
+            (libc::FSOPT_ATTR_CMN_EXTENDED | libc::FSOPT_NOFOLLOW).into(),
         )
     };
     if r != 0 {
@@ -185,62 +196,72 @@ pub fn clone_info_at(dir: BorrowedFd<'_>, name: &std::ffi::CStr) -> io::Result<C
     parse_clone_at(&buf).ok_or_else(|| io::ErrorKind::Unsupported.into())
 }
 
+/// The native-endian `u32` at byte `i` of `buf`, if `buf` holds it.
+fn u32_at(buf: &[u8], i: usize) -> Option<u32> {
+    Some(u32::from_ne_bytes(buf.get(i..i + 4)?.try_into().ok()?))
+}
+
+/// The native-endian `u64` at byte `i` of `buf`, if `buf` holds it.
+fn u64_at(buf: &[u8], i: usize) -> Option<u64> {
+    Some(u64::from_ne_bytes(buf.get(i..i + 8)?.try_into().ok()?))
+}
+
 /// Reads [`clone_info_at`]'s buffer: every attribute must have been returned.
 fn parse_clone_at(buf: &[u8]) -> Option<CloneAt> {
-    let u32_at = |i: usize| u32::from_ne_bytes(buf[i..i + 4].try_into().unwrap());
-    let u64_at = |i: usize| u64::from_ne_bytes(buf[i..i + 8].try_into().unwrap());
-    let (common, file, fork) = (u32_at(4), u32_at(4 + 12), u32_at(4 + 16));
+    let (common, file, fork) = (u32_at(buf, 4)?, u32_at(buf, 4 + 12)?, u32_at(buf, 4 + 16)?);
     let want = libc::ATTR_CMNEXT_PRIVATESIZE | libc::ATTR_CMNEXT_CLONEID;
     if common & ATTR_CMN_FILEID == 0
         || file & ATTR_FILE_ALLOCSIZE == 0
         || fork & want != want
-        || (u32_at(0) as usize) < buf.len()
+        || (u32_at(buf, 0)? as usize) < buf.len()
     {
         return None;
     }
     Some(CloneAt {
-        ino: u64_at(24),
-        alloc: u64_at(32),
+        ino: u64_at(buf, 24)?,
+        alloc: u64_at(buf, 32)?,
         info: CloneInfo {
-            private_size: u64_at(40),
-            clone_id: u64_at(48),
+            private_size: u64_at(buf, 40)?,
+            clone_id: u64_at(buf, 48)?,
         },
     })
 }
 
 /// Whether the filesystem at `path` is APFS, whose clones share data.
+///
+/// # Errors
+///
+/// `InvalidInput` when `path` holds a NUL byte, or the error `statfs` reports.
 #[allow(unsafe_code)]
 pub fn shares_extents(path: &std::path::Path) -> io::Result<bool> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: `statfs` is plain data, valid when zeroed.
+    // SAFETY: `statfs` holds only integers and integer arrays, so all zeros is a valid value.
     let mut st: libc::statfs = unsafe { std::mem::zeroed() };
     // SAFETY: `c` is NUL-terminated and `st` is valid for writes of a `statfs`.
-    if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
+    if unsafe { libc::statfs(c.as_ptr(), &raw mut st) } != 0 {
         return Err(io::Error::last_os_error());
     }
     let name: Vec<u8> = st
         .f_fstypename
         .iter()
         .take_while(|&&c| c != 0)
-        .map(|&c| c as u8)
+        .map(|&c| c.cast_unsigned())
         .collect();
     Ok(name == b"apfs")
 }
 
 /// Reads [`clone_info`]'s buffer: both attributes must have been returned.
 fn parse_clone_info(buf: &[u8]) -> Option<CloneInfo> {
-    let u32_at = |i: usize| u32::from_ne_bytes(buf[i..i + 4].try_into().unwrap());
-    let u64_at = |i: usize| u64::from_ne_bytes(buf[i..i + 8].try_into().unwrap());
     // attribute_set_t: commonattr, volattr, dirattr, fileattr, forkattr.
-    let fork = u32_at(4 + 16);
+    let fork = u32_at(buf, 4 + 16)?;
     let want = libc::ATTR_CMNEXT_PRIVATESIZE | libc::ATTR_CMNEXT_CLONEID;
-    if fork & want != want || (u32_at(0) as usize) < buf.len() {
+    if fork & want != want || (u32_at(buf, 0)? as usize) < buf.len() {
         return None;
     }
     Some(CloneInfo {
-        private_size: u64_at(24),
-        clone_id: u64_at(32),
+        private_size: u64_at(buf, 24)?,
+        clone_id: u64_at(buf, 32)?,
     })
 }
 
@@ -283,7 +304,7 @@ mod tests {
         assert!(ok.success());
         let mut f = std::fs::OpenOptions::new().write(true).open(&b).unwrap();
         f.seek(std::io::SeekFrom::Start(0)).unwrap();
-        f.write_all(&[1u8; 65536]).unwrap();
+        f.write_all(&vec![1u8; 65536]).unwrap();
         f.sync_all().unwrap();
         let part = at(c"b");
         assert_eq!(part.alloc, alone.alloc);
@@ -357,7 +378,11 @@ mod tests {
                 let name = std::str::from_utf8(e.name).unwrap().to_string();
                 let md = std::fs::symlink_metadata(root.join(&name)).unwrap();
                 assert_eq!(e.error, 0, "{name}");
-                assert_eq!(e.dev.map(|d| d as u64), Some(md.dev()), "{name}: dev");
+                assert_eq!(
+                    e.dev.map(|d| i64::from(d).cast_unsigned()),
+                    Some(md.dev()),
+                    "{name}: dev"
+                );
                 assert_eq!(e.ino, Some(md.ino()), "{name}: ino");
                 assert_eq!(e.mtime.map(|t| t.0), Some(md.mtime()), "{name}: mtime");
                 assert_eq!(e.flags.unwrap() & SF_FIRMLINK, 0);
@@ -368,9 +393,17 @@ mod tests {
                 };
                 assert_eq!(e.obj_type, Some(want), "{name}: type");
                 if want != VDIR {
-                    assert_eq!(e.nlink, Some(md.nlink() as u32), "{name}: nlink");
-                    assert_eq!(e.size, Some(md.size() as i64), "{name}: size");
-                    let alloc = e.alloc.unwrap() as u64;
+                    assert_eq!(
+                        e.nlink,
+                        Some(u32::try_from(md.nlink()).unwrap()),
+                        "{name}: nlink"
+                    );
+                    assert_eq!(
+                        e.size,
+                        Some(i64::try_from(md.size()).unwrap()),
+                        "{name}: size"
+                    );
+                    let alloc = u64::try_from(e.alloc.unwrap()).unwrap();
                     assert_eq!(alloc.div_ceil(512), md.blocks(), "{name}: blocks");
                 }
                 seen.push(name);

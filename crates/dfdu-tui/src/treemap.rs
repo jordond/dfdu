@@ -9,28 +9,26 @@
 //! Tiles too small to label are merged into one "+N small" tile per parent. Below 60x15 cells
 //! the list is drawn instead.
 
+mod draw;
 pub mod layout;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use dfdu_engine::Model;
+use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{Class, Ix, NodeRef, Tree};
-use ratatui::Frame;
-use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 
 use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
-use crate::snapshot::{Name, SizeMode, Tag, tag_of};
-use crate::theme::{count, human};
+use crate::snapshot::{Name, Tag, tag_of};
+use crate::theme::{count, ratio};
 use layout::{Area, cells, squarify};
+
+pub use draw::draw;
 
 pub const MIN_DEPTH: u8 = 1;
 pub const MAX_DEPTH: u8 = 3;
@@ -338,13 +336,13 @@ impl Placer {
         level: u8,
         top: Option<usize>,
     ) {
-        let cells_total = area.width as f64 * area.height as f64;
+        let cells_total = f64::from(area.width) * f64::from(area.height);
         let total: u64 = items.iter().map(|i| i.size).sum::<u64>() + rest.1;
         if total == 0 || area.is_empty() {
             return;
         }
         items.sort_by_key(|i| std::cmp::Reverse(i.size));
-        let fits = |s: u64| s as f64 / total as f64 * cells_total >= MIN_CELLS;
+        let fits = |s: u64| ratio(s, total) * cells_total >= MIN_CELLS;
         let keep = items
             .iter()
             .take(MAX_TILES)
@@ -371,8 +369,8 @@ impl Placer {
         }
         let sizes: Vec<u64> = items.iter().map(|i| i.size).collect();
         for (item, a) in items.into_iter().zip(squarify(&sizes, Area::of(area))) {
-            let rect = cells(a);
-            if rect.is_empty() {
+            let tile = cells(a);
+            if tile.is_empty() {
                 continue;
             }
             let top = top.unwrap_or_else(|| {
@@ -384,9 +382,9 @@ impl Placer {
             let nested = item
                 .kids
                 .filter(|k| level + 1 < self.depth && !k.items.is_empty())
-                .filter(|_| rect.width >= 8 && rect.height >= 5);
+                .filter(|_| tile.width >= 8 && tile.height >= 5);
             self.tiles.push(Tile {
-                rect,
+                rect: tile,
                 level,
                 top,
                 entry: item.entry,
@@ -401,7 +399,7 @@ impl Placer {
             });
             if let Some(kids) = nested {
                 // Inside the frame, below the label line.
-                let inner = Rect::new(rect.x + 1, rect.y + 2, rect.width - 2, rect.height - 3);
+                let inner = Rect::new(tile.x + 1, tile.y + 2, tile.width - 2, tile.height - 3);
                 let items = kids.items.iter().map(|k| Item {
                     entry: None,
                     name: String::from_utf8_lossy(&k.name).into_owned(),
@@ -468,7 +466,10 @@ pub fn show(app: &mut App, on: bool) {
 /// One level more or less, within [`MIN_DEPTH`] and [`MAX_DEPTH`].
 pub fn deeper(app: &mut App, by: i8) {
     let t = &mut app.treemap;
-    t.depth = (t.depth as i8 + by).clamp(MIN_DEPTH as i8, MAX_DEPTH as i8) as u8;
+    t.depth = t
+        .depth
+        .saturating_add_signed(by)
+        .clamp(MIN_DEPTH, MAX_DEPTH);
     app.status = Some(format!("treemap depth {}", t.depth));
 }
 
@@ -508,8 +509,8 @@ fn select_top(app: &mut App, top: usize) {
 /// Centre of `r` in layout space, where rows count [`layout::CELL_ASPECT`] times a column.
 fn centre(r: Rect) -> (f64, f64) {
     (
-        r.x as f64 + r.width as f64 / 2.0,
-        (r.y as f64 + r.height as f64 / 2.0) * layout::CELL_ASPECT,
+        f64::from(r.x) + f64::from(r.width) / 2.0,
+        (f64::from(r.y) + f64::from(r.height) / 2.0) * layout::CELL_ASPECT,
     )
 }
 
@@ -584,287 +585,6 @@ pub fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
 /// Whether the treemap fits a terminal of size `area`; the list is drawn otherwise.
 pub fn fits(area: Rect) -> bool {
     area.width >= MIN_WIDTH && area.height >= MIN_HEIGHT
-}
-
-/// Age bands for [`ColorBy::Age`]: their upper bound in days and name.
-const AGES: [(i64, &str); 4] = [
-    (7, "week"),
-    (90, "3 months"),
-    (365, "year"),
-    (i64::MAX, "older"),
-];
-
-fn age_band(mtime: i64, now: i64) -> usize {
-    let days = now.saturating_sub(mtime) / 86_400;
-    AGES.iter()
-        .position(|&(d, _)| days < d)
-        .unwrap_or(AGES.len() - 1)
-}
-
-fn age_style(app: &App, band: usize) -> Style {
-    let t = &app.theme;
-    [t.status_ok, t.fg, t.status_warn, t.fg_dim][band]
-}
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
-/// Draws the treemap in `area`: a legend line, the tiles, and a line on the selected entry.
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
-    crate::motion::frame(app, now, &[]);
-    app.list_height = area.height as usize;
-    let [legend, map, info] = ratatui::layout::Layout::vertical([
-        ratatui::layout::Constraint::Length(1),
-        ratatui::layout::Constraint::Min(1),
-        ratatui::layout::Constraint::Length(1),
-    ])
-    .areas(area);
-    let key = key_of(app);
-    let current = app
-        .treemap
-        .layout
-        .as_ref()
-        .is_some_and(|l| l.key == key && l.area == map && l.below == app.extras.treemap.key);
-    if !current {
-        app.treemap.layout = Some(build(app, map));
-    }
-    let today = now_secs();
-    draw_legend(f, app, legend);
-    let app = &*app;
-    if let Some(line) = selected_line(app) {
-        f.render_widget(Paragraph::new(line), info);
-    }
-    let Some(l) = &app.treemap.layout else {
-        return;
-    };
-    if l.tiles.is_empty() {
-        f.render_widget(
-            Paragraph::new(Line::styled("  (empty)", app.theme.fg_dim)),
-            map,
-        );
-        return;
-    }
-    let sel = selected_top(app);
-    let buf = f.buffer_mut();
-    for tile in &l.tiles {
-        draw_tile(buf, app, tile, sel, today);
-    }
-}
-
-fn draw_legend(f: &mut Frame, app: &App, area: Rect) {
-    let t = &app.theme;
-    let mut spans = vec![Span::styled(
-        format!(" colour: {}", app.treemap.color.label()),
-        t.fg_dim,
-    )];
-    if app.treemap.color == ColorBy::Category {
-        spans.push(Span::styled("  ╱ cleanup candidate", t.fg_dim));
-    }
-    if app.treemap.color == ColorBy::Age {
-        for (band, (_, name)) in AGES.iter().enumerate() {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled("■", age_style(app, band)));
-            spans.push(Span::styled(format!(" {name}"), t.fg_dim));
-        }
-    }
-    spans.push(Span::styled(
-        format!(
-            "   {} colour  depth {} ({} {})",
-            keys::first_key(Action::TreemapColor),
-            app.treemap.depth,
-            keys::first_key(Action::TreemapDeeper),
-            keys::first_key(Action::TreemapShallower),
-        ),
-        t.fg_dim,
-    ));
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-fn tile_style(app: &App, tile: &Tile, today: i64) -> Style {
-    let t = &app.theme;
-    if tile.small > 0 {
-        return t.fg_dim;
-    }
-    match app.treemap.color {
-        ColorBy::Folder => t.cat[tile.top % t.cat.len()],
-        ColorBy::Age => age_style(app, age_band(tile.mtime, today)),
-        ColorBy::Category => match (&app.snap.rules, tile.tag) {
-            (Some(rules), Some(tag)) => t.cat[tag.category(rules).1],
-            _ => t.fg_dim,
-        },
-    }
-}
-
-/// The live size of a top-level tile's entry, or the size it was laid out with.
-fn live_size(app: &App, tile: &Tile) -> u64 {
-    match tile.entry {
-        Some((node, i)) => app
-            .snap
-            .entries
-            .get(i)
-            .filter(|e| e.node == node)
-            .map_or(tile.size, |e| e.size),
-        None => tile.size,
-    }
-}
-
-fn draw_tile(buf: &mut Buffer, app: &App, tile: &Tile, sel: Option<usize>, today: i64) {
-    let r = tile.rect.intersection(buf.area);
-    if r.is_empty() {
-        return;
-    }
-    let style = tile_style(app, tile, today);
-    let selected = tile.level == 0 && sel == Some(tile.top) && tile.entry.is_some();
-    let marked = tile.entry.is_some_and(|(node, _)| app.marks.contains(node));
-    let size = live_size(app, tile);
-    let name = if tile.is_dir {
-        format!("{}/", tile.name)
-    } else {
-        tile.name.clone()
-    };
-    let name = if marked { format!("✓ {name}") } else { name };
-    // Top-level tiles show live sizes, so their share is of the directory's live total.
-    let parent = match tile.level {
-        0 => app.size_mode.of(&app.snap.dir_total),
-        _ => tile.parent,
-    };
-    let share = if tile.small > 0 || parent == 0 {
-        String::new()
-    } else {
-        format!("  {}%", size.saturating_mul(100) / parent)
-    };
-    let size_text = format!("{}{share}", human(size));
-    let name_style = if tile.is_dir {
-        app.theme.dir.patch(style)
-    } else {
-        style
-    };
-    if r.width >= 4 && r.height >= 3 {
-        let border = if selected {
-            app.theme.border_focus.add_modifier(Modifier::BOLD)
-        } else {
-            style
-        };
-        Block::bordered()
-            .border_type(if selected {
-                BorderType::Thick
-            } else {
-                BorderType::Plain
-            })
-            .border_style(border)
-            .render(r, buf);
-        let mut inner = Rect::new(r.x + 1, r.y + 1, r.width - 2, r.height - 2);
-        // Cleanup candidates and what is in them are hatched, under the labels; a framed
-        // tile's own tiles are.
-        let candidate = tile.tag.is_some_and(|g| g.candidate());
-        if app.treemap.color == ColorBy::Category && candidate && !tile.framed {
-            // Below the label lines: name, size, category.
-            for y in (inner.top() + 3).min(inner.bottom())..inner.bottom() {
-                for x in inner.left()..inner.right() {
-                    if (x + y) % 2 == 0 {
-                        buf[(x, y)].set_symbol("╱").set_style(style);
-                    }
-                }
-            }
-        }
-        // One cell of padding when the name has room for it.
-        if inner.width >= 6 {
-            inner.x += 1;
-            inner.width -= 1;
-        }
-        let w = inner.width as usize;
-        // The share goes first when the size does not fit with it, then the size: a cut size
-        // would read as another number.
-        let size_text = [size_text, human(size)]
-            .into_iter()
-            .find(|s| Span::raw(s).width() <= w)
-            .unwrap_or_default();
-        let one_line = format!("{name}  {size_text}");
-        if tile.framed || inner.height == 1 {
-            let text = if Span::raw(&one_line).width() <= w {
-                one_line
-            } else {
-                clip(&name, w)
-            };
-            buf.set_stringn(inner.x, inner.y, text, w, name_style);
-        } else {
-            buf.set_stringn(inner.x, inner.y, clip(&name, w), w, name_style);
-            buf.set_stringn(inner.x, inner.y + 1, &size_text, w, app.theme.fg);
-            if app.treemap.color == ColorBy::Age && tile.small == 0 && inner.height >= 3 {
-                let band = AGES[age_band(tile.mtime, today)].1;
-                buf.set_stringn(
-                    inner.x,
-                    inner.y + 2,
-                    format!("≤ {band}"),
-                    w,
-                    app.theme.fg_dim,
-                );
-            }
-            if app.treemap.color == ColorBy::Category
-                && inner.height >= 3
-                && let (Some(rules), Some(tag)) = (&app.snap.rules, tile.tag)
-                && !tag.inherited
-            {
-                let safety = tag.class.safety.as_str();
-                let text = format!("{} · {safety}", tag.category(rules).0);
-                buf.set_stringn(inner.x, inner.y + 2, text, w, app.theme.fg_dim);
-            }
-        }
-    } else {
-        // Too small for a frame: a shaded block with what fits of the name.
-        let fill = if selected { app.theme.cursor } else { style };
-        for y in r.top()..r.bottom() {
-            buf.set_stringn(r.x, y, "░".repeat(r.width as usize), r.width as usize, fill);
-        }
-        buf.set_stringn(
-            r.x,
-            r.y,
-            clip(&name, r.width as usize),
-            r.width as usize,
-            fill,
-        );
-    }
-}
-
-/// `s` cut to `w` cells, ending in `…` when it was cut.
-fn clip(s: &str, w: usize) -> String {
-    if Span::raw(s).width() <= w {
-        return s.to_owned();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = Span::raw(c.to_string()).width();
-        if used + cw + 1 > w {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    if w > 0 {
-        out.push('…');
-    }
-    out
-}
-
-/// The line under the treemap: the selected tile's name, size, share and items.
-fn selected_line(app: &App) -> Option<Line<'static>> {
-    let e = app.selected_entry()?;
-    let total = app.size_mode.of(&app.snap.dir_total).max(1);
-    let mut text = format!(
-        " ▶ {}{}  {}  {:.1}%",
-        String::from_utf8_lossy(&e.name),
-        if e.is_dir { "/" } else { "" },
-        human(e.size),
-        e.size as f64 * 100.0 / total as f64
-    );
-    if e.is_dir {
-        text.push_str(&format!("  ·  {} items", count(e.items)));
-    }
-    Some(Line::styled(text, app.theme.fg))
 }
 
 #[cfg(test)]

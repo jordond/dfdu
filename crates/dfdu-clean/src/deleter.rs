@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{RecvTimeoutError, Sender, unbounded};
 use dfdu_tree::{ErrKind, Kind};
@@ -57,6 +57,15 @@ struct State {
 /// are deleted `window` after they were staged ([`STAGE_UNDO_WINDOW`] in the app), or on
 /// [`DeleterReq::Commit`]; those still staged when the deleter stops are left for recovery
 /// (`crate::recover`).
+///
+/// # Panics
+///
+/// When the deleter's thread cannot be started.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "nothing can be deleted without the thread; `thread::spawn` panics the same way"
+)]
 pub fn spawn_deleter(
     journal_dir: Option<PathBuf>,
     window: Duration,
@@ -179,7 +188,7 @@ impl State {
             } else {
                 match (self.journal.as_mut(), self.stager.as_mut()) {
                     (Some(j), Some(s)) => {
-                        let at = now_secs();
+                        let at = dfdu_tree::now_secs();
                         let (r, staged) = run_item(j, s, plan, item);
                         if r == DeleteResult::Deleted && plan.mode.undoable() {
                             self.kept.push(Kept {
@@ -221,14 +230,15 @@ impl State {
             self.open_journal();
             match self.journal.as_mut() {
                 None => Err(self.no_journal().to_string()),
-                Some(j) => match j.native(req) {
-                    Err(e) => Err(format!("journal: {e}")),
-                    Ok(()) => {
+                Some(j) => {
+                    if let Err(e) = j.native(req) {
+                        Err(format!("journal: {e}"))
+                    } else {
                         let r = crate::native::run(req, ab, &self.out);
                         let _ = j.native_done(req.id, &r);
                         r
                     }
-                },
+                }
             }
         };
         let _ = self.out.send(DeleterMsg::NativeDone { id: req.id, result });
@@ -244,7 +254,10 @@ impl State {
             return;
         };
         for k in due {
-            let staged = k.staged.as_deref().expect("staged");
+            // Only staged items are due.
+            let Some(staged) = k.staged.as_deref() else {
+                continue;
+            };
             let result = j
                 .commit_intent(k.plan, &k.item)
                 .map_err(|e| format!("journal: {e}"))
@@ -306,12 +319,6 @@ impl State {
         }
         let _ = self.out.send(DeleterMsg::UndoDone { plan });
     }
-}
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Whether the deleted item's directory is on btrfs.
@@ -457,7 +464,7 @@ mod tests {
                     mtime: 0,
                 },
                 bytes: 1,
-                inside: Default::default(),
+                inside: std::sync::Arc::default(),
             }],
         }
     }

@@ -4,6 +4,7 @@
 //! backend and the native one (Linux, macOS, Windows).
 
 #![cfg(any(unix, windows))]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::HashMap;
 use std::fs;
@@ -15,11 +16,8 @@ use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_tree::{Ix, Totals, Tree};
 use tempfile::TempDir;
 
-/// A temporary directory under the canonical temp dir, so its path matches the scan root the
-/// engine reports (on macOS the temp dir is behind the /var symlink).
-fn tempdir() -> TempDir {
-    tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
-}
+mod common;
+use common::tempdir;
 
 /// A path as the tree stores it.
 fn key(p: &Path) -> Vec<u8> {
@@ -104,7 +102,7 @@ fn links(root: &Path) {
 
 /// A path longer than 4096 bytes, built one level at a time relative to the current
 /// directory (this test binary has a single test, so changing it is safe). The portable
-/// backend opens directories by full path and reports the levels past PATH_MAX as errors;
+/// backend opens directories by full path and reports the levels past `PATH_MAX` as errors;
 /// the Linux and macOS backends open long paths in pieces and read them.
 #[cfg(unix)]
 fn deep(root: &Path) {
@@ -230,7 +228,7 @@ fn reference(root: &Path) -> HashMap<Vec<u8>, Totals> {
         if !m.dir && m.nlink > 1 {
             let e = lowest.entry(m.id).or_insert_with(|| p.clone());
             if p < e {
-                *e = p.clone();
+                e.clone_from(p);
             }
         }
     }

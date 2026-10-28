@@ -3,6 +3,7 @@
 //! is not on APFS.
 
 #![cfg(target_os = "macos")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::Path;
@@ -11,7 +12,9 @@ use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, NativeBackend};
-use dfdu_tree::{Ix, Tree};
+
+mod common;
+use common::child;
 
 fn clone(from: &Path, to: &Path) {
     let st = Proc::new("cp")
@@ -23,21 +26,17 @@ fn clone(from: &Path, to: &Path) {
     assert!(st.success());
 }
 
-fn child(tree: &Tree, ix: Ix, name: &str) -> Ix {
-    tree.children(ix)
-        .find(|&c| tree.name(c) == name.as_bytes())
-        .unwrap_or_else(|| panic!("{name} missing"))
-}
-
 #[test]
 fn clones_count_once() {
-    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tmp = common::tempdir();
     let root = tmp.path().join("t");
     if !dfdu_sys::shares_extents(tmp.path()).unwrap() {
         eprintln!("skipped: not APFS");
         return;
     }
-    let big: Vec<u8> = (0..4_000_000u32).map(|i| (i * 7 + i / 991) as u8).collect();
+    let big: Vec<u8> = (0..4_000_000u32)
+        .map(|i| (i * 7 + i / 991).to_le_bytes()[0])
+        .collect();
     fs::create_dir_all(root.join("x")).unwrap();
     fs::create_dir_all(root.join("y")).unwrap();
     fs::write(root.join("x/a"), &big).unwrap();

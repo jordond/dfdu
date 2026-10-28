@@ -37,23 +37,22 @@ use std::ffi::{CStr, CString, OsStr};
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dfdu_sys::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG};
 use dfdu_tree::{ErrKind, Kind, Meta, Subvol};
 use parking_lot::Mutex;
-use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags};
+use rustix::fs::{AtFlags, CWD, FileType, OFlags};
 
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock};
+use crate::unix::{name_at, push_name};
 
 /// `getattrlistbulk` buffer; Apple suggests 64-128 KiB.
 const BULK_BUF: usize = 128 * 1024;
 /// Buffers kept for reuse; more are freed (only drained SMB directories need more at once).
 const POOL_MAX: usize = 32;
-/// Paths are opened in pieces of at most this many bytes when the whole is too long.
-const PIECE: usize = 768;
 
 #[derive(Default, Debug)]
 struct Common {
@@ -86,7 +85,7 @@ impl Common {
                 .f_fstypename
                 .iter()
                 .take_while(|&&c| c != 0)
-                .map(|&c| c as u8)
+                .map(|&c| c.cast_unsigned())
                 .collect();
             name == b"smbfs"
         });
@@ -157,9 +156,7 @@ impl MacRaw {
         if e.name == b"." || e.name == b".." {
             return;
         }
-        let off = self.names.len() as u32;
-        self.names.extend_from_slice(e.name);
-        self.names.push(0);
+        let off = push_name(&mut self.names, e.name);
         self.entries.push((off, pending(e)));
     }
 }
@@ -174,7 +171,7 @@ fn pending(e: &BulkEntry<'_>) -> Pending {
         // As std reports it: times before the epoch are 0.
         mtime: mtime.max(0),
         // `dev_t` is an `i32`; std widens `st_dev` with sign extension, and so does this.
-        dev: dev as u64,
+        dev: i64::from(dev).cast_unsigned(),
         ino,
         nlink,
         mount: 0,
@@ -209,7 +206,13 @@ fn pending(e: &BulkEntry<'_>) -> Pending {
     };
     // `st_blocks` is the allocation rounded up to 512-byte blocks.
     let alloc = u64::try_from(alloc).unwrap_or(0).div_ceil(512) * 512;
-    Pending::Ready(meta(kind, size as u64, alloc, nlink, (dev, ino, mtime)))
+    Pending::Ready(meta(
+        kind,
+        size.cast_unsigned(),
+        alloc,
+        nlink,
+        (dev, ino, mtime),
+    ))
 }
 
 impl RawBlock<PathBuf> for MacRaw {
@@ -219,9 +222,7 @@ impl RawBlock<PathBuf> for MacRaw {
 
     fn stat(&mut self, out: &mut Block<PathBuf>) -> io::Result<()> {
         for &(off, p) in &self.entries {
-            let rest = &self.names[off as usize..];
-            let end = rest.iter().position(|&b| b == 0).expect("NUL-terminated");
-            let name = CStr::from_bytes_with_nul(&rest[..=end]).expect("one NUL");
+            let name = name_at(&self.names, off);
             let bytes = name.to_bytes();
             let meta = match p {
                 Pending::Ready(m) => Ok(m),
@@ -252,10 +253,10 @@ fn meta_of(st: &rustix::fs::Stat) -> Meta {
             FileType::RegularFile => Kind::File,
             _ => Kind::Other,
         },
-        apparent: st.st_size as u64,
-        alloc: st.st_blocks as u64 * 512,
+        apparent: st.st_size.cast_unsigned(),
+        alloc: st.st_blocks.cast_unsigned() * 512,
         mtime: st.st_mtime.max(0),
-        dev: st.st_dev as u64,
+        dev: i64::from(st.st_dev).cast_unsigned(),
         ino: st.st_ino,
         nlink: st.st_nlink.into(),
         mount: 0,
@@ -265,36 +266,7 @@ fn meta_of(st: &rustix::fs::Stat) -> Meta {
 /// Opens a directory by path without following a symlink in its last component, in pieces
 /// when the path is longer than the kernel accepts.
 fn open_dir(path: &Path) -> io::Result<OwnedFd> {
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    match rustix::fs::open(path, flags | OFlags::NOFOLLOW, Mode::empty()) {
-        Err(rustix::io::Errno::NAMETOOLONG) => {}
-        r => return r.map_err(Into::into),
-    }
-    let mut fd: Option<OwnedFd> = None;
-    let mut piece = PathBuf::new();
-    for c in path.components() {
-        let part: &OsStr = match c {
-            Component::RootDir => OsStr::new("/"),
-            Component::CurDir => continue,
-            Component::ParentDir => OsStr::new(".."),
-            Component::Normal(n) => n,
-            Component::Prefix(_) => unreachable!("no path prefixes on macOS"),
-        };
-        if !piece.as_os_str().is_empty() && piece.as_os_str().len() + part.len() + 1 > PIECE {
-            // Leading pieces are followed as the path says; only its last component is not.
-            let base = fd.as_ref().map_or(CWD, |f| f.as_fd());
-            fd = Some(rustix::fs::openat(base, &piece, flags, Mode::empty())?);
-            piece.clear();
-        }
-        piece.push(part);
-    }
-    let base = fd.as_ref().map_or(CWD, |f| f.as_fd());
-    Ok(rustix::fs::openat(
-        base,
-        &piece,
-        flags | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )?)
+    crate::unix::open_dir(path, OFlags::NOFOLLOW)
 }
 
 impl MacStream {
@@ -366,8 +338,9 @@ impl DirStream for MacStream {
                     raw.add(&e);
                     f.pos = next;
                     f.left -= 1;
-                    if f.left == 0 {
-                        let f = self.filled.pop_front().expect("front");
+                    if f.left == 0
+                        && let Some(f) = self.filled.pop_front()
+                    {
                         self.common.give(f.buf);
                     }
                 }
@@ -477,24 +450,7 @@ mod tests {
         dir: &Path,
         per_block: usize,
     ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b
-            .open(&dir.to_path_buf(), dfdu_sys::Storage::Unknown)
-            .unwrap();
-        let mut block = Block::default();
-        loop {
-            let (mut raw, more) = s.next_raw(per_block, 1 << 20).unwrap();
-            raw.stat(&mut block).unwrap();
-            if !more {
-                break;
-            }
-        }
-        let mut out: Vec<_> = block
-            .entries
-            .iter()
-            .map(|e| (block.name(e.name).to_vec(), e.meta))
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
+        crate::unix::tests::list(b, dir, dfdu_sys::Storage::Unknown, per_block)
     }
 
     #[test]
@@ -582,13 +538,13 @@ mod tests {
 
     #[test]
     fn unreadable_directory_is_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
         if rustix::process::geteuid().is_root() {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
         let locked = tmp.path().join("locked");
         fs::create_dir(&locked).unwrap();
-        use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
         let e = MacBackend::default()
             .open(&locked, dfdu_sys::Storage::Unknown)
@@ -596,39 +552,5 @@ mod tests {
             .unwrap();
         assert_eq!(ErrKind::from(&e), ErrKind::PermissionDenied);
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-
-    #[test]
-    fn opens_paths_longer_than_path_max() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut deep = tmp.path().to_path_buf();
-        // Created one level at a time through descriptors, as no single path call reaches it.
-        let mut fd = open_dir(&deep).unwrap();
-        for i in 0..30 {
-            let name = format!("{i:03}-{}", "y".repeat(200));
-            rustix::fs::mkdirat(&fd, name.as_str(), Mode::from_raw_mode(0o755)).unwrap();
-            fd = rustix::fs::openat(&fd, name.as_str(), OFlags::DIRECTORY, Mode::empty()).unwrap();
-            deep.push(name);
-        }
-        let f = rustix::fs::openat(
-            &fd,
-            "leaf",
-            OFlags::CREATE | OFlags::WRONLY,
-            Mode::from_raw_mode(0o644),
-        )
-        .unwrap();
-        rustix::io::write(&f, &[7u8; 99]).unwrap();
-        assert!(deep.as_os_str().len() > 4096);
-        let b = MacBackend::default();
-        let entries = list(&b, &deep, 3);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].1.unwrap().apparent, 99);
-        let root = b.stat_root(&deep).unwrap();
-        assert_eq!(root.kind, Kind::Dir);
-        drop(fd);
-        let _ = std::process::Command::new("rm")
-            .arg("-rf")
-            .arg(tmp.path().join(format!("000-{}", "y".repeat(200))))
-            .status();
     }
 }

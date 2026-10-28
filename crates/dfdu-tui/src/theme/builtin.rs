@@ -12,7 +12,12 @@ use ratatui::style::Color::{
 };
 use ratatui::style::{Color, Modifier};
 
-use super::Token::*;
+use super::Token::{
+    BarEmpty, BarFill, Bg, Border, BorderFocus, CatBuild, CatCache, CatContainer, CatDownload,
+    CatMedia, CatOther, CatToolchain, CatVm, Cursor, Dir, Fg, FgDim, Header, Key, Mark, Match,
+    SafetyKeep, SafetyReview, SafetySafe, ScanActive, ScanDone, SizeBig, StatusError, StatusOk,
+    StatusWarn, Title,
+};
 use super::{ColorSpec, Palette, Spec, Token};
 
 pub const NAMES: [&str; 5] = ["dark", "light", "ansi", "mono", "high-contrast"];
@@ -42,8 +47,9 @@ fn entries(name: &str) -> Option<[(Token, Spec); Token::COUNT]> {
 
 /// A truecolor value with its 16-colour fallback.
 const fn rgb(hex: u32, ansi16: Color) -> ColorSpec {
+    let [_, r, g, b] = hex.to_be_bytes();
     ColorSpec {
-        rgb: Some(((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)),
+        rgb: Some((r, g, b)),
         ansi256: None,
         ansi16: Some(ansi16),
     }
@@ -61,6 +67,10 @@ const fn modifiers(m: Modifier) -> Spec {
     Spec::NONE.add(m)
 }
 
+#[expect(
+    clippy::unreadable_literal,
+    reason = "colours are written as six-digit #rrggbb hex codes"
+)]
 fn dark() -> [(Token, Spec); Token::COUNT] {
     let text = rgb(0xeceff4, Reset);
     let accent = rgb(0x88c0d0, Cyan);
@@ -111,6 +121,10 @@ fn dark() -> [(Token, Spec); Token::COUNT] {
     ]
 }
 
+#[expect(
+    clippy::unreadable_literal,
+    reason = "colours are written as six-digit #rrggbb hex codes"
+)]
 fn light() -> [(Token, Spec); Token::COUNT] {
     let text = rgb(0x1f2329, Reset);
     let accent = rgb(0x1b6b8c, Blue);

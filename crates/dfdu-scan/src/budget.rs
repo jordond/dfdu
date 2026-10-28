@@ -11,6 +11,7 @@ pub struct Budget {
 }
 
 impl Budget {
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Budget {
             capacity,

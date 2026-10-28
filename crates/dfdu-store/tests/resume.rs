@@ -1,12 +1,15 @@
 //! `--resume-from`: a snapshot loaded into the engine is shown at once, and a rescan of its
 //! root replaces it with what is on disk now (the shadow-subtree swap).
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_store::ncdu::Limits;
 use dfdu_store::snapshot::{self, Header};
 use dfdu_tree::Totals;
 
@@ -58,7 +61,7 @@ fn resumed_snapshot_is_rescanned() {
     let (_, now) = scan(&root);
     assert_ne!(before.alloc, now.alloc);
 
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
@@ -90,7 +93,7 @@ fn resumed_snapshot_is_classified() {
     fs::write(root.join("web/node_modules/pkg/index.js"), vec![1u8; 5_000]).unwrap();
     let (snap, _) = scan(&root);
 
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
@@ -146,7 +149,7 @@ fn resume_rescans_only_changed_directories() {
     fs::write(root.join("a/b/node_modules/dep/i.js"), vec![1u8; 3_000]).unwrap();
     fs::write(root.join("quiet/unseen"), vec![1u8; 40_000]).unwrap();
 
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
@@ -287,7 +290,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
     e.shutdown(Duration::from_secs(1));
     assert_eq!(scanned.len(), 4, "{scanned:?}");
 
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
@@ -303,7 +306,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
 
 /// How long classifying a large loaded tree takes (`DFDU_TREE=path`, `--ignored`, release).
 #[test]
-#[ignore]
+#[ignore = "a timing run on the tree DFDU_TREE names"]
 fn classify_loaded_cost() {
     let Some(root) = std::env::var_os("DFDU_TREE").map(std::path::PathBuf::from) else {
         return;
@@ -312,7 +315,7 @@ fn classify_loaded_cost() {
     let (snap, _) = scan(&root);
     let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
     let rules = std::sync::Arc::new(rules);
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
@@ -396,7 +399,7 @@ fn btrfs_generations_tell_what_changed() {
         None
     );
 
-    let loaded = snapshot::read(&snap[..], &Default::default()).unwrap();
+    let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);

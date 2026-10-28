@@ -5,6 +5,7 @@
 //! runs it with the engine's real threads and up to a million links.
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +14,9 @@ use std::time::{Duration, Instant};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, Timing};
 use dfdu_scan::JobOptions;
 use dfdu_tree::{Ix, NodeFlags};
+
+mod common;
+use common::child;
 
 const FILE_BYTES: usize = 3000;
 
@@ -41,13 +45,6 @@ fn make_tree(root: &Path, inodes: usize, profiles: usize) {
     });
 }
 
-fn child(m: &Model, ix: Ix, name: &str) -> Ix {
-    m.tree
-        .children(ix)
-        .find(|&c| m.tree.name(c) == name.as_bytes())
-        .unwrap_or_else(|| panic!("no {name}"))
-}
-
 /// Charged links and all hard links below `ix`.
 fn count_links(m: &Model, ix: Ix) -> (u64, u64) {
     let (mut charged, mut links) = (0, 0);
@@ -56,7 +53,7 @@ fn count_links(m: &Model, ix: Ix) -> (u64, u64) {
         let f = m.tree.flags(ix);
         if f.has(NodeFlags::HARDLINK) {
             links += 1;
-            charged += f.has(NodeFlags::CHARGED) as u64;
+            charged += u64::from(f.has(NodeFlags::CHARGED));
         }
         stack.extend(m.tree.children(ix));
     }
@@ -86,7 +83,7 @@ fn holds(from: &Timing, to: &Timing) -> String {
 }
 
 fn check(inodes: usize, profiles: usize) {
-    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tmp = common::tempdir();
     let t = Instant::now();
     make_tree(tmp.path(), inodes, profiles);
     let links = (inodes * profiles) as u64;
@@ -128,7 +125,7 @@ fn check(inodes: usize, profiles: usize) {
             count_links(m, root),
             (inodes as u64, inodes as u64 * (profiles as u64 + 1))
         );
-        let p = child(m, root, "profiles");
+        let p = child(&m.tree, root, "profiles");
         (m.tree.total(root).alloc, m.tree.node_ref(p))
     });
 
@@ -165,7 +162,7 @@ fn check(inodes: usize, profiles: usize) {
         if let Err(v) = m.tree.check(&[]) {
             panic!("{v:?}");
         }
-        let profiles = child(m, root, "profiles");
+        let profiles = child(&m.tree, root, "profiles");
         assert_eq!(
             m.tree.total(profiles).items,
             1 + links + m.tree.children(profiles).count() as u64
@@ -182,7 +179,7 @@ fn links_swapped_in() {
 /// A million links to 2,000 inodes, 501 links each. Run with
 /// `cargo test --release -p dfdu-engine --test links -- --ignored --nocapture`.
 #[test]
-#[ignore]
+#[ignore = "a million links: slow outside a release build"]
 fn million_links_swapped_in() {
     check(2000, 500);
 }

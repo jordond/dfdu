@@ -1,10 +1,15 @@
 //! The man pages and shell completions in `assets/`, which release archives and packages ship,
 //! match what `dfdu man` and `dfdu completions` write. `DFDU_UPDATE_ASSETS=1` rewrites them.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use common::{dfdu, ok};
 
 const SHELLS: &[(&str, &str)] = &[
     ("bash", "dfdu.bash"),
@@ -16,15 +21,6 @@ const SHELLS: &[(&str, &str)] = &[
 
 fn assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
-}
-
-fn dfdu(args: &[&str]) -> Vec<u8> {
-    let o = Command::new(env!("CARGO_BIN_EXE_dfdu"))
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    o.stdout
 }
 
 /// The files of `dir` by name.
@@ -46,11 +42,11 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 fn assets_are_current() {
     let tmp = tempfile::tempdir().unwrap();
     let man = tmp.path().join("man");
-    dfdu(&["man", man.to_str().unwrap()]);
+    ok(dfdu(&["man", man.to_str().unwrap()]));
     let comp = tmp.path().join("completions");
     fs::create_dir_all(&comp).unwrap();
     for (shell, name) in SHELLS {
-        fs::write(comp.join(name), dfdu(&["completions", shell])).unwrap();
+        fs::write(comp.join(name), ok(dfdu(&["completions", shell]))).unwrap();
     }
     let update = std::env::var_os("DFDU_UPDATE_ASSETS").is_some();
     for dir in ["man", "completions"] {

@@ -23,7 +23,7 @@ use crate::details;
 /// A second click on the same row within this long opens it.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Rows one wheel step moves.
-const WHEEL_ROWS: usize = 3;
+const WHEEL_ROWS: i8 = 3;
 
 #[derive(Clone, Debug, Default)]
 pub struct Mouse {
@@ -58,9 +58,9 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
         return None;
     }
     let step = if up {
-        -(WHEEL_ROWS as i32)
+        -i32::from(WHEEL_ROWS)
     } else {
-        WHEEL_ROWS as i32
+        i32::from(WHEEL_ROWS)
     };
     if (app.areas.details.is_some_and(|r| r.contains(at)) || details::focused(app))
         && details::scroll(app, step)
@@ -71,7 +71,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
         return None;
     }
     app.status = None;
-    let rows = WHEEL_ROWS as isize;
+    let rows = isize::from(WHEEL_ROWS);
     app.move_by(if up { -rows } else { rows });
     Some(Vec::new())
 }
@@ -115,7 +115,7 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
         .rows
         .len()
         .saturating_sub(app.scroll)
-        .min((list.height as usize).saturating_sub(new_row as usize));
+        .min((list.height as usize).saturating_sub(usize::from(new_row)));
     app.status = None;
     if line < entries {
         let row = app.scroll + line;
@@ -148,10 +148,10 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
     use super::*;
-    use crate::ErrorList;
     use crate::snapshot::{EntryData, Snapshot, test_entry};
     use crate::tests::{press, render, snap_without_totals};
     use crate::theme::Theme;
+    use dfdu_engine::ErrorList;
 
     /// The list's first row is on this screen line, below the two header lines.
     const TOP: u16 = 2;
@@ -180,7 +180,7 @@ mod tests {
     fn browser(t0: Instant) -> App {
         let mut app = App::new(Theme::no_color(), t0);
         let entries = (0..10)
-            .map(|i| dir(i, &format!("d{i}"), 1000 - i as u64 * 10))
+            .map(|i| dir(i, &format!("d{i}"), 1000 - u64::from(i) * 10))
             .collect();
         app.refresh(snap_without_totals(entries, 1), t0);
         render(&mut app, t0, 80, 12);

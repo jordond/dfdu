@@ -33,10 +33,12 @@ impl Safety {
     ];
 
     /// The level numbered `n` (`s as u8`), as sent between hosts.
+    #[must_use]
     pub fn from_u8(n: u8) -> Option<Safety> {
         Safety::ALL.get(usize::from(n)).copied()
     }
 
+    #[must_use]
     pub fn parse(s: &str) -> Option<Safety> {
         Some(match s {
             "safe" => Safety::Safe,
@@ -48,6 +50,7 @@ impl Safety {
         })
     }
 
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Safety::Safe => "safe",
@@ -86,6 +89,7 @@ impl Class {
     /// repository it refuses): never recommended or cleaned.
     pub const VCS_UNKNOWN: u8 = 16;
 
+    #[must_use]
     pub fn has(self, flag: u8) -> bool {
         self.flags & flag != 0
     }
@@ -101,6 +105,9 @@ mod tests {
             assert_eq!(Safety::from_u8(s as u8), Some(s));
             assert_eq!(Safety::parse(s.as_str()), Some(s));
         }
-        assert_eq!(Safety::from_u8(Safety::ALL.len() as u8), None);
+        assert_eq!(
+            Safety::from_u8(u8::try_from(Safety::ALL.len()).unwrap()),
+            None
+        );
     }
 }

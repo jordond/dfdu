@@ -1,10 +1,10 @@
-//! Change journals: which directories changed since a snapshot was taken (FSEvents on macOS,
+//! Change journals: which directories changed since a snapshot was taken (`FSEvents` on macOS,
 //! the USN journal on Windows, btrfs generations on Linux as root),
 //! so a resume rescans only those ([`Command::Resume`](crate::Command::Resume)).
 
 use std::path::{Path, PathBuf};
 
-/// How long the FSEvents daemon may take to replay its history.
+/// How long the `FSEvents` daemon may take to replay its history.
 #[cfg(target_os = "macos")]
 const REPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -14,6 +14,7 @@ const REPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 /// keeps no journal; everything must then be scanned again. `time` is when the position was
 /// read (seconds since the Unix epoch, 0 when not known); btrfs needs it to tell atime updates
 /// from changes.
+#[must_use]
 pub fn changed_since(
     root: &Path,
     volume: [u8; 16],
@@ -61,6 +62,7 @@ pub fn changed_since(
 /// Where the change journal of `path`'s volume stands, as `(journal identity, position)` for
 /// [`changed_since`]; `None` where there is none (on Linux: off btrfs, or without
 /// `CAP_SYS_ADMIN`).
+#[must_use]
 pub fn journal_position(path: &Path) -> Option<([u8; 16], u64)> {
     #[cfg(target_os = "macos")]
     {

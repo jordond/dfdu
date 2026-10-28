@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 
 use crate::FsClass;
 
+/// How long each filesystem gets to report its size in the disk list: the `timeout` of
+/// [`disks`] for `dfdu disks` and the browser's picker.
+pub const DISK_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Disk {
     pub mount_point: PathBuf,
@@ -50,6 +54,10 @@ fn on_thread<T: Send + 'static>(
 
 /// The mounted filesystems, sorted by mount point. Each filesystem gets `timeout` to report
 /// its size; those that do not answer are listed without one.
+///
+/// # Errors
+///
+/// When the mount table cannot be read.
 #[cfg(target_os = "linux")]
 pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
     use std::collections::BTreeMap;
@@ -133,6 +141,11 @@ fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
 }
 
 /// The mounted filesystems, sorted by mount point, from `sysinfo`. The whole listing gets
+/// `timeout`.
+///
+/// # Errors
+///
+/// When no thread can be started for the listing, or `TimedOut` when it takes longer than
 /// `timeout`.
 #[cfg(not(target_os = "linux"))]
 pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {

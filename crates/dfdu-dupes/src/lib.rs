@@ -65,6 +65,7 @@ pub struct Candidate {
 impl Candidate {
     /// What deleting this name alone frees: nothing for a file with other names, its private
     /// bytes when known, its allocation otherwise.
+    #[must_use]
     pub fn freed(&self) -> u64 {
         if self.links > 0 {
             0
@@ -94,6 +95,7 @@ impl Group {
 
     /// Every copy shares its data with the others (APFS clones, reflinks): deleting copies frees
     /// nothing.
+    #[must_use]
     pub fn all_clones(&self) -> bool {
         self.files.iter().all(|f| f.private == Some(0))
     }
@@ -129,6 +131,7 @@ pub struct Found {
 
 /// The files at or below `root` worth comparing: at least `min_size` bytes, one per inode,
 /// not cloud placeholders, and only sizes that more than one file has.
+#[must_use]
 pub fn candidates(tree: &Tree, root: Ix, min_size: u64) -> Vec<Candidate> {
     let mut by_inode: HashMap<(u64, u64), usize> = HashMap::new();
     let mut out: Vec<Candidate> = Vec::new();
@@ -161,20 +164,7 @@ pub fn candidates(tree: &Tree, root: Ix, min_size: u64) -> Vec<Candidate> {
             private: None,
         });
     };
-    if tree.dir(root).is_none() {
-        add(root);
-    } else {
-        let mut stack = vec![root];
-        while let Some(d) = stack.pop() {
-            for c in tree.children(d) {
-                if tree.dir(c).is_some() {
-                    stack.push(c);
-                } else {
-                    add(c);
-                }
-            }
-        }
-    }
+    tree.for_each_leaf(root, &mut add);
     // Nothing allocated for a file with data: a placeholder whose data is elsewhere.
     out.retain(|f| f.alloc > 0);
     let mut sizes: HashMap<u64, u32> = HashMap::new();
@@ -321,11 +311,15 @@ fn par_map<T: Sync, R: Send>(
                         mine.push((i, r));
                     }
                 }
-                out.lock().unwrap_or_else(|e| e.into_inner()).extend(mine);
+                out.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend(mine);
             });
         }
     });
-    let mut v = out.into_inner().unwrap_or_else(|e| e.into_inner());
+    let mut v = out
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     v.sort_unstable_by_key(|r| r.0);
     v
 }
@@ -342,7 +336,7 @@ fn shared_keys<K: std::hash::Hash + Eq + Copy>(v: Vec<(K, Candidate)>) -> Vec<(K
 /// Compares `cands` (from [`candidates`]) and returns the groups of identical files.
 /// `cancel` stops it between files and between reads.
 pub fn find(
-    cands: Vec<Candidate>,
+    cands: &[Candidate],
     opts: &Options,
     progress: &Progress,
     cancel: &AtomicBool,
@@ -358,8 +352,8 @@ pub fn find(
         progress.bytes.store(0, Ordering::Relaxed);
     };
     let partial_bytes: u64 = cands.iter().map(|c| c.size.min(2 * PARTIAL as u64)).sum();
-    start_round(1, &cands, partial_bytes);
-    let partial = par_map(&cands, opts.threads, cancel, |c| {
+    start_round(1, cands, partial_bytes);
+    let partial = par_map(cands, opts.threads, cancel, |c| {
         let h = partial_hash(c);
         progress.files.fetch_add(1, Ordering::Relaxed);
         progress
@@ -427,15 +421,23 @@ pub fn find(
 }
 
 /// The hash as lower-case hex.
+#[must_use]
 pub fn hex(hash: &[u8; 32]) -> String {
-    hash.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write;
+    hash.iter().fold(String::with_capacity(64), |mut s, b| {
+        // Writing to a `String` cannot fail.
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Whether the file at the candidate's path is still the one it describes (its length and
 /// inode), for a caller about to act on it.
+#[must_use]
 pub fn still_same(c: &Candidate) -> bool {
     open_checked(c).is_some()
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests;

@@ -11,19 +11,37 @@ use super::work::Work;
 use super::{Applier, Job, JobKind, JobPhase, Model};
 use crate::links::Scope;
 
+/// What a job scans: the node it is for (`target`), the directory it scans into (`root`: the
+/// target, or a shadow that replaces it when the job finishes), the scope of the hard links it
+/// finds, and the path and options it scans with.
+pub(super) struct JobStart {
+    pub kind: JobKind,
+    pub target: Ix,
+    pub root: Ix,
+    pub scope: Scope,
+    pub path: PathBuf,
+    pub opts: JobOptions,
+}
+
 impl<B: Backend> Applier<B> {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn start(
-        &mut self,
-        m: &mut Model,
-        id: u32,
-        kind: JobKind,
-        target: Ix,
-        root: Ix,
-        scope: Scope,
-        path: PathBuf,
-        opts: JobOptions,
-    ) {
+    /// Starts job `id`.
+    ///
+    /// # Panics
+    ///
+    /// If `start.root` is not a directory.
+    #[expect(
+        clippy::expect_used,
+        reason = "callers pass a root they have just created or resolved as a directory"
+    )]
+    pub(super) fn start(&mut self, m: &mut Model, id: u32, start: JobStart) {
+        let JobStart {
+            kind,
+            target,
+            root,
+            scope,
+            path,
+            opts,
+        } = start;
         let rec = m.tree.dir_mut(root).expect("job root is a directory");
         rec.job = id;
         rec.dir_id = 0;

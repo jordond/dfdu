@@ -69,6 +69,11 @@ pub struct Imported {
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
 /// Reads an export, plain or zstd-compressed.
+///
+/// # Errors
+///
+/// When `r` fails, the export is malformed or not one this version reads, or it exceeds
+/// `limits`.
 pub fn import(r: impl Read, limits: &Limits) -> Result<Imported, ImportError> {
     let mut r = BufReader::with_capacity(1 << 16, r);
     let compressed = r.fill_buf()?.starts_with(&ZSTD_MAGIC);
@@ -179,10 +184,10 @@ fn valid_name(n: &[u8]) -> bool {
 
 /// The kind an info block describes, from `mode` where the export has it.
 fn kind_of(info: &Info) -> Kind {
-    match info.mode.map(|m| m & 0o170000) {
-        Some(0o040000) => Kind::Dir,
-        Some(0o100000) => Kind::File,
-        Some(0o120000) => Kind::Symlink,
+    match info.mode.map(|m| m & 0o170_000) {
+        Some(0o040_000) => Kind::Dir,
+        Some(0o100_000) => Kind::File,
+        Some(0o120_000) => Kind::Symlink,
         Some(_) => Kind::Other,
         None if info.notreg => Kind::Other,
         None => Kind::File,
@@ -271,10 +276,10 @@ fn add_entry(
 ) -> Ix {
     let dev = info.dev.unwrap_or(pdev);
     if listed {
-        let flags = if dev != pdev {
-            NodeFlags::MOUNT_ROOT
-        } else {
+        let flags = if dev == pdev {
             0
+        } else {
+            NodeFlags::MOUNT_ROOT
         };
         let ix = tree.add_dir_flagged(dir, &info.name, &meta_of(info, Kind::Dir, dev), flags);
         let own = tree.own(ix);
@@ -285,43 +290,40 @@ fn add_entry(
         }
         return ix;
     }
-    let ix = match &info.excluded {
-        Some(why) => {
-            let (kind, flags) = match why.as_slice() {
-                b"otherfs" | b"othfs" => (Kind::Dir, NodeFlags::MOUNT_ROOT),
-                b"kernfs" => (Kind::Dir, NodeFlags::KERNEL),
-                b"frmlink" => (Kind::Symlink, 0),
-                // Not stat'ed: a directory as far as anyone knows, unless `mode` says
-                // otherwise.
-                _ => match info.mode {
-                    Some(_) => (kind_of(info), 0),
-                    None => (Kind::Dir, 0),
-                },
-            };
-            let m = meta_of(info, kind, dev);
-            if kind == Kind::Dir {
-                let ix = tree.add_dir_flagged(dir, &info.name, &m, flags);
-                set_state(tree, ix, DirState::Skipped);
-                close_dir(tree, ix);
-                ix
-            } else {
-                tree.add_file(dir, &info.name, &m, true, None)
-            }
+    let ix = if let Some(why) = &info.excluded {
+        let (kind, flags) = match why.as_slice() {
+            b"otherfs" | b"othfs" => (Kind::Dir, NodeFlags::MOUNT_ROOT),
+            b"kernfs" => (Kind::Dir, NodeFlags::KERNEL),
+            b"frmlink" => (Kind::Symlink, 0),
+            // Not stat'ed: a directory as far as anyone knows, unless `mode` says
+            // otherwise.
+            _ => match info.mode {
+                Some(_) => (kind_of(info), 0),
+                None => (Kind::Dir, 0),
+            },
+        };
+        let m = meta_of(info, kind, dev);
+        if kind == Kind::Dir {
+            let ix = tree.add_dir_flagged(dir, &info.name, &m, flags);
+            set_state(tree, ix, DirState::Skipped);
+            close_dir(tree, ix);
+            ix
+        } else {
+            tree.add_file(dir, &info.name, &m, true, None)
         }
-        None => {
-            let kind = kind_of(info);
-            let m = meta_of(info, kind, dev);
-            if kind == Kind::Dir {
-                // A directory written as an info block: one that could not be read.
-                let ix = tree.add_dir(dir, &info.name, &m);
-                set_state(tree, ix, DirState::Failed);
-                close_dir(tree, ix);
-                ix
-            } else {
-                let charged = !m.is_hardlink() || links.insert((dev, info.ino));
-                let err = info.read_error.then_some(ErrKind::Other);
-                tree.add_file(dir, &info.name, &m, charged, err)
-            }
+    } else {
+        let kind = kind_of(info);
+        let m = meta_of(info, kind, dev);
+        if kind == Kind::Dir {
+            // A directory written as an info block: one that could not be read.
+            let ix = tree.add_dir(dir, &info.name, &m);
+            set_state(tree, ix, DirState::Failed);
+            close_dir(tree, ix);
+            ix
+        } else {
+            let charged = !m.is_hardlink() || links.insert((dev, info.ino));
+            let err = info.read_error.then_some(ErrKind::Other);
+            tree.add_file(dir, &info.name, &m, charged, err)
         }
     };
     let own = tree.own(ix);
@@ -408,6 +410,10 @@ pub struct ExportStats {
 }
 
 /// Writes the tree below `root` (its path as the root's name) in ncdu's format, version 1.2.
+///
+/// # Errors
+///
+/// When writing to `w` fails.
 pub fn export(tree: &Tree, root: Ix, w: impl Write, meta: &Metadata) -> io::Result<ExportStats> {
     let mut w = io::BufWriter::with_capacity(1 << 16, w);
     let mut stats = ExportStats::default();
@@ -468,16 +474,13 @@ pub fn export(tree: &Tree, root: Ix, w: impl Write, meta: &Metadata) -> io::Resu
         let Some((kids, i, dev)) = stack.last_mut() else {
             break;
         };
-        match kids.get(*i) {
-            Some(&c) => {
-                *i += 1;
-                w.write_all(b",\n")?;
-                next = Some((c, Some(*dev)));
-            }
-            None => {
-                stack.pop();
-                w.write_all(b"]")?;
-            }
+        if let Some(&c) = kids.get(*i) {
+            *i += 1;
+            w.write_all(b",\n")?;
+            next = Some((c, Some(*dev)));
+        } else {
+            stack.pop();
+            w.write_all(b"]")?;
         }
     }
     w.write_all(b"]\n")?;

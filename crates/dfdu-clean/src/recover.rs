@@ -40,6 +40,7 @@ pub struct Unfinished {
 
 impl Unfinished {
     /// How the TUI and `clean` describe it.
+    #[must_use]
     pub fn describe(&self) -> String {
         let p = self.path.display();
         match &self.state {
@@ -84,6 +85,11 @@ pub struct Recovery {
 }
 
 /// Reads every finished session's journal in `dir`.
+///
+/// # Errors
+///
+/// `dir` could not be listed. A journal that cannot be read or is damaged is a note in the
+/// result instead.
 pub fn scan(dir: &Path) -> io::Result<Recovery> {
     let mut r = Recovery {
         sessions: vec![],
@@ -143,8 +149,8 @@ impl Recovery {
                     let stage = stage_hex.as_deref().and_then(path_of_hex);
                     let at_original = path_of_hex(&item.path_hex)
                         .is_some_and(|p| fs::symlink_metadata(p).is_ok());
-                    let state = Pending::Interrupted { mode, at_original };
-                    open.insert(key(&item), (item, Some(state), stage));
+                    let pending = Pending::Interrupted { mode, at_original };
+                    open.insert(key(&item), (item, Some(pending), stage));
                 }
                 Record::Done { item } => {
                     if let Some(e) = open.get_mut(&key(&item)) {
@@ -234,6 +240,11 @@ impl Recovery {
     }
 
     /// Deletes what is left of a staged item.
+    ///
+    /// # Errors
+    ///
+    /// There is no item `i`, it is not staged, its journal could not be written, or the delete
+    /// failed.
     pub fn finish(&mut self, i: usize) -> io::Result<()> {
         let u = self.checked(i)?.clone();
         let stage = match &u.state {
@@ -247,7 +258,7 @@ impl Recovery {
         if matches!(u.state, Pending::Staged { .. }) {
             record(
                 j,
-                Record::CommitIntent {
+                &Record::CommitIntent {
                     item: u.rec.clone(),
                 },
             )?;
@@ -264,7 +275,7 @@ impl Recovery {
         }
         record(
             j,
-            Record::CommitDone {
+            &Record::CommitDone {
                 item: u.rec.clone(),
             },
         )?;
@@ -277,6 +288,10 @@ impl Recovery {
 
     /// Closes an interrupted item in its journal, once the user has seen what is at its path
     /// (or in the trash): nothing is done on disk.
+    ///
+    /// # Errors
+    ///
+    /// There is no item `i`, it is staged, or its journal could not be written.
     pub fn dismiss(&mut self, i: usize) -> io::Result<()> {
         let u = self.checked(i)?.clone();
         if !matches!(u.state, Pending::Interrupted { .. } | Pending::Trashed) {
@@ -284,7 +299,7 @@ impl Recovery {
         }
         record(
             &mut self.sessions[u.session].journal,
-            Record::Failed {
+            &Record::Failed {
                 item: u.rec.clone(),
                 detail: "interrupted; dismissed in a later session".into(),
             },
@@ -296,6 +311,11 @@ impl Recovery {
     /// Puts an item found in the trash back at its path (refused if something is there now).
     /// Puts a staged item back at its path, or next to it as `<name>.restored-<n>` if
     /// something is there now. Refused for a partly deleted item.
+    ///
+    /// # Errors
+    ///
+    /// There is no item `i`, it cannot be restored (partly deleted, or something is at the path
+    /// of an item in the trash), the move failed, or its journal could not be written.
     pub fn restore(&mut self, i: usize) -> io::Result<PathBuf> {
         let u = self.checked(i)?.clone();
         if u.state == Pending::Trashed {
@@ -303,7 +323,7 @@ impl Recovery {
             let to = crate::stage::restore_from_trash(&u.path, &identity(&u.rec), started)?;
             record(
                 &mut self.sessions[u.session].journal,
-                Record::Restored {
+                &Record::Restored {
                     item: u.rec.clone(),
                     to_hex: hex_path(&to),
                 },
@@ -322,7 +342,7 @@ impl Recovery {
         let to = crate::stage::put_back(stage, &u.path)?;
         record(
             &mut self.sessions[u.session].journal,
-            Record::Restored {
+            &Record::Restored {
                 item: u.rec.clone(),
                 to_hex: hex_path(&to),
             },
@@ -351,7 +371,7 @@ fn refused(why: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, why)
 }
 
-fn record(j: &mut Journal, rec: Record) -> io::Result<()> {
+fn record(j: &mut Journal, rec: &Record) -> io::Result<()> {
     j.write(rec)
         .and_then(|()| j.sync())
         .map_err(|e| io::Error::new(e.kind(), format!("journal: {e}")))

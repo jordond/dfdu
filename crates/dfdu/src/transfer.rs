@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Args;
-use dfdu_engine::{Command, Model};
+use dfdu_engine::{Command, Model, SizeMode};
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tui::SizeMode;
 
 use crate::launch::{self, Local};
 use crate::table::{print_by_type, print_tree, shown_total};
@@ -69,7 +68,7 @@ pub struct ImportArgs {
     pub bytes: bool,
 }
 
-/// Where the change journal of `path`'s volume stands (FSEvents on macOS, the USN journal on
+/// Where the change journal of `path`'s volume stands (`FSEvents` on macOS, the USN journal on
 /// Windows, the btrfs subvolume's generation on Linux as root); `None` where there is none.
 fn journal_position(path: &Path) -> Option<dfdu_store::snapshot::Journal> {
     // Read before the position, so that whatever changes after it has a ctime no older.
@@ -105,7 +104,7 @@ pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
 }
 
 /// `dfdu import`: the summary `dfdu scan` prints, for a scan read from a file.
-pub fn import(args: ImportArgs) -> ExitCode {
+pub fn import(args: &ImportArgs) -> ExitCode {
     let im = match read_export(&args.file) {
         Ok(im) => im,
         Err(code) => return code,
@@ -141,24 +140,27 @@ pub fn import(args: ImportArgs) -> ExitCode {
     }
 }
 
+/// The snapshot in `f`, read; reports a failure.
+fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
+    std::fs::File::open(f)
+        .map_err(dfdu_store::ImportError::from)
+        .and_then(|r| {
+            dfdu_store::snapshot::read(
+                std::io::BufReader::new(r),
+                &dfdu_store::ncdu::Limits::default(),
+            )
+        })
+        .map_err(|e| {
+            eprintln!("dfdu: {}: {e}", f.display());
+            ExitCode::from(1)
+        })
+}
+
 /// `dfdu export`: scans `path` and writes it in ncdu's format.
-pub fn export(args: ExportArgs) -> ExitCode {
-    let resumed = match &args.resume_from {
-        Some(f) => {
-            let read = std::fs::File::open(f)
-                .map_err(dfdu_store::ImportError::from)
-                .and_then(|r| {
-                    dfdu_store::snapshot::read(std::io::BufReader::new(r), &Default::default())
-                });
-            match read {
-                Ok(l) => Some(l),
-                Err(e) => {
-                    eprintln!("dfdu: {}: {e}", f.display());
-                    return ExitCode::from(1);
-                }
-            }
-        }
-        None => None,
+pub fn export(args: &ExportArgs) -> ExitCode {
+    let resumed = match args.resume_from.as_deref().map(read_snapshot).transpose() {
+        Ok(l) => l,
+        Err(code) => return code,
     };
     let mut job = args.mounts.job();
     let path = match &resumed {
@@ -170,19 +172,16 @@ pub fn export(args: ExportArgs) -> ExitCode {
         None => args.path.clone(),
     };
     let opts = launch::headless(false);
-    let (engine, job) = match &args.remote {
-        Some(host) => {
-            let (_, opts) = launch::for_storage(&path, args.threads, opts);
-            match remote::engine(host, opts, None) {
-                Ok((e, _)) => (e, job),
-                Err(code) => return code,
-            }
+    let (engine, job) = if let Some(host) = &args.remote {
+        let (_, opts) = launch::for_storage(&path, args.threads, opts);
+        match remote::engine(host, opts, None) {
+            Ok((e, _)) => (e, job),
+            Err(code) => return code,
         }
-        None => {
-            let mut local = Local::new(&path, args.mounts, args.threads, None);
-            local.job = job;
-            local.start(&path, opts)
-        }
+    } else {
+        let mut local = Local::new(&path, args.mounts, args.threads, None);
+        local.job = job;
+        local.start(&path, opts)
     };
     // Taken before the scan, so that what changes during it is replayed on resume.
     let journal = journal_position(&path).filter(|_| args.remote.is_none());
@@ -218,28 +217,15 @@ pub fn export(args: ExportArgs) -> ExitCode {
             .next()
             .ok_or_else(|| std::io::Error::other("no scan"))?;
         let partial = m.tree.total(root).errors > 0 || m.status.incomplete;
-        let write = |w: &mut dyn std::io::Write| -> std::io::Result<_> {
-            if args.snapshot {
-                let header = dfdu_store::snapshot::Header {
-                    tool_version: env!("CARGO_PKG_VERSION").into(),
-                    written: meta.timestamp.unwrap_or(0),
-                    cross_mounts: job.cross_mounts,
-                    network: job.network,
-                    journal,
-                };
-                let entries = dfdu_store::snapshot::write(&m.tree, root, w, &header)?;
-                Ok(dfdu_store::ncdu::ExportStats {
-                    entries,
-                    non_utf8: 0,
-                })
-            } else if args.compress {
-                let mut z = dfdu_store::ZstdWriter::new(w);
-                let s = dfdu_store::ncdu::export(&m.tree, root, &mut z, &meta)?;
-                z.finish()?;
-                Ok(s)
-            } else {
-                dfdu_store::ncdu::export(&m.tree, root, w, &meta)
-            }
+        let write = |w: &mut dyn std::io::Write| {
+            let header = args.snapshot.then(|| dfdu_store::snapshot::Header {
+                tool_version: env!("CARGO_PKG_VERSION").into(),
+                written: meta.timestamp.unwrap_or(0),
+                cross_mounts: job.cross_mounts,
+                network: job.network,
+                journal,
+            });
+            write_export(w, &m.tree, root, header.as_ref(), args.compress, &meta)
         };
         let stats = if to_stdout {
             write(&mut std::io::stdout().lock())?
@@ -267,6 +253,32 @@ pub fn export(args: ExportArgs) -> ExitCode {
     }
 }
 
+/// Writes the scan below `root` to `w`: as a snapshot with `header` when there is one, else in
+/// ncdu's format, zstd-compressed when `compress` is set.
+fn write_export(
+    w: &mut dyn std::io::Write,
+    tree: &dfdu_tree::Tree,
+    root: dfdu_tree::Ix,
+    header: Option<&dfdu_store::snapshot::Header>,
+    compress: bool,
+    meta: &dfdu_store::ncdu::Metadata,
+) -> std::io::Result<dfdu_store::ncdu::ExportStats> {
+    if let Some(header) = header {
+        let entries = dfdu_store::snapshot::write(tree, root, w, header)?;
+        Ok(dfdu_store::ncdu::ExportStats {
+            entries,
+            non_utf8: 0,
+        })
+    } else if compress {
+        let mut z = dfdu_store::ZstdWriter::new(w);
+        let s = dfdu_store::ncdu::export(tree, root, &mut z, meta)?;
+        z.finish()?;
+        Ok(s)
+    } else {
+        dfdu_store::ncdu::export(tree, root, w, meta)
+    }
+}
+
 /// What an ncdu export says about its writer.
 pub fn ncdu_meta() -> dfdu_store::ncdu::Metadata {
     dfdu_store::ncdu::Metadata {
@@ -276,5 +288,35 @@ pub fn ncdu_meta() -> dfdu_store::ncdu::Metadata {
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| d.as_secs()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `write_export` writes for a one-directory tree: a snapshot with a header, ncdu's
+    /// JSON compressed or plain otherwise.
+    #[test]
+    fn export_format_follows_the_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = dfdu_tree::Meta::from_metadata(&std::fs::metadata(tmp.path()).unwrap());
+        let mut tree = dfdu_tree::Tree::new();
+        let root = tree.new_root(tmp.path().as_os_str().as_encoded_bytes(), &meta, true);
+        let header = dfdu_store::snapshot::Header {
+            tool_version: "test".into(),
+            written: 0,
+            cross_mounts: false,
+            network: false,
+            journal: None,
+        };
+        let write = |header, compress| {
+            let mut out = Vec::new();
+            write_export(&mut out, &tree, root, header, compress, &ncdu_meta()).unwrap();
+            out
+        };
+        assert!(write(Some(&header), true).starts_with(b"DFDUSNAP"));
+        assert!(write(None, true).starts_with(&[0x28, 0xb5, 0x2f, 0xfd]));
+        assert!(write(None, false).starts_with(b"[1,2,{\"progname\":\"dfdu\""));
     }
 }

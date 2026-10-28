@@ -25,6 +25,11 @@ impl Tree {
     /// Checks totals and parent links of every node reachable from the visible roots and from
     /// `extra_roots` (rescan shadows). Cost is linear in the reachable tree; used after every
     /// slice step in debug builds and simulation tests.
+    ///
+    /// # Errors
+    ///
+    /// The first [`Violation`] found: a dead root, a stored total that is not the sum of its
+    /// children's, or a broken parent link.
     pub fn check(&self, extra_roots: &[Ix]) -> Result<(), Violation> {
         let roots: Vec<Ix> = self.roots().chain(extra_roots.iter().copied()).collect();
         for &r in &roots {
@@ -40,12 +45,33 @@ impl Tree {
     fn check_subtree(&self, root: Ix) -> Result<(), Violation> {
         // Iterative post-order: compute each directory's total from its children.
         let mut stack: Vec<(Ix, bool)> = vec![(root, false)];
-        let mut sums: std::collections::HashMap<u32, Totals> = Default::default();
+        let mut sums: std::collections::HashMap<u32, Totals> = std::collections::HashMap::default();
         while let Some((ix, expanded)) = stack.pop() {
             if self.dir(ix).is_none() {
                 continue;
             }
-            if !expanded {
+            if expanded {
+                let mut t = self.own(ix);
+                for c in self.children(ix) {
+                    match self.dir(c) {
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "post-order: a directory expands after all its children"
+                        )]
+                        Some(_) => t.add(sums.get(&c.0).expect("child computed first")),
+                        None => t.add(&self.own(c)),
+                    }
+                }
+                let stored = self.total(ix);
+                if stored != t {
+                    return Err(Violation::Totals {
+                        node: ix.0,
+                        stored: Box::new(stored),
+                        computed: Box::new(t),
+                    });
+                }
+                sums.insert(ix.0, t);
+            } else {
                 stack.push((ix, true));
                 for c in self.children(ix) {
                     if c.0 as usize >= self.slot_count()
@@ -69,23 +95,6 @@ impl Tree {
                         stack.push((c, false));
                     }
                 }
-            } else {
-                let mut t = self.own(ix);
-                for c in self.children(ix) {
-                    match self.dir(c) {
-                        Some(_) => t.add(sums.get(&c.0).expect("child computed first")),
-                        None => t.add(&self.own(c)),
-                    }
-                }
-                let stored = self.total(ix);
-                if stored != t {
-                    return Err(Violation::Totals {
-                        node: ix.0,
-                        stored: Box::new(stored),
-                        computed: Box::new(t),
-                    });
-                }
-                sums.insert(ix.0, t);
             }
         }
         Ok(())

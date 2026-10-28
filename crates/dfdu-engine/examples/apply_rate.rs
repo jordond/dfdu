@@ -122,15 +122,27 @@ fn applier_alone<B: Backend>(backend: impl Fn() -> B, root: &Path, runs: usize) 
         eprintln!(
             "{entries} entries in {:.1} ms: {:.2}M entries/s",
             took.as_secs_f64() * 1e3,
-            entries as f64 / took.as_secs_f64() / 1e6
+            millions_per_sec(entries, took.as_secs_f64())
         );
     }
     println!(
         "best: {:.2}M entries/s ({} messages){}",
-        entries as f64 / best.as_secs_f64() / 1e6,
+        millions_per_sec(entries, best.as_secs_f64()),
         log.len(),
         peak()
     );
+}
+
+/// `n` per `secs` seconds, in millions, for printing.
+#[expect(clippy::cast_precision_loss, reason = "printed to two decimals")]
+fn millions_per_sec(n: u64, secs: f64) -> f64 {
+    n as f64 / secs / 1e6
+}
+
+/// `part` as a percentage of `whole`, for printing.
+#[expect(clippy::cast_precision_loss, reason = "printed to two decimals")]
+fn percent(part: u64, whole: u64) -> f64 {
+    part as f64 * 100.0 / whole.max(1) as f64
 }
 
 /// The process's peak memory, where the system says (Linux).
@@ -175,12 +187,12 @@ fn engine<B: Backend>(backend: impl Fn() -> B, root: &Path, runs: usize, workers
                  {:?}, p99 < {:?}, max < {:?}, {long} ({:.2}%) over 2 ms; wait p99 < {:?}",
                 s.entries,
                 wall.as_secs_f64(),
-                s.entries as f64 / locked.as_secs_f64().max(1e-9) / 1e6,
+                millions_per_sec(s.entries, locked.as_secs_f64().max(1e-9)),
                 t.slices,
                 Timing::percentile(&t.hold, 0.5),
                 Timing::percentile(&t.hold, 0.99),
                 Timing::max(&t.hold),
-                long as f64 * 100.0 / t.slices.max(1) as f64,
+                percent(long, t.slices),
                 Timing::percentile(&t.wait, 0.99),
             );
         });
@@ -195,17 +207,28 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (mut runs, mut synth, mut wide, mut seed, mut stat_ns, mut workers, mut dir) =
         (5, None, 0, 1, 0, None, None);
-    let num = |v: Option<String>| -> u64 { v.and_then(|v| v.parse().ok()).expect(usage) };
+    let bad_usage = || -> ! {
+        eprintln!("{usage}");
+        std::process::exit(2)
+    };
+    let num = |v: Option<String>| -> u64 {
+        v.and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| bad_usage())
+    };
+    let count = |v: Option<String>| -> usize {
+        v.and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| bad_usage())
+    };
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--runs" => runs = num(args.next()) as usize,
+            "--runs" => runs = count(args.next()),
             "--synth" => synth = Some(num(args.next())),
             "--wide" => wide = num(args.next()),
             "--seed" => seed = num(args.next()),
             "--stat-ns" => stat_ns = num(args.next()),
-            "--engine" => workers = Some(num(args.next()) as usize),
+            "--engine" => workers = Some(count(args.next())),
             _ if dir.is_none() && !a.starts_with('-') => dir = Some(PathBuf::from(a)),
-            _ => panic!("{usage}"),
+            _ => bad_usage(),
         }
     }
     match (synth, dir) {
@@ -224,12 +247,18 @@ fn main() {
             }
         }
         (None, Some(dir)) => {
-            let root = dunce::canonicalize(dir).expect("DIR");
+            let root = match dunce::canonicalize(&dir) {
+                Ok(root) => root,
+                Err(e) => {
+                    eprintln!("{}: {e}", dir.display());
+                    std::process::exit(1)
+                }
+            };
             match workers {
                 Some(w) => engine(NativeBackend::default, &root, runs, w),
                 None => applier_alone(NativeBackend::default, &root, runs),
             }
         }
-        _ => panic!("{usage}"),
+        _ => bad_usage(),
     }
 }

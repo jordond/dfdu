@@ -10,6 +10,7 @@ use crate::extents::Inode;
 
 impl<B: Backend> Applier<B> {
     /// What deleting `items` would free. Walks them, so it is linear in their size.
+    #[must_use]
     pub fn estimate(&self, m: &Model, items: &[NodeRef], id: u64) -> Estimate {
         let tree = &m.tree;
         let all: HashSet<Ix> = items

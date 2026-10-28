@@ -10,6 +10,11 @@ use crate::applier::Command;
 /// Entries kept.
 pub const RECENT: usize = 1000;
 
+/// A count for a summary, saturating.
+fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Chunk {
@@ -38,15 +43,16 @@ pub enum Event {
 }
 
 impl Event {
+    #[must_use]
     pub fn of_msg(msg: &ScanMsg) -> Event {
         match msg {
             ScanMsg::Chunk(c) => Event::Chunk {
                 job: c.job.0,
                 dir: c.dir.0,
                 seq: c.seq,
-                files: c.files.len() as u32,
-                subdirs: c.subdirs.len() as u32,
-                errors: c.errors.len() as u32,
+                files: count(c.files.len()),
+                subdirs: count(c.subdirs.len()),
+                errors: count(c.errors.len()),
                 status: match c.status {
                     ChunkStatus::Ok => "ok",
                     ChunkStatus::Panicked(_) => "panicked",
@@ -75,6 +81,7 @@ impl Event {
         }
     }
 
+    #[must_use]
     pub fn of_command(cmd: &Command) -> Event {
         Event::Command(match cmd {
             Command::Scan { .. } => "Scan",
@@ -110,12 +117,23 @@ impl Recent {
         if self.ring.len() < RECENT {
             self.ring.push(e);
         } else {
-            self.ring[(self.total % RECENT as u64) as usize] = e;
+            let oldest = self.oldest();
+            self.ring[oldest] = e;
         }
         self.total += 1;
     }
 
+    /// Where the oldest kept event is once the ring is full, and the next one goes.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a remainder of RECENT, which is a usize"
+    )]
+    fn oldest(&self) -> usize {
+        (self.total % RECENT as u64) as usize
+    }
+
     /// Events recorded so far, including those no longer kept.
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.total
     }
@@ -125,12 +143,13 @@ impl Recent {
         let split = if self.ring.len() < RECENT {
             0
         } else {
-            (self.total % RECENT as u64) as usize
+            self.oldest()
         };
         self.ring[split..].iter().chain(&self.ring[..split])
     }
 
     /// One line per kept event, oldest first, under a heading.
+    #[must_use]
     pub fn report(&self) -> String {
         let mut s = format!(
             "last {} of {} messages and commands, oldest first:\n",

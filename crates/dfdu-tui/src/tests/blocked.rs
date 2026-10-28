@@ -203,7 +203,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
         path: root.to_path_buf(),
         opts: JobOptions::default(),
     });
-    let mut held = Duration::ZERO;
+    let mut held_for = Duration::ZERO;
     let release = (ui != Ui::Drawing).then(|| {
         // Block as soon as the job has started (the applier starts it under the write lock).
         while engine.read(|m| m.status.commands_applied) == 0 {
@@ -230,7 +230,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
                 engine.read(|m| m.status.busy()),
                 "the scan ended before the UI blocked"
             );
-            held = t0.elapsed();
+            held_for = t0.elapsed();
             hold.as_ref().unwrap().release();
         }
         let g = gate.clone();
@@ -256,7 +256,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
     let out = Outcome {
         totals,
         took,
-        held,
+        held: held_for,
         peak: engine.budget().peak(),
         capacity: engine.budget().capacity(),
         frames: gate.flushes.load(SeqCst),
@@ -290,7 +290,7 @@ fn check(dirs: usize, files: usize, block: Duration) {
             o.took,
             o.held,
             o.frames,
-            o.peak as f64 / (1 << 20) as f64,
+            crate::theme::ratio(o.peak as u64, 1 << 20),
             o.capacity >> 20
         );
         assert_eq!(o.totals.items, entries as u64, "{name}");
@@ -318,7 +318,7 @@ fn blocked_ui_does_not_slow_the_scan() {
 /// About 1M entries and a UI blocked for 10 s. Run with
 /// `cargo test --release -p dfdu-tui blocked_ui_10s -- --ignored --nocapture`.
 #[test]
-#[ignore]
+#[ignore = "a million entries and a 10 s block: run by hand, in release"]
 fn blocked_ui_10s_on_a_million_entries() {
     check(100, 100, Duration::from_secs(10));
 }

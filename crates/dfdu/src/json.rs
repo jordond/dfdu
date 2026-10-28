@@ -6,9 +6,8 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use dfdu_engine::Model;
+use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::{Class, DirState, Ix, Kind, NodeFlags, Totals, Tree};
-use dfdu_tui::SizeMode;
 use serde_json::{Map, Value, json};
 
 /// Bumped when a field changes meaning or goes away; new fields keep the version.
@@ -19,9 +18,9 @@ pub fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for c in bytes.chunks(3) {
-        let n = (c[0] as u32) << 16
-            | (*c.get(1).unwrap_or(&0) as u32) << 8
-            | *c.get(2).unwrap_or(&0) as u32;
+        let n = u32::from(c[0]) << 16
+            | u32::from(*c.get(1).unwrap_or(&0)) << 8
+            | u32::from(*c.get(2).unwrap_or(&0));
         for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
             out.push(if i <= c.len() {
                 ABC[(n >> shift & 63) as usize] as char
@@ -35,14 +34,11 @@ pub fn base64(bytes: &[u8]) -> String {
 
 /// Adds `key` with the text of `bytes`, and `key_bytes_b64` when they are not UTF-8.
 fn put_bytes(o: &mut Map<String, Value>, key: &str, bytes: &[u8]) {
-    match std::str::from_utf8(bytes) {
-        Ok(s) => {
-            o.insert(key.into(), s.into());
-        }
-        Err(_) => {
-            o.insert(key.into(), String::from_utf8_lossy(bytes).into());
-            o.insert(format!("{key}_bytes_b64"), base64(bytes).into());
-        }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        o.insert(key.into(), s.into());
+    } else {
+        o.insert(key.into(), String::from_utf8_lossy(bytes).into());
+        o.insert(format!("{key}_bytes_b64"), base64(bytes).into());
     }
 }
 
@@ -52,6 +48,22 @@ pub fn put_path(o: &mut Map<String, Value>, key: &str, path: &Path) {
 
 pub fn tool() -> Value {
     json!({ "name": "dfdu", "version": env!("CARGO_PKG_VERSION") })
+}
+
+/// The fields every document starts with: `schema_version`, `tool` and `root`.
+pub fn document(root: &Path) -> Map<String, Value> {
+    let mut doc = Map::new();
+    doc.insert("schema_version".into(), SCHEMA_VERSION.into());
+    doc.insert("tool".into(), tool());
+    put_path(&mut doc, "root", root);
+    doc
+}
+
+/// Writes `doc` to stdout, pretty-printed, with a final newline.
+pub fn print(doc: Map<String, Value>) -> io::Result<()> {
+    let mut w = io::stdout().lock();
+    serde_json::to_writer_pretty(&mut w, &Value::Object(doc))?;
+    w.write_all(b"\n")
 }
 
 pub fn mode_name(mode: SizeMode) -> &'static str {
@@ -167,7 +179,7 @@ fn subtree(
 
 /// Every entry that could not be read.
 fn errors(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
-    let list = dfdu_tui::errors(&m.tree, root, usize::MAX);
+    let list = dfdu_engine::errors(&m.tree, root, usize::MAX);
     list.items
         .iter()
         .map(|e| {
@@ -186,25 +198,25 @@ fn skipped(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
     let mut out = vec![];
     let mut stack = vec![root];
     while let Some(ix) = stack.pop() {
-        let Some(d) = t.dir(ix) else { continue };
-        let f = t.flags(ix);
-        let reason = if f.has(NodeFlags::DUP_MOUNT) {
+        let Some(dir) = t.dir(ix) else { continue };
+        let flags = t.flags(ix);
+        let reason = if flags.has(NodeFlags::DUP_MOUNT) {
             Some("mounted-again")
-        } else if f.has(NodeFlags::KERNEL) {
+        } else if flags.has(NodeFlags::KERNEL) {
             Some("kernel-filesystem")
-        } else if f.has(NodeFlags::NETWORK) {
+        } else if flags.has(NodeFlags::NETWORK) {
             Some("network-filesystem")
-        } else if d.state == DirState::Skipped {
+        } else if dir.state == DirState::Skipped {
             Some("other-filesystem")
         } else {
             None
         };
         match reason {
-            Some(r) => {
-                let mut o = Map::new();
-                put_path(&mut o, "path", &t.path_buf(ix));
-                o.insert("reason".into(), r.into());
-                out.push(o);
+            Some(reason) => {
+                let mut item = Map::new();
+                put_path(&mut item, "path", &t.path_buf(ix));
+                item.insert("reason".into(), reason.into());
+                out.push(item);
             }
             None => stack.extend(t.children(ix)),
         }
@@ -223,12 +235,9 @@ pub struct ScanOut<'a> {
 
 /// `scan --format json`: one document.
 pub fn scan(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<()> {
-    let mut doc = Map::new();
-    doc.insert("schema_version".into(), SCHEMA_VERSION.into());
-    doc.insert("tool".into(), tool());
-    put_path(&mut doc, "root", &m.tree.path_buf(root));
+    let mut doc = document(&m.tree.path_buf(root));
     doc.insert("size_mode".into(), mode_name(o.mode).into());
-    doc.insert("complete".into(), complete(m, root).into());
+    doc.insert("complete".into(), m.complete(root).into());
     doc.insert("elapsed_ms".into(), o.elapsed_ms.into());
     doc.insert("totals".into(), totals(&m.tree.total(root)));
     let tree = subtree(
@@ -246,11 +255,6 @@ pub fn scan(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<(
     writeln!(w)
 }
 
-/// No entry had an error and nothing was left unfinished.
-pub fn complete(m: &Model, root: Ix) -> bool {
-    m.tree.total(root).errors == 0 && !m.status.incomplete
-}
-
 fn line(w: &mut dyn Write, record: &str, mut o: Map<String, Value>) -> io::Result<()> {
     o.insert("record".into(), record.into());
     serde_json::to_writer(&mut *w, &Value::Object(o))?;
@@ -262,39 +266,36 @@ fn line(w: &mut dyn Write, record: &str, mut o: Map<String, Value>) -> io::Resul
 /// `summary` line.
 pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<()> {
     let t = &m.tree;
-    let mut h = Map::new();
-    h.insert("schema_version".into(), SCHEMA_VERSION.into());
-    h.insert("tool".into(), tool());
-    put_path(&mut h, "root", &t.path_buf(root));
-    h.insert("size_mode".into(), mode_name(o.mode).into());
-    line(w, "header", h)?;
-    let depth = o.depth.unwrap_or(usize::MAX);
+    let mut header = document(&t.path_buf(root));
+    header.insert("size_mode".into(), mode_name(o.mode).into());
+    line(w, "header", header)?;
+    let max_depth = o.depth.unwrap_or(usize::MAX);
     let top = o.top.unwrap_or(usize::MAX);
     let mut stack = vec![(root, 0usize)];
-    while let Some((ix, d)) = stack.pop() {
-        let mut e = entry(m, ix, &(o.note)(ix));
-        e.remove("name");
-        e.remove("name_bytes_b64");
-        put_path(&mut e, "path", &t.path_buf(ix));
-        e.insert("depth".into(), d.into());
-        line(w, "entry", e)?;
-        if d < depth && t.dir(ix).is_some() {
-            for &c in sorted_children(t, ix, o.mode).iter().take(top).rev() {
-                stack.push((c, d + 1));
+    while let Some((ix, depth)) = stack.pop() {
+        let mut record = entry(m, ix, &(o.note)(ix));
+        record.remove("name");
+        record.remove("name_bytes_b64");
+        put_path(&mut record, "path", &t.path_buf(ix));
+        record.insert("depth".into(), depth.into());
+        line(w, "entry", record)?;
+        if depth < max_depth && t.dir(ix).is_some() {
+            for &child in sorted_children(t, ix, o.mode).iter().take(top).rev() {
+                stack.push((child, depth + 1));
             }
         }
     }
-    for e in errors(m, root) {
-        line(w, "error", e)?;
+    for error in errors(m, root) {
+        line(w, "error", error)?;
     }
-    for s in skipped(m, root) {
-        line(w, "skipped", s)?;
+    for skip in skipped(m, root) {
+        line(w, "skipped", skip)?;
     }
-    let mut s = Map::new();
-    s.insert("complete".into(), complete(m, root).into());
-    s.insert("elapsed_ms".into(), o.elapsed_ms.into());
-    s.insert("totals".into(), totals(&t.total(root)));
-    line(w, "summary", s)
+    let mut summary = Map::new();
+    summary.insert("complete".into(), m.complete(root).into());
+    summary.insert("elapsed_ms".into(), o.elapsed_ms.into());
+    summary.insert("totals".into(), totals(&t.total(root)));
+    line(w, "summary", summary)
 }
 
 #[cfg(test)]

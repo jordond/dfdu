@@ -77,7 +77,7 @@ pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
     app.refresh(snap, now);
     for _ in 0..3 {
         let budget = dfdu_scan::Budget::new(1 << 20);
-        let x = extras::read(m, app, &budget, Default::default());
+        let x = extras::read(m, app, &budget, crate::debug::Counters::default());
         extras::apply(app, x);
         if !app.extras_stale() {
             return;
@@ -374,7 +374,7 @@ fn tiles_hold_still_until_the_next_sort() {
     let mut app = App::new(Theme::no_color(), t0);
     app.key(press(KeyCode::Char('2')), t0);
     let mut es: Vec<EntryData> = (0..6)
-        .map(|i| test_entry(i, &format!("e{i}"), 6000 - i as u64 * 900))
+        .map(|i| test_entry(i, &format!("e{i}"), 6000 - u64::from(i) * 900))
         .collect();
     app.refresh(snap_without_totals(es.clone(), 1), t0);
     render(&mut app, t0, 100, 30);
@@ -427,7 +427,13 @@ fn ten_thousand_rows_lay_out_quickly() {
     let mut app = App::new(Theme::no_color(), t0);
     app.key(press(KeyCode::Char('2')), t0);
     let es: Vec<EntryData> = (0..10_000u32)
-        .map(|i| test_entry(i, &format!("entry-{i}"), 1 + (i as u64 * 7919) % 100_000))
+        .map(|i| {
+            test_entry(
+                i,
+                &format!("entry-{i}"),
+                1 + (u64::from(i) * 7919) % 100_000,
+            )
+        })
         .collect();
     app.refresh(snap_without_totals(es, 1), t0);
     let area = Rect::new(0, 3, 200, 54);

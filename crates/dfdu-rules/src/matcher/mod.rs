@@ -88,6 +88,9 @@ pub enum Verdict {
     Hits(Vec<Hit>),
 }
 
+/// The most rules a [`RuleSet`] holds: one per [`RuleIx`] value.
+pub const MAX_RULES: usize = u16::MAX as usize + 1;
+
 #[derive(Clone, Debug)]
 pub struct RuleSet {
     rules: Vec<Rule>,
@@ -135,6 +138,7 @@ pub struct Reach {
 
 /// The name without its last extension, and without `.tar` before it: `pixel.avd` is
 /// `pixel`, `src.tar.gz` is `src`.
+#[must_use]
 pub fn stem(name: &[u8]) -> &[u8] {
     let cut = |n: &'_ [u8]| match n.iter().rposition(|&b| b == b'.') {
         Some(i) if i > 0 => i,
@@ -176,6 +180,10 @@ fn with_slash(parent: &[u8]) -> Vec<u8> {
 
 /// The number of components of an entry of the directory whose path (with a `/` at the end)
 /// is `dir`, for [`may_match_below`].
+#[expect(
+    clippy::naive_bytecount,
+    reason = "patterns and paths are short; not worth the `bytecount` dependency"
+)]
 pub(crate) fn depth_below(dir: &[u8]) -> usize {
     dir.iter().filter(|&&b| b == b'/').count() + 1
 }
@@ -196,13 +204,25 @@ pub(crate) fn may_match_below(g: &Glob, dir: &[u8], depth: usize, fold: bool) ->
 }
 
 impl RuleSet {
+    /// Compiles `rules` for `env`; a rule's [`RuleIx`] is its position in `rules`.
+    ///
+    /// # Panics
+    ///
+    /// There are more than [`MAX_RULES`] rules ([`load_from`](crate::load_from) keeps the
+    /// first [`MAX_RULES`] and reports the rest).
+    #[must_use]
     pub fn new(rules: Vec<Rule>, env: &Env) -> RuleSet {
+        assert!(
+            rules.len() <= MAX_RULES,
+            "{} rules, at most {MAX_RULES} fit a rule index",
+            rules.len()
+        );
         let fold = glob::platform_folds_case(env.platform);
         let mut by_name: FastMap<Vec<u8>, Vec<RuleIx>> = FastMap::default();
         let mut name_globs = Vec::new();
         let mut paths = Vec::new();
-        for (i, r) in rules.iter().enumerate() {
-            let i = RuleIx(i as u16);
+        for (i, r) in (0..=u16::MAX).zip(&rules) {
+            let i = RuleIx(i);
             for g in &r.paths {
                 paths.push((i, g.clone()));
             }
@@ -256,7 +276,7 @@ impl RuleSet {
             sibling_tails,
             now: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64),
+                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX)),
         }
     }
 
@@ -267,12 +287,14 @@ impl RuleSet {
 
     /// Whether some rule may ask whether an entry named `name` is next to its candidate. A
     /// wide directory keeps only these names for [`RuleSet::siblings`].
+    #[must_use]
     pub fn may_be_sibling(&self, name: &[u8]) -> bool {
         self.sibling_names.contains(name) || self.sibling_tails.iter().any(|t| name.ends_with(t))
     }
 
     /// The names [`RuleSet::check_inside`] asks about for rule `i` and the entry named `name`:
     /// its `child` names and required marker files.
+    #[must_use]
     pub fn inside_names(&self, i: RuleIx, name: &[u8]) -> Vec<Vec<u8>> {
         let r = self.rule(i);
         let mut v: Vec<Vec<u8>> = Vec::new();
@@ -286,12 +308,14 @@ impl RuleSet {
         v
     }
 
+    #[must_use]
     pub fn rules(&self) -> &[Rule] {
         &self.rules
     }
 
     /// A hash of the rules' ids in order (FNV-1a): two sets with the same fingerprint number
     /// their rules alike, so classes sent between them name the same rules.
+    #[must_use]
     pub fn fingerprint(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut eat = |b: &[u8]| {
@@ -302,41 +326,55 @@ impl RuleSet {
         eat(&(self.rules.len() as u64).to_le_bytes());
         for r in &self.rules {
             eat(r.id.as_bytes());
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "hashed: the length wraps alike on every side that compares fingerprints"
+            )]
             eat(&[0, r.safety as u8, r.action as u8, r.degrade.len() as u8]);
         }
         h
     }
 
+    #[must_use]
     pub fn rule(&self, i: RuleIx) -> &Rule {
         &self.rules[usize::from(i.0)]
     }
 
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<&Rule> {
         self.rules.iter().find(|r| r.id == id)
     }
 
     /// The index of the rule with this id.
+    #[must_use]
     pub fn index(&self, id: &str) -> Option<RuleIx> {
         let i = self.rules.iter().position(|r| r.id == id)?;
-        Some(RuleIx(i as u16))
+        u16::try_from(i).ok().map(RuleIx)
     }
 
+    #[must_use]
     pub fn protected(&self) -> &Protected {
         &self.protected
     }
 
     /// The context for classifying the entries of the directory at `parent`.
+    #[must_use]
     pub fn dir<'a>(&'a self, parent: &'a [u8]) -> Dir<'a> {
         self.dir_in(parent, None)
     }
 
     /// [`RuleSet::dir`] trying only the patterns that reach `parent`: those its parent's
     /// listing found ([`Dir::reach`]), or all of them with `None`.
+    #[must_use]
     pub fn dir_in<'a>(&'a self, parent: &'a [u8], reach: Option<&Reach>) -> Dir<'a> {
         let dir = with_slash(parent);
         let depth = depth_below(&dir);
         let candidates: Box<dyn Iterator<Item = u32>> = match reach {
             Some(r) => Box::new(r.paths.iter().copied()),
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "rule files cannot hold u32::MAX path patterns: each is a compiled glob"
+            )]
             None => Box::new(0..self.paths.len() as u32),
         };
         let (mut paths, mut below) = (Vec::new(), Vec::new());
@@ -364,6 +402,7 @@ impl RuleSet {
 
     /// Classifies one entry; for many entries of one directory, [`RuleSet::dir`] once and
     /// [`Dir::classify`] for each is cheaper.
+    #[must_use]
     pub fn classify(&self, c: &Candidate) -> Verdict {
         self.dir(c.parent).classify(c)
     }
@@ -446,7 +485,7 @@ impl RuleSet {
             .position(|d| !d.missing_sibling.is_empty() && !has(&d.missing_sibling));
         Some((
             degraded.map_or(r.safety, |d| r.degrade[d].safety),
-            degraded.map(|d| d as u16),
+            degraded.and_then(|d| u16::try_from(d).ok()),
         ))
     }
 
@@ -479,6 +518,7 @@ impl RuleSet {
 
 impl Dir<'_> {
     /// The patterns that can reach this directory's subdirectories, for [`RuleSet::dir_in`].
+    #[must_use]
     pub fn reach(&self) -> &Reach {
         &self.reach
     }
@@ -552,7 +592,7 @@ impl Dir<'_> {
 }
 
 /// Every proper ancestor path of `path`.
-fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+pub(crate) fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     path.iter()
         .enumerate()
         .filter(|&(i, &b)| b == b'/' && i > 0)

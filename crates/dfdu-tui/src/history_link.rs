@@ -2,19 +2,20 @@
 //! in the background for the growth notes, and the scan recorded once it is complete. As in
 //! the CLI, problems with the history are reported (in the status line), never fatal.
 
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use dfdu_engine::Engine;
-use dfdu_store::history::{self, Growth};
+use dfdu_store::history::{self, Growth, Scanned};
+use dfdu_tree::now_secs;
 
 use crate::App;
 
 /// What the last scan's sizes came to: the sizes, `None` when there are none, or why they could
 /// not be read.
-pub type Loaded = Result<Option<Arc<Growth>>, String>;
+pub type Loaded = io::Result<Option<Arc<Growth>>>;
 
 /// The browser's link to the scan history: the last scan's sizes, loaded in the background, and
 /// what to record the scan under when it finishes.
@@ -29,6 +30,7 @@ pub struct HistoryLink {
 
 impl HistoryLink {
     /// Starts loading the last scan of `root` with `options` from `db`.
+    #[must_use]
     pub fn start(db: PathBuf, root: PathBuf, options: String) -> HistoryLink {
         let started_at = now_secs();
         let growth: Arc<OnceLock<Loaded>> = Arc::default();
@@ -37,10 +39,10 @@ impl HistoryLink {
             .name("dfdu-history".into())
             .spawn(move || {
                 let g = Growth::load(&path, &root, &opts, Some(started_at));
-                let _ = lock.set(g.map(|g| g.map(Arc::new)).map_err(|e| e.to_string()));
+                let _ = lock.set(g.map(|g| g.map(Arc::new)));
             });
         if let Err(e) = spawned {
-            let _ = growth.set(Err(format!("cannot start a thread: {e}")));
+            let _ = growth.set(Err(thread_error(&e)));
         }
         HistoryLink {
             db,
@@ -51,9 +53,14 @@ impl HistoryLink {
     }
 
     /// How a problem with the history is shown, as the CLI words it.
-    fn problem(&self, e: &str) -> String {
+    fn problem(&self, e: &io::Error) -> String {
         format!("history {}: {e}", self.db.display())
     }
+}
+
+/// Why a history thread could not be started, as the status line says it.
+fn thread_error(e: &io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("cannot start a thread: {e}"))
 }
 
 /// Records the scan once its first job is done, on a thread the drop waits for.
@@ -63,7 +70,9 @@ pub(crate) struct Recorder {
     loaded: bool,
     /// The record was started; the writer is kept until its outcome is taken in.
     started: bool,
-    writer: Option<thread::JoinHandle<Result<(), String>>>,
+    writer: Option<thread::JoinHandle<io::Result<()>>>,
+    /// The writer could not be started: reported by the next poll.
+    unstarted: Option<io::Error>,
 }
 
 impl Recorder {
@@ -73,6 +82,7 @@ impl Recorder {
             loaded: false,
             started: false,
             writer: None,
+            unstarted: None,
         }
     }
 
@@ -97,7 +107,7 @@ impl Recorder {
             self.loaded = true;
             match loaded {
                 Ok(g) => {
-                    app.growth = g.clone();
+                    app.growth.clone_from(g);
                     changed = g.is_some();
                 }
                 Err(e) => {
@@ -106,16 +116,23 @@ impl Recorder {
                 }
             }
         }
-        if self.writer.as_ref().is_some_and(|w| w.is_finished())
+        if self
+            .writer
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
             && let Some(w) = self.writer.take()
         {
             let result = w
                 .join()
-                .unwrap_or_else(|_| Err("the writer panicked".into()));
+                .unwrap_or_else(|_| Err(io::Error::other("the writer panicked")));
             if let Err(e) = result {
                 app.status = Some(link.problem(&e));
                 changed = true;
             }
+        }
+        if let Some(e) = self.unstarted.take() {
+            app.status = Some(link.problem(&e));
+            changed = true;
         }
         changed
     }
@@ -125,7 +142,7 @@ impl Recorder {
         let Some(link) = &self.link else {
             return;
         };
-        let rec = engine.read(|m| {
+        let scan = engine.read(|m| {
             let done = m
                 .status
                 .jobs
@@ -135,20 +152,9 @@ impl Recorder {
                 return None;
             }
             let root = m.tree.roots().next()?;
-            let t = m.tree.total(root);
-            Some((
-                m.tree.path_buf(root),
-                history::rows(&m.tree, root),
-                history::Sizes {
-                    disk: t.alloc,
-                    apparent: t.apparent,
-                    entries: t.items,
-                },
-                t.errors,
-                t.errors == 0 && !m.status.incomplete,
-            ))
+            Some(Scanned::read(&m.tree, root, m.complete(root)))
         });
-        let Some((root, rows, total, errors, complete)) = rec else {
+        let Some(scan) = scan else {
             return;
         };
         self.started = true;
@@ -156,24 +162,14 @@ impl Recorder {
         let spawned = thread::Builder::new()
             .name("dfdu-history".into())
             .spawn(move || {
-                let mut h = history::History::open(&link.db).map_err(|e| e.to_string())?;
-                h.record(&history::Record {
-                    root: &root,
-                    options: &link.options,
-                    started_at: link.started_at,
-                    finished_at: now_secs(),
-                    complete,
-                    total,
-                    errors,
-                    rows: &rows,
-                })
-                .map(drop)
-                .map_err(|e| e.to_string())
+                let mut h = history::History::open(&link.db)?;
+                h.record(&scan.record(&link.options, link.started_at, now_secs()))
+                    .map(drop)
             });
-        self.writer = Some(spawned.unwrap_or_else(|e| {
-            let e = format!("cannot start a thread: {e}");
-            thread::spawn(move || Err(e))
-        }));
+        match spawned {
+            Ok(w) => self.writer = Some(w),
+            Err(e) => self.unstarted = Some(thread_error(&e)),
+        }
     }
 
     /// The history is still being read or written, so [`Recorder::poll`] has more to take in.
@@ -190,12 +186,6 @@ impl Drop for Recorder {
             let _ = w.join();
         }
     }
-}
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 #[cfg(test)]

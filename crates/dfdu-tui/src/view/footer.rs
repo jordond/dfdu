@@ -75,56 +75,11 @@ fn context(app: &App) -> Vec<Hint> {
     let arrows = format!("{}{}", first_key(Action::Up), first_key(Action::Down));
     let help = hint(first_key(Action::Help), "help", 0);
     let quit = hint(first_key(Action::Quit), "quit", 1);
-    let editing = |arrows_do: &'static str| {
-        vec![
-            hint("Enter", "keep", 0),
-            hint("Esc", "clear", 0),
-            hint(arrows.clone(), arrows_do, 1),
-        ]
-    };
-    match &app.overlay {
-        Overlay::None => {}
-        Overlay::ConfirmDelete(_) => {
-            return vec![
-                hint("p", "permanent", 0),
-                hint("s", "stage", 1),
-                hint("Esc", "cancel", 0),
-            ];
-        }
-        Overlay::Help(h) if h.searching() => return editing("scroll"),
-        Overlay::Help(_) => {
-            return vec![
-                hint(arrows.clone(), "scroll", 1),
-                hint("PgUp PgDn", "page", 2),
-                hint("/", "search", 1),
-                hint("Esc", "close", 0),
-            ];
-        }
-        Overlay::Palette(_) => {
-            return vec![
-                hint(arrows.clone(), "move", 1),
-                hint("Enter", "run", 0),
-                hint("Esc", "close", 0),
-            ];
-        }
-        Overlay::Errors { .. } => {
-            return vec![
-                hint(arrows.clone(), "move", 1),
-                hint("Enter", "go to it", 0),
-                hint("Esc", "close", 0),
-            ];
-        }
-        Overlay::Types(_) => {
-            return vec![
-                hint(arrows.clone(), "move", 1),
-                hint("Space", "toggle", 0),
-                hint("Enter", "done", 0),
-                hint("Esc", "close", 0),
-            ];
-        }
+    if let Some(hints) = overlay_hints(&app.overlay, &arrows) {
+        return hints;
     }
     if filter::editing(app) {
-        return editing("move");
+        return editing(&arrows, "move");
     }
     if details::focused(app) {
         return vec![
@@ -135,14 +90,6 @@ fn context(app: &App) -> Vec<Hint> {
             quit,
         ];
     }
-    let sort = [
-        Action::SortSize,
-        Action::SortName,
-        Action::SortItems,
-        Action::SortMtime,
-    ]
-    .map(first_key)
-    .join(" ");
     if crate::dupes::active(app) {
         return vec![
             hint(arrows.clone(), "move", 3),
@@ -185,6 +132,73 @@ fn context(app: &App) -> Vec<Hint> {
         hints.push(quit);
         return hints;
     }
+    list_hints(app, arrows, help, quit)
+}
+
+/// The hints of a filter or search being typed, where the arrows do `arrows_do`.
+fn editing(arrows: &str, arrows_do: &'static str) -> Vec<Hint> {
+    vec![
+        hint("Enter", "keep", 0),
+        hint("Esc", "clear", 0),
+        hint(arrows, arrows_do, 1),
+    ]
+}
+
+/// The hints of the open overlay; `None` when none is open.
+fn overlay_hints(overlay: &Overlay, arrows: &str) -> Option<Vec<Hint>> {
+    Some(match overlay {
+        Overlay::None => return None,
+        Overlay::ConfirmDelete(_) => {
+            vec![
+                hint("p", "permanent", 0),
+                hint("s", "stage", 1),
+                hint("Esc", "cancel", 0),
+            ]
+        }
+        Overlay::Help(h) if h.searching() => editing(arrows, "scroll"),
+        Overlay::Help(_) => {
+            vec![
+                hint(arrows, "scroll", 1),
+                hint("PgUp PgDn", "page", 2),
+                hint("/", "search", 1),
+                hint("Esc", "close", 0),
+            ]
+        }
+        Overlay::Palette(_) => {
+            vec![
+                hint(arrows, "move", 1),
+                hint("Enter", "run", 0),
+                hint("Esc", "close", 0),
+            ]
+        }
+        Overlay::Errors { .. } => {
+            vec![
+                hint(arrows, "move", 1),
+                hint("Enter", "go to it", 0),
+                hint("Esc", "close", 0),
+            ]
+        }
+        Overlay::Types(_) => {
+            vec![
+                hint(arrows, "move", 1),
+                hint("Space", "toggle", 0),
+                hint("Enter", "done", 0),
+                hint("Esc", "close", 0),
+            ]
+        }
+    })
+}
+
+/// The hints of the list, with what marks, a running scan and errors add.
+fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint) -> Vec<Hint> {
+    let sort = [
+        Action::SortSize,
+        Action::SortName,
+        Action::SortItems,
+        Action::SortMtime,
+    ]
+    .map(first_key)
+    .join(" ");
     let mut hints = vec![
         hint(arrows, "move", 2),
         hint(first_key(Action::Open), "open", 3),
@@ -377,12 +391,12 @@ mod tests {
             ),
             (
                 |app| {
-                    app.show_errors(crate::ErrorList {
+                    app.show_errors(dfdu_engine::ErrorList {
                         root: "/r".into(),
                         items: Vec::new(),
                         total: 0,
                         kinds: Vec::new(),
-                    })
+                    });
                 },
                 " ↑↓ move  Enter go to it  Esc close",
             ),

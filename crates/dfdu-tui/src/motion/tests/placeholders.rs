@@ -18,7 +18,7 @@ fn deleted_row_stays_as_placeholder_until_resort() {
 
     let t1 = t0 + ms(100);
     app.refresh(snap_with_alloc(vec![a.clone(), c.clone()], 2), t1);
-    assert_eq!(names(&app), ["a", "b", "c"]);
+    assert_eq!(row_names(&app), ["a", "b", "c"]);
     assert!(app.snap.entries[app.rows[1]].ghost);
     let buf = render_buffer(&mut app, t1, W, H);
     let frame = text(&buf);
@@ -28,13 +28,13 @@ fn deleted_row_stays_as_placeholder_until_resort() {
     // Kept while the snapshots go on without it.
     let t2 = t0 + ms(200);
     app.refresh(snap_with_alloc(vec![a.clone(), c.clone()], 3), t2);
-    assert_eq!(names(&app), ["a", "b", "c"]);
+    assert_eq!(row_names(&app), ["a", "b", "c"]);
 
     app.key(press(KeyCode::Char('S')), t2);
     app.reorder(t2);
-    assert_eq!(names(&app), ["a", "c"]);
+    assert_eq!(row_names(&app), ["a", "c"]);
     app.refresh(snap_with_alloc(vec![a, c], 4), t0 + ms(300));
-    assert_eq!(names(&app), ["a", "c"]);
+    assert_eq!(row_names(&app), ["a", "c"]);
     assert_eq!(app.snap.entries.len(), 2, "the ghost was added again");
 }
 
@@ -48,12 +48,12 @@ fn entry_gone_while_a_delete_ran_becomes_a_placeholder() {
     app.refresh(before, t0);
     // Deleted before any snapshot showed it marked.
     app.refresh(snap_with_alloc(vec![es[0].clone()], 2), t0 + ms(100));
-    assert_eq!(names(&app), ["a", "b"]);
+    assert_eq!(row_names(&app), ["a", "b"]);
     // Gone without a delete: no placeholder.
     let t1 = t0 + ms(200);
     app.key(press(KeyCode::Char('S')), t1);
     app.reorder(t1);
     app.refresh(snap_with_alloc(es.clone(), 3), t1);
     app.refresh(snap_with_alloc(vec![es[0].clone()], 4), t1 + ms(100));
-    assert_eq!(names(&app), ["a"]);
+    assert_eq!(row_names(&app), ["a"]);
 }

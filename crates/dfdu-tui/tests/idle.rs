@@ -6,21 +6,23 @@
 //! `TestBackend` wrapped in a backend that records every flush; ratatui flushes once per
 //! `Terminal::draw`.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
-use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use common::Recording;
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
 use dfdu_tui::{ColorLevel, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Theme, UiOptions};
 use ratatui::Terminal;
-use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
-use ratatui::buffer::Cell;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Position, Size};
 use ratatui::style::Color;
 
 /// How long without a frame counts as the loop having caught up with the finished scan. Longer
@@ -52,72 +54,25 @@ fn count(frames: &Mutex<Frames>) -> usize {
     frames.lock().expect("frames").at.len()
 }
 
-fn ok<T>(r: Result<T, std::convert::Infallible>) -> io::Result<T> {
-    let Ok(v) = r;
-    Ok(v)
-}
-
-/// `TestBackend` that records each flush.
-struct Recording {
-    inner: TestBackend,
-    frames: Arc<Mutex<Frames>>,
-}
-
-impl Backend for Recording {
-    type Error = io::Error;
-
-    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
-    where
-        I: Iterator<Item = (u16, u16, &'a Cell)>,
-    {
-        ok(self.inner.draw(content))
-    }
-    fn hide_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.hide_cursor())
-    }
-    fn show_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.show_cursor())
-    }
-    fn get_cursor_position(&mut self) -> io::Result<Position> {
-        ok(self.inner.get_cursor_position())
-    }
-    fn set_cursor_position<P: Into<Position>>(&mut self, p: P) -> io::Result<()> {
-        ok(self.inner.set_cursor_position(p))
-    }
-    fn clear(&mut self) -> io::Result<()> {
-        ok(self.inner.clear())
-    }
-    fn clear_region(&mut self, t: ClearType) -> io::Result<()> {
-        ok(self.inner.clear_region(t))
-    }
-    fn size(&self) -> io::Result<Size> {
-        ok(self.inner.size())
-    }
-    fn window_size(&mut self) -> io::Result<WindowSize> {
-        ok(self.inner.window_size())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        ok(self.inner.flush())?;
-        let buf = self.inner.buffer();
-        let line = |y| -> String {
-            (0..buf.area.width)
-                .map(|x| buf.cell((x, y)).map_or(" ", Cell::symbol))
-                .collect()
-        };
-        let header = line(0);
-        let screen = (0..buf.area.height)
-            .map(line)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let is_rgb = |c: Color| matches!(c, Color::Rgb(..));
-        let rgb = buf.content.iter().any(|c| is_rgb(c.fg) || is_rgb(c.bg));
-        let mut f = self.frames.lock().expect("frames");
-        f.at.push(Instant::now());
-        f.header = header;
-        f.screens.push(screen);
-        f.rgb.push(rgb);
-        Ok(())
-    }
+/// Adds the frame in `buf` to `frames`.
+fn record(frames: &Mutex<Frames>, buf: &Buffer) {
+    let line = |y| -> String {
+        (0..buf.area.width)
+            .map(|x| buf.cell((x, y)).map_or(" ", Cell::symbol))
+            .collect()
+    };
+    let header = line(0);
+    let screen = (0..buf.area.height)
+        .map(line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let is_rgb = |c: Color| matches!(c, Color::Rgb(..));
+    let rgb = buf.content.iter().any(|c| is_rgb(c.fg) || is_rgb(c.bg));
+    let mut f = frames.lock().expect("frames");
+    f.at.push(Instant::now());
+    f.header = header;
+    f.screens.push(screen);
+    f.rgb.push(rgb);
 }
 
 /// Waits until no frame was flushed for [`QUIET`], at most until 10 s after `start`.
@@ -147,9 +102,9 @@ fn settled(check: impl FnOnce(Sender<Event>, &Mutex<Frames>)) {
 /// `check`. The loop ends when `check` drops the sender, also when it panics. The largest entry
 /// is the file `big`, at the top of the list; the engine may delete.
 fn settled_with(ui: UiOptions, check: impl FnOnce(Sender<Event>, &Mutex<Frames>)) {
-    let temp = dunce::canonicalize(std::env::temp_dir()).expect("temp");
-    let tmp = tempfile::tempdir_in(&temp).expect("tempdir");
-    let journal = tempfile::tempdir_in(&temp).expect("journal dir");
+    let temp_root = dunce::canonicalize(std::env::temp_dir()).expect("temp");
+    let tmp = tempfile::tempdir_in(&temp_root).expect("tempdir");
+    let journal = tempfile::tempdir_in(&temp_root).expect("journal dir");
     for d in 0..10 {
         let dir = tmp.path().join(format!("d{d}/sub"));
         fs::create_dir_all(&dir).expect("mkdir");
@@ -159,11 +114,9 @@ fn settled_with(ui: UiOptions, check: impl FnOnce(Sender<Event>, &Mutex<Frames>)
     }
     fs::write(tmp.path().join("big"), vec![1u8; 4 << 20]).expect("write");
     let frames = Arc::new(Mutex::new(Frames::default()));
-    let mut terminal = Terminal::new(Recording {
-        inner: TestBackend::new(120, 20),
-        frames: frames.clone(),
-    })
-    .expect("terminal");
+    let recorded = frames.clone();
+    let mut terminal = Terminal::new(Recording::new(120, 20, move |buf| record(&recorded, buf)))
+        .expect("terminal");
     let engine = Engine::start(
         dfdu_scan::native_backend(dfdu_sys::storage(tmp.path()), false),
         EngineOptions {
@@ -237,7 +190,7 @@ fn no_frames_after_animations_finish() {
     settled(animations_finish);
 }
 
-/// At TrueColor, with a theme whose text colour is RGB, the deleted row also fades in colour,
+/// At `TrueColor`, with a theme whose text colour is RGB, the deleted row also fades in colour,
 /// a frame at a time; those frames end too.
 #[test]
 fn no_frames_after_colour_animations_finish() {
@@ -249,7 +202,7 @@ fn no_frames_after_colour_animations_finish() {
     settled_with(ui, animations_finish);
 }
 
-/// A loop started with the colourless `mono` theme on a TrueColor terminal resolves a theme
+/// A loop started with the colourless `mono` theme on a `TrueColor` terminal resolves a theme
 /// chosen in the palette at the terminal's colour level, not at mono's.
 #[test]
 fn palette_theme_after_mono_gets_the_terminal_colour_level() {

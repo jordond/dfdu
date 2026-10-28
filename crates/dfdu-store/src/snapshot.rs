@@ -63,11 +63,11 @@ pub struct Header {
     pub journal: Option<Journal>,
 }
 
-/// A position in a volume's change journal (FSEvents on macOS, the USN journal on Windows,
+/// A position in a volume's change journal (`FSEvents` on macOS, the USN journal on Windows,
 /// a btrfs subvolume's generation on Linux).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Journal {
-    /// The journal's identity (the FSEvents store UUID; the USN journal id and volume serial;
+    /// The journal's identity (the `FSEvents` store UUID; the USN journal id and volume serial;
     /// the btrfs subvolume uuid):
     /// positions in another are meaningless.
     pub volume: [u8; 16],
@@ -105,9 +105,12 @@ impl<W: Write> FrameWriter<W> {
             ruzstd::encoding::CompressionLevel::Fastest,
         );
         let crc = crc32c::crc32c(&z);
+        let too_big = |_| io::Error::new(io::ErrorKind::InvalidInput, "a frame over 4 GiB");
+        let zlen = u32::try_from(z.len()).map_err(too_big)?;
+        let rawlen = u32::try_from(self.raw.len()).map_err(too_big)?;
         let mut h = [0u8; 12];
-        h[..4].copy_from_slice(&(z.len() as u32).to_le_bytes());
-        h[4..8].copy_from_slice(&(self.raw.len() as u32).to_le_bytes());
+        h[..4].copy_from_slice(&zlen.to_le_bytes());
+        h[4..8].copy_from_slice(&rawlen.to_le_bytes());
         h[8..].copy_from_slice(&crc.to_le_bytes());
         self.w.write_all(&h)?;
         self.w.write_all(&z)?;
@@ -138,12 +141,22 @@ fn put_u(out: &mut Vec<u8>, mut v: u64) {
 }
 
 fn put_i(out: &mut Vec<u8>, v: i64) {
-    put_u(out, ((v << 1) ^ (v >> 63)) as u64);
+    put_u(out, ((v << 1) ^ (v >> 63)).cast_unsigned());
 }
 
 fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
     put_u(out, b.len() as u64);
     out.extend_from_slice(b);
+}
+
+/// The little-endian `u32` at byte `i` of `b`.
+fn le_u32(b: &[u8], i: usize) -> u32 {
+    u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
+}
+
+/// The little-endian `u64` at byte `i` of `b`.
+fn le_u64(b: &[u8], i: usize) -> u64 {
+    u64::from(le_u32(b, i)) | (u64::from(le_u32(b, i + 4)) << 32)
 }
 
 fn err_code(e: Option<ErrKind>) -> (u8, i64) {
@@ -153,7 +166,7 @@ fn err_code(e: Option<ErrKind>) -> (u8, i64) {
         Some(ErrKind::NotFound) => (2, 0),
         Some(ErrKind::Stalled) => (3, 0),
         Some(ErrKind::Other) => (4, 0),
-        Some(ErrKind::Os(c)) => (5, c as i64),
+        Some(ErrKind::Os(c)) => (5, i64::from(c)),
     }
 }
 
@@ -174,6 +187,10 @@ fn state_code(s: DirState) -> u8 {
 }
 
 /// Writes the tree below `root` (a visible root, whose name is its path).
+///
+/// # Errors
+///
+/// When writing to `w` fails.
 pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Result<u64> {
     write_as(tree, root, w, header, VERSION)
 }
@@ -195,26 +212,7 @@ fn write_as(
     fw.w.write_all(MAGIC)?;
     fw.w.write_all(&version.to_le_bytes())?;
     let path = tree.path_buf(root);
-    put_bytes(&mut fw.raw, &dfdu_tree::name_bytes(path.as_os_str()));
-    put_bytes(&mut fw.raw, header.tool_version.as_bytes());
-    put_u(&mut fw.raw, header.written);
-    put_u(
-        &mut fw.raw,
-        header.cross_mounts as u64
-            | (header.network as u64) << 1
-            | if header.journal.is_some() {
-                OPT_JOURNAL
-            } else {
-                0
-            },
-    );
-    if let Some(j) = &header.journal {
-        put_bytes(&mut fw.raw, &j.volume);
-        put_u(&mut fw.raw, j.event_id);
-        if version == VERSION {
-            put_u(&mut fw.raw, j.time);
-        }
-    }
+    put_header(&mut fw.raw, &path, header, version);
     let mut devs: Vec<u64> = vec![];
     let mut entries = 0u64;
     let mut stack: Vec<(Vec<Ix>, usize)> = vec![];
@@ -234,20 +232,19 @@ fn write_as(
                     Kind::Symlink => 2,
                     Kind::Other => 3,
                 });
-                r.push(flags.has(NodeFlags::HARDLINK) as u8);
+                r.push(u8::from(flags.has(NodeFlags::HARDLINK)));
             }
             let (apparent, alloc) = tree.raw_size(ix);
             put_u(r, apparent);
             put_u(r, alloc);
             put_i(r, tree.mtime(ix));
             let (dev, ino) = tree.dev_ino(ix);
-            match devs.iter().position(|&d| d == dev) {
-                Some(i) => put_u(r, i as u64),
-                None => {
-                    put_u(r, devs.len() as u64);
-                    put_u(r, dev);
-                    devs.push(dev);
-                }
+            if let Some(i) = devs.iter().position(|&d| d == dev) {
+                put_u(r, i as u64);
+            } else {
+                put_u(r, devs.len() as u64);
+                put_u(r, dev);
+                devs.push(dev);
             }
             put_u(r, ino);
             let (code, os) = err_code(tree.error(ix));
@@ -269,15 +266,12 @@ fn write_as(
         let Some((kids, i)) = stack.last_mut() else {
             break;
         };
-        match kids.get(*i) {
-            Some(&c) => {
-                *i += 1;
-                next = Some(c);
-            }
-            None => {
-                stack.pop();
-                fw.raw.push(CLOSE);
-            }
+        if let Some(&c) = kids.get(*i) {
+            *i += 1;
+            next = Some(c);
+        } else {
+            stack.pop();
+            fw.raw.push(CLOSE);
         }
     }
     fw.frame()?;
@@ -291,6 +285,30 @@ fn write_as(
     fw.w.write_all(&foot)?;
     fw.w.flush()?;
     Ok(entries)
+}
+
+/// The scan's header records: root path, tool version, time, options and journal position.
+fn put_header(r: &mut Vec<u8>, path: &std::path::Path, header: &Header, version: u32) {
+    put_bytes(r, &dfdu_tree::name_bytes(path.as_os_str()));
+    put_bytes(r, header.tool_version.as_bytes());
+    put_u(r, header.written);
+    put_u(
+        r,
+        u64::from(header.cross_mounts)
+            | u64::from(header.network) << 1
+            | if header.journal.is_some() {
+                OPT_JOURNAL
+            } else {
+                0
+            },
+    );
+    if let Some(j) = &header.journal {
+        put_bytes(r, &j.volume);
+        put_u(r, j.event_id);
+        if version == VERSION {
+            put_u(r, j.time);
+        }
+    }
 }
 
 /// The frames' raw bytes as one stream, each frame checked as it is read. At the end marker it
@@ -319,30 +337,28 @@ impl<R: Read> FrameReader<R> {
         }
         let mut h = [0u8; 12];
         self.r.read_exact(&mut h).map_err(truncated)?;
-        let u = |i: usize| u32::from_le_bytes(h[i..i + 4].try_into().expect("4 bytes")) as usize;
-        let (zlen, rawlen, crc) = (u(0), u(4), u(8) as u32);
+        let (zlen, rawlen, crc) = (
+            le_u32(&h, 0) as usize,
+            le_u32(&h, 4) as usize,
+            le_u32(&h, 8),
+        );
         if zlen == 0 {
             if h != [0; 12] {
                 return Err(bad("a bad end marker"));
             }
             let mut foot = [0u8; 24];
             self.r.read_exact(&mut foot).map_err(truncated)?;
-            let q = |i: usize| u64::from_le_bytes(foot[i..i + 8].try_into().expect("8 bytes"));
-            let fcrc = u32::from_le_bytes(foot[20..].try_into().expect("4 bytes"));
-            if crc32c::crc32c(&foot[..20]) != fcrc {
+            if crc32c::crc32c(&foot[..20]) != le_u32(&foot, 20) {
                 return Err(bad("the footer is damaged"));
             }
-            if q(8) != self.frames
-                || u32::from_le_bytes(foot[16..20].try_into().expect("4 bytes"))
-                    != crc32c::crc32c(&self.crcs)
-            {
+            if le_u64(&foot, 8) != self.frames || le_u32(&foot, 16) != crc32c::crc32c(&self.crcs) {
                 return Err(bad("frames are missing or out of order"));
             }
             let mut rest = [0u8; 1];
             if self.r.read(&mut rest)? != 0 {
                 return Err(bad("data after the footer"));
             }
-            self.footer_entries = Some(q(0));
+            self.footer_entries = Some(le_u64(&foot, 0));
             return Ok(false);
         }
         if zlen > FRAME_MAX || rawlen > FRAME_MAX || rawlen == 0 {
@@ -422,18 +438,16 @@ impl<R: BufRead> Rec<R> {
 
     fn i(&mut self) -> Result<i64, ImportError> {
         let u = self.u()?;
-        Ok((u >> 1) as i64 ^ -((u & 1) as i64))
+        Ok((u >> 1).cast_signed() ^ -(u & 1).cast_signed())
     }
 
     fn bytes(&mut self, max: usize) -> Result<Vec<u8>, ImportError> {
-        let n = self.u()?;
-        if n > max as u64 {
-            return Err(ImportError::Limit(format!(
-                "a name longer than {max} bytes"
-            )));
-        }
-        let mut v = vec![0u8; n as usize];
-        for b in v.iter_mut() {
+        let n = usize::try_from(self.u()?)
+            .ok()
+            .filter(|&n| n <= max)
+            .ok_or_else(|| ImportError::Limit(format!("a name longer than {max} bytes")))?;
+        let mut v = vec![0u8; n];
+        for b in &mut v {
             *b = self.byte()?;
         }
         Ok(v)
@@ -441,62 +455,21 @@ impl<R: BufRead> Rec<R> {
 }
 
 /// Whether `bytes` start like a snapshot.
+#[must_use]
 pub fn is_snapshot(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)
 }
 
 /// Reads a snapshot. Anything damaged, cut short or past `limits` is an error, and nothing of
 /// it is used.
+///
+/// # Errors
+///
+/// When `r` fails, the data is not a snapshot of a format this version reads, it is damaged
+/// or cut short, or it exceeds `limits`.
 pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
-    let mut r = BufReader::with_capacity(1 << 16, r);
-    let mut head = [0u8; 12];
-    r.read_exact(&mut head).map_err(truncated)?;
-    if &head[..8] != MAGIC {
-        return Err(bad("not a dfdu snapshot"));
-    }
-    let version = u32::from_le_bytes(head[8..].try_into().expect("4 bytes"));
-    if !matches!(version, VERSION | VERSION_1 | VERSION_2) {
-        return Err(bad(format!(
-            "snapshot format {version}; this dfdu reads {VERSION}"
-        )));
-    }
-    let fr = FrameReader {
-        r,
-        cur: vec![],
-        pos: 0,
-        frames: 0,
-        crcs: vec![],
-        footer_entries: None,
-    };
-    let mut rec = Rec(BufReader::with_capacity(1 << 16, fr));
-    let root_path = rec.bytes(limits.max_name.max(1 << 16))?;
-    if root_path.is_empty() {
-        return Err(bad("no root path"));
-    }
-    let header = Header {
-        tool_version: String::from_utf8_lossy(&rec.bytes(256)?).into_owned(),
-        written: rec.u()?,
-        cross_mounts: false,
-        network: false,
-        journal: None,
-    };
-    let opts = rec.u()?;
-    let journal = if version != VERSION_1 && opts & OPT_JOURNAL != 0 {
-        let volume = rec.bytes(16)?;
-        Some(Journal {
-            volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
-            event_id: rec.u()?,
-            time: if version == VERSION { rec.u()? } else { 0 },
-        })
-    } else {
-        None
-    };
-    let header = Header {
-        cross_mounts: opts & 1 != 0,
-        network: opts & 2 != 0,
-        journal,
-        ..header
-    };
+    let (mut rec, version) = open_records(r)?;
+    let (root_path, header) = read_header(&mut rec, version, limits)?;
 
     let mut tree = Tree::new();
     let mut devs: Vec<u64> = vec![];
@@ -531,53 +504,7 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
                 limits.max_entries
             )));
         }
-        let name = rec.bytes(limits.max_name)?;
-        let (kind, link) = if tag == ENTRY {
-            let k = match rec.byte()? {
-                0 => Kind::File,
-                2 => Kind::Symlink,
-                3 => Kind::Other,
-                _ => return Err(bad("a bad entry kind")),
-            };
-            (k, rec.byte()? != 0)
-        } else {
-            (Kind::Dir, false)
-        };
-        let apparent = rec.u()?;
-        let alloc = rec.u()?;
-        let mtime = rec.i()?;
-        let di = rec.u()? as usize;
-        let dev = match di.cmp(&devs.len()) {
-            std::cmp::Ordering::Less => devs[di],
-            std::cmp::Ordering::Equal => {
-                let d = rec.u()?;
-                devs.push(d);
-                d
-            }
-            std::cmp::Ordering::Greater => return Err(bad("a bad device index")),
-        };
-        let ino = rec.u()?;
-        let err = match rec.byte()? {
-            0 => None,
-            1 => Some(ErrKind::PermissionDenied),
-            2 => Some(ErrKind::NotFound),
-            3 => Some(ErrKind::Stalled),
-            4 => Some(ErrKind::Other),
-            5 => Some(ErrKind::Os(
-                i32::try_from(rec.i()?).map_err(|_| bad("a bad error code"))?,
-            )),
-            _ => return Err(bad("a bad error kind")),
-        };
-        let meta = Meta {
-            kind,
-            apparent,
-            alloc,
-            mtime,
-            dev,
-            ino,
-            nlink: if link { 2 } else { 1 },
-            mount: 0,
-        };
+        let (name, meta, err) = read_entry(&mut rec, tag, limits, &mut devs)?;
         let parent = stack.last().copied();
         if root.is_none() && (tag != DIR || !name.is_empty()) {
             return Err(bad("the first record is not the root"));
@@ -591,27 +518,7 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
             }
         }
         if tag == DIR {
-            let all = DIR_FLAGS.iter().fold(0, |a, &f| a | f);
-            let flags = rec.u()? as u16 & all;
-            let state = match rec.byte()? {
-                0 => DirState::Pending,
-                1 => DirState::Complete,
-                2 => DirState::Partial,
-                3 => DirState::Failed,
-                4 => DirState::Skipped,
-                5 => DirState::Cancelled,
-                6 => DirState::Abandoned,
-                7 => DirState::Lost,
-                8 => DirState::Superseded,
-                9 => DirState::Deleting,
-                10 => DirState::Deleted,
-                _ => return Err(bad("a bad directory state")),
-            };
-            // A directory still being read when the snapshot was taken is shown as partial.
-            let state = match state {
-                DirState::Pending | DirState::Deleting | DirState::Superseded => DirState::Partial,
-                s => s,
-            };
+            let (flags, state) = read_dir_fields(&mut rec)?;
             let ix = match parent {
                 None => tree.new_root(&root_path, &meta, true),
                 Some(p) => {
@@ -643,29 +550,191 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
             root.get_or_insert(ix);
             stack.push(ix);
         } else {
-            let p = parent.expect("checked above");
-            let charged = !meta.is_hardlink() || links.insert((dev, ino));
+            // An entry comes after the root (checked above), so inside an open directory.
+            let Some(p) = parent else {
+                return Err(bad("records after the root closed"));
+            };
+            let charged = !meta.is_hardlink() || links.insert((meta.dev, meta.ino));
             let ix = tree.add_file(p, &name, &meta, charged, err);
             let own = tree.own(ix);
             tree.propagate_add(p, &own);
         }
     }
-    // The records end where the frames do, and the footer agrees.
+    check_end(rec, entries)?;
+    // The loop ends only when the root closes, so there is one.
+    let root = root.ok_or_else(|| bad("no root"))?;
+    Ok(Loaded {
+        tree,
+        root,
+        header,
+        entries,
+    })
+}
+
+/// The records of a snapshot read from `R`.
+type Records<R> = Rec<BufReader<FrameReader<BufReader<R>>>>;
+
+/// Checks the magic and the format version, and returns the record stream and the version.
+fn open_records<R: Read>(r: R) -> Result<(Records<R>, u32), ImportError> {
+    let mut r = BufReader::with_capacity(1 << 16, r);
+    let mut head = [0u8; 12];
+    r.read_exact(&mut head).map_err(truncated)?;
+    if &head[..8] != MAGIC {
+        return Err(bad("not a dfdu snapshot"));
+    }
+    let version = le_u32(&head, 8);
+    if !matches!(version, VERSION | VERSION_1 | VERSION_2) {
+        return Err(bad(format!(
+            "snapshot format {version}; this dfdu reads {VERSION}"
+        )));
+    }
+    let fr = FrameReader {
+        r,
+        cur: vec![],
+        pos: 0,
+        frames: 0,
+        crcs: vec![],
+        footer_entries: None,
+    };
+    Ok((Rec(BufReader::with_capacity(1 << 16, fr)), version))
+}
+
+/// Checks that the records end where the frames do, and that the footer counts `entries`.
+fn check_end<R: Read>(
+    mut rec: Rec<BufReader<FrameReader<R>>>,
+    entries: u64,
+) -> Result<(), ImportError> {
     let mut rest = [0u8; 1];
     let more = rec.0.read(&mut rest).map_err(|e| bad(e.to_string()))?;
     if more != 0 {
         return Err(bad("records after the root closed"));
     }
-    let counted = rec.0.get_ref().footer_entries;
-    if counted != Some(entries) {
+    if rec.0.get_ref().footer_entries != Some(entries) {
         return Err(bad("the footer does not match the records"));
     }
-    Ok(Loaded {
-        tree,
-        root: root.expect("a root"),
-        header,
-        entries,
-    })
+    Ok(())
+}
+
+/// The scan's header records ([`put_header`]): the root path and the header.
+fn read_header(
+    rec: &mut Rec<impl BufRead>,
+    version: u32,
+    limits: &Limits,
+) -> Result<(Vec<u8>, Header), ImportError> {
+    let root_path = rec.bytes(limits.max_name.max(1 << 16))?;
+    if root_path.is_empty() {
+        return Err(bad("no root path"));
+    }
+    let tool_version = String::from_utf8_lossy(&rec.bytes(256)?).into_owned();
+    let written = rec.u()?;
+    let opts = rec.u()?;
+    let journal = if version != VERSION_1 && opts & OPT_JOURNAL != 0 {
+        let volume = rec.bytes(16)?;
+        Some(Journal {
+            volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
+            event_id: rec.u()?,
+            time: if version == VERSION { rec.u()? } else { 0 },
+        })
+    } else {
+        None
+    };
+    let header = Header {
+        tool_version,
+        written,
+        cross_mounts: opts & 1 != 0,
+        network: opts & 2 != 0,
+        journal,
+    };
+    Ok((root_path, header))
+}
+
+/// The fields every record `tag` (`DIR` or `ENTRY`) has: its name, metadata and error. A new
+/// device goes into `devs`.
+fn read_entry(
+    rec: &mut Rec<impl BufRead>,
+    tag: u8,
+    limits: &Limits,
+    devs: &mut Vec<u64>,
+) -> Result<(Vec<u8>, Meta, Option<ErrKind>), ImportError> {
+    let name = rec.bytes(limits.max_name)?;
+    let (kind, link) = if tag == ENTRY {
+        let k = match rec.byte()? {
+            0 => Kind::File,
+            2 => Kind::Symlink,
+            3 => Kind::Other,
+            _ => return Err(bad("a bad entry kind")),
+        };
+        (k, rec.byte()? != 0)
+    } else {
+        (Kind::Dir, false)
+    };
+    let apparent = rec.u()?;
+    let alloc = rec.u()?;
+    let mtime = rec.i()?;
+    // An index that does not fit in `usize` is past the table too.
+    let di = usize::try_from(rec.u()?).unwrap_or(usize::MAX);
+    let dev = match di.cmp(&devs.len()) {
+        std::cmp::Ordering::Less => devs[di],
+        std::cmp::Ordering::Equal => {
+            let d = rec.u()?;
+            devs.push(d);
+            d
+        }
+        std::cmp::Ordering::Greater => return Err(bad("a bad device index")),
+    };
+    let ino = rec.u()?;
+    let err = match rec.byte()? {
+        0 => None,
+        1 => Some(ErrKind::PermissionDenied),
+        2 => Some(ErrKind::NotFound),
+        3 => Some(ErrKind::Stalled),
+        4 => Some(ErrKind::Other),
+        5 => Some(ErrKind::Os(
+            i32::try_from(rec.i()?).map_err(|_| bad("a bad error code"))?,
+        )),
+        _ => return Err(bad("a bad error kind")),
+    };
+    let meta = Meta {
+        kind,
+        apparent,
+        alloc,
+        mtime,
+        dev,
+        ino,
+        nlink: if link { 2 } else { 1 },
+        mount: 0,
+    };
+    Ok((name, meta, err))
+}
+
+/// The fields only a directory record has: its kept flags and its state.
+fn read_dir_fields(rec: &mut Rec<impl BufRead>) -> Result<(u16, DirState), ImportError> {
+    let all = DIR_FLAGS.iter().fold(0, |a, &f| a | f);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "only the bits of DIR_FLAGS, all within u16, are kept"
+    )]
+    let flags = rec.u()? as u16 & all;
+    let state = match rec.byte()? {
+        0 => DirState::Pending,
+        1 => DirState::Complete,
+        2 => DirState::Partial,
+        3 => DirState::Failed,
+        4 => DirState::Skipped,
+        5 => DirState::Cancelled,
+        6 => DirState::Abandoned,
+        7 => DirState::Lost,
+        8 => DirState::Superseded,
+        9 => DirState::Deleting,
+        10 => DirState::Deleted,
+        _ => return Err(bad("a bad directory state")),
+    };
+    // A directory still being read when the snapshot was taken is shown as partial.
+    let state = match state {
+        DirState::Pending | DirState::Deleting | DirState::Superseded => DirState::Partial,
+        s => s,
+    };
+    Ok((flags, state))
 }
 
 #[cfg(test)]

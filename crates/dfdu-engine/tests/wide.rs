@@ -1,6 +1,8 @@
 //! A wide directory read in many blocks, most of them stat'ed by chunk tasks on other workers, with
 //! each backend: totals, items and subdirectories match a plain walk.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::io;
@@ -10,6 +12,8 @@ use std::time::Duration;
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{Backend, DirStream, Forward, JobOptions, Limits, PortableBackend, Raw};
 use dfdu_tree::Totals;
+
+mod common;
 
 /// Each block read takes 2 ms longer, so chunk tasks finish (and return the directory's credit)
 /// while the listing still reads, on any OS. At full speed the listing can read the whole
@@ -126,7 +130,10 @@ fn scan<B: Backend>(backend: B, root: &Path) -> (Totals, u64) {
     assert!(e.wait_idle(Some(Duration::from_secs(60))).is_idle());
     let out = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
-        assert!(m.status.stats.corrupt + m.status.stats.lost + m.status.stats.duplicate == 0);
+        assert_eq!(
+            m.status.stats.corrupt + m.status.stats.lost + m.status.stats.duplicate,
+            0
+        );
         (m.tree.total(r), m.status.stats.chunks)
     });
     let chunk_tasks = e
@@ -140,7 +147,7 @@ fn scan<B: Backend>(backend: B, root: &Path) -> (Totals, u64) {
 
 #[test]
 fn wide_directory_in_chunk_tasks() {
-    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tmp = common::tempdir();
     fixture(tmp.path());
     let (bytes, items) = walk(tmp.path());
 

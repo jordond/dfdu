@@ -4,12 +4,12 @@
 //! counted.
 //!
 //! The filesystem runs in the test process (one `fuser` session thread). A request that hangs
-//! is kept, unanswered, until [`Mounted::release`] or drop, which answer every kept request
+//! is kept, unanswered, until `Mounted::release` or drop, which answer every kept request
 //! with `EIO` so the threads waiting in the kernel return; drop then unmounts, falling back to
 //! aborting the connection and a lazy unmount if the mount is still busy.
 //!
 //! Mounting needs `/dev/fuse` and either root (a direct `mount(2)`) or `fusermount3`.
-//! [`Mounted::mount`] returns an error otherwise; tests skip with a message.
+//! `Mounted::mount` returns an error otherwise; tests skip with a message.
 #![cfg(target_os = "linux")]
 
 use std::ffi::OsStr;
@@ -17,7 +17,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -50,6 +50,7 @@ impl Default for Spec {
 }
 
 impl Spec {
+    #[must_use]
     pub fn new() -> Self {
         Spec {
             nodes: vec![Node {
@@ -89,6 +90,7 @@ impl Spec {
     }
 
     /// Bytes allocated to node `n`, as `st_blocks * 512` reports it.
+    #[must_use]
     pub fn alloc(&self, n: usize) -> u64 {
         blocks(self.nodes[n].size) * 512
     }
@@ -97,6 +99,7 @@ impl Spec {
     /// four, plus three directories a scan cannot finish: `hung` and `deep/hung`, whose
     /// listings never answer, and `slow`, whose file `stuck` never answers its stat. Returns
     /// the spec and the paths of those three, relative to the root.
+    #[must_use]
     pub fn hanging(dirs: usize) -> (Spec, Vec<&'static str>) {
         let mut s = Spec::new();
         for i in 0..dirs {
@@ -131,6 +134,7 @@ impl Spec {
 
     /// Paths below the root (relative, `/`-separated) with the node at each, in depth-first
     /// order, the root (`""`) first.
+    #[must_use]
     pub fn paths(&self) -> Vec<(String, usize)> {
         let mut out = vec![];
         let mut stack = vec![(String::new(), 0)];
@@ -200,7 +204,7 @@ const TTL: Duration = Duration::from_secs(60);
 
 impl HangFs {
     fn node(&self, ino: INodeNo) -> Option<usize> {
-        let i = (u64::from(ino) as usize).checked_sub(1)?;
+        let i = usize::try_from(u64::from(ino)).ok()?.checked_sub(1)?;
         (i < self.spec.nodes.len()).then_some(i)
     }
 
@@ -242,7 +246,11 @@ impl HangFs {
             job();
             return;
         }
-        let tx = self.later.lock().unwrap().clone();
+        let tx = self
+            .later
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let job = match tx {
             Some(tx) => match tx.send((Instant::now() + self.delay, job)) {
                 Ok(()) => return,
@@ -256,7 +264,11 @@ impl HangFs {
     /// Keeps the request unanswered, unless the filesystem has been released: then the reply
     /// is dropped here, which answers it with `EIO`.
     fn hold(&self, reply: Box<dyn Send>) {
-        let mut held = self.state.held.lock().unwrap();
+        let mut held = self
+            .state
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if !self.state.released.load(SeqCst) {
             held.push(reply);
         }
@@ -280,12 +292,15 @@ impl Filesystem for HangFs {
                     job();
                 }
             })?;
-        *self.later.lock().unwrap() = Some(tx);
+        *self.later.lock().unwrap_or_else(PoisonError::into_inner) = Some(tx);
         Ok(())
     }
 
     fn destroy(&mut self) {
-        self.later.lock().unwrap().take();
+        self.later
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
@@ -348,7 +363,11 @@ impl Filesystem for HangFs {
             let a = self.attr(c);
             entries.push((a.ino, a.kind, self.spec.nodes[c].name.clone()));
         }
-        for (k, (ino, kind, name)) in entries.into_iter().enumerate().skip(offset as usize) {
+        for (k, (ino, kind, name)) in entries
+            .into_iter()
+            .enumerate()
+            .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+        {
             if reply.add(ino, k as u64 + 1, kind, &name) {
                 break;
             }
@@ -366,6 +385,11 @@ pub struct Mounted {
 
 impl Mounted {
     /// Mounts `spec` at the directory `at`.
+    ///
+    /// # Errors
+    ///
+    /// There is no `/dev/fuse`, the mount fails (no root and no `fusermount3`), or the mounted
+    /// root does not answer.
     pub fn mount(spec: Spec, at: &Path, opts: Options) -> io::Result<Mounted> {
         if !Path::new("/dev/fuse").exists() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no /dev/fuse"));
@@ -379,7 +403,7 @@ impl Mounted {
         };
         let mut config = Config::default();
         config.mount_options = vec![MountOption::RO, MountOption::FSName("dfdu-hangfs".into())];
-        if let Some(s) = &opts.subtype {
+        if let Some(s) = opts.subtype {
             // A kernel option: fuser passes `Subtype` only to fusermount.
             config
                 .mount_options
@@ -397,11 +421,17 @@ impl Mounted {
     }
 
     /// Requests kept unanswered now.
+    #[must_use]
     pub fn held(&self) -> usize {
-        self.state.held.lock().unwrap().len()
+        self.state
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     /// The most requests that were being answered (after the delay) at once.
+    #[must_use]
     pub fn peak_in_flight(&self) -> usize {
         self.state.peak.load(SeqCst)
     }
@@ -411,7 +441,11 @@ impl Mounted {
     pub fn release(&self) {
         // Under the lock, so a request being held now is either taken here or not kept.
         let held = {
-            let mut h = self.state.held.lock().unwrap();
+            let mut h = self
+                .state
+                .held
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             self.state.released.store(true, SeqCst);
             std::mem::take(&mut *h)
         };
@@ -488,15 +522,15 @@ mod tests {
         let mut spec = Spec::new();
         let a = spec.dir(0, "a");
         spec.file(a, "f", 5000);
-        let h = spec.dir(0, "hung");
-        let s = spec.file(0, "stuck", 1);
-        spec.hang(h);
-        spec.hang(s);
+        let hung = spec.dir(0, "hung");
+        let stuck = spec.file(0, "stuck", 1);
+        spec.hang(hung);
+        spec.hang(stuck);
         let opts = Options {
             subtype: Some("sshfs".into()),
             ..Default::default()
         };
-        let Some(m) = mount(spec, &tmp, opts) else {
+        let Some(mounted) = mount(spec, &tmp, opts) else {
             return;
         };
         let names: Vec<String> = std::fs::read_dir(&tmp)
@@ -504,8 +538,8 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(names, ["a", "hung", "stuck"]);
-        let f = std::fs::metadata(tmp.join("a/f")).unwrap();
-        assert_eq!((f.len(), f.blocks()), (5000, 16));
+        let meta = std::fs::metadata(tmp.join("a/f")).unwrap();
+        assert_eq!((meta.len(), meta.blocks()), (5000, 16));
         let table = std::fs::read_to_string("/proc/self/mountinfo").unwrap();
         assert!(table.contains("fuse.sshfs"), "{table}");
         // A listing and a stat that never answer, until released.
@@ -523,12 +557,12 @@ mod tests {
             });
         }
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
-        assert_eq!(m.held(), 2);
-        m.release();
+        assert_eq!(mounted.held(), 2);
+        mounted.release();
         for _ in 0..2 {
             assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), "EIO");
         }
-        drop(m);
+        drop(mounted);
         // Unmounted: the directory is empty again.
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }

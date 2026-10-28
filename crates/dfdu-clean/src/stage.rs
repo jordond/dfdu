@@ -17,6 +17,10 @@ use crate::{Identity, PlanItem};
 /// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists, atomically where the
 /// system can (`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS,
 /// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows).
+///
+/// # Errors
+///
+/// `AlreadyExists` when `to` exists; any other error of the rename.
 pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -69,13 +73,12 @@ impl Stager {
     /// created if need be.
     pub fn target(&mut self, item: &PlanItem, scan_root: &Path) -> io::Result<PathBuf> {
         let dev = item.identity.dev;
-        let dir = match self.dirs.get(&dev) {
-            Some(d) => d.clone(),
-            None => {
-                let d = self.find_dir(&item.path, dev, scan_root)?;
-                self.dirs.insert(dev, d.clone());
-                d
-            }
+        let dir = if let Some(d) = self.dirs.get(&dev) {
+            d.clone()
+        } else {
+            let d = self.find_dir(&item.path, dev, scan_root)?;
+            self.dirs.insert(dev, d.clone());
+            d
         };
         self.n += 1;
         let mut name = OsString::from(format!("{}-", self.n));

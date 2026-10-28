@@ -229,7 +229,7 @@ impl<B: Backend> Applier<B> {
                 node,
                 bytes,
                 result,
-            } => self.item_result(m, plan, node, bytes, result),
+            } => self.item_result(m, plan, node, bytes, &result),
             DeleterMsg::Done { plan, btrfs } => {
                 if btrfs {
                     m.status.notice(
@@ -238,8 +238,7 @@ impl<B: Backend> Applier<B> {
                             .into(),
                     );
                 }
-                if self.active_plan.as_ref().is_some_and(|a| a.id == plan) {
-                    let a = self.active_plan.take().expect("active");
+                if let Some(a) = self.active_plan.take_if(|a| a.id == plan) {
                     for r in a.remaining {
                         if let Some(ix) = m.tree.resolve(r) {
                             m.tree.set_deleting(ix, false);
@@ -310,7 +309,7 @@ impl<B: Backend> Applier<B> {
                 self.rescan_paths(m);
             }
             DeleterMsg::Unfinished { items, notes } => {
-                notice_unfinished(&mut m.status, &items, notes)
+                notice_unfinished(&mut m.status, &items, notes);
             }
         }
         self.refresh_undo(m);
@@ -324,13 +323,13 @@ impl<B: Backend> Applier<B> {
         plan: u64,
         node: NodeRef,
         bytes: u64,
-        result: DeleteResult,
+        result: &DeleteResult,
     ) {
         let Some(active) = self.active_plan.as_mut().filter(|a| a.id == plan) else {
             return;
         };
         active.remaining.remove(&node);
-        active.summary.add(node, bytes, &result);
+        active.summary.add(node, bytes, result);
         let mode = active.mode;
         let done = active.total - active.remaining.len();
         if let Some(d) = m.status.deleting.as_mut() {
@@ -353,7 +352,7 @@ impl<B: Backend> Applier<B> {
                 .map(|ix| String::from_utf8_lossy(m.tree.name(ix)).into_owned())
                 .unwrap_or_default();
             m.status.notice(format!("delete {name}: {result}"));
-            if ix.is_some_and(|ix| unmark_kept(&mut m.tree, ix, &result)) {
+            if ix.is_some_and(|ix| unmark_kept(&mut m.tree, ix, result)) {
                 self.deferred_rescans.push(node);
             }
         }
@@ -406,7 +405,7 @@ impl DeleteSummary {
             DeleteResult::Stale(_) => self.stale += 1,
             DeleteResult::Refused(_) => self.refused += 1,
             DeleteResult::Aborted => self.aborted += 1,
-            _ => self.failed += 1,
+            DeleteResult::Failed { .. } => self.failed += 1,
         }
         if self.problems.len() < PROBLEMS_KEPT {
             self.problems.push((node, result.to_string()));
@@ -451,5 +450,40 @@ fn notice_unfinished(status: &mut Status, items: &[String], notes: Vec<String>) 
     }
     for n in notes {
         status.notice(format!("deletion journal: {n}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dfdu_tree::ErrKind;
+
+    #[test]
+    fn a_summary_counts_each_result_and_keeps_the_problems() {
+        let mut s = DeleteSummary::default();
+        let n = NodeRef::from_bits;
+        s.add(n(1), 100, &DeleteResult::Deleted);
+        s.add(n(2), 50, &DeleteResult::Stale("changed".into()));
+        s.add(n(3), 10, &DeleteResult::Aborted);
+        let busy = DeleteResult::Failed {
+            partial: true,
+            err: ErrKind::Other,
+            msg: "busy".into(),
+        };
+        s.add(n(4), 10, &busy);
+        assert_eq!((s.deleted, s.bytes), (1, 100));
+        assert_eq!((s.stale, s.refused, s.failed, s.aborted), (1, 0, 1, 1));
+        let kept: Vec<NodeRef> = s.problems.iter().map(|p| p.0).collect();
+        assert_eq!(kept, [n(2), n(3), n(4)]);
+    }
+
+    #[test]
+    fn problems_past_the_limit_are_counted_not_kept() {
+        let mut s = DeleteSummary::default();
+        for i in 0..PROBLEMS_KEPT as u64 + 5 {
+            s.add(NodeRef::from_bits(i), 1, &DeleteResult::Aborted);
+        }
+        assert_eq!(s.aborted, PROBLEMS_KEPT + 5);
+        assert_eq!(s.problems.len(), PROBLEMS_KEPT);
     }
 }

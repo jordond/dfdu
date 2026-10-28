@@ -88,6 +88,12 @@ impl fmt::Display for ThemeError {
 impl std::error::Error for ThemeError {}
 
 impl ThemeFile {
+    /// Reads a theme file's text.
+    ///
+    /// # Errors
+    ///
+    /// When the text is not TOML, or has a key, token, colour, modifier or base theme dfdu
+    /// does not know, or a value of the wrong type.
     pub fn parse(text: &str) -> Result<ThemeFile, ThemeError> {
         let table: Table = toml::from_str(text).map_err(|e| ThemeError::Syntax(e.to_string()))?;
         let mut file = ThemeFile {
@@ -120,12 +126,19 @@ impl ThemeFile {
     }
 
     /// The built-in theme the file starts from.
+    #[must_use]
     pub fn base(&self) -> &'static str {
         self.base
     }
 
     /// The theme for `level` on a terminal with background `background`, named after the file's
     /// `name`, or after its base when it has none.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        clippy::missing_panics_doc,
+        reason = "parse only sets `base` to one of builtin::NAMES, which all have a palette"
+    )]
     pub fn resolve(&self, level: ColorLevel, background: Option<Rgb>) -> Theme {
         let mut palette = builtin::palette(self.base).expect("base is a built-in theme");
         for s in &self.tokens {
@@ -147,17 +160,16 @@ impl ThemeFile {
 }
 
 fn setting(key: &str, value: &Value) -> Result<Setting, ThemeError> {
-    let (token, background) = match Token::from_name(key) {
-        Some(t) => (t, t == Token::Bg),
-        None => {
-            let unknown = || ThemeError::UnknownToken(key.to_owned());
-            let (name, part) = key.rsplit_once('.').ok_or_else(unknown)?;
-            let token = Token::from_name(name).ok_or_else(unknown)?;
-            match part {
-                "fg" => (token, false),
-                "bg" => (token, true),
-                _ => return Err(unknown()),
-            }
+    let (token, background) = if let Some(t) = Token::from_name(key) {
+        (t, t == Token::Bg)
+    } else {
+        let unknown = || ThemeError::UnknownToken(key.to_owned());
+        let (name, part) = key.rsplit_once('.').ok_or_else(unknown)?;
+        let token = Token::from_name(name).ok_or_else(unknown)?;
+        match part {
+            "fg" => (token, false),
+            "bg" => (token, true),
+            _ => return Err(unknown()),
         }
     };
     let mut s = Setting {
@@ -174,7 +186,7 @@ fn setting(key: &str, value: &Value) -> Result<Setting, ThemeError> {
                     ..ColorSpec::NONE
                 },
                 None => ColorSpec::named(named(key, v)?),
-            })
+            });
         }
         Value::Table(t) => {
             let mut c = ColorSpec::NONE;

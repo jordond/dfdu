@@ -2,20 +2,26 @@
 //! 100 columns or more, as a sheet below the list when narrower. `Tab` gives it the focus, and
 //! the arrow and page keys then scroll it.
 
+mod text;
+
 use std::path::PathBuf;
 
-use dfdu_engine::Model;
+use dfdu_engine::{Model, SizeMode, subvol_label};
 use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, RuleIx, Safety, Totals, Tree};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::{App, Effect};
-use crate::snapshot::{Mark, SizeMode, subvol_label};
-use crate::theme::{bar, count, human};
+use crate::snapshot::Mark;
+use crate::view::cells;
+
+pub(crate) use text::date;
+use text::lines;
+#[cfg(test)]
+use text::{state, wrap};
 
 /// The pane goes on the right from this width of the area below the header...
 const RIGHT_FROM: u16 = 100;
@@ -39,8 +45,18 @@ pub struct Details {
     focused: bool,
     /// First line shown.
     scroll: usize,
-    /// The entry `app.extras.details` was read for; `None` until a read since the pane opened.
-    read_for: Option<Option<NodeRef>>,
+    /// What `app.extras.details` was read for.
+    read_for: ReadFor,
+}
+
+/// What the details were last read for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ReadFor {
+    /// Nothing read since the pane opened.
+    #[default]
+    Unread,
+    /// The selected entry, or no entry.
+    Entry(Option<NodeRef>),
 }
 
 /// What [`read`] found for the selected entry under the read lock.
@@ -62,7 +78,7 @@ pub struct Facts {
     pub total: Totals,
     /// Compressed extents of unknown size on disk: the disk usage is an upper bound.
     pub compressed: bool,
-    /// Its own error ([`crate::problem`]).
+    /// Its own error ([`dfdu_engine::problem`]).
     pub problem: Option<String>,
     pub errors_below: u64,
     pub mtime: i64,
@@ -196,7 +212,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let page = app
         .areas
         .details
-        .map_or(1, |r| r.height.saturating_sub(2).max(1) as i32);
+        .map_or(1, |r| i32::from(r.height.saturating_sub(2).max(1)));
     match k.code {
         KeyCode::Up => scroll(app, -1),
         KeyCode::Down => scroll(app, 1),
@@ -247,18 +263,15 @@ pub fn split(app: &mut App, area: Rect) -> (Rect, Option<Rect>) {
     } else {
         None
     };
-    match parts {
-        Some([list, pane]) => {
-            if app.status.as_deref() == Some(TOO_SMALL) {
-                app.status = None;
-            }
-            (list, Some(pane))
+    if let Some([list, pane]) = parts {
+        if app.status.as_deref() == Some(TOO_SMALL) {
+            app.status = None;
         }
-        None => {
-            app.details.focused = false;
-            app.status.get_or_insert_with(|| TOO_SMALL.into());
-            (area, None)
-        }
+        (list, Some(pane))
+    } else {
+        app.details.focused = false;
+        app.status.get_or_insert_with(|| TOO_SMALL.into());
+        (area, None)
     }
 }
 
@@ -287,7 +300,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     }
     f.render_widget(
         Paragraph::new(lines)
-            .scroll((scroll as u16, 0))
+            .scroll((cells(scroll), 0))
             .block(block),
         area,
     );
@@ -296,7 +309,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 /// True when the pane shows something other than what [`read`] last read. A read ([`read`],
 /// then [`apply`]) must make it false: while it is true, the run loop reads again at once.
 pub fn stale(app: &App) -> bool {
-    app.details.open && app.details.read_for != Some(subject(app).map(|e| e.node))
+    app.details.open && app.details.read_for != ReadFor::Entry(subject(app).map(|e| e.node))
 }
 
 /// What the pane describes.
@@ -354,8 +367,8 @@ fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
             is_dir: tree.dir(ix).is_some(),
             total: tree.total(ix),
             compressed: e.compressed,
-            problem: crate::problem(tree, ix),
-            errors_below: crate::errors_below(tree, ix),
+            problem: dfdu_engine::problem(tree, ix),
+            errors_below: dfdu_engine::errors_below(tree, ix),
             mtime: tree.mtime(ix),
             dev_ino: tree.dev_ino(ix),
             mark: e.mark,
@@ -364,9 +377,9 @@ fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
                 let (t, flags) = (tree.total(ix), tree.flags(ix));
                 (
                     t.mounts
-                        .saturating_sub(flags.has(NodeFlags::MOUNT_ROOT) as u64),
+                        .saturating_sub(u64::from(flags.has(NodeFlags::MOUNT_ROOT))),
                     t.ro_subvols
-                        .saturating_sub(flags.has(NodeFlags::RO_SUBVOL) as u64),
+                        .saturating_sub(u64::from(flags.has(NodeFlags::RO_SUBVOL))),
                 )
             },
             largest: largest::<MAX>(tree, ix, app.size_mode),
@@ -422,10 +435,10 @@ fn largest<const MAX: usize>(tree: &Tree, ix: Ix, mode: SizeMode) -> Largest {
 /// list now draws for the same entry.
 pub fn apply(app: &mut App) {
     let node = app.extras.details.node;
-    if app.details.read_for != Some(node) {
+    if app.details.read_for != ReadFor::Entry(node) {
         app.details.scroll = 0;
     }
-    app.details.read_for = Some(node);
+    app.details.read_for = ReadFor::Entry(node);
     let row = subject(app)
         .filter(|e| Some(e.node) == node)
         .map(|e| (e.mark, e.compressed));
@@ -433,269 +446,6 @@ pub fn apply(app: &mut App) {
         f.mark = mark;
         f.compressed = compressed;
     }
-}
-
-/// The scan state of a directory, by the rules of its mark in the list.
-fn state(mark: Mark) -> &'static str {
-    match mark {
-        Mark::Scanning => "scanning",
-        Mark::Stalled => "stalled: not responding",
-        Mark::Rescanning => "rescanning",
-        Mark::Error => "incomplete",
-        Mark::Incomplete => "incomplete: scan stopped, r to rescan",
-        Mark::Deleting => "being deleted",
-        Mark::OtherFs => "not scanned: other filesystem",
-        Mark::DupMount => "not scanned: mounted again",
-        Mark::Network => "not scanned: network filesystem",
-        Mark::Kernel => "not scanned: kernel filesystem",
-        Mark::ErrorsInside => "complete, errors below",
-        Mark::None => "complete",
-    }
-}
-
-fn kind_name(kind: Kind) -> &'static str {
-    match kind {
-        Kind::File => "file",
-        Kind::Dir => "directory",
-        Kind::Symlink => "symlink",
-        Kind::Other => "other",
-    }
-}
-
-fn plural(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", count(n), if n == 1 { one } else { many })
-}
-
-/// Seconds since the Unix epoch as a UTC date and time ("2026-10-24 09:42 UTC").
-pub(crate) fn date(secs: i64) -> String {
-    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    // Days to a civil date, in 400-year eras starting on 1 March.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + (month <= 2) as i64;
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
-        rem / 3600,
-        rem % 3600 / 60
-    )
-}
-
-/// `text` in lines of at most `width` characters, broken at spaces; a word longer than a line
-/// (a path) is cut.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    let mut line = String::new();
-    let mut len = 0;
-    for word in text.split(' ') {
-        let mut word: Vec<char> = word.chars().collect();
-        if len > 0 && len + 1 + word.len() <= width {
-            line.push(' ');
-            line.extend(&word);
-            len += 1 + word.len();
-            continue;
-        }
-        if len > 0 {
-            out.push(std::mem::take(&mut line));
-        }
-        while word.len() > width {
-            out.push(word.drain(..width).collect());
-        }
-        line = word.iter().collect();
-        len = word.len();
-    }
-    out.push(line);
-    out
-}
-
-/// The pane's lines for an inner width of `width`, most wanted first: where it is, what it is,
-/// its sizes and problems, the largest children, then identity and boundaries.
-fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let t = &app.theme;
-    let mut out = Vec::new();
-    let text = |out: &mut Vec<Line<'static>>, s: &str, style: Style| {
-        for piece in wrap(s, width.saturating_sub(1)) {
-            out.push(Line::styled(format!(" {piece}"), style));
-        }
-    };
-    let Some(f) = &app.extras.details.facts else {
-        let listed = app
-            .selected_entry()
-            .filter(|_| !crate::cleanup::active(app));
-        let note = match listed {
-            Some(e) if e.ghost => "deleted".to_string(),
-            Some(e) if e.pseudo => format!(
-                "{} of data that entries of this directory share, counted here once. Not an \
-                 entry: it cannot be opened or deleted.",
-                human(e.size)
-            ),
-            _ => "nothing selected".to_string(),
-        };
-        text(&mut out, &note, t.fg_dim);
-        return out;
-    };
-    let plain = Style::new();
-    text(&mut out, &f.path.display().to_string(), t.fg_dim);
-    if f.is_dir {
-        let style = match f.mark {
-            Mark::None => plain,
-            Mark::ErrorsInside => t.fg_dim,
-            Mark::Scanning | Mark::Rescanning => t.scan_active,
-            Mark::Error => t.status_error,
-            _ => t.status_warn,
-        };
-        let head = format!(" {} · ", kind_name(f.kind));
-        let s = state(f.mark);
-        if head.chars().count() + s.chars().count() <= width {
-            out.push(Line::from(vec![Span::raw(head), Span::styled(s, style)]));
-        } else {
-            text(&mut out, kind_name(f.kind), plain);
-            text(&mut out, s, style);
-        }
-    } else {
-        text(&mut out, kind_name(f.kind), plain);
-    }
-    let mut disk = format!("{} on disk", human(f.total.alloc));
-    if f.compressed {
-        disk.push_str(" at most (compressed)");
-    }
-    if f.is_dir {
-        disk.push_str(&format!(" · {}", plural(f.total.items, "item", "items")));
-    }
-    text(&mut out, &disk, plain);
-    let other = format!(
-        "{} apparent · {} like du",
-        human(f.total.apparent),
-        human(f.total.referenced)
-    );
-    text(&mut out, &other, plain);
-    let size = app.size_mode.of(&f.total);
-    if let Some((d, then, at)) = crate::growth::since(app, &f.path, size, f.mark) {
-        let s = if d == 0 {
-            format!("the same as on {}", dfdu_store::history::day(at))
-        } else {
-            format!("{} (was {})", crate::growth::describe(d, at), human(then))
-        };
-        text(&mut out, &s, if d > 0 { t.status_warn } else { t.fg_dim });
-    }
-    if f.total.shared_out > 0 {
-        let s = format!(
-            "{} also used outside the scan: deleting it frees less",
-            human(f.total.shared_out)
-        );
-        text(&mut out, &s, t.status_warn);
-    }
-    if let Some(p) = &f.problem {
-        text(&mut out, p, t.status_error);
-    }
-    if f.errors_below > 0 {
-        let s = format!("{} below", plural(f.errors_below, "error", "errors"));
-        text(&mut out, &s, t.status_error);
-    }
-    if let Some(c) = &f.matched {
-        out.push(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(c.category.to_string(), t.cat[c.slot]),
-            Span::styled(format!(" · {}", c.safety.as_str()), plain),
-        ]));
-        text(&mut out, &c.rule, t.title);
-        if let Some(p) = &c.above {
-            text(&mut out, &format!("in {}", p.display()), t.fg_dim);
-        }
-        text(&mut out, &c.explanation, plain);
-        text(&mut out, &format!("lost: {}", c.lost), t.fg_dim);
-        if let Some(d) = &c.degraded {
-            text(&mut out, d, t.status_warn);
-        }
-        if c.flags & dfdu_tree::Class::VCS_TRACKED != 0 {
-            text(
-                &mut out,
-                "version control tracks files in it: protected",
-                t.status_warn,
-            );
-        }
-        if c.flags & dfdu_tree::Class::IN_USE != 0 {
-            text(
-                &mut out,
-                "a program that uses it was running",
-                t.status_warn,
-            );
-        }
-        if c.flags & dfdu_tree::Class::VCS_UNKNOWN != 0 {
-            text(
-                &mut out,
-                "git could not tell whether it tracks files in it: not recommended",
-                t.status_warn,
-            );
-        }
-    }
-    // A match counts as one category; the breakdown is for directories with matches below.
-    if !f.categories.is_empty() && f.matched.is_none() {
-        text(&mut out, "by category", t.title);
-        for &(name, slot, size, n) in &f.categories {
-            out.push(Line::from(vec![
-                Span::raw(format!(" {:>10}  ", human(size))),
-                Span::styled(name.to_string(), t.cat[slot]),
-                Span::styled(format!(" · {n}"), t.fg_dim),
-            ]));
-        }
-    }
-    match &f.largest {
-        Largest::None => {}
-        Largest::Skipped(n) => {
-            let s = format!(
-                "largest children: not computed for {} entries",
-                count(*n as u64)
-            );
-            text(&mut out, &s, t.fg_dim);
-        }
-        Largest::Listed(kids) if kids.is_empty() => {}
-        Largest::Listed(kids) => {
-            text(
-                &mut out,
-                &format!("largest by {}", f.size_mode.label()),
-                t.title,
-            );
-            let total = f.size_mode.of(&f.total).max(1);
-            for k in kids {
-                let style = if k.is_dir { t.dir } else { plain };
-                out.push(Line::from(vec![
-                    Span::raw(" "),
-                    Span::styled(bar(k.size as f64 / total as f64, BAR), t.bar_fill),
-                    Span::raw(format!(" {:>10}  ", human(k.size))),
-                    Span::styled(
-                        format!("{}{}", k.name, if k.is_dir { "/" } else { "" }),
-                        style,
-                    ),
-                ]));
-            }
-        }
-    }
-    text(&mut out, &format!("modified {}", date(f.mtime)), plain);
-    let id = format!("device {} · inode {}", f.dev_ino.0, f.dev_ino.1);
-    text(&mut out, &id, plain);
-    if let Some(l) = &f.label {
-        text(&mut out, l, plain);
-    }
-    let (mounts, ro) = f.inside;
-    if mounts + ro > 0 {
-        let mut parts = Vec::new();
-        if mounts > 0 {
-            parts.push(plural(mounts, "mount", "mounts"));
-        }
-        if ro > 0 {
-            parts.push(plural(ro, "read-only subvolume", "read-only subvolumes"));
-        }
-        let s = format!("inside: {}; deletion stops at them", parts.join(", "));
-        text(&mut out, &s, t.status_warn);
-    }
-    out
 }
 
 #[cfg(test)]

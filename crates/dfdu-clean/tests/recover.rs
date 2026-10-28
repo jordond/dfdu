@@ -2,6 +2,10 @@
 //! session killed part-way through a staged delete, then recovery. The second re-runs this
 //! binary as the session to kill, with the `fault-injection` hook that stops a staged delete after its first entry.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as Proc;
@@ -9,15 +13,12 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, unbounded};
 use dfdu_clean::recover::{self, Pending};
-use dfdu_clean::{DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, spawn_deleter};
-use dfdu_tree::{Kind, Meta, Tree};
+use dfdu_clean::{DeleterMsg, DeleterReq, Mode, Plan, spawn_deleter};
+use dfdu_tree::{Kind, Tree};
+
+use common::canonical_tempdir;
 
 const CHILD: &str = "DFDU_RECOVER_CHILD";
-
-fn canonical_tempdir() -> tempfile::TempDir {
-    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
-    tempfile::tempdir_in(base).unwrap()
-}
 
 /// A tree of `n` files at `root/junk`, and a plan to stage it.
 fn plan(root: &Path, n: usize) -> Plan {
@@ -26,31 +27,18 @@ fn plan(root: &Path, n: usize) -> Plan {
     for i in 0..n {
         fs::write(junk.join(format!("f{i}")), b"x").unwrap();
     }
-    let m = Meta::from_metadata(&fs::symlink_metadata(&junk).unwrap());
-    let mut tree = Tree::new();
-    let r = tree.new_root(b"/", &m, false);
+    let identity = common::identity(&junk).unwrap();
+    assert_eq!(identity.kind, Kind::Dir);
     Plan {
         id: 1,
         mode: Mode::Stage,
         scan_root: root.to_path_buf(),
-        items: vec![PlanItem {
-            node: tree.node_ref(r),
-            path: junk,
-            identity: Identity {
-                dev: m.dev,
-                ino: m.ino,
-                kind: Kind::Dir,
-                apparent: m.apparent,
-                mtime: m.mtime,
-            },
-            bytes: 0,
-            inside: Default::default(),
-        }],
+        items: vec![common::item(&mut Tree::new(), junk, identity)],
     }
 }
 
 fn until_done(rx: &Receiver<DeleterMsg>) {
-    for m in rx.iter() {
+    for m in rx {
         if let DeleterMsg::Item { result, .. } = &m {
             assert_eq!(*result, dfdu_clean::DeleteResult::Deleted);
         }

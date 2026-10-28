@@ -134,9 +134,9 @@ fn completed_scan_view() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.size_mode = crate::SizeMode::Apparent;
+    app.size_mode = dfdu_engine::SizeMode::Apparent;
     let mut target = Target::root();
-    let snap = engine.read(|m| snapshot::build(m, &mut target, crate::SizeMode::Apparent));
+    let snap = engine.read(|m| snapshot::build(m, &mut target, dfdu_engine::SizeMode::Apparent));
     app.refresh(snap, t0 + Duration::from_secs(1));
     let out = render(&mut app, t0 + Duration::from_secs(1), 90, 10);
     engine.shutdown(Duration::from_millis(200));
@@ -189,7 +189,7 @@ fn target_survives_rescan_swap() {
     let old = target.node.expect("node");
     engine.send(Command::Rescan { node: old });
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
-    let snap = engine.read(|m| snapshot::build(m, &mut target, crate::SizeMode::Disk));
+    let snap = engine.read(|m| snapshot::build(m, &mut target, dfdu_engine::SizeMode::Disk));
     engine.shutdown(Duration::from_millis(200));
 
     assert_ne!(target.node, Some(old), "the rescan replaced the node");
@@ -207,10 +207,10 @@ fn overlays_fit_a_small_terminal() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let node = test_entry(1, "junk", 0).node;
-    let list = crate::ErrorList {
+    let list = dfdu_engine::ErrorList {
         root: "/r".into(),
         items: (0..50)
-            .map(|i| crate::ErrorItem {
+            .map(|i| dfdu_engine::ErrorItem {
                 node,
                 path: format!("/r/some/rather/long/path/number/{i}").into(),
                 is_dir: true,
@@ -221,10 +221,10 @@ fn overlays_fit_a_small_terminal() {
         kinds: vec![(dfdu_tree::ErrKind::PermissionDenied, 60)],
     };
     for overlay in [
-        crate::app::Overlay::Help(Default::default()),
+        crate::app::Overlay::Help(crate::overlay::help::Help::default()),
         crate::app::Overlay::Errors { list, cursor: 49 },
-        crate::app::Overlay::ConfirmDelete(crate::confirm::Confirm::new(
-            vec![crate::confirm::Item {
+        crate::app::Overlay::ConfirmDelete(crate::overlay::confirm::Confirm::new(
+            vec![crate::overlay::confirm::Item {
                 node,
                 name: "junk".into(),
                 size: 5 << 20,
@@ -255,12 +255,12 @@ fn overlays_fit_a_small_terminal() {
 fn shared_data_has_its_own_row_and_cannot_be_deleted() {
     let m = shared_model();
     let mut target = Target::root();
-    let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
+    let snap = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Disk);
     let shared: Vec<_> = snap.entries.iter().filter(|e| e.pseudo).collect();
     assert_eq!(shared.len(), 1);
     assert_eq!(shared[0].size, 600);
     assert_eq!(snap.dir_total.alloc, 1400);
-    let like_du = snapshot::build(&m, &mut target, crate::SizeMode::Referenced);
+    let like_du = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Referenced);
     assert!(like_du.entries.iter().all(|e| !e.pseudo));
     assert_eq!(like_du.dir_total.referenced, 2000);
 
@@ -300,7 +300,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     m.tree.set_error(locked, ErrKind::PermissionDenied);
     m.tree.set_error(gone, ErrKind::NotFound);
 
-    let list = crate::errors(&m.tree, root, 100);
+    let list = dfdu_engine::errors(&m.tree, root, 100);
     assert_eq!(list.total, 2);
     let paths: Vec<_> = list.items.iter().map(|e| e.path.clone()).collect();
     assert_eq!(
@@ -316,7 +316,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     );
 
     let mut target = Target::root();
-    let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
+    let snap = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Disk);
     let entry = |name: &[u8]| {
         snap.entries
             .iter()
@@ -345,7 +345,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     app.key(press(KeyCode::Enter), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::None));
     let mut target = app.target.clone();
-    let snap = snapshot::build(&m, &mut target, crate::SizeMode::Disk);
+    let snap = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Disk);
     app.target = target;
     app.refresh(snap, t0);
     assert_eq!(app.snap.dir_path, std::path::Path::new("/r/a/b"));

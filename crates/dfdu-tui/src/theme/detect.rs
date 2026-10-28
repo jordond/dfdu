@@ -17,6 +17,10 @@ pub struct ColorDetection {
 }
 
 /// Parses a `--color` value: `auto` (detect), `never`, `16`, `256` or `truecolor`.
+///
+/// # Errors
+///
+/// For any other value, with a message for the command line that lists the valid ones.
 pub fn parse_color_flag(s: &str) -> Result<Option<ColorLevel>, String> {
     Ok(Some(match s {
         "auto" => return Ok(None),

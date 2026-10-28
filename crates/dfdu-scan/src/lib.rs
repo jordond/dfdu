@@ -21,6 +21,8 @@ mod proto;
 pub mod runtime;
 mod shared;
 pub mod sync;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix;
 #[cfg(windows)]
 mod windows;
 
@@ -48,8 +50,9 @@ pub type NativeBackend = WindowsBackend;
 pub type NativeBackend = PortableBackend;
 
 /// The native backend set up for data on `storage` ([`dfdu_sys::storage`]). With `mft`, NTFS
-/// volumes are listed from their master file tables ([`WindowsBackend::with_mft`]); `mft` is
+/// volumes are listed from their master file tables (`WindowsBackend::with_mft`); `mft` is
 /// ignored on other systems.
+#[must_use]
 pub fn native_backend(storage: dfdu_sys::Storage, mft: bool) -> NativeBackend {
     #[cfg(target_os = "linux")]
     {

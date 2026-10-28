@@ -44,6 +44,7 @@ pub struct NativeRule {
 }
 
 /// Shows an argv as a person would type it.
+#[must_use]
 pub fn shown(argv: &[String]) -> String {
     argv.iter()
         .map(|a| {
@@ -109,9 +110,9 @@ fn run_one(
     abort: &AtomicBool,
     lines: &Sender<String>,
 ) -> Result<(), String> {
-    let (prog, args) = argv.split_first().ok_or("empty command")?;
+    let (prog, rest) = argv.split_first().ok_or("empty command")?;
     let mut cmd = Command::new(prog);
-    cmd.args(args)
+    cmd.args(rest)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -178,7 +179,8 @@ fn run_one(
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
@@ -187,7 +189,10 @@ mod tests {
             id: 1,
             check: vec!["true".into()],
             pre: vec![vec!["echo".into(), "pre".into()]],
-            command: command.iter().map(|s| s.to_string()).collect(),
+            command: command
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             cwd: None,
             timeout,
             dry_run: false,

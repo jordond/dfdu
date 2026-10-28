@@ -7,15 +7,17 @@ mod builtin;
 mod color;
 mod detect;
 mod file;
+mod format;
 
-use humansize::{BINARY, format_size};
 use ratatui::style::{Modifier, Style};
 
 pub use color::{ColorLevel, ColorSpec, Rgb};
 pub use detect::{
     choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
 };
+pub use dfdu_engine::human;
 pub use file::{ThemeError, ThemeFile};
+pub use format::{bar, count, percent, ratio, spinner};
 
 /// A themable style. [`Token::name`] is its key in a theme file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -270,22 +272,26 @@ pub struct Theme {
 
 impl Theme {
     /// The 16-colour theme (`ansi`), readable on light and dark backgrounds.
+    #[must_use]
     pub fn ansi16() -> Self {
         Self::builtin("ansi", ColorLevel::Ansi16, None)
     }
 
     /// The theme without colours (`mono`).
+    #[must_use]
     pub fn no_color() -> Self {
         Self::builtin("mono", ColorLevel::None, None)
     }
 
     /// The names [`Theme::named`] accepts.
+    #[must_use]
     pub fn builtin_names() -> &'static [&'static str] {
         &builtin::NAMES
     }
 
     /// Built-in theme `name` resolved for `level`, on a terminal whose background is
     /// `background` when known. `mono` always resolves without colours.
+    #[must_use]
     pub fn named(name: &str, level: ColorLevel, background: Option<Rgb>) -> Option<Theme> {
         let palette = builtin::palette(name)?;
         let level = if name == "mono" {
@@ -296,6 +302,11 @@ impl Theme {
         Some(Self::resolve(name.to_owned(), &palette, level, background))
     }
 
+    /// Built-in theme `name`, which must be one of [`builtin::NAMES`].
+    #[expect(
+        clippy::expect_used,
+        reason = "only called with names from builtin::NAMES, which all have a palette"
+    )]
     fn builtin(name: &str, level: ColorLevel, background: Option<Rgb>) -> Self {
         Self::named(name, level, background).expect("built-in theme")
     }
@@ -309,6 +320,10 @@ impl Theme {
         level: ColorLevel,
         background: Option<Rgb>,
     ) -> Self {
+        #[expect(
+            clippy::expect_used,
+            reason = "`mono` is one of builtin::NAMES, which all have a palette"
+        )]
         let mono = (level == ColorLevel::None).then(|| builtin::palette("mono").expect("mono"));
         let style = |t: Token| {
             let mut spec = palette[t as usize];
@@ -350,6 +365,7 @@ impl Theme {
 
     /// The style of `token`.
     #[cfg(test)]
+    #[must_use]
     pub fn style(&self, token: Token) -> Style {
         match token {
             Token::Fg => self.fg,
@@ -386,89 +402,27 @@ impl Theme {
         }
     }
 
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// The colour level the styles were resolved for; RGB effects need `TrueColor`.
+    #[must_use]
     pub fn level(&self) -> ColorLevel {
         self.level
     }
 
     /// The terminal background the theme was resolved for, when it was queried.
+    #[must_use]
     pub fn background(&self) -> Option<Rgb> {
         self.background
     }
 }
 
-/// Human-readable size with binary units, one decimal place above bytes ("1.5 KiB", "2.0 MiB",
-/// "512 B"), so the size column keeps its width.
-pub fn human(n: u64) -> String {
-    if n < 1024 {
-        // humansize would print "512.0 B".
-        format!("{n} B")
-    } else {
-        format_size(n, BINARY.decimal_places(1).decimal_zeroes(1))
-    }
-}
-
-/// Compact count: 812, 1.2k, 3.4M.
-pub fn count(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1}M", n as f64 / 1e6),
-        _ => format!("{:.1}G", n as f64 / 1e9),
-    }
-}
-
-/// A bar of `width` cells filled to `frac` (0..=1), with eighth-block resolution.
-pub fn bar(frac: f64, width: usize) -> String {
-    const PARTS: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-    let eighths = (frac.clamp(0.0, 1.0) * (width * 8) as f64).round() as usize;
-    let mut s = String::with_capacity(width * 3);
-    for _ in 0..eighths / 8 {
-        s.push('█');
-    }
-    if eighths / 8 < width {
-        s.push(PARTS[eighths % 8]);
-        for _ in eighths / 8 + 1..width {
-            s.push(' ');
-        }
-    }
-    s
-}
-
-/// Braille spinner frame for directories still being scanned.
-pub fn spinner(frame: u64) -> char {
-    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    FRAMES[(frame % FRAMES.len() as u64) as usize]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bars_have_fixed_width() {
-        for f in [0.0, 0.01, 0.5, 0.999, 1.0] {
-            assert_eq!(bar(f, 10).chars().count(), 10, "frac {f}");
-        }
-        assert_eq!(bar(1.0, 4), "████");
-        assert_eq!(bar(0.5, 4), "██  ");
-        assert_eq!(bar(0.0625, 4), "▎   ");
-    }
-
-    #[test]
-    fn formats() {
-        assert_eq!(human(512), "512 B");
-        assert_eq!(human(0), "0 B");
-        assert_eq!(human(1536), "1.5 KiB");
-        assert_eq!(human(2048), "2.0 KiB");
-        assert_eq!(human(5 << 30), "5.0 GiB");
-        assert_eq!(count(812), "812");
-        assert_eq!(count(1_200), "1.2k");
-    }
 
     #[test]
     fn token_names_round_trip() {

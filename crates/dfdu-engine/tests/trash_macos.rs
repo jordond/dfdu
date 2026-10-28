@@ -2,6 +2,7 @@
 //! so it is ignored by default: `cargo test -p dfdu-engine --test trash_macos -- --ignored`.
 
 #![cfg(target_os = "macos")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use dfdu_engine::{Command, Engine, EngineOptions, Mode};
 use dfdu_scan::{JobOptions, PortableBackend};
 
 #[test]
-#[ignore]
+#[ignore = "uses the real Trash"]
 fn trash_and_undo() {
     let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let tmp = tempfile::Builder::new()

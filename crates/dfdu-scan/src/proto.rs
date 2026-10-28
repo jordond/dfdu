@@ -126,11 +126,13 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    #[must_use]
     pub fn name(&self, s: NameSpan) -> &[u8] {
         &self.names[s.off as usize..s.off as usize + s.len as usize]
     }
 
     /// Bytes this message holds on the heap plus its fixed size; what the byte budget counts.
+    #[must_use]
     pub fn size(&self) -> usize {
         use std::mem::size_of;
         size_of::<ScanMsg>()
@@ -168,6 +170,7 @@ pub enum ScanMsg {
 }
 
 impl ScanMsg {
+    #[must_use]
     pub fn size(&self) -> usize {
         match self {
             ScanMsg::Chunk(c) => c.size(),

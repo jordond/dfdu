@@ -7,18 +7,27 @@ use crate::extents::Inode;
 
 impl<B: Backend> Applier<B> {
     /// The extent table's view of one inode, for debugging.
+    #[must_use]
     pub fn describe_extents(&self, m: &Model, inode: Inode) -> String {
         self.extents.describe(&m.tree, inode)
     }
 
     /// Checks what must hold once nothing is pending: every measured inode is counted at a
     /// visible node.
+    ///
+    /// # Errors
+    ///
+    /// A description of the first inode that is not.
     pub fn check_settled(&self, m: &Model) -> Result<(), String> {
         self.extents.check_settled(&m.tree)
     }
 
     /// Checks the tree's structure and totals, and the pending counts of running jobs. Linear
     /// in tree size.
+    ///
+    /// # Errors
+    ///
+    /// A description of the first thing found that does not hold.
     pub fn check(&self, m: &Model) -> Result<(), String> {
         m.tree
             .check(&self.shadow_roots(&m.tree))
@@ -30,11 +39,17 @@ impl<B: Backend> Applier<B> {
             };
             let mut stack = vec![root];
             while let Some(ix) = stack.pop() {
-                let rec = m.tree.dir(ix).expect("dir");
+                let rec = m.tree.dir(ix).ok_or_else(|| {
+                    format!(
+                        "{} scanned by job {} is not a directory",
+                        m.tree.path_buf(ix).display(),
+                        j.id.0
+                    )
+                })?;
                 if rec.job != j.id.0 || rec.cut {
                     continue;
                 }
-                let mut expect = (!rec.listing_closed) as u32;
+                let mut expect = u32::from(!rec.listing_closed);
                 for c in m.tree.children(ix) {
                     if let Some(cr) = m.tree.dir(c) {
                         if cr.job == j.id.0 && !cr.reported {

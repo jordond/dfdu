@@ -8,7 +8,7 @@
 
 mod disks;
 mod storage;
-pub use disks::{Disk, Space, disks};
+pub use disks::{DISK_TIMEOUT, Disk, Space, disks};
 pub use storage::{Storage, storage, storage_in, storage_of_mount};
 
 #[cfg(target_os = "linux")]
@@ -46,6 +46,7 @@ pub use usn::{UsnChanges, usn_changes_since, usn_position};
 /// Whether this process runs as root, so it may read every directory, delete read-only btrfs
 /// snapshots and read extent trees.
 #[cfg(unix)]
+#[must_use]
 pub fn is_privileged() -> bool {
     rustix::process::geteuid().is_root()
 }
@@ -89,8 +90,9 @@ pub struct MountEntry {
 
 impl MountEntry {
     /// [`MountEntry::dev`] as `st_dev` reports it (glibc's `makedev` encoding).
+    #[must_use]
     pub fn st_dev(&self) -> u64 {
-        let (ma, mi) = (self.dev.0 as u64, self.dev.1 as u64);
+        let (ma, mi) = (u64::from(self.dev.0), u64::from(self.dev.1));
         ((ma & 0xffff_f000) << 32) | ((ma & 0xfff) << 8) | ((mi & 0xffff_ff00) << 12) | (mi & 0xff)
     }
 }
@@ -109,6 +111,7 @@ pub enum FsClass {
 }
 
 /// Classifies a filesystem type as `/proc/self/mountinfo` names it.
+#[must_use]
 pub fn classify_fs(fstype: &str) -> FsClass {
     const KERNEL: &[&str] = &[
         "proc",
@@ -183,6 +186,7 @@ pub fn classify_fs(fstype: &str) -> FsClass {
 }
 
 /// Parses `/proc/self/mountinfo` text. Malformed lines are skipped.
+#[must_use]
 pub fn parse_mountinfo(text: &[u8]) -> Vec<MountEntry> {
     text.split(|&b| b == b'\n')
         .filter_map(|line| {

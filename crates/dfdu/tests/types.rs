@@ -1,21 +1,21 @@
 //! `dfdu scan --type` and `--by-type`: sizes count only the matching files, entries without
 //! any are left out, and the breakdown adds up.
 
-use std::fs;
-use std::process::{Command, Stdio};
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-fn dfdu(args: &[&std::ffi::OsStr]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_dfdu"))
+mod common;
+
+use std::fs;
+
+use common::ok;
+
+/// Runs `dfdu args --no-history`.
+fn unrecorded(args: &[&std::ffi::OsStr]) -> std::process::Output {
+    common::bin()
         .args(args)
         .arg("--no-history")
-        .stdin(Stdio::null())
         .output()
         .unwrap()
-}
-
-fn stdout(o: &std::process::Output) -> String {
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8(o.stdout.clone()).unwrap()
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn type_filter_and_breakdown() {
     fs::write(tree.join("films/notes.txt"), vec![1u8; 4_000]).unwrap();
     fs::write(tree.join("music/c.flac"), vec![1u8; 30_000]).unwrap();
     let bytes = |types: &str| {
-        let o = dfdu(&[
+        let o = unrecorded(&[
             "scan".as_ref(),
             tree.as_os_str(),
             "--apparent".as_ref(),
@@ -37,13 +37,13 @@ fn type_filter_and_breakdown() {
             "--type".as_ref(),
             types.as_ref(),
         ]);
-        stdout(&o).trim().parse::<u64>().unwrap()
+        ok(o).trim().parse::<u64>().unwrap()
     };
     assert_eq!(bytes("video"), 60_000);
     assert_eq!(bytes("videos,audio"), 90_000);
     assert_eq!(bytes(".flac,txt"), 34_000);
 
-    let out = stdout(&dfdu(&[
+    let out = ok(unrecorded(&[
         "scan".as_ref(),
         tree.as_os_str(),
         "--type".as_ref(),
@@ -58,7 +58,7 @@ fn type_filter_and_breakdown() {
         "{out}"
     );
 
-    let out = stdout(&dfdu(&[
+    let out = ok(unrecorded(&[
         "scan".as_ref(),
         tree.as_os_str(),
         "--apparent".as_ref(),
@@ -77,7 +77,7 @@ fn type_filter_and_breakdown() {
     assert!(lines[2].contains("document"), "{out}");
     assert!(out.contains(".mkv") && out.contains(".flac"), "{out}");
 
-    let o = dfdu(&[
+    let o = unrecorded(&[
         "scan".as_ref(),
         tree.as_os_str(),
         "--type".as_ref(),
@@ -86,7 +86,7 @@ fn type_filter_and_breakdown() {
         "json".as_ref(),
     ]);
     assert_eq!(o.status.code(), Some(2));
-    let o = dfdu(&[
+    let o = unrecorded(&[
         "scan".as_ref(),
         tree.as_os_str(),
         "--type".as_ref(),

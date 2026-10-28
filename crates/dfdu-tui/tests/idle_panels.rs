@@ -5,21 +5,23 @@
 //! debug panel open) and the real engine, drawing to a `TestBackend` wrapped in a backend that
 //! records every flush.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
-use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use common::Recording;
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
 use dfdu_tui::{ColorLevel, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Theme, UiOptions};
 use ratatui::Terminal;
-use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
-use ratatui::buffer::Cell;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Position, Size};
 
 /// How long without a frame counts as the loop having caught up with the finished scan. Longer
 /// than any of its timed wakes: the spinner while busy and the automatic re-sort, which waits
@@ -46,65 +48,18 @@ fn count(frames: &Mutex<Frames>) -> usize {
     frames.lock().expect("frames").at.len()
 }
 
-fn ok<T>(r: Result<T, std::convert::Infallible>) -> io::Result<T> {
-    let Ok(v) = r;
-    Ok(v)
-}
-
-/// `TestBackend` that records each flush.
-struct Recording {
-    inner: TestBackend,
-    frames: Arc<Mutex<Frames>>,
-}
-
-impl Backend for Recording {
-    type Error = io::Error;
-
-    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
-    where
-        I: Iterator<Item = (u16, u16, &'a Cell)>,
-    {
-        ok(self.inner.draw(content))
-    }
-    fn hide_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.hide_cursor())
-    }
-    fn show_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.show_cursor())
-    }
-    fn get_cursor_position(&mut self) -> io::Result<Position> {
-        ok(self.inner.get_cursor_position())
-    }
-    fn set_cursor_position<P: Into<Position>>(&mut self, p: P) -> io::Result<()> {
-        ok(self.inner.set_cursor_position(p))
-    }
-    fn clear(&mut self) -> io::Result<()> {
-        ok(self.inner.clear())
-    }
-    fn clear_region(&mut self, t: ClearType) -> io::Result<()> {
-        ok(self.inner.clear_region(t))
-    }
-    fn size(&self) -> io::Result<Size> {
-        ok(self.inner.size())
-    }
-    fn window_size(&mut self) -> io::Result<WindowSize> {
-        ok(self.inner.window_size())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        ok(self.inner.flush())?;
-        let buf = self.inner.buffer();
-        let mut screen = String::new();
-        for y in 0..buf.area.height {
-            for x in 0..buf.area.width {
-                screen.push_str(buf.cell((x, y)).map_or(" ", Cell::symbol));
-            }
-            screen.push('\n');
+/// Adds the frame in `buf` to `frames`.
+fn record(frames: &Mutex<Frames>, buf: &Buffer) {
+    let mut screen = String::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            screen.push_str(buf.cell((x, y)).map_or(" ", Cell::symbol));
         }
-        let mut f = self.frames.lock().expect("frames");
-        f.at.push(Instant::now());
-        f.screen = screen;
-        Ok(())
+        screen.push('\n');
     }
+    let mut f = frames.lock().expect("frames");
+    f.at.push(Instant::now());
+    f.screen = screen;
 }
 
 fn press(tx: &Sender<Event>, code: KeyCode) {
@@ -129,11 +84,9 @@ fn settled_with_panels(
         }
     }
     let frames = Arc::new(Mutex::new(Frames::default()));
-    let mut terminal = Terminal::new(Recording {
-        inner: TestBackend::new(120, 24),
-        frames: frames.clone(),
-    })
-    .expect("terminal");
+    let recorded = frames.clone();
+    let mut terminal = Terminal::new(Recording::new(120, 24, move |buf| record(&recorded, buf)))
+        .expect("terminal");
     let engine = Engine::start(
         dfdu_scan::native_backend(dfdu_sys::storage(tmp.path()), false),
         EngineOptions {
@@ -155,7 +108,7 @@ fn settled_with_panels(
         debug: true,
         home: None,
         history: None,
-        types: Default::default(),
+        types: dfdu_tree::filetype::TypeFilter::default(),
     };
     thread::scope(|scope| {
         let (tx, rx) = unbounded();

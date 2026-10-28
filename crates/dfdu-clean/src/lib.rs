@@ -57,6 +57,7 @@ impl Mode {
     }
 
     /// Whether the session can put an item back.
+    #[must_use]
     pub fn undoable(self) -> bool {
         matches!(self, Mode::Trash | Mode::Stage)
     }

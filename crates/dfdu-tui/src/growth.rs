@@ -3,10 +3,11 @@
 
 use std::path::Path;
 
+use dfdu_engine::SizeMode;
 use dfdu_store::history;
 
 use crate::app::App;
-use crate::snapshot::{Mark, SizeMode};
+use crate::snapshot::Mark;
 
 /// Changes smaller than this are not noted on list rows.
 const NOTICEABLE: u64 = 1 << 20;
@@ -28,13 +29,13 @@ pub fn since(app: &App, path: &Path, size: u64, mark: Mark) -> Option<(i128, u64
         SizeMode::Apparent => then.apparent,
         SizeMode::Referenced => return None,
     };
-    Some((size as i128 - then as i128, then, g.at))
+    Some((i128::from(size) - i128::from(then), then, g.at))
 }
 
 /// "+12.4 GiB since 2026-10-18".
 pub fn describe(delta: i128, at: i64) -> String {
     let sign = if delta < 0 { "-" } else { "+" };
-    let abs = delta.unsigned_abs().min(u64::MAX as u128) as u64;
+    let abs = u64::try_from(delta.unsigned_abs()).unwrap_or(u64::MAX);
     format!(
         "{sign}{} since {}",
         crate::theme::human(abs),
@@ -46,7 +47,7 @@ pub fn describe(delta: i128, at: i64) -> String {
 pub fn row_note(app: &App, path: &Path, size: u64, mark: Mark) -> Option<(String, bool)> {
     let (d, then, at) = since(app, path, size, mark)?;
     let abs = d.unsigned_abs();
-    if abs < NOTICEABLE as u128 || abs * 100 < then.max(size) as u128 {
+    if abs < u128::from(NOTICEABLE) || abs * 100 < u128::from(then.max(size)) {
         return None;
     }
     Some((describe(d, at), d > 0))

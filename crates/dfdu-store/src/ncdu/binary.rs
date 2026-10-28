@@ -24,6 +24,7 @@ use crate::ImportError;
 pub const SIGNATURE: &[u8; 8] = b"\xbfncduEX1";
 
 /// Whether `head` starts like a binary export.
+#[must_use]
 pub fn is_binary(head: &[u8]) -> bool {
     head.starts_with(SIGNATURE)
 }
@@ -44,6 +45,10 @@ fn bad(offset: u64, msg: impl Into<String>) -> ImportError {
 }
 
 /// Reads a binary export from a seekable source positioned anywhere.
+///
+/// # Errors
+///
+/// When `r` fails, the export is malformed, or it exceeds `limits`.
 pub fn import(mut r: impl Read + Seek, limits: &Limits) -> Result<Imported, ImportError> {
     let len = r.seek(SeekFrom::End(0))?;
     let mut sig = [0u8; 8];
@@ -90,15 +95,18 @@ fn read_index(r: &mut (impl Read + Seek), len: u64) -> Result<Index, ImportError
         return Err(bad(len - 4, format!("bad index length {blen}")));
     }
     let start = len - blen;
-    let mut block = vec![0u8; usize::try_from(blen).expect("under 16 MiB")];
+    let size = usize::try_from(blen).map_err(|_| bad(len - 4, "index too large"))?;
+    let mut block = vec![0u8; size];
     r.seek(SeekFrom::Start(start))?;
     r.read_exact(&mut block)?;
     if block[..4] != foot {
         return Err(bad(start, "index header and footer differ"));
     }
     let body = &block[4..block.len() - 4];
-    let (ptrs, root) = body.split_at(body.len() - 8);
-    let root = u64::from_be_bytes(root.try_into().expect("8 bytes"));
+    let Some((ptrs, &root)) = body.split_last_chunk::<8>() else {
+        return Err(bad(start, "index without a root"));
+    };
+    let root = u64::from_be_bytes(root);
     let pointers = ptrs
         .as_chunks::<8>()
         .0
@@ -145,14 +153,14 @@ impl<R: Read + Seek> File<R> {
         self.r
             .read_exact(&mut raw)
             .map_err(|_| bad(off, format!("block {num} is cut short")))?;
-        let head: [u8; 4] = raw[..4].try_into().expect("4 bytes");
+        let head = [raw[0], raw[1], raw[2], raw[3]];
         if type_len(head) != (DATA, blen) || raw[raw.len() - 4..] != head {
             return Err(bad(
                 off,
                 format!("block {num}'s framing does not match the index"),
             ));
         }
-        let stored = u32::from_be_bytes(raw[4..8].try_into().expect("4 bytes"));
+        let stored = u32::from_be_bytes([raw[4], raw[5], raw[6], raw[7]]);
         if u64::from(stored) != num {
             return Err(bad(off, format!("block {num} says it is block {stored}")));
         }
@@ -174,9 +182,8 @@ impl<R: Read + Seek> File<R> {
             self.cache.push(b);
             self.cache.len() - 1
         } else {
-            let i = (0..CACHE)
-                .min_by_key(|&i| self.cache[i].used)
-                .expect("full cache");
+            // The least recently used; `CACHE` is not 0, so there is one.
+            let i = (0..CACHE).min_by_key(|&i| self.cache[i].used).unwrap_or(0);
             self.cache[i] = b;
             i
         };
@@ -276,8 +283,8 @@ impl Item {
         };
         if listed {
             // A directory, whatever its mode says.
-            info.mode = Some(0o040000);
-        } else if info.mode.is_some_and(|m| m & 0o170000 == 0o040000) {
+            info.mode = Some(0o040_000);
+        } else if info.mode.is_some_and(|m| m & 0o170_000 == 0o040_000) {
             info.mode = None;
         }
         (info, listed)
@@ -396,7 +403,7 @@ impl Cbor<'_> {
         }
         let (major, n) = self.head()?;
         match (major, n) {
-            (0 | 1, Some(_)) | (7, Some(_)) => {}
+            (0 | 1 | 7, Some(_)) => {}
             (2 | 3, Some(n)) => {
                 let n = usize::try_from(n).unwrap_or(usize::MAX);
                 if self.b.len() - self.pos < n {
@@ -404,18 +411,13 @@ impl Cbor<'_> {
                 }
                 self.pos += n;
             }
-            (2 | 3, None) => {
-                while !self.at_break() {
-                    self.skip(depth + 1)?;
-                }
-            }
             (4 | 5, Some(n)) => {
                 let per = if major == 5 { 2 } else { 1 };
                 for _ in 0..n.saturating_mul(per) {
                     self.skip(depth + 1)?;
                 }
             }
-            (4 | 5, None) => {
+            (2..=5, None) => {
                 while !self.at_break() {
                     self.skip(depth + 1)?;
                 }
@@ -427,9 +429,8 @@ impl Cbor<'_> {
     }
 
     fn item(&mut self, limits: &Limits) -> Result<RawItem, ImportError> {
-        let n = match self.head()? {
-            (5, n) => n,
-            _ => return Err(self.err("an entry that is not a map")),
+        let (5, n) = self.head()? else {
+            return Err(self.err("an entry that is not a map"));
         };
         let mut it = RawItem {
             typ: i64::MIN,

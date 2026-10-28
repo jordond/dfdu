@@ -14,6 +14,7 @@ use crate::sync::Sleepers;
 pub struct RealClock(Instant);
 
 impl RealClock {
+    #[must_use]
     pub fn new() -> Self {
         RealClock(Instant::now())
     }
@@ -27,7 +28,7 @@ impl Default for RealClock {
 
 impl Clock for RealClock {
     fn now(&self) -> u64 {
-        self.0.elapsed().as_nanos() as u64 + 1
+        u64::try_from(self.0.elapsed().as_nanos()).unwrap_or(u64::MAX - 1) + 1
     }
 }
 
@@ -48,9 +49,18 @@ pub struct Pool {
 }
 
 impl Pool {
+    /// Starts `workers` worker threads (at least one) and the watchdog.
+    ///
+    /// # Panics
+    ///
+    /// When a thread cannot be started.
+    #[expect(
+        clippy::expect_used,
+        reason = "a scan cannot go on without its threads; `thread::spawn` panics the same way"
+    )]
     pub fn start<B: Backend, S: Sink + Send + 'static>(
-        shared: Arc<Shared<B>>,
-        sink: Arc<S>,
+        shared: &Arc<Shared<B>>,
+        sink: &Arc<S>,
         workers: usize,
     ) -> Pool {
         let workers = workers.max(1);
@@ -66,7 +76,7 @@ impl Pool {
         shared.set_waker(Box::new(move || st.idle_threads.wake_all()));
         let clock = Arc::new(RealClock::new());
         for _ in 0..workers {
-            spawn_worker(&state, &shared, &sink, &clock);
+            spawn_worker(&state, shared, sink, &clock);
         }
         let (st, sh, sk, ck) = (state.clone(), shared.clone(), sink.clone(), clock.clone());
         let watchdog = thread::Builder::new()
@@ -117,6 +127,10 @@ impl Pool {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "a scan cannot go on without its threads; `thread::spawn` panics the same way"
+)]
 fn spawn_worker<B: Backend, S: Sink + Send + 'static>(
     state: &Arc<PoolState>,
     shared: &Arc<Shared<B>>,

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
-use dfdu_bench::{Entry, Plan};
+use dfdu_bench::{Entry, Plan, index};
 
 #[derive(Parser)]
 #[command(about)]
@@ -43,7 +43,7 @@ enum Cmd {
 
 fn create(plan: &Plan, root: &Path, threads: usize) -> anyhow::Result<()> {
     // Parents come before their children in the plan.
-    let paths: Vec<PathBuf> = (0..plan.dirs.len() as u32)
+    let paths: Vec<PathBuf> = (0..index(plan.dirs.len()))
         .map(|d| plan.path(root, d))
         .collect();
     fs::create_dir_all(root)?;
@@ -62,13 +62,16 @@ fn create(plan: &Plan, root: &Path, threads: usize) -> anyhow::Result<()> {
                             if d >= plan.dirs.len() {
                                 return Ok(());
                             }
-                            create_files(plan, &paths, d as u32, pass)?;
+                            create_files(plan, &paths, index(d), pass)?;
                         }
                     })
                 })
                 .collect();
             for w in workers {
-                w.join().expect("worker")?;
+                match w.join() {
+                    Ok(r) => r?,
+                    Err(p) => std::panic::resume_unwind(p),
+                }
             }
             Ok(())
         })?;
@@ -79,12 +82,12 @@ fn create(plan: &Plan, root: &Path, threads: usize) -> anyhow::Result<()> {
 fn create_files(plan: &Plan, paths: &[PathBuf], d: u32, links: bool) -> anyhow::Result<()> {
     let dir = &paths[d as usize];
     for (k, e) in plan.dirs[d as usize].entries.iter().enumerate() {
-        let path = dir.join(plan.file_name(d, k as u32));
+        let path = dir.join(plan.file_name(d, index(k)));
         match (e, links) {
             (Entry::Data(size), false) => {
                 let mut f = fs::File::create(&path)?;
                 if *size <= 512 {
-                    f.write_all(&vec![b'x'; *size as usize])?;
+                    f.write_all(&vec![b'x'; usize::try_from(*size)?])?;
                 } else {
                     f.set_len(*size)?;
                 }

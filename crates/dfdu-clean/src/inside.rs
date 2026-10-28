@@ -29,14 +29,20 @@ pub struct Listing {
 pub type Listings = HashMap<PathBuf, Listing>;
 
 /// FNV-1a over a name's bytes.
+#[must_use]
 pub fn name_hash(name: &[u8]) -> u64 {
     name.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
-        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
     })
 }
 
 /// Compares the directories under `root` (the item) with `expect`. Returns the first that
 /// differs, relative to the item, with what changed.
+///
+/// # Errors
+///
+/// What differs, as a message: an entry added, gone or changed, or a directory that could not
+/// be read.
 pub fn compare(root: &Path, expect: &Listings) -> Result<(), String> {
     walk(root, Path::new(""), expect)
 }
@@ -133,6 +139,10 @@ fn meta_ino(_m: &fs::Metadata) -> u64 {
 }
 
 /// The listing of `dir` as it is now, for tests and for callers without a tree.
+///
+/// # Errors
+///
+/// `dir` or an entry in it could not be read.
 pub fn listing_of(dir: &Path) -> std::io::Result<Listing> {
     let mut entries = vec![];
     for e in fs::read_dir(dir)? {

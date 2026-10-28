@@ -8,6 +8,9 @@
 //! paths, permanent and staged. The mount case needs a disk image (macOS) or root (Linux).
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,27 +23,13 @@ use dfdu_clean::{
     DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal, is_protected,
     spawn_deleter,
 };
-use dfdu_tree::{Kind, Meta, Tree};
+use dfdu_tree::{Kind, Tree};
 use rand::rngs::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
 
+use common::{canonical_tempdir, identity, item};
+
 const CASES: u64 = 48;
-
-fn canonical_tempdir() -> tempfile::TempDir {
-    let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
-    tempfile::tempdir_in(base).unwrap()
-}
-
-fn identity(p: &Path) -> Option<Identity> {
-    let m = Meta::from_metadata(&fs::symlink_metadata(p).ok()?);
-    Some(Identity {
-        dev: m.dev,
-        ino: m.ino,
-        kind: m.kind,
-        apparent: m.apparent,
-        mtime: m.mtime,
-    })
-}
 
 /// Every entry under `dir` (not following symlinks), with its identity.
 fn entries(dir: &Path, out: &mut BTreeMap<PathBuf, Identity>) {
@@ -89,19 +78,6 @@ struct Case {
     mounts: Vec<PathBuf>,
 }
 
-/// One plan item: a path and the identity it claims.
-fn item(tree: &mut Tree, path: PathBuf, identity: Identity) -> PlanItem {
-    let m = Meta::from_metadata(&fs::symlink_metadata("/").unwrap());
-    let r = tree.new_root(b"/", &m, false);
-    PlanItem {
-        node: tree.node_ref(r),
-        path,
-        identity,
-        bytes: 0,
-        inside: Default::default(),
-    }
-}
-
 fn run(rx: &Receiver<DeleterMsg>, h: &dfdu_clean::DeleterHandle, plan: Plan) -> Vec<DeleteResult> {
     let (id, mode, n) = (plan.id, plan.mode, plan.items.len());
     h.reqs.send(DeleterReq::Plan(plan)).unwrap();
@@ -133,6 +109,10 @@ fn run(rx: &Receiver<DeleterMsg>, h: &dfdu_clean::DeleterHandle, plan: Plan) -> 
     results
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one generated case in order: build the tree, race the scan, run the plan, check"
+)]
 fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let here = c.root.join(format!("c{seed}"));
@@ -146,14 +126,14 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
     fs::write(here.join("p/.git/objects/o"), b"o").unwrap();
 
     // What the scan saw.
-    let mut seen = BTreeMap::new();
-    entries(&here, &mut seen);
-    let mut outside_seen = BTreeMap::new();
-    entries(&away, &mut outside_seen);
+    let mut scanned = BTreeMap::new();
+    entries(&here, &mut scanned);
+    let mut scanned_away = BTreeMap::new();
+    entries(&away, &mut scanned_away);
 
     // Races with the scan: a directory moved out of the root with a symlink in its place,
     // and one replaced by a symlink to the protected directory.
-    let dirs: Vec<PathBuf> = seen
+    let dirs: Vec<PathBuf> = scanned
         .iter()
         .filter(|(p, id)| id.kind == Kind::Dir && !is_protected(p) && !p.ends_with("p"))
         .map(|(p, _)| p.clone())
@@ -186,10 +166,11 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
 
     let mut tree = Tree::new();
     let mut items = vec![];
-    let seen_list: Vec<(&PathBuf, &Identity)> = seen.iter().collect();
-    let outside_list: Vec<(&PathBuf, &Identity)> = outside_seen.iter().collect();
+    let scanned_list: Vec<(&PathBuf, &Identity)> = scanned.iter().collect();
+    let outside_list: Vec<(&PathBuf, &Identity)> = scanned_away.iter().collect();
     for _ in 0..rng.random_range(4..16) {
-        let pick_seen = |rng: &mut ChaCha8Rng| seen_list[rng.random_range(0..seen_list.len())];
+        let pick_seen =
+            |rng: &mut ChaCha8Rng| scanned_list[rng.random_range(0..scanned_list.len())];
         let pick_out = |rng: &mut ChaCha8Rng| {
             outside_list
                 .get(rng.random_range(0..outside_list.len().max(1)))
@@ -310,7 +291,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
         };
         for m in &c.mounts {
             assert!(
-                !(p.starts_with(m) && !by.path.starts_with(m)),
+                !p.starts_with(m) || by.path.starts_with(m),
                 "deleted {} in the mount at {} through {}; {}",
                 p.display(),
                 m.display(),

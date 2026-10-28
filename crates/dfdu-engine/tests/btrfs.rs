@@ -3,8 +3,10 @@
 //! that need root run only when the tests run as root.
 
 #![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as Proc;
@@ -13,14 +15,21 @@ use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions, Mode};
 use dfdu_scan::{JobOptions, NativeBackend};
-use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
+use dfdu_tree::{DirState, NodeFlags, NodeRef};
+
+mod common;
+use common::{child, node};
 
 /// Tests run one at a time: they add and remove `work-*` directories in the shared fixture,
 /// which other tests' totals would see.
 fn fixture() -> Option<(PathBuf, std::sync::MutexGuard<'static, ()>)> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let dir = std::env::var_os("DFDU_BTRFS_DIR").map(PathBuf::from)?;
-    Some((dir, LOCK.lock().unwrap_or_else(|e| e.into_inner())))
+    Some((
+        dir,
+        LOCK.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    ))
 }
 
 fn sh(args: &[&str]) {
@@ -61,22 +70,6 @@ fn scan(e: &Engine<NativeBackend>, root: &Path, cross_mounts: bool) {
         },
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
-}
-
-fn child(tree: &Tree, ix: Ix, name: &str) -> Ix {
-    tree.children(ix)
-        .find(|&c| tree.name(c) == name.as_bytes())
-        .unwrap_or_else(|| panic!("{name} missing"))
-}
-
-fn node(e: &Engine<NativeBackend>, rel: &str) -> NodeRef {
-    e.read(|m| {
-        let mut ix = m.tree.roots().next().unwrap();
-        for part in rel.split('/') {
-            ix = child(&m.tree, ix, part);
-        }
-        m.tree.node_ref(ix)
-    })
 }
 
 fn delete(e: &Engine<NativeBackend>, items: Vec<NodeRef>, mode: Mode) {
@@ -199,8 +192,16 @@ fn btrfs_subvolumes(f: &Path) -> HashMap<String, ListedSubvol> {
     out
 }
 
+/// `b` in lowercase hex.
+fn hex(b: &[u8]) -> String {
+    b.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
 fn uuid(u: &[u8; 16]) -> String {
-    let h: String = u.iter().map(|b| format!("{b:02x}")).collect();
+    let h = hex(u);
     format!(
         "{}-{}-{}-{}-{}",
         &h[..8],
@@ -253,6 +254,10 @@ fn subvolume_records_and_quota_groups_match_btrfs() {
 }
 
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "fixture, work directory, journal and engine named alike in every test here"
+)]
 fn subvolumes_and_snapshots_are_deleted() {
     let Some((f, _lock)) = fixture() else { return };
     let w = workdir(&f, "del");
@@ -280,8 +285,7 @@ fn subvolumes_and_snapshots_are_deleted() {
     let j = tempfile::tempdir().unwrap();
     let e = engine(j.path());
     scan(&e, &w, false);
-    let hex = |u: [u8; 16]| -> String { u.iter().map(|b| format!("{b:02x}")).collect() };
-    let uuid_of = |p: &Path| hex(dfdu_sys::subvol_info(p).unwrap().unwrap().uuid);
+    let uuid_of = |p: &Path| hex(&dfdu_sys::subvol_info(p).unwrap().unwrap().uuid);
     // Each item's intent record names the subvolume it is in: the snapshot and the subvolume
     // are their own, `d` is in the fixture's top level.
     let want = [
@@ -417,6 +421,10 @@ fn a_mount_inside_an_item_is_refused() {
 /// Root only (mounts a tmpfs): a mount that appears after the scan stops the delete at the
 /// mount; nothing on the mounted filesystem is touched.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "fixture, work directory, journal and engine named alike in every test here"
+)]
 fn a_mount_made_after_the_scan_stops_the_delete() {
     let Some((f, _lock)) = fixture() else { return };
     if !dfdu_sys::is_privileged() {
@@ -503,7 +511,7 @@ fn reference(root: &Path) -> (HashMap<PathBuf, u64>, u64) {
         .iter()
         .flat_map(|(_, m)| m.ranges.iter().flat_map(|&(a, b)| [a, b]))
         .collect();
-    bounds.sort();
+    bounds.sort_unstable();
     bounds.dedup();
     for w in bounds.windows(2) {
         let (a, b) = (w[0], w[1]);
@@ -545,6 +553,10 @@ fn reference(root: &Path) -> (HashMap<PathBuf, u64>, u64) {
 }
 
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "fixture, work directory, journal and engine named alike in every test here"
+)]
 fn shared_data_matches_the_reference_and_btrfs() {
     let Some((f, _lock)) = fixture() else { return };
     let j = tempfile::tempdir().unwrap();

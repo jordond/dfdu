@@ -14,14 +14,15 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dfdu_tree::{ErrKind, Kind, Meta, Subvol};
-use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, RawDir, StatxFlags};
+use rustix::fs::{AtFlags, CWD, FileType, OFlags, RawDir, StatxFlags};
 
 use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock};
+use crate::unix::{name_at, push_name};
 
 const MASK: StatxFlags = StatxFlags::TYPE
     .union(StatxFlags::MODE)
@@ -31,9 +32,6 @@ const MASK: StatxFlags = StatxFlags::TYPE
     .union(StatxFlags::BLOCKS)
     .union(StatxFlags::MTIME)
     .union(StatxFlags::MNT_ID);
-
-/// Paths are opened in pieces of at most this many bytes when the whole is too long.
-const PIECE: usize = 2048;
 
 #[derive(Default, Debug)]
 pub struct LinuxBackend {
@@ -49,6 +47,7 @@ impl LinuxBackend {
     /// seeking back and forth in name-hash order, and in directory order otherwise. The order
     /// follows the storage of the directory's own mount, which the scanner gives to
     /// [`Backend::open`]; `storage` decides only for a mount whose storage is not known.
+    #[must_use]
     pub fn for_storage(storage: dfdu_sys::Storage) -> Self {
         LinuxBackend {
             portable: PortableBackend::default(),
@@ -87,9 +86,7 @@ impl RawBlock<PathBuf> for LinuxRaw {
             self.entries.sort_unstable_by_key(|e| e.1);
         }
         for &(off, _) in &self.entries {
-            let rest = &self.names[off as usize..];
-            let end = rest.iter().position(|&b| b == 0).expect("NUL-terminated");
-            let name = CStr::from_bytes_with_nul(&rest[..=end]).expect("one NUL");
+            let name = name_at(&self.names, off);
             let bytes = name.to_bytes();
             let meta = stat_at(self.fd.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW);
             let child = match &meta {
@@ -130,12 +127,12 @@ fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta>
             let st = rustix::fs::statat(dir, name, flags)?;
             Ok(Meta {
                 kind: kind(FileType::from_raw_mode(st.st_mode)),
-                apparent: st.st_size as u64,
-                alloc: st.st_blocks as u64 * 512,
+                apparent: st.st_size.cast_unsigned(),
+                alloc: st.st_blocks.cast_unsigned() * 512,
                 mtime: (st.st_mtime as i64).max(0),
                 dev: st.st_dev,
                 ino: st.st_ino,
-                nlink: st.st_nlink as u32,
+                nlink: u32::try_from(st.st_nlink).unwrap_or(u32::MAX),
                 mount: 0,
             })
         }
@@ -154,30 +151,7 @@ fn kind(t: FileType) -> Kind {
 
 /// Opens a directory by path, in pieces when the path is longer than the kernel accepts.
 fn open_dir(path: &Path) -> io::Result<OwnedFd> {
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    match rustix::fs::open(path, flags, Mode::empty()) {
-        Err(rustix::io::Errno::NAMETOOLONG) => {}
-        r => return r.map_err(Into::into),
-    }
-    let mut fd: Option<OwnedFd> = None;
-    let mut piece = PathBuf::new();
-    for c in path.components() {
-        let part: &OsStr = match c {
-            Component::RootDir => OsStr::new("/"),
-            Component::CurDir => continue,
-            Component::ParentDir => OsStr::new(".."),
-            Component::Normal(n) => n,
-            Component::Prefix(_) => unreachable!("no path prefixes on Linux"),
-        };
-        if !piece.as_os_str().is_empty() && piece.as_os_str().len() + part.len() + 1 > PIECE {
-            let base = fd.as_ref().map_or(CWD, |f| f.as_fd());
-            fd = Some(rustix::fs::openat(base, &piece, flags, Mode::empty())?);
-            piece.clear();
-        }
-        piece.push(part);
-    }
-    let base = fd.as_ref().map_or(CWD, |f| f.as_fd());
-    Ok(rustix::fs::openat(base, &piece, flags, Mode::empty())?)
+    crate::unix::open_dir(path, OFlags::empty())
 }
 
 /// `getdents64` buffer per open directory.
@@ -233,8 +207,8 @@ impl DirStream for LinuxStream {
                     if name.to_bytes() == b"." || name.to_bytes() == b".." {
                         continue;
                     }
-                    raw.entries.push((raw.names.len() as u32, entry.ino()));
-                    raw.names.extend_from_slice(name.to_bytes_with_nul());
+                    let off = push_name(&mut raw.names, name.to_bytes());
+                    raw.entries.push((off, entry.ino()));
                 }
             }
         }
@@ -321,29 +295,13 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// Every entry of a directory as `(name, meta)`, sorted by name.
+    /// Every entry of a directory as `(name, meta)`, sorted by name, read three at a time.
     fn list<B: Backend<Loc = PathBuf>>(
         b: &B,
         dir: &Path,
         storage: dfdu_sys::Storage,
     ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b.open(&dir.to_path_buf(), storage).unwrap();
-        let mut block = Block::default();
-        // A small block size, so entries are read across several calls (and seeks).
-        loop {
-            let (mut raw, more) = s.next_raw(3, 1 << 20).unwrap();
-            raw.stat(&mut block).unwrap();
-            if !more {
-                break;
-            }
-        }
-        let mut out: Vec<_> = block
-            .entries
-            .iter()
-            .map(|e| (block.name(e.name).to_vec(), e.meta))
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
+        crate::unix::tests::list(b, dir, storage, 3)
     }
 
     #[test]
@@ -426,40 +384,5 @@ mod tests {
         assert!(ascending(&stat_order(&hdd_root, root, Unknown)));
         let ssd_root = LinuxBackend::for_storage(Solid);
         assert_eq!(stat_order(&ssd_root, root, Unknown), dir_order);
-    }
-
-    #[test]
-    fn opens_paths_longer_than_path_max() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut deep = tmp.path().to_path_buf();
-        // Created one level at a time through descriptors, as no single path call reaches it.
-        let mut fd = open_dir(&deep).unwrap();
-        for i in 0..30 {
-            let name = format!("{i:03}-{}", "y".repeat(200));
-            rustix::fs::mkdirat(&fd, name.as_str(), Mode::from_raw_mode(0o755)).unwrap();
-            fd = rustix::fs::openat(&fd, name.as_str(), OFlags::DIRECTORY, Mode::empty()).unwrap();
-            deep.push(name);
-        }
-        let f = rustix::fs::openat(
-            &fd,
-            "leaf",
-            OFlags::CREATE | OFlags::WRONLY,
-            Mode::from_raw_mode(0o644),
-        )
-        .unwrap();
-        rustix::io::write(&f, &[7u8; 99]).unwrap();
-        assert!(deep.as_os_str().len() > 4096);
-        let b = LinuxBackend::default();
-        let entries = list(&b, &deep, dfdu_sys::Storage::Unknown);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].1.unwrap().apparent, 99);
-        let root = b.stat_root(&deep).unwrap();
-        assert_eq!(root.kind, Kind::Dir);
-        // Removed level by level from the top would also fail on the long paths.
-        drop(fd);
-        let _ = std::process::Command::new("rm")
-            .arg("-rf")
-            .arg(tmp.path().join(format!("000-{}", "y".repeat(200))))
-            .status();
     }
 }

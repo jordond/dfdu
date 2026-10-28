@@ -11,7 +11,7 @@ fn auto_resort_shows_rank_markers_for_two_seconds() {
     // After the idle delay and the minimum interval: an automatic re-sort.
     let t1 = t0 + Duration::from_secs(3);
     app.refresh(snap_with_alloc(es, 2), t1);
-    assert_eq!(names(&app), ["c", "a", "b"]);
+    assert_eq!(row_names(&app), ["c", "a", "b"]);
     render_buffer(&mut app, t1, W, H);
     // The bars settle; the markers stay.
     let t = t1 + ms(1500);
@@ -38,10 +38,10 @@ fn explicit_sort_shows_no_markers() {
     let es = resort_fixture(&mut app, t0);
     let t1 = t0 + ms(100);
     app.refresh(snap_with_alloc(es, 2), t1);
-    assert_eq!(names(&app), ["a", "b", "c"]);
+    assert_eq!(row_names(&app), ["a", "b", "c"]);
     app.key(press(KeyCode::Char('S')), t1);
     app.reorder(t1);
-    assert_eq!(names(&app), ["c", "a", "b"]);
+    assert_eq!(row_names(&app), ["c", "a", "b"]);
     let frame = render(&mut app, t1, W, H);
     let rows = list_rows(&frame);
     assert!(!rows.contains('↑') && !rows.contains('↓'), "{frame}");
@@ -58,7 +58,7 @@ fn rank_markers_survive_a_resort_that_replaced_the_entries() {
     es.reverse();
     let t1 = t0 + Duration::from_secs(3);
     app.refresh(snap_with_alloc(es, 2), t1);
-    assert_eq!(names(&app), ["c", "a", "b"]);
+    assert_eq!(row_names(&app), ["c", "a", "b"]);
     let rows = list_rows(&render(&mut app, t1, W, H));
     assert!(rows.contains("c  ↑2"), "{rows}");
     assert!(rows.contains("a  ↓1"), "{rows}");

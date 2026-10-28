@@ -3,12 +3,12 @@
 //! scanned inode, read its extent map and reply. Like the deleter, they never touch the tree.
 
 use std::path::PathBuf;
-use std::thread;
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::Sender;
 use dfdu_tree::{ErrKind, NodeRef};
 
 use crate::extents::{Inode, Measurement};
+use crate::threads::spawn_pool;
 
 /// Files of one directory to measure. The measurer opens the directory once and each file
 /// relative to it.
@@ -28,6 +28,7 @@ pub struct MeasureFile {
 }
 
 impl MeasureReq {
+    #[must_use]
     pub fn path(&self, f: &MeasureFile) -> PathBuf {
         self.dir.join(&*dfdu_tree::name_os(&f.name))
     }
@@ -52,25 +53,14 @@ pub struct MeasureMsg {
 /// Starts `n` measurer threads; results go to `out`, one batch per request. They exit when the
 /// returned sender is dropped (a thread stuck in a filesystem call is left behind, like a stuck
 /// scan worker).
-pub fn spawn_measurers(n: usize, out: Sender<Vec<MeasureMsg>>) -> Sender<MeasureReq> {
-    let (tx, rx) = unbounded();
-    for i in 0..n.max(1) {
-        let (rx, out) = (rx.clone(), out.clone());
-        thread::Builder::new()
-            .name(format!("dfdu-measure-{i}"))
-            .spawn(move || {
-                let mut m = Measurer::default();
-                #[cfg(target_os = "linux")]
-                {
-                    m.privileged = dfdu_sys::is_privileged();
-                }
-                for r in rx {
-                    let _ = out.send(m.batch(&r));
-                }
-            })
-            .expect("spawn measurer");
-    }
-    tx
+///
+/// # Panics
+///
+/// If the system cannot create a thread, as [`std::thread::spawn`] does.
+pub fn spawn_measurers(n: usize, out: &Sender<Vec<MeasureMsg>>) -> Sender<MeasureReq> {
+    spawn_pool("dfdu-measure", n, out, Measurer::new, |m, r: MeasureReq| {
+        m.batch(&r)
+    })
 }
 
 /// One measurer thread's state: reused extent buffers and filesystem identities by device.
@@ -86,6 +76,20 @@ struct Measurer {
 }
 
 impl Measurer {
+    /// A measurer that, as root, tries the tree search for exact sizes.
+    #[cfg(target_os = "linux")]
+    fn new() -> Self {
+        Measurer {
+            privileged: dfdu_sys::is_privileged(),
+            ..Measurer::default()
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn new() -> Self {
+        Measurer::default()
+    }
+
     fn batch(&mut self, r: &MeasureReq) -> Vec<MeasureMsg> {
         let results = self.measure_dir(r);
         r.files
@@ -111,6 +115,7 @@ impl Measurer {
 /// extents counts about the space it spans on disk: still an upper bound of its size, and far
 /// closer than the sum of uncompressed lengths.
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn from_extents(fs: [u8; 16], extents: &[dfdu_sys::Extent]) -> Measurement {
     use dfdu_sys::Extent;
     let mut m = Measurement {
@@ -142,6 +147,7 @@ pub fn from_extents(fs: [u8; 16], extents: &[dfdu_sys::Extent]) -> Measurement {
 /// are keyed by their disk address, so every file referencing one counts the same extent once.
 /// Inline data counts at its stored size, as `compsize` does.
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn from_items(
     fs: [u8; 16],
     items: &[dfdu_sys::FileExtent],
@@ -152,7 +158,8 @@ pub fn from_items(
         fs,
         ..Default::default()
     };
-    let mut extents: std::collections::BTreeMap<u64, (u64, bool)> = Default::default();
+    let mut extents: std::collections::BTreeMap<u64, (u64, bool)> =
+        std::collections::BTreeMap::default();
     for it in items {
         if it.kind == FileExtentKind::Inline {
             m.excl += it.disk_num_bytes;
@@ -282,6 +289,10 @@ pub fn from_clone(fs: [u8; 16], c: &dfdu_sys::CloneAt) -> Measurement {
 
 #[cfg(target_os = "macos")]
 impl Measurer {
+    #[expect(
+        clippy::unused_self,
+        reason = "the signature of every platform's measurer; Linux's keeps buffers in `self`"
+    )]
     fn measure_dir(&mut self, r: &MeasureReq) -> Vec<MeasureResult> {
         use std::os::fd::AsFd;
         // Something other than a directory there now fails each lookup with ENOTDIR.

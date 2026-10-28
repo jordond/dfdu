@@ -9,7 +9,9 @@ use rustix::ioctl::{Getter, Setter, ioctl, opcode};
 
 use crate::SubvolInfo;
 
+mod extents;
 mod generations;
+pub use extents::{Extent, ExtentReader, FileExtent, FileExtentKind, fiemap, file_extents};
 pub use generations::{BtrfsChanges, btrfs_changes_since, btrfs_position};
 
 const BTRFS_SUPER_MAGIC: i64 = 0x9123_683E;
@@ -23,16 +25,44 @@ fn errno(e: rustix::io::Errno) -> io::Error {
     io::Error::from_raw_os_error(e.raw_os_error())
 }
 
+/// The native-endian `u32` at byte `i` of `b`, if `b` holds it.
+fn ne_u32(b: &[u8], i: usize) -> Option<u32> {
+    Some(u32::from_ne_bytes(b.get(i..i + 4)?.try_into().ok()?))
+}
+
+/// The native-endian `u64` at byte `i` of `b`, if `b` holds it.
+fn ne_u64(b: &[u8], i: usize) -> Option<u64> {
+    Some(u64::from_ne_bytes(b.get(i..i + 8)?.try_into().ok()?))
+}
+
+/// The little-endian `u32` at byte `i` of `b`, if `b` holds it.
+fn le_u32(b: &[u8], i: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?))
+}
+
+/// The little-endian `u64` at byte `i` of `b`, if `b` holds it.
+fn le_u64(b: &[u8], i: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(b.get(i..i + 8)?.try_into().ok()?))
+}
+
 /// Mount id of `path` itself (symlinks are not followed, automounts are not triggered).
 /// `Ok(None)` when the kernel does not report one (before Linux 5.8).
+///
+/// # Errors
+///
+/// The error `statx` reports, such as `ENOENT`.
 pub fn mount_id(path: &Path) -> io::Result<Option<u64>> {
     let flags = AtFlags::SYMLINK_NOFOLLOW | AtFlags::NO_AUTOMOUNT;
-    statx_mount_id(rustix::fs::statx(CWD, path, flags, StatxFlags::MNT_ID))
+    statx_mount_id(&rustix::fs::statx(CWD, path, flags, StatxFlags::MNT_ID))
 }
 
 /// Mount id of an open file or directory.
+///
+/// # Errors
+///
+/// The error `statx` reports.
 pub fn mount_id_fd(fd: impl AsFd) -> io::Result<Option<u64>> {
-    statx_mount_id(rustix::fs::statx(
+    statx_mount_id(&rustix::fs::statx(
         fd,
         "",
         AtFlags::EMPTY_PATH,
@@ -40,19 +70,29 @@ pub fn mount_id_fd(fd: impl AsFd) -> io::Result<Option<u64>> {
     ))
 }
 
-fn statx_mount_id(r: rustix::io::Result<rustix::fs::Statx>) -> io::Result<Option<u64>> {
+fn statx_mount_id(r: &rustix::io::Result<rustix::fs::Statx>) -> io::Result<Option<u64>> {
     match r {
         Ok(st) => Ok((st.stx_mask & StatxFlags::MNT_ID.bits() != 0).then_some(st.stx_mnt_id)),
         Err(rustix::io::Errno::NOSYS) => Ok(None),
-        Err(e) => Err(errno(e)),
+        Err(e) => Err(errno(*e)),
     }
 }
 
+/// Whether the open file or directory `fd` is on btrfs.
+///
+/// # Errors
+///
+/// The error `fstatfs` reports.
 pub fn is_btrfs_fd(fd: impl AsFd) -> io::Result<bool> {
     let st = rustix::fs::fstatfs(fd).map_err(errno)?;
     Ok(st.f_type as i64 == BTRFS_SUPER_MAGIC)
 }
 
+/// Whether the directory `path` is on btrfs.
+///
+/// # Errors
+///
+/// When `path` cannot be opened as a directory (a symlink is not followed), or `fstatfs` fails.
 pub fn is_btrfs(path: &Path) -> io::Result<bool> {
     is_btrfs_fd(open_dir(CWD, path)?)
 }
@@ -130,11 +170,15 @@ fn subvol_info_fd(dir: impl AsFd) -> io::Result<SubvolInfo> {
         uuid: a.uuid,
         parent_uuid: (a.parent_uuid != [0; 16]).then_some(a.parent_uuid),
         read_only: a.flags & ROOT_SUBVOL_RDONLY != 0,
-        otime: a.otime.sec as i64,
+        otime: a.otime.sec.cast_signed(),
     })
 }
 
 /// Subvolume information if `path` is the root directory of a btrfs subvolume, else `None`.
+///
+/// # Errors
+///
+/// When `path` cannot be opened as a directory, or `fstatfs`, `fstat` or the ioctl fails.
 pub fn subvol_info(path: &Path) -> io::Result<Option<SubvolInfo>> {
     let fd = open_dir(CWD, path)?;
     if !is_btrfs_fd(&fd)? {
@@ -159,6 +203,11 @@ const SNAP_DESTROY: rustix::ioctl::Opcode = opcode::write::<VolArgs>(BTRFS_IOCTL
 /// Deletes the subvolume `name` in the directory `parent` (`BTRFS_IOC_SNAP_DESTROY`). Root may
 /// delete any subvolume; other users only read-write subvolumes they own, and only on
 /// filesystems mounted with `user_subvol_rm_allowed`. The space is freed later by the cleaner.
+///
+/// # Errors
+///
+/// `InvalidInput` when `name` is empty, too long or holds `/` or NUL, else the error the ioctl
+/// reports (`EPERM` without the right to delete it, `ENOTTY` off btrfs).
 #[allow(unsafe_code)]
 pub fn destroy_subvolume_at(parent: impl AsFd, name: &OsStr) -> io::Result<()> {
     let bytes = name.as_bytes();
@@ -180,6 +229,10 @@ const BCACHEFS_SUPER_MAGIC: i64 = 0xca45_1a4e;
 
 /// Filesystems where files can share extents (reflinks, snapshots, deduplication), so FIEMAP's
 /// `SHARED` flag is worth reading.
+///
+/// # Errors
+///
+/// The error `statfs` reports.
 pub fn shares_extents(path: &Path) -> io::Result<bool> {
     let st = rustix::fs::statfs(path).map_err(errno)?;
     let t = st.f_type as i64;
@@ -205,175 +258,52 @@ struct FsInfoArgs {
 }
 const _: () = assert!(std::mem::size_of::<FsInfoArgs>() == 1024);
 
+impl FsInfoArgs {
+    /// All fields zero: `flags` 0 asks for no optional fields.
+    fn zeroed() -> Self {
+        FsInfoArgs {
+            max_id: 0,
+            num_devices: 0,
+            fsid: [0; 16],
+            nodesize: 0,
+            sectorsize: 0,
+            clone_alignment: 0,
+            csum_type: 0,
+            csum_size: 0,
+            flags: 0,
+            generation: 0,
+            metadata_uuid: [0; 16],
+            reserved: [0; 944],
+        }
+    }
+}
+
 const FS_INFO: rustix::ioctl::Opcode = opcode::read::<FsInfoArgs>(BTRFS_IOCTL_MAGIC, 31);
 
 /// `BTRFS_IOC_FS_INFO`. No privileges.
 #[allow(unsafe_code)]
 fn fs_info(fd: BorrowedFd<'_>) -> io::Result<FsInfoArgs> {
+    let mut args = FsInfoArgs::zeroed();
     // SAFETY: FS_INFO is `_IOR(0x94, 31, struct btrfs_ioctl_fs_info_args)`; `FsInfoArgs` has
     // that layout (size checked above), with no invalid bit patterns. The kernel reads `flags`
     // (zero here: request no optional fields) and writes the struct.
     unsafe {
-        let mut args: FsInfoArgs = std::mem::zeroed();
         ioctl(
             fd,
             rustix::ioctl::Updater::<FS_INFO, FsInfoArgs>::new(&mut args),
         )
-        .map(|()| args)
     }
+    .map(|()| args)
     .map_err(errno)
 }
 
 /// The btrfs filesystem uuid (the same for every subvolume and mount of it). No privileges.
+///
+/// # Errors
+///
+/// The error the ioctl reports (`ENOTTY` off btrfs).
 pub fn btrfs_fsid(fd: impl AsFd) -> io::Result<[u8; 16]> {
     Ok(fs_info(fd.as_fd())?.fsid)
-}
-
-/// One extent as FIEMAP reports it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Extent {
-    pub logical: u64,
-    pub physical: u64,
-    pub length: u64,
-    pub flags: u32,
-}
-
-impl Extent {
-    pub const LAST: u32 = 0x1;
-    pub const UNKNOWN: u32 = 0x2;
-    pub const DELALLOC: u32 = 0x4;
-    /// Compressed (btrfs): `length` is the uncompressed length.
-    pub const ENCODED: u32 = 0x8;
-    pub const DATA_INLINE: u32 = 0x200;
-    pub const UNWRITTEN: u32 = 0x800;
-    pub const SHARED: u32 = 0x2000;
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct RawExtent {
-    logical: u64,
-    physical: u64,
-    length: u64,
-    reserved64: [u64; 2],
-    flags: u32,
-    reserved: [u32; 3],
-}
-const _: () = assert!(std::mem::size_of::<RawExtent>() == 56);
-
-const FIEMAP_BATCH: usize = 256;
-
-/// `struct fiemap` with room for `FIEMAP_BATCH` extents.
-#[repr(C)]
-struct FiemapArgs {
-    start: u64,
-    length: u64,
-    flags: u32,
-    mapped_extents: u32,
-    extent_count: u32,
-    reserved: u32,
-    extents: [RawExtent; FIEMAP_BATCH],
-}
-
-const FS_IOC_FIEMAP: rustix::ioctl::Opcode = opcode::read_write::<[u64; 4]>(b'f', 11);
-
-/// Reusable buffers for [`ExtentReader::fiemap`] and [`ExtentReader::file_extents`]: one per
-/// thread that measures many files, so no call allocates or clears tens of kilobytes.
-pub struct ExtentReader {
-    fiemap: Box<FiemapArgs>,
-    search: Box<SearchArgs>,
-}
-
-impl Default for ExtentReader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ExtentReader {
-    pub fn new() -> Self {
-        ExtentReader {
-            fiemap: Box::new(FiemapArgs {
-                start: 0,
-                length: 0,
-                flags: 0,
-                mapped_extents: 0,
-                extent_count: 0,
-                reserved: 0,
-                extents: [RawExtent {
-                    logical: 0,
-                    physical: 0,
-                    length: 0,
-                    reserved64: [0; 2],
-                    flags: 0,
-                    reserved: [0; 3],
-                }; FIEMAP_BATCH],
-            }),
-            search: SearchArgs::boxed(),
-        }
-    }
-
-    /// The extent map of an open regular file (`FS_IOC_FIEMAP`), without syncing it first.
-    #[allow(unsafe_code)]
-    pub fn fiemap(&mut self, fd: impl AsFd) -> io::Result<Vec<Extent>> {
-        let mut out = Vec::new();
-        let mut start = 0u64;
-        let args = &mut *self.fiemap;
-        loop {
-            args.start = start;
-            args.length = u64::MAX - start;
-            args.flags = 0;
-            args.mapped_extents = 0;
-            args.extent_count = FIEMAP_BATCH as u32;
-            args.reserved = 0;
-            // SAFETY: FS_IOC_FIEMAP is `_IOWR('f', 11, struct fiemap)`, where `struct fiemap` is
-            // the 32-byte header the opcode encodes, followed by `extent_count` extents of 56
-            // bytes that the kernel may write. `FiemapArgs` is that header followed by
-            // `FIEMAP_BATCH` extents and `extent_count` says so, so the kernel writes only
-            // inside it.
-            unsafe {
-                ioctl(
-                    fd.as_fd(),
-                    rustix::ioctl::Updater::<FS_IOC_FIEMAP, FiemapArgs>::new(args),
-                )
-            }
-            .map_err(errno)?;
-            let n = (args.mapped_extents as usize).min(FIEMAP_BATCH);
-            for e in &args.extents[..n] {
-                out.push(Extent {
-                    logical: e.logical,
-                    physical: e.physical,
-                    length: e.length,
-                    flags: e.flags,
-                });
-            }
-            match args.extents[..n].last() {
-                Some(e) if e.flags & Extent::LAST == 0 && n == FIEMAP_BATCH => {
-                    start = e.logical + e.length;
-                }
-                _ => return Ok(out),
-            }
-        }
-    }
-
-    /// The file extent items of the open file `fd` with inode number `ino`, from its
-    /// subvolume's tree (`BTRFS_IOC_TREE_SEARCH_V2`). Needs `CAP_SYS_ADMIN`.
-    pub fn file_extents(&mut self, fd: impl AsFd, ino: u64) -> io::Result<Vec<FileExtent>> {
-        let items = tree_search(
-            &mut self.search,
-            fd.as_fd(),
-            0,
-            (ino, ino),
-            EXTENT_DATA_KEY,
-            (0, u64::MAX),
-        )?;
-        Ok(parse_file_extents(items))
-    }
-}
-
-/// The extent map of an open regular file (`FS_IOC_FIEMAP`), without syncing it first.
-pub fn fiemap(fd: impl AsFd) -> io::Result<Vec<Extent>> {
-    ExtentReader::new().fiemap(fd)
 }
 
 /// `struct btrfs_ioctl_search_key`.
@@ -441,7 +371,7 @@ pub(crate) type Key = (u64, u32, u64);
 fn next_key(k: Key) -> Option<Key> {
     if k.2 < u64::MAX {
         Some((k.0, k.1, k.2 + 1))
-    } else if k.1 < u8::MAX as u32 {
+    } else if k.1 < u32::from(u8::MAX) {
         Some((k.0, k.1 + 1, 0))
     } else if k.0 < u64::MAX {
         Some((k.0 + 1, 0, 0))
@@ -500,11 +430,11 @@ pub(crate) fn search<const N: usize>(
         let mut at = 0usize;
         let mut last = from;
         for _ in 0..n {
-            let h = buf.get(at..at + 32).ok_or(io::ErrorKind::InvalidData)?;
-            let u64_at = |i: usize| u64::from_ne_bytes(h[i..i + 8].try_into().expect("8 bytes"));
-            let (objectid, offset) = (u64_at(8), u64_at(16));
-            let item_type = u32::from_ne_bytes(h[24..28].try_into().expect("4 bytes"));
-            let len = u32::from_ne_bytes(h[28..32].try_into().expect("4 bytes")) as usize;
+            let bad = || io::Error::from(io::ErrorKind::InvalidData);
+            let objectid = ne_u64(buf, at + 8).ok_or_else(bad)?;
+            let offset = ne_u64(buf, at + 16).ok_or_else(bad)?;
+            let item_type = ne_u32(buf, at + 24).ok_or_else(bad)?;
+            let len = ne_u32(buf, at + 28).ok_or_else(bad)? as usize;
             let data = buf
                 .get(at + 32..at + 32 + len)
                 .ok_or(io::ErrorKind::InvalidData)?
@@ -556,82 +486,20 @@ fn tree_search(
     Ok(out)
 }
 
-/// One file extent item of a btrfs file (`struct btrfs_file_extent_item`, which is packed).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct FileExtent {
-    /// Offset in the file.
-    pub file_offset: u64,
-    /// 0 none, 1 zlib, 2 lzo, 3 zstd.
-    pub compression: u8,
-    pub kind: FileExtentKind,
-    /// The extent on disk (logical address in the filesystem); 0 for a hole.
-    pub disk_bytenr: u64,
-    /// Bytes the extent takes on disk (compressed size for compressed extents).
-    pub disk_num_bytes: u64,
-    /// Bytes of the file this item covers.
-    pub num_bytes: u64,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FileExtentKind {
-    /// Data stored in the metadata item; `disk_num_bytes` is its stored size.
-    Inline,
-    Regular,
-    Prealloc,
-}
-
-const EXTENT_DATA_KEY: u32 = 108;
-
-/// The file extent items of the open file `fd` with inode number `ino`, from its subvolume's
-/// tree (`BTRFS_IOC_TREE_SEARCH_V2`). Needs `CAP_SYS_ADMIN`.
-pub fn file_extents(fd: impl AsFd, ino: u64) -> io::Result<Vec<FileExtent>> {
-    ExtentReader::new().file_extents(fd, ino)
-}
-
-fn parse_file_extents(items: Vec<SearchItem>) -> Vec<FileExtent> {
-    let mut out = Vec::with_capacity(items.len());
-    for it in items {
-        let d = &it.data;
-        if it.item_type != EXTENT_DATA_KEY || d.len() < 21 {
-            continue;
-        }
-        let le = |i: usize| u64::from_le_bytes(d[i..i + 8].try_into().expect("8 bytes"));
-        let compression = d[16];
-        let (kind, disk_bytenr, disk_num_bytes, num_bytes) = match d[20] {
-            0 => (FileExtentKind::Inline, 0, (d.len() - 21) as u64, le(8)),
-            t @ (1 | 2) if d.len() >= 53 => (
-                if t == 1 {
-                    FileExtentKind::Regular
-                } else {
-                    FileExtentKind::Prealloc
-                },
-                le(21),
-                le(29),
-                le(45),
-            ),
-            _ => continue,
-        };
-        out.push(FileExtent {
-            file_offset: it.offset,
-            compression,
-            kind,
-            disk_bytenr,
-            disk_num_bytes,
-            num_bytes,
-        });
-    }
-    out
-}
-
 const QUOTA_TREE_OBJECTID: u64 = 8;
 const QGROUP_INFO_KEY: u32 = 242;
 
 /// Referenced and exclusive bytes of a subvolume's level-0 quota group, when quotas are
 /// enabled (`None` otherwise). Needs `CAP_SYS_ADMIN`. The numbers are btrfs's own and can lag
 /// behind until a quota rescan.
+///
+/// # Errors
+///
+/// The error the ioctl reports (`EPERM` without the capability), or `InvalidData` for a
+/// result the kernel cut short.
 pub fn qgroup_usage(fd: impl AsFd, subvol_id: u64) -> io::Result<Option<(u64, u64)>> {
     let items = match tree_search(
-        &mut ExtentReader::new().search,
+        &mut SearchArgs::boxed(),
         fd.as_fd(),
         QUOTA_TREE_OBJECTID,
         (0, 0),
@@ -649,10 +517,7 @@ pub fn qgroup_usage(fd: impl AsFd, subvol_id: u64) -> io::Result<Option<(u64, u6
     Ok(items
         .iter()
         .find(|i| i.objectid == 0 && i.offset == subvol_id && i.data.len() >= 40)
-        .map(|i| {
-            let le = |o: usize| u64::from_le_bytes(i.data[o..o + 8].try_into().expect("8 bytes"));
-            (le(8), le(24))
-        }))
+        .and_then(|i| Some((le_u64(&i.data, 8)?, le_u64(&i.data, 24)?))))
 }
 
 /// Data allocation profile of a btrfs filesystem.
@@ -671,7 +536,12 @@ pub enum Profile {
 
 impl Profile {
     /// Raw bytes stored per byte of data, given the number of devices.
+    #[must_use]
     pub fn raw_ratio(self, devices: u64) -> f64 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "device counts are far below 2^52"
+        )]
         let n = devices.max(1) as f64;
         match self {
             Profile::Single | Profile::Raid0 => 1.0,
@@ -683,6 +553,7 @@ impl Profile {
         }
     }
 
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Profile::Single => "single",
@@ -728,8 +599,14 @@ const SPACE_INFO: rustix::ioctl::Opcode =
 /// The data profile of the btrfs filesystem of `fd` and its number of devices
 /// (`BTRFS_IOC_SPACE_INFO`, `BTRFS_IOC_FS_INFO`; no privileges). With several data profiles
 /// (during a conversion) the one with the most data is reported.
+///
+/// # Errors
+///
+/// The error the ioctls report (`ENOTTY` off btrfs), or `NotFound` when no data space is
+/// reported.
 #[allow(unsafe_code)]
 pub fn data_profile(fd: impl AsFd) -> io::Result<(Profile, u64)> {
+    const DATA: u64 = 1;
     let mut args = Box::new(SpaceArgs {
         space_slots: SPACE_SLOTS as u64,
         total_spaces: 0,
@@ -745,8 +622,7 @@ pub fn data_profile(fd: impl AsFd) -> io::Result<(Profile, u64)> {
         )
     }
     .map_err(errno)?;
-    const DATA: u64 = 1;
-    let n = (args.total_spaces as usize).min(SPACE_SLOTS);
+    let n = usize::try_from(args.total_spaces).map_or(SPACE_SLOTS, |n| n.min(SPACE_SLOTS));
     let data = args.spaces[..n]
         .iter()
         .filter(|s| s.flags & DATA != 0)
@@ -776,6 +652,10 @@ pub fn data_profile(fd: impl AsFd) -> io::Result<(Profile, u64)> {
 }
 
 /// The mount table of this process's mount namespace.
+///
+/// # Errors
+///
+/// When `/proc/self/mountinfo` cannot be read.
 pub fn mount_table() -> io::Result<Vec<crate::MountEntry>> {
     Ok(crate::parse_mountinfo(&std::fs::read(
         "/proc/self/mountinfo",

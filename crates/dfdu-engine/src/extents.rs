@@ -14,12 +14,13 @@
 //! never on a node that does not contain it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 use std::hash::{BuildHasherDefault, Hasher};
 
 use dfdu_tree::{Ix, NodeFlags, NodeRef, Tree};
 
 /// Multiply-rotate hashing for the table's integer keys (inode numbers, disk addresses): the
-/// default SipHash is a noticeable part of the applier's time per measured file.
+/// default `SipHash` is a noticeable part of the applier's time per measured file.
 #[derive(Default, Clone, Copy)]
 struct IntHasher(u64);
 
@@ -135,6 +136,10 @@ impl ExtentTable {
         let fs = match self.last_fs {
             Some((id, fs)) if id == m.fs => fs,
             _ => {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a table holds far fewer filesystems than u32::MAX"
+                )]
                 let next = self.fs.len() as Fs;
                 let fs = *self.fs.entry(m.fs).or_insert(next);
                 self.last_fs = Some((m.fs, fs));
@@ -143,7 +148,7 @@ impl ExtentTable {
         };
         let ranges = merge(m.ranges);
         let mut points = m.points;
-        points.sort();
+        points.sort_unstable();
         points.dedup_by_key(|p| p.0);
         // Re-homing needs the node the inode is counted at, not its ranges: those are stored after.
         self.inodes.insert(
@@ -170,9 +175,10 @@ impl ExtentTable {
             pt.refs.push((inode, len));
             rehome_point(tree, &self.inodes, pt, Some(ix));
         }
-        let rec = self.inodes.get_mut(&inode).expect("inserted");
-        rec.ranges = ranges;
-        rec.points = points;
+        if let Some(rec) = self.inodes.get_mut(&inode) {
+            rec.ranges = ranges;
+            rec.points = points;
+        }
     }
 
     fn add_range(&mut self, tree: &mut Tree, fs: Fs, a: u64, b: u64, inode: Inode, at: Ix) {
@@ -180,7 +186,6 @@ impl ExtentTable {
         self.split(fs, b);
         let starts = self.starts(fs, a, b);
         let mut cur = a;
-        let mut touched = Vec::new();
         for s in starts {
             if cur < s {
                 self.segs.insert(
@@ -192,9 +197,7 @@ impl ExtentTable {
                         out: false,
                     },
                 );
-                touched.push(cur);
             }
-            touched.push(s);
             cur = self.segs[&(fs, s)].end;
         }
         if cur < b {
@@ -207,10 +210,9 @@ impl ExtentTable {
                     out: false,
                 },
             );
-            touched.push(cur);
         }
-        for s in touched {
-            let seg = self.segs.get_mut(&(fs, s)).expect("touched");
+        // The gaps filled, the segments in `[a, b)` cover it.
+        for (&(_, s), seg) in self.segs.range_mut((fs, a)..(fs, b)) {
             if !seg.refs.contains(&inode) {
                 seg.refs.push(inode);
             }
@@ -251,16 +253,18 @@ impl ExtentTable {
             return;
         };
         let fs = rec.fs;
+        let mut emptied = Vec::new();
         for &(a, b) in &rec.ranges {
-            let starts = self.starts(fs, a, b);
-            for s in starts {
-                let seg = self.segs.get_mut(&(fs, s)).expect("listed");
+            for (&(_, s), seg) in self.segs.range_mut((fs, a)..(fs, b)) {
                 seg.refs.retain(|&r| r != inode);
                 rehome_seg(tree, &self.inodes, s, seg, None);
                 if seg.refs.is_empty() {
-                    self.segs.remove(&(fs, s));
+                    emptied.push(s);
                 }
             }
+        }
+        for s in emptied {
+            self.segs.remove(&(fs, s));
         }
         for &(p, _) in &rec.points {
             let Some(pt) = self.points.get_mut(&(fs, p)) else {
@@ -289,9 +293,7 @@ impl ExtentTable {
             tree.set_measured(ix, excl, compressed);
         }
         for (a, b) in ranges {
-            let starts = self.starts(fs, a, b);
-            for s in starts {
-                let seg = self.segs.get_mut(&(fs, s)).expect("listed");
+            for (&(_, s), seg) in self.segs.range_mut((fs, a)..(fs, b)) {
                 rehome_seg(tree, &self.inodes, s, seg, None);
             }
         }
@@ -308,9 +310,10 @@ impl ExtentTable {
             return format!("{inode:?}: not in the table");
         };
         let path = |r: NodeRef| {
-            tree.resolve(r)
-                .map(|ix| String::from_utf8_lossy(&tree.path(ix)).into_owned())
-                .unwrap_or_else(|| "freed".into())
+            tree.resolve(r).map_or_else(
+                || "freed".into(),
+                |ix| String::from_utf8_lossy(&tree.path(ix)).into_owned(),
+            )
         };
         let mut out = format!(
             "{inode:?} at {} excl {} ranges {:?} points {:?}",
@@ -321,13 +324,14 @@ impl ExtentTable {
         );
         for &(a, b) in &rec.ranges {
             for (&(_, st), seg) in self.segs.range((rec.fs, a)..(rec.fs, b)) {
-                out.push_str(&format!(
+                let _ = write!(
+                    out,
                     "\n  seg {st}..{} refs {:?} home {:?} out {}",
                     seg.end,
                     seg.refs,
                     seg.home.map(path),
                     seg.out
-                ));
+                );
             }
         }
         out
@@ -415,7 +419,7 @@ impl ExtentTable {
 /// Sorted, non-overlapping ranges (a file can reference the same data twice).
 fn merge(mut r: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     r.retain(|&(a, b)| a < b);
-    r.sort();
+    r.sort_unstable();
     let mut out: Vec<(u64, u64)> = Vec::with_capacity(r.len());
     for (a, b) in r {
         match out.last_mut() {
@@ -564,8 +568,9 @@ fn lca_of(tree: &Tree, nodes: &[Ix]) -> Option<Ix> {
     } else {
         let lowest = chains
             .iter()
-            .min_by_key(|c| tree.path(*c.last().expect("non-empty")))
-            .expect("non-empty")[0];
+            .filter_map(|c| Some((tree.path(*c.last()?), c[0])))
+            .min_by(|a, b| a.0.cmp(&b.0))?
+            .1;
         chains.iter().filter(|c| c[0] == lowest).collect()
     };
     // The deepest level at which every chain has the same node.
@@ -597,6 +602,10 @@ mod tests {
     }
 
     /// /r/{a/{x,y}, b/{z}} with 100-byte files; returns (tree, root, [x, y, z]).
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "nodes named as in the fixture's diagram"
+    )]
     fn tree() -> (Tree, Ix, [Ix; 3]) {
         let mut t = Tree::new();
         let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
@@ -629,6 +638,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "nodes named as in the fixture's diagram"
+    )]
     fn shared_data_is_counted_once_at_the_common_ancestor() {
         let (mut t, r, [x, y, z]) = tree();
         let mut e = ExtentTable::default();
@@ -673,6 +686,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "nodes named as in the fixture's diagram"
+    )]
     fn order_does_not_matter() {
         let orders = [[0, 1, 2], [2, 1, 0], [1, 2, 0]];
         let mut results: Vec<Vec<Totals>> = vec![];
@@ -702,6 +719,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "nodes named as in the fixture's diagram"
+    )]
     fn compressed_extents_match_by_start() {
         let (mut t, r, [x, _, z]) = tree();
         let mut e = ExtentTable::default();

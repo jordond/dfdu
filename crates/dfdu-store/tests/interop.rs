@@ -3,6 +3,7 @@
 //! Skipped when `ncdu` is not installed.
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::Path;
@@ -78,9 +79,9 @@ fn ncdu_and_dfdu_agree() {
     let root = tmp.path().join("tree");
     fixture(&root);
     let (ours, scanned) = scan(&root);
-    let t = totals(&ours);
+    let dfdu_t = totals(&ours);
     assert_eq!(
-        (t.apparent, t.alloc, t.items),
+        (dfdu_t.apparent, dfdu_t.alloc, dfdu_t.items),
         (scanned.apparent, scanned.alloc, scanned.items)
     );
 
@@ -98,9 +99,9 @@ fn ncdu_and_dfdu_agree() {
         "{}",
         String::from_utf8_lossy(&ok.stderr)
     );
-    let n = totals(&fs::read(&theirs).unwrap());
+    let ncdu_t = totals(&fs::read(&theirs).unwrap());
     assert_eq!(
-        (n.apparent, n.alloc, n.items),
+        (ncdu_t.apparent, ncdu_t.alloc, ncdu_t.items),
         (scanned.apparent, scanned.alloc, scanned.items),
         "ncdu's scan against dfdu's"
     );
@@ -122,29 +123,29 @@ fn ncdu_and_dfdu_agree() {
         "{}",
         String::from_utf8_lossy(&ok.stderr)
     );
-    let b = totals(&fs::read(&back).unwrap());
+    let back_t = totals(&fs::read(&back).unwrap());
     assert_eq!(
-        (b.apparent, b.alloc, b.items),
-        (t.apparent, t.alloc, t.items)
+        (back_t.apparent, back_t.alloc, back_t.items),
+        (dfdu_t.apparent, dfdu_t.alloc, dfdu_t.items)
     );
     // Compressed, both ways.
-    let z = tmp.path().join("ncdu.zst");
+    let zst = tmp.path().join("ncdu.zst");
     let ok = Proc::new("ncdu")
         .args(["-x", "--compress", "-o"])
-        .arg(&z)
+        .arg(&zst)
         .arg(&root)
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
     assert!(ok.status.success());
-    let c = totals(&fs::read(&z).unwrap());
+    let zst_t = totals(&fs::read(&zst).unwrap());
     assert_eq!(
-        (c.apparent, c.alloc, c.items),
-        (n.apparent, n.alloc, n.items)
+        (zst_t.apparent, zst_t.alloc, zst_t.items),
+        (ncdu_t.apparent, ncdu_t.alloc, ncdu_t.items)
     );
-    let mut w = dfdu_store::ZstdWriter::new(fs::File::create(&mine).unwrap());
-    std::io::Write::write_all(&mut w, &ours).unwrap();
-    w.finish().unwrap();
+    let mut writer = dfdu_store::ZstdWriter::new(fs::File::create(&mine).unwrap());
+    std::io::Write::write_all(&mut writer, &ours).unwrap();
+    writer.finish().unwrap();
     let ok = Proc::new("ncdu")
         .arg("-f")
         .arg(&mine)
@@ -158,10 +159,10 @@ fn ncdu_and_dfdu_agree() {
         "{}",
         String::from_utf8_lossy(&ok.stderr)
     );
-    let b = totals(&fs::read(&back).unwrap());
+    let back_t = totals(&fs::read(&back).unwrap());
     assert_eq!(
-        (b.apparent, b.alloc, b.items),
-        (t.apparent, t.alloc, t.items)
+        (back_t.apparent, back_t.alloc, back_t.items),
+        (dfdu_t.apparent, dfdu_t.alloc, dfdu_t.items)
     );
 }
 

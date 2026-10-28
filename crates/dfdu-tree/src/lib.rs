@@ -5,6 +5,7 @@
 
 mod check;
 mod class;
+mod clock;
 pub mod filetype;
 mod meta;
 mod names;
@@ -13,6 +14,7 @@ mod tree;
 
 pub use check::Violation;
 pub use class::{Class, RuleIx, Safety};
+pub use clock::now_secs;
 pub use meta::{ErrKind, Kind, Meta, Subvol, Totals, WinStat, win_attr};
 pub use names::{name_bytes, name_bytes_wide, name_os};
 pub use pages::Pages;

@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use dfdu_tree::{Ix, Tree};
+use dfdu_tree::{Ix, Totals, Tree};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 /// The schema this version writes.
@@ -34,6 +34,18 @@ pub struct Sizes {
     pub disk: u64,
     pub apparent: u64,
     pub entries: u64,
+}
+
+impl Sizes {
+    /// The sizes in a node's totals.
+    #[must_use]
+    pub fn of(t: &Totals) -> Sizes {
+        Sizes {
+            disk: t.alloc,
+            apparent: t.apparent,
+            entries: t.items,
+        }
+    }
 }
 
 /// Paths relative to the scan root (names joined by `/`, the root itself empty) and their
@@ -67,6 +79,47 @@ pub struct Record<'a> {
     pub rows: &'a SizeMap,
 }
 
+/// What a finished scan found below its root, read from the tree for its [`Record`]. Owned, so
+/// it can be read under a lock and recorded after.
+#[derive(Clone, Debug)]
+pub struct Scanned {
+    pub root: PathBuf,
+    pub complete: bool,
+    pub total: Sizes,
+    pub errors: u64,
+    pub rows: SizeMap,
+}
+
+impl Scanned {
+    /// The scan below `root`, `complete` or not, with its [`rows`].
+    #[must_use]
+    pub fn read(tree: &Tree, root: Ix, complete: bool) -> Scanned {
+        let t = tree.total(root);
+        Scanned {
+            root: tree.path_buf(root),
+            complete,
+            total: Sizes::of(&t),
+            errors: t.errors,
+            rows: rows(tree, root),
+        }
+    }
+
+    /// The record of this scan, with the key of its `options`.
+    #[must_use]
+    pub fn record<'a>(&'a self, options: &'a str, started_at: i64, finished_at: i64) -> Record<'a> {
+        Record {
+            root: &self.root,
+            options,
+            started_at,
+            finished_at,
+            complete: self.complete,
+            total: self.total,
+            errors: self.errors,
+            rows: &self.rows,
+        }
+    }
+}
+
 pub struct History {
     conn: Connection,
 }
@@ -95,14 +148,33 @@ fn path_of(b: Vec<u8>) -> PathBuf {
 
 /// The key under which scans are compared: scans that count other data (other mounts, shared
 /// extents measured or not) are never compared with each other.
+#[must_use]
 pub fn options_key(cross_mounts: bool, network: bool, measured: bool) -> String {
     format!("cross_mounts={cross_mounts} network={network} measured={measured}")
 }
 
 /// Seconds since the Unix epoch as a UTC date ("2026-10-18").
+#[must_use]
 pub fn day(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    // Days to a civil date, in 400-year eras starting on 1 March.
+    let (y, m, d) = civil(secs.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Seconds since the Unix epoch as a UTC date and time ("2026-10-24 09:42 UTC").
+#[must_use]
+pub fn date_time(secs: i64) -> String {
+    let (y, m, d) = civil(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02} UTC",
+        rem / 3600,
+        rem % 3600 / 60
+    )
+}
+
+/// Days since the Unix epoch as a civil (proleptic Gregorian) year, month and day.
+fn civil(days: i64) -> (i64, i64, i64) {
+    // In 400-year eras starting on 1 March.
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -111,8 +183,8 @@ pub fn day(secs: i64) -> String {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + (m <= 2) as i64;
-    format!("{y:04}-{m:02}-{d:02}")
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
 }
 
 /// An earlier scan's directory sizes, to show what grew since.
@@ -126,6 +198,7 @@ pub struct Growth {
 
 impl Growth {
     /// The sizes `path` had then, if they were kept.
+    #[must_use]
     pub fn get(&self, path: &Path) -> Option<Sizes> {
         let rel = path.strip_prefix(&self.root).ok()?;
         self.sizes.get(rel.as_os_str().as_encoded_bytes()).copied()
@@ -133,6 +206,10 @@ impl Growth {
 
     /// The last scan of `root` with `options` that finished before `before`, in the database
     /// at `db`, if there is one.
+    ///
+    /// # Errors
+    ///
+    /// When the database exists but cannot be opened, migrated or read.
     pub fn load(
         db: &Path,
         root: &Path,
@@ -156,11 +233,12 @@ impl Growth {
 
 /// `$DFDU_STATE_DIR/history.sqlite3`, else `history.sqlite3` in dfdu's directory in the
 /// platform state directory (the data directory on Windows).
+#[must_use]
 pub fn default_path() -> Option<PathBuf> {
+    use etcetera::BaseStrategy;
     if let Some(d) = std::env::var_os("DFDU_STATE_DIR") {
         return Some(PathBuf::from(d).join("history.sqlite3"));
     }
-    use etcetera::BaseStrategy;
     let dirs = etcetera::choose_base_strategy().ok()?;
     let base = dirs.state_dir().unwrap_or_else(|| dirs.data_dir());
     Some(base.join("dfdu").join("history.sqlite3"))
@@ -168,6 +246,11 @@ pub fn default_path() -> Option<PathBuf> {
 
 impl History {
     /// Opens or creates the database at `path` (and its directory).
+    ///
+    /// # Errors
+    ///
+    /// When the directory cannot be created, the database cannot be opened or migrated, or it
+    /// has a schema newer than this version reads.
     pub fn open(path: &Path) -> io::Result<History> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -177,6 +260,10 @@ impl History {
     }
 
     /// A database in memory, for tests.
+    ///
+    /// # Errors
+    ///
+    /// When `SQLite` cannot create or set up the database.
     pub fn in_memory() -> io::Result<History> {
         Self::setup(Connection::open_in_memory().map_err(err)?)
     }
@@ -262,6 +349,10 @@ impl History {
 
     /// Records a scan in one transaction and drops the oldest scans of its root past
     /// [`KEEP_SCANS`]. Returns its id.
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be written; nothing of the scan is kept then.
     pub fn record(&mut self, r: &Record) -> io::Result<i64> {
         let tx = self.write()?;
         tx.execute(
@@ -273,10 +364,10 @@ impl History {
                 r.started_at,
                 r.finished_at,
                 r.complete,
-                r.total.disk as i64,
-                r.total.apparent as i64,
-                r.total.entries as i64,
-                r.errors as i64,
+                r.total.disk.cast_signed(),
+                r.total.apparent.cast_signed(),
+                r.total.entries.cast_signed(),
+                r.errors.cast_signed(),
             ],
         )
         .map_err(err)?;
@@ -306,9 +397,9 @@ impl History {
                 size.execute(params![
                     id,
                     pid,
-                    s.disk as i64,
-                    s.apparent as i64,
-                    s.entries as i64
+                    s.disk.cast_signed(),
+                    s.apparent.cast_signed(),
+                    s.entries.cast_signed()
                 ])
                 .map_err(err)?;
             }
@@ -333,11 +424,11 @@ impl History {
             finished_at: r.get(4)?,
             complete: r.get(5)?,
             total: Sizes {
-                disk: r.get::<_, i64>(6)? as u64,
-                apparent: r.get::<_, i64>(7)? as u64,
-                entries: r.get::<_, i64>(8)? as u64,
+                disk: r.get::<_, i64>(6)?.cast_unsigned(),
+                apparent: r.get::<_, i64>(7)?.cast_unsigned(),
+                entries: r.get::<_, i64>(8)?.cast_unsigned(),
             },
-            errors: r.get::<_, i64>(9)? as u64,
+            errors: r.get::<_, i64>(9)?.cast_unsigned(),
         })
     }
 
@@ -345,6 +436,10 @@ impl History {
         "id, root, options, started_at, finished_at, complete, disk, apparent, entries, errors";
 
     /// The scans of `root` (every root when `None`), newest first.
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be read.
     pub fn scans(&self, root: Option<&Path>) -> io::Result<Vec<ScanRow>> {
         let sql = format!(
             "SELECT {} FROM scans WHERE ?1 IS NULL OR root = ?1
@@ -360,6 +455,10 @@ impl History {
 
     /// The newest scan of `root` with `options` that finished before `before` (any time when
     /// `None`).
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be read.
     pub fn latest(
         &self,
         root: &Path,
@@ -382,6 +481,10 @@ impl History {
     }
 
     /// The scan of `root` with `options` that finished closest to `at`.
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be read.
     pub fn nearest(&self, root: &Path, options: &str, at: i64) -> io::Result<Option<ScanRow>> {
         let sql = format!(
             "SELECT {} FROM scans WHERE root = ?1 AND options = ?2
@@ -395,6 +498,10 @@ impl History {
     }
 
     /// The directory sizes kept for scan `id`, by path relative to its root.
+    ///
+    /// # Errors
+    ///
+    /// When there is no scan `id` or the database cannot be read.
     pub fn sizes(&self, id: i64) -> io::Result<SizeMap> {
         let root: Vec<u8> = self
             .conn
@@ -412,9 +519,9 @@ impl History {
                 Ok((
                     r.get::<_, Vec<u8>>(0)?,
                     Sizes {
-                        disk: r.get::<_, i64>(1)? as u64,
-                        apparent: r.get::<_, i64>(2)? as u64,
-                        entries: r.get::<_, i64>(3)? as u64,
+                        disk: r.get::<_, i64>(1)?.cast_unsigned(),
+                        apparent: r.get::<_, i64>(2)?.cast_unsigned(),
+                        entries: r.get::<_, i64>(3)?.cast_unsigned(),
                     },
                 ))
             })
@@ -422,13 +529,10 @@ impl History {
         let mut out = SizeMap::new();
         for row in rows {
             let (full, s) = row.map_err(err)?;
-            let rel = full
-                .strip_prefix(root.as_slice())
-                .map(|r| {
-                    r.strip_prefix(&[std::path::MAIN_SEPARATOR as u8])
-                        .unwrap_or(r)
-                })
-                .unwrap_or(&full);
+            let rel = full.strip_prefix(root.as_slice()).map_or(&full[..], |r| {
+                r.strip_prefix(&[std::path::MAIN_SEPARATOR as u8])
+                    .unwrap_or(r)
+            });
             out.insert(rel.to_vec(), s);
         }
         Ok(out)
@@ -438,21 +542,16 @@ impl History {
 /// The directories of the scan below `root` that history keeps: those at most
 /// [`KEEP_DEPTH`] levels down, those of at least [`KEEP_SIZE`], and every match of the rules
 /// (files included), at most [`MAX_ROWS`], largest first.
+#[must_use]
 pub fn rows(tree: &Tree, root: Ix) -> SizeMap {
     rows_to(tree, root, KEEP_DEPTH, KEEP_SIZE, MAX_ROWS)
 }
 
 /// [`rows`] with other limits: directories at most `depth` levels down or at least `size`
 /// bytes, at most `max` of them.
+#[must_use]
 pub fn rows_to(tree: &Tree, root: Ix, depth: usize, size: u64, max: usize) -> SizeMap {
-    let sizes = |ix: Ix| {
-        let t = tree.total(ix);
-        Sizes {
-            disk: t.alloc,
-            apparent: t.apparent,
-            entries: t.items,
-        }
-    };
+    let sizes = |ix: Ix| Sizes::of(&tree.total(ix));
     let mut picked: Vec<(Ix, Sizes)> = vec![];
     let mut stack = vec![(root, 0usize)];
     while let Some((ix, d)) = stack.pop() {
@@ -494,24 +593,26 @@ pub struct Change {
 
 impl Change {
     /// The change in disk usage.
+    #[must_use]
     pub fn delta(&self) -> i128 {
-        self.new.map_or(0, |s| s.disk as i128) - self.old.map_or(0, |s| s.disk as i128)
+        self.new.map_or(0, |s| i128::from(s.disk)) - self.old.map_or(0, |s| i128::from(s.disk))
     }
 
+    #[must_use]
     pub fn apparent_delta(&self) -> i128 {
-        self.new.map_or(0, |s| s.apparent as i128) - self.old.map_or(0, |s| s.apparent as i128)
+        self.new.map_or(0, |s| i128::from(s.apparent))
+            - self.old.map_or(0, |s| i128::from(s.apparent))
     }
 }
 
 /// Levels below the root of a relative path (the root is 0).
+#[must_use]
 pub fn depth(rel: &[u8]) -> usize {
     if rel.is_empty() {
         0
     } else {
-        1 + rel
-            .iter()
-            .filter(|&&b| b == std::path::MAIN_SEPARATOR as u8)
-            .count()
+        // One more part than separators.
+        rel.split(|&b| b == std::path::MAIN_SEPARATOR as u8).count()
     }
 }
 
@@ -519,6 +620,7 @@ pub fn depth(rel: &[u8]) -> usize {
 /// first. A path in only one of them is new or gone if it is at most `complete` levels down,
 /// where each side has every directory; deeper, it was only left out for being small, so it
 /// is not compared (its parents show the change).
+#[must_use]
 pub fn diff(old: &SizeMap, new: &SizeMap, complete: usize) -> Vec<Change> {
     let mut out = vec![];
     for (path, &o) in old {
@@ -568,6 +670,7 @@ fn is_below(tree: &Tree, mut ix: Ix, root: Ix) -> bool {
 }
 
 /// The names from below `root` down to `ix`, joined by the platform's separator.
+#[must_use]
 pub fn rel_path(tree: &Tree, mut ix: Ix, root: Ix) -> Vec<u8> {
     let mut names = vec![];
     while ix != root {
@@ -718,6 +821,16 @@ mod tests {
     }
 
     #[test]
+    fn dates_and_times_are_utc() {
+        assert_eq!(date_time(0), "1970-01-01 00:00 UTC");
+        assert_eq!(date_time(1_793_157_288), "2026-10-28 03:14 UTC");
+        assert_eq!(date_time(951_782_400), "2000-02-29 00:00 UTC");
+        assert_eq!(date_time(-86_400), "1969-12-31 00:00 UTC");
+        assert_eq!(date_time(-1), "1969-12-31 23:59 UTC");
+        assert_eq!(day(-1), "1969-12-31");
+    }
+
+    #[test]
     fn old_scans_are_dropped() {
         let mut h = History::in_memory().unwrap();
         let rows = map(&[("", 1), ("a", 1)]);
@@ -725,7 +838,10 @@ mod tests {
         for i in 1..=KEEP_SCANS {
             record(&mut h, "/r", "x", i, &rows);
         }
-        assert_eq!(h.scans(None).unwrap().len(), KEEP_SCANS as usize);
+        assert_eq!(
+            h.scans(None).unwrap().len(),
+            usize::try_from(KEEP_SCANS).unwrap()
+        );
         assert!(h.sizes(first).is_err(), "its scan is gone");
         let n: i64 = h
             .conn

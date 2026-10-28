@@ -117,19 +117,21 @@ pub struct LinkTable {
     chains: (Vec<Ix>, Vec<Ix>),
 }
 
+/// The entry of `scope` in `v`, added if there is none.
+fn scope_entry(v: &mut Small<ScopeEntry>, scope: Scope) -> &mut ScopeEntry {
+    let i = v.iter().position(|e| e.scope == scope).unwrap_or_else(|| {
+        v.push(ScopeEntry {
+            scope,
+            ..Default::default()
+        });
+        v.len() - 1
+    });
+    &mut v[i]
+}
+
 impl LinkTable {
     fn entry(&mut self, key: (u64, u64), scope: Scope) -> &mut ScopeEntry {
-        let v = &mut self.map.entry(key).or_default().scopes;
-        match v.iter().position(|e| e.scope == scope) {
-            Some(i) => &mut v[i],
-            None => {
-                v.push(ScopeEntry {
-                    scope,
-                    ..Default::default()
-                });
-                v.last_mut().expect("just pushed")
-            }
-        }
+        scope_entry(&mut self.map.entry(key).or_default().scopes, scope)
     }
 
     /// Adds a link a scan found. It is charged if no other link of the inode in `scope` is;
@@ -253,16 +255,7 @@ impl LinkTable {
             return (false, 0);
         };
         let moved = v.swap_remove(i);
-        let target = match v.iter().position(|e| e.scope == to) {
-            Some(j) => &mut v[j],
-            None => {
-                v.push(ScopeEntry {
-                    scope: to,
-                    ..Default::default()
-                });
-                v.last_mut().expect("just pushed")
-            }
-        };
+        let target = scope_entry(v, to);
         let n = moved.links.len();
         target.links.extend(moved.links);
         let reelect = match (target.charged, moved.charged) {
@@ -314,8 +307,9 @@ impl LinkTable {
         if let Some(old) = old.or_else(|| e.charged.and_then(|c| tree.resolve(c))) {
             tree.set_charged(old, false);
         }
-        if best.is_some() {
-            let ix = *best_chain.last().expect("resolved");
+        if best.is_some()
+            && let Some(&ix) = best_chain.last()
+        {
             tree.set_charged(ix, true);
         }
         e.charged = best;

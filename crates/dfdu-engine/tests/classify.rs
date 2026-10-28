@@ -2,6 +2,8 @@
 //! the workers reach the tree, including directories wide enough to be read in several blocks,
 //! whose markers and siblings are in other blocks.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -419,7 +421,7 @@ not_modified_days = 30
     assert!(errors.is_empty(), "{errors:?}");
     let tmp = tmp();
     let root = dunce::canonicalize(tmp.path()).unwrap();
-    let old = std::time::SystemTime::now() - Duration::from_secs(40 * 86_400);
+    let old = std::time::SystemTime::now() - Duration::from_hours(960);
     for (name, len, aged) in [
         ("big-old.bin", 64 << 10, true),
         ("big-new.bin", 64 << 10, false),

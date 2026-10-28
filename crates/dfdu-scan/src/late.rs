@@ -27,13 +27,14 @@ static LATE_AT: AtomicU64 = AtomicU64::new(0);
 static EPOCH: OnceLock<Instant> = OnceLock::new();
 
 fn now_ns() -> u64 {
-    EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64 + 1
+    u64::try_from(EPOCH.get_or_init(Instant::now).elapsed().as_nanos()).unwrap_or(u64::MAX - 1) + 1
 }
 
 /// The applier is about to take the write lock, or has taken it, and expects to have it, or to
 /// have released it, within `within` unless it is kept off the CPU.
 pub fn expect_lock_within(within: Duration) {
-    LATE_AT.store(now_ns() + within.as_nanos() as u64, Relaxed);
+    let within = u64::try_from(within.as_nanos()).unwrap_or(u64::MAX);
+    LATE_AT.store(now_ns().saturating_add(within), Relaxed);
 }
 
 /// The applier is about to release the write lock.

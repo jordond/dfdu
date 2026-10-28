@@ -24,6 +24,7 @@ pub enum ThemeChoice {
 
 impl ThemeChoice {
     /// `auto` or a built-in theme; `None` for any other name.
+    #[must_use]
     pub fn builtin(name: &str) -> Option<ThemeChoice> {
         if name == "auto" {
             return Some(ThemeChoice::Auto);
@@ -56,24 +57,16 @@ impl Default for UiSettings {
             color: None,
             mouse: true,
             debug_stats: false,
-            types: Default::default(),
+            types: dfdu_tree::filetype::TypeFilter::default(),
         }
     }
 }
 
 /// Where theme files are looked up by name: `dfdu/themes` in the configuration directory (XDG
-/// on Linux and macOS, the roaming AppData folder on Windows). `None` without a home directory.
+/// on Linux and macOS, the roaming `AppData` folder on Windows). `None` without a home directory.
+#[must_use]
 pub fn theme_dir() -> Option<PathBuf> {
-    use etcetera::BaseStrategy;
-    let dirs = etcetera::choose_base_strategy().ok()?;
-    Some(dirs.config_dir().join("dfdu").join("themes"))
-}
-
-/// Where the user's rule files are (`dfdu-rules`), beside the themes.
-pub fn rules_dir() -> Option<PathBuf> {
-    use etcetera::BaseStrategy;
-    let dirs = etcetera::choose_base_strategy().ok()?;
-    Some(dirs.config_dir().join("dfdu").join("rules"))
+    Some(dfdu_engine::config_dir()?.join("themes"))
 }
 
 /// The user's home directory with symbolic links resolved, as the scan's paths are.
@@ -113,12 +106,15 @@ pub(crate) fn resolve_theme(
     } else {
         None
     };
-    let theme = match &settings.theme {
-        ThemeChoice::File(file) => file.resolve(detected.level, background),
-        _ => {
-            let name = theme::choose_theme(explicit, detected.level, background);
-            Theme::named(name, detected.level, background).expect("a built-in theme")
-        }
+    let theme = if let ThemeChoice::File(file) = &settings.theme {
+        file.resolve(detected.level, background)
+    } else {
+        let name = theme::choose_theme(explicit, detected.level, background);
+        #[expect(
+            clippy::expect_used,
+            reason = "choose_theme returns one of the built-in theme names"
+        )]
+        Theme::named(name, detected.level, background).expect("a built-in theme")
     };
     Colors {
         theme,

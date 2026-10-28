@@ -2,6 +2,7 @@
 //! Skipped (passing) when the variable is not set.
 
 #![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::PathBuf;
 
@@ -90,7 +91,7 @@ fn fiemap_reports_sharing_compression_and_inline() {
     let tiny = extents(&p.join("tiny.txt"));
     assert_eq!(tiny.len(), 1);
     assert!(tiny[0].flags & Extent::DATA_INLINE != 0);
-    assert!(extents(&p.join("sparse.bin")).is_empty());
+    assert_eq!(extents(&p.join("sparse.bin")), [] as [dfdu_sys::Extent; 0]);
     let pre = extents(&p.join("prealloc.bin"));
     assert!(pre.iter().all(|e| e.flags & Extent::UNWRITTEN != 0));
 }
@@ -115,8 +116,8 @@ fn file_extent_items_as_root() {
         return;
     }
     let items = |p: &str| -> Vec<FileExtent> {
-        let f = std::fs::File::open(d.join(p)).unwrap();
         use std::os::unix::fs::MetadataExt;
+        let f = std::fs::File::open(d.join(p)).unwrap();
         let ino = f.metadata().unwrap().ino();
         dfdu_sys::file_extents(&f, ino).unwrap()
     };

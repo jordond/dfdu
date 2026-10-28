@@ -15,7 +15,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Overlay};
-use crate::{confirm, debug, details, error_list, filter, help, motion, palette, treemap};
+use crate::overlay::{confirm, error_list, help, palette, type_filter};
+use crate::{debug, details, filter, motion, treemap};
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
 #[derive(Copy, Clone, Debug, Default)]
@@ -31,6 +32,11 @@ pub struct Areas {
     pub debug: Option<Rect>,
 }
 
+/// A number of rows or columns as a terminal length, at most `u16::MAX`.
+pub fn cells(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
 fn mmss(d: std::time::Duration) -> String {
     let s = d.as_secs();
     format!("{:02}:{:02}", s / 60, s % 60)
@@ -39,13 +45,13 @@ fn mmss(d: std::time::Duration) -> String {
 /// Draws the whole screen and updates the list height, scroll offset and areas in `app`.
 pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let area = f.area();
-    let stalled_line = if app.snap.stalled > 0 { 1 } else { 0 };
+    let stalled_line = u16::from(app.snap.stalled > 0);
     let filter_line = filter::line(app);
     let [header, body, prompt, filter_row, status, footer] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(1),
         Constraint::Length(stalled_line),
-        Constraint::Length(filter_line.is_some() as u16),
+        Constraint::Length(u16::from(filter_line.is_some())),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -60,7 +66,8 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         overlay: None,
         debug: None,
     };
-    let frame = now.duration_since(app.started).as_millis() as u64 / 100;
+    let frame =
+        u64::try_from(now.duration_since(app.started).as_millis() / 100).unwrap_or(u64::MAX);
 
     header::draw(f, app, header, now, frame);
     app.treemap.shown = app.treemap.on && treemap::fits(area);
@@ -92,15 +99,15 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::Errors { .. } => Some(error_list::draw(f, app, area)),
         Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
-        Overlay::Types(_) => Some(crate::type_filter::draw(f, app, area)),
+        Overlay::Types(_) => Some(type_filter::draw(f, app, area)),
     };
     motion::post_process(app, f.buffer_mut(), now);
 }
 
 /// A line with `left` at the start and `right` at the end of `width` cells.
 fn spread<'a>(left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) -> Line<'a> {
-    let lw: usize = left.iter().map(|s| s.width()).sum();
-    let rw: usize = right.iter().map(|s| s.width()).sum();
+    let lw: usize = left.iter().map(Span::width).sum();
+    let rw: usize = right.iter().map(Span::width).sum();
     let pad = (width as usize).saturating_sub(lw + rw);
     let mut spans = left;
     spans.push(Span::raw(" ".repeat(pad)));

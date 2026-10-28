@@ -63,7 +63,7 @@ fn nt_error(status: NTSTATUS) -> io::Error {
         // SAFETY: a table lookup on an integer; no pointers.
         s => unsafe { RtlNtStatusToDosError(s) },
     };
-    io::Error::from_raw_os_error(code as i32)
+    io::Error::from_raw_os_error(code.cast_signed())
 }
 
 fn win32_error(code: u32) -> io::Error {
@@ -72,7 +72,7 @@ fn win32_error(code: u32) -> io::Error {
     } else {
         code
     };
-    io::Error::from_raw_os_error(code as i32)
+    io::Error::from_raw_os_error(code.cast_signed())
 }
 
 fn last_error_code() -> u32 {
@@ -86,11 +86,12 @@ fn wide(s: &str) -> Vec<u16> {
 
 /// Whether this process runs elevated (with an administrator's full token), so it may read
 /// what administrators may.
+#[must_use]
 pub fn is_privileged() -> bool {
     let mut h: HANDLE = null_mut();
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no closing; `h` is valid
     // for writes.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut h) } == 0 {
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut h) } == 0 {
         return false;
     }
     // SAFETY: on success `h` is a new handle that nothing else owns; `OwnedHandle` closes it.
@@ -104,8 +105,8 @@ pub fn is_privileged() -> bool {
             token.as_raw_handle(),
             TokenElevation,
             (&raw mut elevation).cast::<c_void>(),
-            size_of::<TOKEN_ELEVATION>() as u32,
-            &mut len,
+            len_u32(size_of::<TOKEN_ELEVATION>()),
+            &raw mut len,
         )
     };
     ok != 0 && elevation.TokenIsElevated != 0
@@ -113,6 +114,10 @@ pub fn is_privileged() -> bool {
 
 /// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists: `MoveFileExW` without
 /// `MOVEFILE_REPLACE_EXISTING` (and without `MOVEFILE_COPY_ALLOWED`, so never a copy).
+///
+/// # Errors
+///
+/// `AlreadyExists` when `to` exists, or the error `MoveFileExW` reports.
 pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     let z = |p: &Path| -> io::Result<Vec<u16>> {
         let v = verbatim_path(p)?;
@@ -130,6 +135,10 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 /// path is made absolute against the current directory, which also resolves `.` and `..`
 /// (`GetFullPathNameW`); a verbatim or device path (`\\?\`, `\\.\`) is returned as it is.
 /// Names joined to the result reach the filesystem unchanged.
+///
+/// # Errors
+///
+/// When `path` cannot be made absolute (no current directory).
 pub fn verbatim_path(path: &Path) -> io::Result<PathBuf> {
     let abs = std::path::absolute(path)?;
     let w: Vec<u16> = abs.as_os_str().encode_wide().collect();
@@ -150,6 +159,11 @@ pub fn verbatim_path(path: &Path) -> io::Result<PathBuf> {
 
 /// The device of the volume `path` is on, as `\\?\Volume{GUID}` (no trailing separator), for
 /// reading the volume itself. Opening it needs administrator rights.
+///
+/// # Errors
+///
+/// When `path` cannot be made absolute, or the error `GetVolumePathNameW` or
+/// `GetVolumeNameForVolumeMountPointW` reports.
 pub fn volume_device(path: &Path) -> io::Result<PathBuf> {
     use windows_sys::Win32::Storage::FileSystem::{
         GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
@@ -162,14 +176,14 @@ pub fn volume_device(path: &Path) -> io::Result<PathBuf> {
     let mut mount = vec![0u16; p.len().max(64)];
     // SAFETY: `p` is NUL-terminated; `mount` is valid for writes of its length in characters,
     // which is at least the path's, the longest a mount point of it can be.
-    if unsafe { GetVolumePathNameW(p.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
+    if unsafe { GetVolumePathNameW(p.as_ptr(), mount.as_mut_ptr(), len_u32(mount.len())) } == 0 {
         return Err(io::Error::last_os_error());
     }
     let mut name = [0u16; 64];
     // SAFETY: `mount` is NUL-terminated (the call wrote it); `name` is valid for writes of its
     // length in characters (a volume GUID path takes 50 with its NUL).
     let ok = unsafe {
-        GetVolumeNameForVolumeMountPointW(mount.as_ptr(), name.as_mut_ptr(), name.len() as u32)
+        GetVolumeNameForVolumeMountPointW(mount.as_ptr(), name.as_mut_ptr(), len_u32(name.len()))
     };
     if ok == 0 {
         return Err(io::Error::last_os_error());
@@ -197,7 +211,7 @@ fn nt_path(path: &Path) -> io::Result<Vec<u16>> {
 /// A counted string pointing into `s`, which must outlive every use of it.
 fn unicode(s: &[u16]) -> io::Result<UNICODE_STRING> {
     let bytes = u16::try_from(s.len() * 2)
-        .map_err(|_| io::Error::from_raw_os_error(ERROR_FILENAME_EXCED_RANGE as i32))?;
+        .map_err(|_| io::Error::from_raw_os_error(ERROR_FILENAME_EXCED_RANGE.cast_signed()))?;
     Ok(UNICODE_STRING {
         Length: bytes,
         MaximumLength: bytes,
@@ -212,7 +226,7 @@ fn object_attributes(
     attributes: u32,
 ) -> OBJECT_ATTRIBUTES {
     OBJECT_ATTRIBUTES {
-        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        Length: len_u32(size_of::<OBJECT_ATTRIBUTES>()),
         RootDirectory: root.map_or(null_mut(), |h| h.as_raw_handle()),
         ObjectName: name,
         Attributes: attributes,
@@ -259,10 +273,10 @@ fn nt_open_shared(
     // `FILE_OPEN` allows.
     let st = unsafe {
         NtCreateFile(
-            &mut h,
+            &raw mut h,
             access,
-            &oa,
-            &mut iosb,
+            &raw const oa,
+            &raw mut iosb,
             null(),
             0,
             share,
@@ -283,6 +297,10 @@ fn nt_open_shared(
 /// Opens a directory for listing. With `follow`, a symlink or junction at `path` is followed
 /// (a scan root given as one); without it the reparse point itself is opened, so a directory
 /// replaced by a junction after its parent was listed is not entered.
+///
+/// # Errors
+///
+/// The error `NtCreateFile` reports (`NotFound`, `PermissionDenied`, ...).
 pub fn open_dir(path: &Path, follow: bool) -> io::Result<OwnedHandle> {
     let reparse = if follow { 0 } else { FILE_OPEN_REPARSE_POINT };
     nt_open(
@@ -338,7 +356,7 @@ fn handle_info<T: Plain>(h: BorrowedHandle<'_>, class: FILE_INFO_BY_HANDLE_CLASS
             h.as_raw_handle(),
             class,
             (&raw mut v).cast::<c_void>(),
-            size_of::<T>() as u32,
+            len_u32(size_of::<T>()),
         )
     };
     if ok == 0 {
@@ -349,7 +367,7 @@ fn handle_info<T: Plain>(h: BorrowedHandle<'_>, class: FILE_INFO_BY_HANDLE_CLASS
 }
 
 fn filetime(t: FILETIME) -> u64 {
-    ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64
+    (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
 }
 
 /// Metadata of an open file or directory: attributes, write time, volume serial number and
@@ -359,18 +377,18 @@ fn filetime(t: FILETIME) -> u64 {
 ///
 /// `alloc` is `AllocationSize`, the clusters of the file's unnamed data stream, as in the
 /// directory enumeration. For NTFS-compressed and sparse files that is what the data takes on
-/// disk; `GetCompressedFileSizeW` reports the same for them. Files compressed by WOF (CompactOS)
+/// disk; `GetCompressedFileSizeW` reports the same for them. Files compressed by WOF (`CompactOS`)
 /// keep their data in an alternate stream, which neither number includes (unverified).
 fn stat_handle(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
     let mut bh = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: `bh` is valid for writes; the structure has integer fields only.
-    if unsafe { GetFileInformationByHandle(h.as_raw_handle(), &mut bh) } == 0 {
+    if unsafe { GetFileInformationByHandle(h.as_raw_handle(), &raw mut bh) } == 0 {
         return Err(win32_error(last_error_code()));
     }
     let std: StandardInfo = handle_info(h, FileStandardInfo)?;
     let file_id = match handle_info::<FILE_ID_INFO>(h, FileIdInfo) {
         Ok(i) => u128::from_le_bytes(i.FileId.Identifier),
-        Err(_) => ((bh.nFileIndexHigh as u128) << 32) | bh.nFileIndexLow as u128,
+        Err(_) => (u128::from(bh.nFileIndexHigh) << 32) | u128::from(bh.nFileIndexLow),
     };
     let reparse_tag = if bh.dwFileAttributes & win_attr::REPARSE_POINT != 0 {
         handle_info::<FILE_ATTRIBUTE_TAG_INFO>(h, FileAttributeTagInfo)?.ReparseTag
@@ -380,8 +398,8 @@ fn stat_handle(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
     Ok(WinStat {
         attributes: bh.dwFileAttributes,
         reparse_tag,
-        size: std.end_of_file as u64,
-        alloc: std.allocation_size as u64,
+        size: std.end_of_file.cast_unsigned(),
+        alloc: std.allocation_size.cast_unsigned(),
         last_write: filetime(bh.ftLastWriteTime),
         volume: bh.dwVolumeSerialNumber,
         file_id,
@@ -392,6 +410,10 @@ fn stat_handle(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
 /// [`stat_handle`] of `path`, opened with attribute access only (no data is read, so the
 /// file's contents are not touched). With `follow`, a symlink or junction at `path` is
 /// followed; without it, the reparse point itself is described.
+///
+/// # Errors
+///
+/// The error of opening `path` or of reading its information.
 pub fn stat_path(path: &Path, follow: bool) -> io::Result<WinStat> {
     let reparse = if follow { 0 } else { FILE_OPEN_REPARSE_POINT };
     let h = nt_open(
@@ -406,6 +428,10 @@ pub fn stat_path(path: &Path, follow: bool) -> io::Result<WinStat> {
 /// Opens the entry at `path` itself (a reparse point is not followed) to delete it through the
 /// handle ([`delete_open`]). Others may go on reading and writing it, but not delete or rename
 /// it while the handle is open, nor rename a directory above it.
+///
+/// # Errors
+///
+/// The error `NtCreateFile` reports (`NotFound`, `PermissionDenied`, a sharing violation).
 pub fn open_for_delete(path: &Path) -> io::Result<OwnedHandle> {
     nt_open_shared(
         None,
@@ -417,6 +443,10 @@ pub fn open_for_delete(path: &Path) -> io::Result<OwnedHandle> {
 }
 
 /// [`stat_path`] of an entry already open.
+///
+/// # Errors
+///
+/// The error of reading its information.
 pub fn stat_open(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
     stat_handle(h)
 }
@@ -424,6 +454,10 @@ pub fn stat_open(h: BorrowedHandle<'_>) -> io::Result<WinStat> {
 /// Deletes the entry open as `h` (from [`open_for_delete`]; a directory must be empty): its name
 /// goes at once where the filesystem has POSIX semantics (NTFS on Windows 10 1809 and later),
 /// otherwise when the handle is closed. A read-only file is deleted too.
+///
+/// # Errors
+///
+/// The error `SetFileInformationByHandle` reports (a directory that is not empty, for one).
 pub fn delete_open(h: BorrowedHandle<'_>) -> io::Result<()> {
     let ex = FILE_DISPOSITION_INFO_EX {
         Flags: FILE_DISPOSITION_FLAG_DELETE
@@ -437,7 +471,7 @@ pub fn delete_open(h: BorrowedHandle<'_>) -> io::Result<()> {
             h.as_raw_handle(),
             FileDispositionInfoEx,
             (&raw const ex).cast(),
-            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+            len_u32(size_of::<FILE_DISPOSITION_INFO_EX>()),
         )
     };
     if ok != 0 {
@@ -461,7 +495,7 @@ pub fn delete_open(h: BorrowedHandle<'_>) -> io::Result<()> {
             h.as_raw_handle(),
             FileDispositionInfo,
             (&raw const plain).cast(),
-            size_of::<FILE_DISPOSITION_INFO>() as u32,
+            len_u32(size_of::<FILE_DISPOSITION_INFO>()),
         )
     };
     if ok == 0 {
@@ -483,6 +517,10 @@ pub struct Volume {
 }
 
 /// [`Volume`] of an open file or directory (`GetVolumeInformationByHandleW`).
+///
+/// # Errors
+///
+/// The error `GetVolumeInformationByHandleW` reports.
 pub fn volume_of(h: BorrowedHandle<'_>) -> io::Result<Volume> {
     let (mut serial, mut flags) = (0u32, 0u32);
     let mut fs_name = [0u16; 32];
@@ -494,11 +532,11 @@ pub fn volume_of(h: BorrowedHandle<'_>) -> io::Result<Volume> {
             h.as_raw_handle(),
             null_mut(),
             0,
-            &mut serial,
+            &raw mut serial,
             null_mut(),
-            &mut flags,
+            &raw mut flags,
             fs_name.as_mut_ptr(),
-            fs_name.len() as u32,
+            len_u32(fs_name.len()),
         )
     };
     if ok == 0 {
@@ -519,7 +557,7 @@ pub fn volume_of(h: BorrowedHandle<'_>) -> io::Result<Volume> {
 }
 
 /// The directory information class an enumeration uses. `FileIdExtdDirectoryInfo` (Windows 8
-/// and later) has the 128-bit file ids ReFS needs; filesystems without it (some network
+/// and later) has the 128-bit file ids `ReFS` needs; filesystems without it (some network
 /// redirectors and third-party drivers) fall back to `FileIdBothDirectoryInfo` (64-bit ids),
 /// then to `FileFullDirectoryInfo` (no ids).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -640,6 +678,12 @@ impl RawEntry<'_> {
     }
 }
 
+/// A buffer length as the `u32` Windows calls take. A longer buffer is passed as its first
+/// `u32::MAX` bytes or units, never more than it holds.
+pub(crate) fn len_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 fn corrupt() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -662,13 +706,18 @@ impl Default for DirReader {
 
 impl DirReader {
     fn bytes(&self) -> &[u8] {
-        // SAFETY: the `u64` slice is valid for reads of `len * 8` bytes for as long as `self`
-        // is borrowed; `u8` has no alignment requirement and every bit pattern is a valid `u8`.
+        // SAFETY: the `u64` slice is non-null and valid for reads of `len * 8` bytes for as long
+        // as `self` is borrowed, and nothing writes it meanwhile (`fill` takes `&mut self`);
+        // `u8` has no alignment requirement and every bit pattern is a valid `u8`.
         unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>(), self.buf.len() * 8) }
     }
 
     /// The next entry of the directory `dir`, `None` at its end. `.` and `..` are left out.
     /// `dir` must be the same open directory on every call.
+    ///
+    /// # Errors
+    ///
+    /// The error `GetFileInformationByHandleEx` reports, or `InvalidData` for a malformed entry.
     pub fn next(&mut self, dir: BorrowedHandle<'_>) -> io::Result<Option<RawEntry<'_>>> {
         loop {
             let Some(off) = self.next else {
@@ -682,10 +731,16 @@ impl DirReader {
             let b = self.bytes();
             let get = |at: usize, n: usize| b.get(off + at..off + at + n).ok_or_else(corrupt);
             let u32_at = |at: usize| -> io::Result<u32> {
-                Ok(u32::from_le_bytes(get(at, 4)?.try_into().expect("4 bytes")))
+                get(at, 4)?
+                    .try_into()
+                    .map(u32::from_le_bytes)
+                    .map_err(|_| corrupt())
             };
             let u64_at = |at: usize| -> io::Result<u64> {
-                Ok(u64::from_le_bytes(get(at, 8)?.try_into().expect("8 bytes")))
+                get(at, 8)?
+                    .try_into()
+                    .map(u64::from_le_bytes)
+                    .map_err(|_| corrupt())
             };
             let next = u32_at(0)? as usize;
             let name_len = u32_at(l.name_len)? as usize;
@@ -695,8 +750,11 @@ impl DirReader {
             }
             let attributes = u32_at(l.attributes)?;
             let file_id = match l.id {
-                (at, 16) => u128::from_le_bytes(get(at, 16)?.try_into().expect("16 bytes")),
-                (at, 8) => u64_at(at)? as u128,
+                (at, 16) => get(at, 16)?
+                    .try_into()
+                    .map(u128::from_le_bytes)
+                    .map_err(|_| corrupt())?,
+                (at, 8) => u128::from(u64_at(at)?),
                 _ => 0,
             };
             let stat = WinStat {
@@ -737,7 +795,7 @@ impl DirReader {
             // A call that succeeds without writing would otherwise leave the previous buffer's
             // first entry in place; an empty name ends the directory instead.
             self.buf[..12].fill(0);
-            let len = (self.buf.len() * 8) as u32;
+            let len = len_u32(self.buf.len() * 8);
             // SAFETY: the buffer is valid for writes of `len` bytes and 8-byte aligned, as the
             // directory information classes require; the call writes at most `len` bytes, and
             // every bit pattern is a valid `u64`.
@@ -768,13 +826,16 @@ impl DirReader {
                     self.done = true;
                     return Ok(());
                 }
-                ERROR_INVALID_PARAMETER
+                code @ (ERROR_INVALID_PARAMETER
                 | ERROR_INVALID_LEVEL
                 | ERROR_NOT_SUPPORTED
-                | ERROR_INVALID_FUNCTION
-                    if !self.started && self.class.fallback().is_some() =>
+                | ERROR_INVALID_FUNCTION)
+                    if !self.started =>
                 {
-                    self.class = self.class.fallback().expect("checked");
+                    let Some(class) = self.class.fallback() else {
+                        return Err(win32_error(code));
+                    };
+                    self.class = class;
                     self.restart = true;
                 }
                 code => return Err(win32_error(code)),
@@ -817,14 +878,19 @@ impl LinkQuery {
     /// Link count and sizes of the file `name` (UTF-16, one component) in `dir`. A reparse
     /// point at `name` is never followed: such files (`reparse`: deduplicated, WOF-compressed)
     /// are opened with `FILE_OPEN_REPARSE_POINT`, as [`stat_path`] does.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` when `name` is not one component, else the error of opening or querying
+    /// the file (`NotFound` when it is gone).
     pub fn query(&self, dir: BorrowedHandle<'_>, name: &[u16], reparse: bool) -> io::Result<Links> {
-        if name.is_empty() || name.contains(&(b'\\' as u16)) || name.contains(&0) {
+        if name.is_empty() || name.contains(&u16::from(b'\\')) || name.contains(&0) {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         if !reparse && self.by_name.load(Ordering::Relaxed) {
             match by_name(dir, name)? {
-                Ok(l) => return Ok(l),
-                Err(()) => self.by_name.store(false, Ordering::Relaxed),
+                Some(l) => return Ok(l),
+                None => self.by_name.store(false, Ordering::Relaxed),
             }
         }
         let h = nt_open(
@@ -840,9 +906,9 @@ impl LinkQuery {
         let st = unsafe {
             NtQueryInformationFile(
                 h.as_raw_handle(),
-                &mut iosb,
+                &raw mut iosb,
                 (&raw mut info).cast::<c_void>(),
-                size_of::<StandardInfo>() as u32,
+                len_u32(size_of::<StandardInfo>()),
                 FileStandardInformation,
             )
         };
@@ -851,14 +917,14 @@ impl LinkQuery {
         }
         Ok(Links {
             nlink: info.number_of_links,
-            size: info.end_of_file as u64,
-            alloc: info.allocation_size as u64,
+            size: info.end_of_file.cast_unsigned(),
+            alloc: info.allocation_size.cast_unsigned(),
         })
     }
 }
 
-/// `NtQueryInformationByName`; `Ok(Err(()))` when the call or class is not supported.
-fn by_name(dir: BorrowedHandle<'_>, name: &[u16]) -> io::Result<Result<Links, ()>> {
+/// `NtQueryInformationByName`; `Ok(None)` when the call or class is not supported.
+fn by_name(dir: BorrowedHandle<'_>, name: &[u16]) -> io::Result<Option<Links>> {
     let us = unicode(name)?;
     let oa = object_attributes(Some(dir), &us, 0);
     let mut iosb = IO_STATUS_BLOCK::default();
@@ -868,24 +934,24 @@ fn by_name(dir: BorrowedHandle<'_>, name: &[u16]) -> io::Result<Result<Links, ()
     // `iosb` is valid for writes.
     let st = unsafe {
         NtQueryInformationByName(
-            &oa,
-            &mut iosb,
+            &raw const oa,
+            &raw mut iosb,
             (&raw mut info).cast::<c_void>(),
-            size_of::<FILE_STAT_INFORMATION>() as u32,
+            len_u32(size_of::<FILE_STAT_INFORMATION>()),
             FileStatInformation,
         )
     };
     match st {
-        s if s >= 0 => Ok(Ok(Links {
+        s if s >= 0 => Ok(Some(Links {
             nlink: info.NumberOfLinks,
-            size: info.EndOfFile as u64,
-            alloc: info.AllocationSize as u64,
+            size: info.EndOfFile.cast_unsigned(),
+            alloc: info.AllocationSize.cast_unsigned(),
         })),
         STATUS_INVALID_INFO_CLASS
         | STATUS_NOT_IMPLEMENTED
         | STATUS_NOT_SUPPORTED
         | STATUS_INVALID_PARAMETER
-        | STATUS_INVALID_DEVICE_REQUEST => Ok(Err(())),
+        | STATUS_INVALID_DEVICE_REQUEST => Ok(None),
         s => Err(nt_error(s)),
     }
 }
@@ -913,9 +979,9 @@ mod tests {
         std::fs::hard_link(root.join("f"), root.join("sub").join("g")).unwrap();
         let dir = open_dir(root, false).unwrap();
         let vol = volume_of(dir.as_handle()).unwrap();
-        let mut r = DirReader::default();
+        let mut reader = DirReader::default();
         let mut names = Vec::new();
-        while let Some(e) = r.next(dir.as_handle()).unwrap() {
+        while let Some(e) = reader.next(dir.as_handle()).unwrap() {
             let name: Vec<u16> = e.name_units().collect();
             names.push((String::from_utf16(&name).unwrap(), e.stat));
         }
@@ -929,10 +995,10 @@ mod tests {
         assert_eq!(fs.alloc, f.alloc);
         assert_eq!(sub.attributes & win_attr::DIRECTORY, win_attr::DIRECTORY);
         if vol.hard_links {
-            let q = LinkQuery::default();
-            let l = q.query(dir.as_handle(), &wide("f"), false).unwrap();
-            assert_eq!((l.nlink, l.size, l.alloc), (2, 5000, fs.alloc));
-            let e = q
+            let query = LinkQuery::default();
+            let links = query.query(dir.as_handle(), &wide("f"), false).unwrap();
+            assert_eq!((links.nlink, links.size, links.alloc), (2, 5000, fs.alloc));
+            let e = query
                 .query(dir.as_handle(), &wide("missing"), false)
                 .unwrap_err();
             assert_eq!(e.kind(), io::ErrorKind::NotFound);

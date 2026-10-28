@@ -6,6 +6,7 @@
 //! RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test --release -p dfdu-scan --test loom
 //! ```
 #![cfg(loom)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -345,7 +346,7 @@ fn check_order(log: &[ScanMsg], unclosed_ok: &[DirId]) -> (Seen, HashSet<DirId>)
                     c.dir
                 );
                 *s.chunks.entry(c.dir).or_default() += 1;
-                for k in 0..c.subdirs.len() as u32 {
+                for k in 0..u32::try_from(c.subdirs.len()).unwrap() {
                     named.insert(DirId(c.first_subdir.0 + k));
                 }
             }
@@ -392,7 +393,7 @@ fn model(name: &str, bound: Option<usize>, f: impl Fn() + Sync + Send + 'static)
     let r = runs.clone();
     b.check(move || {
         r.fetch_add(1, Ordering::Relaxed);
-        f()
+        f();
     });
     eprintln!(
         "{name}: {} executions, preemption bound {:?}, {:.1?}",

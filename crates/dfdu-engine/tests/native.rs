@@ -3,6 +3,7 @@
 //! rescanned afterwards.
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use dfdu_rules::{Env, Source, load_from};
 use dfdu_scan::JobOptions;
 use dfdu_scan::PortableBackend;
 use dfdu_scan::classify::ClassOpts;
+
+mod common;
 
 const RULE: &str = r#"schema_version = 1
 [[rule]]
@@ -36,12 +39,9 @@ name = "also the sibling"
 command = ["rm", "-r", "{name}", "other"]
 "#;
 
-fn wait_for(e: &Engine<PortableBackend>, cond: impl Fn(&Model) -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while !e.read(&cond) {
-        assert!(std::time::Instant::now() < deadline, "timed out");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+/// Waits until `cond` holds of the model, then until the engine is idle.
+fn wait_then_idle(e: &Engine<PortableBackend>, cond: impl Fn(&Model) -> bool) {
+    common::wait_for(e, cond);
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
 }
 
@@ -90,7 +90,7 @@ fn dry_run_then_run() {
         variant: None,
         dry_run: true,
     });
-    wait_for(&e, |m| {
+    wait_then_idle(&e, |m| {
         m.status.native.as_ref().is_some_and(|n| n.done.is_some())
     });
     let n = e.read(|m| m.status.native.clone()).unwrap();
@@ -105,7 +105,7 @@ fn dry_run_then_run() {
         variant: None,
         dry_run: false,
     });
-    wait_for(&e, |m| {
+    wait_then_idle(&e, |m| {
         m.status
             .native
             .as_ref()
@@ -117,7 +117,7 @@ fn dry_run_then_run() {
     assert_eq!(n.cwd.as_deref(), Some(root.as_path()));
     assert!(!root.join("junk").exists() && root.join("other").exists());
     // The rescan of `p` found junk gone.
-    wait_for(&e, |m| {
+    wait_then_idle(&e, |m| {
         let r = m.tree.roots().next().unwrap();
         m.tree.children(r).all(|c| m.tree.name(c) != b"junk")
     });

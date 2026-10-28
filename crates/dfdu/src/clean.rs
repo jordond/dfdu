@@ -14,12 +14,16 @@ use dfdu_engine::{Command, Engine, Mode, Model, WaitIdle};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::Backend;
 use dfdu_tree::{Class, NodeRef};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::report::{self, Filter, Item};
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, json as js, launch, written};
 
 #[derive(Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "command-line flags, each an independent switch"
+)]
 pub struct CleanArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
@@ -211,37 +215,48 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     failed
 }
 
-pub fn run(args: CleanArgs, rules: Arc<RuleSet>) -> ExitCode {
-    let earlier_failed = earlier_sessions(&args);
+pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
+    let earlier_failed = earlier_sessions(args);
     let (engine, _) = match report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)
     {
         Ok(e) => e,
         Err(code) => return code,
     };
-    let now = report::now_secs();
+    let now = dfdu_tree::now_secs();
     let (root, complete, items) = engine.read(|m| {
         let root = m.tree.roots().next().map(|r| m.tree.path_buf(r));
-        let complete = m.tree.roots().next().is_some_and(|r| js::complete(m, r));
-        (root, complete, report::items(m, &rules, &args.filter, now))
+        let complete = m.tree.roots().next().is_some_and(|r| m.complete(r));
+        (root, complete, report::items(m, rules, &args.filter, now))
     });
     let Some(root) = root else {
         return ExitCode::from(1);
     };
     let mut outcomes: Vec<Outcome> = items
         .iter()
-        .map(|it| match skip_reason(&rules, it, &args) {
+        .map(|it| match skip_reason(rules, it, args) {
             Some(r) => Outcome::Skipped(r),
             None => Outcome::Planned,
         })
         .collect();
     if args.yes {
-        execute(&engine, &rules, &items, &mut outcomes, args.mode.mode());
+        execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
     let code = engine.read(|m| {
         let r = if args.format == report::ReportFormat::Json {
-            print_json(m, &rules, &root, &args, &items, &outcomes, complete, now)
+            print_json(
+                m,
+                rules,
+                args,
+                &Results {
+                    root: &root,
+                    items: &items,
+                    outcomes: &outcomes,
+                    complete,
+                    now,
+                },
+            )
         } else {
-            print_table(&rules, &args, &items, &outcomes)
+            print_table(rules, args, &items, &outcomes)
         };
         if let Err(code) = written(r) {
             return code;
@@ -374,8 +389,8 @@ fn print_table(
         let why = o.reason().map(|r| format!("  ({r})")).unwrap_or_default();
         let how = match rules.rule(it.class.rule).native.as_ref() {
             Some(n) if rules.rule(it.class.rule).action == Action::Native => {
-                let argv = dfdu_engine::native_argv(&n.command, &it.path);
-                format!("  `{}`", dfdu_engine::shown_argv(&argv))
+                let command = dfdu_engine::native_argv(&n.command, &it.path);
+                format!("  `{}`", dfdu_engine::shown_argv(&command))
             }
             _ => String::new(),
         };
@@ -383,7 +398,7 @@ fn print_table(
             w,
             "{:<14} {:>10}  {}{how}{why}",
             what,
-            dfdu_tui::human(it.disk),
+            dfdu_engine::human(it.disk),
             it.path.display()
         )?;
     }
@@ -395,23 +410,14 @@ fn print_table(
             .fold((0usize, 0u64), |(n, b), (it, _)| (n + 1, b + it.disk))
     };
     writeln!(w)?;
-    if !args.yes {
-        let (n, b) = sum(&|o| *o == Outcome::Planned);
-        writeln!(
-            w,
-            "dry run: {n} item{} ({}) would be {}; nothing was changed (--yes does it)",
-            if n == 1 { "" } else { "s" },
-            dfdu_tui::human(b),
-            verb(args.mode)
-        )?;
-    } else {
+    if args.yes {
         let (n, b) = sum(&|o| *o == Outcome::Deleted);
         let (f, _) = sum(&|o| matches!(o, Outcome::Failed(_)));
         writeln!(
             w,
             "{n} item{} ({}) {}{}",
             if n == 1 { "" } else { "s" },
-            dfdu_tui::human(b),
+            dfdu_engine::human(b),
             verb(args.mode),
             if f > 0 {
                 format!(", {f} failed")
@@ -419,25 +425,37 @@ fn print_table(
                 String::new()
             }
         )?;
+    } else {
+        let (n, b) = sum(&|o| *o == Outcome::Planned);
+        writeln!(
+            w,
+            "dry run: {n} item{} ({}) would be {}; nothing was changed (--yes does it)",
+            if n == 1 { "" } else { "s" },
+            dfdu_engine::human(b),
+            verb(args.mode)
+        )?;
     }
     w.flush()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn print_json(
-    m: &Model,
-    rules: &RuleSet,
-    root: &std::path::Path,
-    args: &CleanArgs,
-    items: &[Item],
-    outcomes: &[Outcome],
+/// What `run` scanned and did, for its output.
+struct Results<'a> {
+    root: &'a std::path::Path,
+    items: &'a [Item],
+    outcomes: &'a [Outcome],
     complete: bool,
     now: i64,
-) -> std::io::Result<()> {
-    let mut doc = Map::new();
-    doc.insert("schema_version".into(), js::SCHEMA_VERSION.into());
-    doc.insert("tool".into(), js::tool());
-    js::put_path(&mut doc, "root", root);
+}
+
+fn print_json(m: &Model, rules: &RuleSet, args: &CleanArgs, r: &Results) -> std::io::Result<()> {
+    let &Results {
+        root,
+        items,
+        outcomes,
+        complete,
+        now,
+    } = r;
+    let mut doc = js::document(root);
     doc.insert("generated_at".into(), now.into());
     doc.insert("complete".into(), complete.into());
     doc.insert("dry_run".into(), (!args.yes).into());
@@ -477,7 +495,5 @@ fn print_json(
             "failed": count("failed"),
         }),
     );
-    let mut w = std::io::stdout().lock();
-    serde_json::to_writer_pretty(&mut w, &Value::Object(doc))?;
-    std::io::Write::write_all(&mut w, b"\n")
+    js::print(doc)
 }

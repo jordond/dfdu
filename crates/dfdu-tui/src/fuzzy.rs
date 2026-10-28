@@ -5,6 +5,12 @@
 use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
+/// Character position `i` of a text as matches count them. Texts are names and labels, far
+/// shorter than `u32::MAX` characters.
+pub fn char_pos(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(u32::MAX)
+}
+
 /// A query with the matcher and buffer it reuses between calls, so matching a million names
 /// allocates nothing per name.
 #[derive(Clone, Debug, Default)]
@@ -90,12 +96,11 @@ impl Fuzzy {
         let haystack = utf32(text, &mut self.chars);
         let mut total = 0;
         for atom in &self.atoms {
-            match atom.indices(haystack, &mut self.matcher, out) {
-                Some(s) => total += u32::from(s),
-                None => {
-                    out.clear();
-                    return None;
-                }
+            if let Some(s) = atom.indices(haystack, &mut self.matcher, out) {
+                total += u32::from(s);
+            } else {
+                out.clear();
+                return None;
             }
         }
         out.sort_unstable();
@@ -158,7 +163,7 @@ mod tests {
         assert!(f.indices("éaéb", &mut out).is_some());
         assert_eq!(out, [1, 3]);
         assert!(f.indices("xyz", &mut out).is_none());
-        assert!(out.is_empty());
+        assert_eq!(out, [] as [u32; 0]);
     }
 
     #[test]
@@ -219,7 +224,7 @@ mod tests {
             assert_eq!(f.score(""), Some(0));
             let mut out = Vec::new();
             assert_eq!(f.indices("x", &mut out), Some(0));
-            assert!(out.is_empty());
+            assert_eq!(out, [] as [u32; 0]);
         }
         assert!(!Fuzzy::new("a").is_empty());
     }

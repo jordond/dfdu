@@ -32,7 +32,22 @@ pub struct Plan {
     pub dirs: Vec<Dir>,
 }
 
+/// Most entries a plan holds. Directory numbers and entry numbers within a directory are `u32`,
+/// and a plan has at most one directory per entry plus the root, so all of them fit.
+const MAX_ENTRIES: u64 = (1 << 32) - 2;
+
+/// A directory or entry number of a plan as the `u32` plans store.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "plans hold at most MAX_ENTRIES entries, so their numbers fit in u32"
+)]
+pub fn index(n: usize) -> u32 {
+    n as u32
+}
+
 impl Plan {
+    #[must_use]
     pub fn generate(entries: u64, seed: u64, wide: u64) -> Plan {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut dirs = vec![Dir {
@@ -43,7 +58,7 @@ impl Plan {
         let mut depth = vec![0u32];
         // (dir, file) of every data file so far, for hard links.
         let mut data: Vec<(u32, u32)> = vec![];
-        let mut left = entries;
+        let mut left = entries.min(MAX_ENTRIES);
         if wide > 0 && left > 0 {
             left -= 1;
             dirs.push(Dir {
@@ -53,27 +68,24 @@ impl Plan {
             });
             depth.push(1);
             let n = wide.min(left);
-            for i in 0..n {
+            for _ in 0..n {
+                data.push((1, index(dirs[1].entries.len())));
                 dirs[1].entries.push(Entry::Data(file_size(&mut rng)));
-                data.push((1, i as u32));
             }
             left -= n;
         }
         let mut queue = std::collections::VecDeque::from([0u32]);
         while left > 0 {
-            let d = match queue.pop_front() {
-                Some(d) => d,
+            let Some(d) = queue.pop_front() else {
                 // The tree ran out of open directories: grow one below a random existing one.
-                None => {
-                    let p = rng.random_range(0..dirs.len() as u32);
-                    let p = if dirs.len() > 1 && p == 1 && wide > 0 {
-                        0
-                    } else {
-                        p
-                    };
-                    queue.push_back(p);
-                    continue;
-                }
+                let p = rng.random_range(0..index(dirs.len()));
+                let p = if dirs.len() > 1 && p == 1 && wide > 0 {
+                    0
+                } else {
+                    p
+                };
+                queue.push_back(p);
+                continue;
             };
             let nsub = if depth[d as usize] >= 14 {
                 0
@@ -97,7 +109,7 @@ impl Plan {
                 }
                 left -= 1;
                 let i = dirs[d as usize].entries.len() + dirs.len();
-                let id = dirs.len() as u32;
+                let id = index(dirs.len());
                 dirs.push(Dir {
                     parent: d,
                     name: format!("d{i:x}{}", suffix(&mut rng)),
@@ -111,7 +123,7 @@ impl Plan {
                     break;
                 }
                 left -= 1;
-                let k = dirs[d as usize].entries.len() as u32;
+                let k = index(dirs[d as usize].entries.len());
                 let e = match rng.random_range(0..1000) {
                     0..10 if !data.is_empty() => {
                         let (ld, lf) = data[rng.random_range(0..data.len())];
@@ -133,6 +145,7 @@ impl Plan {
         Plan { dirs }
     }
 
+    #[must_use]
     pub fn path(&self, root: &Path, d: u32) -> PathBuf {
         let mut parts = vec![];
         let mut cur = d;
@@ -148,6 +161,7 @@ impl Plan {
     }
 
     /// Hard links and data files share a name scheme, so a link's target path is known.
+    #[must_use]
     pub fn file_name(&self, d: u32, k: u32) -> String {
         match self.dirs[d as usize].entries[k as usize] {
             Entry::Data(_) => format!("f{k:x}.dat"),
@@ -163,7 +177,13 @@ fn file_size(rng: &mut ChaCha8Rng) -> u64 {
         return 0;
     }
     let x: f64 = rng.random_range(0.0..(4.0 * 1024.0 * 1024.0f64).ln());
-    x.exp() as u64
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "x.exp() is in [1, 4 MiB), positive and well inside u64"
+    )]
+    let size = x.exp() as u64;
+    size
 }
 
 /// Names of different lengths, as real trees have.

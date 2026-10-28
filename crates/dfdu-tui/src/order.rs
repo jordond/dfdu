@@ -45,6 +45,11 @@ impl SortSpec {
 
 /// Sizes within about 2% of each other get the same bucket, so automatic re-sorts do not swap
 /// two nearly equal siblings back and forth.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "buckets are 2% wide, far coarser than f64 precision; ln(u64::MAX) / ln(1.02) is about 2240"
+)]
 pub fn bucket(v: u64) -> i64 {
     if v == 0 {
         -1
@@ -54,8 +59,8 @@ pub fn bucket(v: u64) -> i64 {
 }
 
 fn name_cmp(a: &[u8], b: &[u8]) -> Ordering {
-    let la = a.iter().map(|c| c.to_ascii_lowercase());
-    let lb = b.iter().map(|c| c.to_ascii_lowercase());
+    let la = a.iter().map(u8::to_ascii_lowercase);
+    let lb = b.iter().map(u8::to_ascii_lowercase);
     la.cmp(lb).then_with(|| a.cmp(b))
 }
 
@@ -193,6 +198,10 @@ impl Order {
         true
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "positions are rows of one directory, fewer than 2^32"
+    )]
     fn sort(
         &mut self,
         entries: &[EntryData],
@@ -249,6 +258,10 @@ impl Order {
 
 /// The entries `visible` passes, sorted by `spec`. `prev[i]`: the position of entry `i` before
 /// an automatic sort, used as a tie-break (missing: after all others); empty for an exact sort.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "keys hold entry indices in u32 to stay small; a directory has fewer than 2^32 entries"
+)]
 fn sorted(
     entries: &[EntryData],
     visible: impl Fn(usize, &EntryData) -> bool,
@@ -266,7 +279,7 @@ fn sorted(
         if quantise {
             bucket(v)
         } else {
-            v.min(i64::MAX as u64) as i64
+            i64::try_from(v).unwrap_or(i64::MAX)
         }
     };
     // A directory can have a million entries: the order is computed on one integer key per
@@ -275,7 +288,7 @@ fn sorted(
     let first = |e: &EntryData| -> u64 {
         let k = match spec.key {
             SortKey::Name => name_prefix(&e.name),
-            _ => value(e) as u64 ^ 1 << 63,
+            _ => value(e).cast_unsigned() ^ 1 << 63,
         };
         if spec.desc { !k } else { k }
     };
@@ -374,7 +387,7 @@ mod tests {
         assert_eq!(o.new_entries().len(), 1);
         o.sort_auto(&es, all, SortSpec::default());
         assert_eq!(names(&o, &es), ["c", "b", "a"]);
-        assert!(o.new_entries().is_empty());
+        assert_eq!(o.new_entries(), [] as [usize; 0]);
     }
 
     #[test]
@@ -527,16 +540,24 @@ mod tests {
         let mut seed = 7u64;
         let mut next = |n: u64| {
             seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             (seed >> 33) % n
         };
         let mut es = Vec::new();
         for i in 0..300u32 {
-            let name = format!("{}{}", names[next(names.len() as u64) as usize], next(3));
-            let mut e = test_entry(i, &name, [0, 10, 1000, 1001, 5000][next(5) as usize]);
+            let name = format!(
+                "{}{}",
+                names[usize::try_from(next(names.len() as u64)).unwrap()],
+                next(3)
+            );
+            let mut e = test_entry(
+                i,
+                &name,
+                [0, 10, 1000, 1001, 5000][usize::try_from(next(5)).unwrap()],
+            );
             e.items = next(4);
-            e.mtime = next(3) as i64 - 1;
+            e.mtime = i64::try_from(next(3)).unwrap() - 1;
             es.push(e);
         }
         for key in [SortKey::Size, SortKey::Name, SortKey::Items, SortKey::Mtime] {
@@ -559,7 +580,11 @@ mod tests {
                             SortKey::Mtime => return e.mtime,
                             SortKey::Name => return 0,
                         };
-                        if quantise { bucket(v) } else { v as i64 }
+                        if quantise {
+                            bucket(v)
+                        } else {
+                            i64::try_from(v).unwrap()
+                        }
                     };
                     let mut want: Vec<usize> = (0..es.len()).collect();
                     want.sort_by(|&a, &b| {

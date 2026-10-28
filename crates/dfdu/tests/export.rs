@@ -1,27 +1,15 @@
 //! `dfdu export` and `dfdu import`: an export read back gives the scan's total, plain,
 //! compressed, as a snapshot and through stdout and stdin; a broken file is an error.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-fn dfdu(args: &[&std::ffi::OsStr]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_dfdu"))
-        .args(args)
-        // Scans are recorded in the history: not in the user's.
-        .env(
-            "DFDU_STATE_DIR",
-            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("state"),
-        )
-        .stdin(Stdio::null())
-        .output()
-        .unwrap()
-}
-
-fn stdout(o: &std::process::Output) -> String {
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8(o.stdout.clone()).unwrap()
-}
+use common::{dfdu, ok};
 
 #[test]
 fn export_then_import() {
@@ -30,7 +18,7 @@ fn export_then_import() {
     fs::create_dir_all(tree.join("a/b")).unwrap();
     fs::write(tree.join("a/one"), vec![1u8; 20_000]).unwrap();
     fs::write(tree.join("a/b/two"), vec![1u8; 5_000]).unwrap();
-    let total = stdout(&dfdu(&[
+    let total = ok(dfdu(&[
         "scan".as_ref(),
         tree.as_os_str(),
         "--bytes".as_ref(),
@@ -47,27 +35,27 @@ fn export_then_import() {
         if !flag.is_empty() {
             args.push(flag.as_ref());
         }
-        stdout(&dfdu(&args));
+        ok(dfdu(&args));
         let bytes = fs::read(&file).unwrap();
         assert_eq!(
             bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]),
             flag == "--compress"
         );
         assert_eq!(bytes.starts_with(b"DFDUSNAP"), flag == "--snapshot");
-        let back = stdout(&dfdu(&[
+        let back = ok(dfdu(&[
             "import".as_ref(),
             file.as_os_str(),
             "--bytes".as_ref(),
         ]));
         assert_eq!(back, total);
-        let summary = stdout(&dfdu(&["import".as_ref(), file.as_os_str()]));
+        let summary = ok(dfdu(&["import".as_ref(), file.as_os_str()]));
         assert!(summary.contains("entries, written by dfdu"), "{summary}");
     }
 
     // Through a pipe.
-    let out = stdout(&dfdu(&["export".as_ref(), tree.as_os_str()]));
+    let out = ok(dfdu(&["export".as_ref(), tree.as_os_str()]));
     assert!(out.starts_with("[1,2,{\"progname\":\"dfdu\""), "{out}");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_dfdu"))
+    let mut child = common::bin()
         .args(["import", "-", "--bytes"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -80,7 +68,7 @@ fn export_then_import() {
         .write_all(out.as_bytes())
         .unwrap();
     let o = child.wait_with_output().unwrap();
-    assert_eq!(stdout(&o), total);
+    assert_eq!(ok(o), total);
 
     let bad = tmp.path().join("bad.json");
     fs::write(&bad, &out[..out.len() / 2]).unwrap();
@@ -104,7 +92,7 @@ fn resumed_export_matches_a_new_scan() {
         let mut args = vec!["export".as_ref(), tree.as_os_str(), "--snapshot".as_ref()];
         args.extend(["-o".as_ref(), out.as_os_str()]);
         args.extend(extra);
-        stdout(&dfdu(&args));
+        ok(dfdu(&args));
     };
     export(&[], &old);
 
@@ -113,7 +101,7 @@ fn resumed_export_matches_a_new_scan() {
     fs::write(tree.join("a/b/c/new"), vec![1u8; 50_000]).unwrap();
     export(&["--resume-from".as_ref(), old.as_os_str()], &new);
     let total = |f: &std::path::Path| {
-        stdout(&dfdu(&[
+        ok(dfdu(&[
             "import".as_ref(),
             f.as_os_str(),
             "--bytes".as_ref(),

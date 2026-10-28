@@ -33,9 +33,10 @@ impl<B: Backend> Forward for PanicOnSecondOpen<B> {
         &self.inner
     }
     fn open(&self, loc: &B::Loc, storage: dfdu_sys::Storage) -> io::Result<B::Stream> {
-        if self.opens.fetch_add(1, SeqCst) == 1 {
-            panic!("injected worker panic");
-        }
+        assert!(
+            self.opens.fetch_add(1, SeqCst) != 1,
+            "injected worker panic"
+        );
         self.inner.open(loc, storage)
     }
 }

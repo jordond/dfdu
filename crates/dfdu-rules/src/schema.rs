@@ -1,6 +1,7 @@
 //! The rule file format as written (`docs/rules.md`). Unknown fields are
-//! errors, so a misspelt key is reported instead of silently ignored. [`crate::load`] checks
-//! the values and compiles a file into [`crate::Rule`]s.
+//! errors, so a misspelt key is reported instead of silently ignored.
+//! [`crate::load`](mod@crate::load) checks the values and compiles a file into
+//! [`crate::Rule`]s.
 
 use serde::Deserialize;
 
@@ -99,6 +100,10 @@ pub struct RuleDef {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "mirrors the independent flags of a rule file's `[rule.match]` table"
+)]
 pub struct MatchDef {
     #[serde(default)]
     pub kind: Option<String>,

@@ -13,6 +13,11 @@ use std::path::Path;
 use dfdu_tree::Kind;
 
 /// Deletes `path` (a directory and everything in it, or a single entry).
+///
+/// # Errors
+///
+/// Something could not be deleted, or a directory below `path` is on another mount (nothing
+/// below it is deleted then).
 pub fn remove(path: &Path, kind: Kind) -> io::Result<()> {
     imp::remove(path, kind, None)
 }
@@ -20,6 +25,10 @@ pub fn remove(path: &Path, kind: Kind) -> io::Result<()> {
 /// Deletes `path` only if what it names is still the device and inode `(dev, ino)`, checked
 /// on the item as opened for the delete, so a path that was swapped since it was verified (a
 /// directory above it replaced by a symlink or junction) deletes nothing.
+///
+/// # Errors
+///
+/// As [`remove`], and when `path` is no longer `(dev, ino)`.
 pub fn remove_verified(path: &Path, kind: Kind, dev: u64, ino: u64) -> io::Result<()> {
     imp::remove(path, kind, Some((dev, ino)))
 }
@@ -76,10 +85,22 @@ mod imp {
         Ok((
             Fs {
                 mount,
-                dev: st.st_dev as u64,
+                dev: dev_of(&st),
             },
             st.st_ino as u64,
         ))
+    }
+
+    /// The device in `st`, widened as std's `MetadataExt::dev` widens it: `dev_t` is signed on
+    /// macOS, and sign-extended.
+    #[cfg(target_os = "macos")]
+    fn dev_of(st: &rustix::fs::Stat) -> u64 {
+        i64::from(st.st_dev).cast_unsigned()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn dev_of(st: &rustix::fs::Stat) -> u64 {
+        st.st_dev
     }
 
     fn changed(path: &Path) -> io::Error {
@@ -99,7 +120,7 @@ mod imp {
             if let Some((dev, ino)) = expect {
                 let st =
                     rustix::fs::statat(&pfd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(errno)?;
-                if (st.st_dev as u64, st.st_ino as u64) != (dev, ino) {
+                if (dev_of(&st), st.st_ino as u64) != (dev, ino) {
                     return Err(changed(path));
                 }
             }
@@ -108,7 +129,7 @@ mod imp {
         let dfd = open_dir(&pfd, name)?;
         if let Some((dev, ino)) = expect {
             let st = rustix::fs::fstat(&dfd).map_err(errno)?;
-            if (st.st_dev as u64, st.st_ino as u64) != (dev, ino) {
+            if (dev_of(&st), st.st_ino as u64) != (dev, ino) {
                 return Err(changed(path));
             }
         }
@@ -226,7 +247,8 @@ mod imp {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
@@ -317,7 +339,8 @@ mod tests {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
+#[cfg(windows)]
 mod windows_tests {
     use super::*;
 

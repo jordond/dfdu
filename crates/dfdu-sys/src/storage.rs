@@ -3,7 +3,7 @@
 //!
 //! On Linux the answer comes from sysfs: the `queue/rotational` flag of the disk under the
 //! mount's block device, following partitions to their disk and device-mapper and md devices
-//! to their members. Virtual disks often claim to rotate (virtio, VMware and Hyper-V disks set
+//! to their members. Virtual disks often claim to rotate (virtio, `VMware` and Hyper-V disks set
 //! the flag by default, whatever backs them), so a rotating flag on a virtual disk counts as
 //! unknown: reading such a disk with few threads would make the common cloud case several
 //! times slower, and getting a real spinning disk wrong costs less.
@@ -24,6 +24,7 @@ pub enum Storage {
 
 /// The storage behind `path`'s filesystem.
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn storage(path: &Path) -> Storage {
     let Ok(Some(mount)) = crate::mount_id(path) else {
         return Storage::Unknown;
@@ -40,6 +41,7 @@ pub fn storage(path: &Path) -> Storage {
 /// The storage behind mount `e`, from the mount table entry and sysfs, without touching the
 /// mount itself (a network mount may not answer).
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
     use rustix::fs::FileType;
 
@@ -57,12 +59,14 @@ pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[must_use]
 pub fn storage(_path: &Path) -> Storage {
     Storage::Unknown
 }
 
 /// Network filesystems are known from the mount table; nothing else is on these systems.
 #[cfg(not(target_os = "linux"))]
+#[must_use]
 pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
     if crate::classify_fs(&e.fstype) == crate::FsClass::Network {
         Storage::Network
@@ -72,6 +76,7 @@ pub fn storage_of_mount(e: &crate::MountEntry) -> Storage {
 }
 
 /// The storage of block device `major:minor`, from the sysfs tree at `sys`.
+#[must_use]
 pub fn storage_in(sys: &Path, (major, minor): (u32, u32)) -> Storage {
     match std::fs::canonicalize(sys.join(format!("dev/block/{major}:{minor}"))) {
         Ok(dir) => device(&dir, 0),
@@ -135,7 +140,8 @@ fn is_virtual(disk: &Path) -> bool {
     .any(|s| id.contains(s))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
     use std::fs;

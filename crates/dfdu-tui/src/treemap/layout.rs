@@ -22,15 +22,20 @@ pub struct Area {
 impl Area {
     pub fn of(r: Rect) -> Self {
         Area {
-            x: r.x as f64,
-            y: r.y as f64 * CELL_ASPECT,
-            w: r.width as f64,
-            h: r.height as f64 * CELL_ASPECT,
+            x: f64::from(r.x),
+            y: f64::from(r.y) * CELL_ASPECT,
+            w: f64::from(r.width),
+            h: f64::from(r.height) * CELL_ASPECT,
         }
     }
 }
 
 /// The cells `a` covers: each edge rounded to the nearest grid line.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the edges lie within the u16 Rect that was laid out, and `as` saturates past it"
+)]
 pub fn cells(a: Area) -> Rect {
     let x0 = a.x.round();
     let x1 = (a.x + a.w).round();
@@ -42,6 +47,15 @@ pub fn cells(a: Area) -> Rect {
         (x1 - x0).max(0.0) as u16,
         (y1 - y0).max(0.0) as u16,
     )
+}
+
+/// `size` as a layout weight.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a tile's share of the screen needs far fewer than the 52 bits f64 keeps"
+)]
+fn weight(size: u64) -> f64 {
+    size as f64
 }
 
 /// The worst aspect ratio of a row of tiles with total weight `sum`, largest `max` and smallest
@@ -64,7 +78,7 @@ pub fn squarify(sizes: &[u64], area: Area) -> Vec<Area> {
         };
         sizes.len()
     ];
-    let total: f64 = sizes.iter().map(|&s| s as f64).sum();
+    let total: f64 = sizes.iter().map(|&s| weight(s)).sum();
     let n = sizes.iter().rposition(|&s| s > 0).map_or(0, |i| i + 1);
     if n == 0 || area.w <= 0.0 || area.h <= 0.0 {
         return out;
@@ -75,11 +89,11 @@ pub fn squarify(sizes: &[u64], area: Area) -> Vec<Area> {
     while start < n {
         let side = free.w.min(free.h);
         // Grow the row while that does not make its worst ratio worse.
-        let first = sizes[start] as f64 * scale;
+        let first = weight(sizes[start]) * scale;
         let (mut end, mut sum) = (start + 1, first);
         let mut ratio = worst(sum, first, first, side);
         while end < n {
-            let a = sizes[end] as f64 * scale;
+            let a = weight(sizes[end]) * scale;
             // Sizes are sorted, so the new one is the row's smallest and the first its largest.
             let next = worst(sum + a, first, a, side);
             if next > ratio {
@@ -90,7 +104,7 @@ pub fn squarify(sizes: &[u64], area: Area) -> Vec<Area> {
             end += 1;
         }
         // The last row takes what is left, so floating-point error never leaves a sliver.
-        let row_total: f64 = sizes[start..end].iter().map(|&s| s as f64).sum();
+        let row_total: f64 = sizes[start..end].iter().map(|&s| weight(s)).sum();
         if free.w >= free.h {
             // A column along the left side.
             let w = if end == n { free.w } else { sum / free.h };
@@ -99,7 +113,7 @@ pub fn squarify(sizes: &[u64], area: Area) -> Vec<Area> {
                 let h = if start + i + 1 == end {
                     free.y + free.h - y
                 } else {
-                    free.h * s as f64 / row_total
+                    free.h * weight(s) / row_total
                 };
                 out[start + i] = Area { x: free.x, y, w, h };
                 y += h;
@@ -114,7 +128,7 @@ pub fn squarify(sizes: &[u64], area: Area) -> Vec<Area> {
                 let w = if start + i + 1 == end {
                     free.x + free.w - x
                 } else {
-                    free.w * s as f64 / row_total
+                    free.w * weight(s) / row_total
                 };
                 out[start + i] = Area { x, y: free.y, w, h };
                 x += w;
@@ -168,7 +182,7 @@ mod tests {
         let out = squarify(&sizes, area);
         let total = area.w * area.h;
         for (a, &s) in out.iter().zip(&sizes) {
-            let want = total * s as f64 / 1000.0;
+            let want = total * weight(s) / 1000.0;
             assert!((a.w * a.h - want).abs() < 1e-6 * total, "{a:?} for {s}");
         }
     }

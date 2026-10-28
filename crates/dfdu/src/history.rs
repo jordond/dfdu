@@ -7,11 +7,11 @@ use std::process::ExitCode;
 use clap::Args;
 use dfdu_engine::{EngineOptions, Model};
 use dfdu_scan::JobOptions;
-use dfdu_store::history::{self, Change, History, Record, SizeMap, Sizes};
-use dfdu_tree::Ix;
+use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
+use dfdu_tree::{Ix, now_secs};
 use serde_json::{Map, Value, json};
 
-use crate::report::{ReportFormat, age_arg, now_secs, size_arg};
+use crate::report::{ReportFormat, age_arg, size_arg};
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
 
 /// The key under which scans are compared ([`history::options_key`]).
@@ -24,24 +24,9 @@ pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
     let Some(path) = history::default_path() else {
         return;
     };
-    let t = m.tree.total(root);
-    let rows = history::rows(&m.tree, root);
-    let r = History::open(&path).and_then(|mut h| {
-        h.record(&Record {
-            root: &m.tree.path_buf(root),
-            options,
-            started_at,
-            finished_at: now_secs(),
-            complete: js::complete(m, root),
-            total: Sizes {
-                disk: t.alloc,
-                apparent: t.apparent,
-                entries: t.items,
-            },
-            errors: t.errors,
-            rows: &rows,
-        })
-    });
+    let scan = Scanned::read(&m.tree, root, m.complete(root));
+    let r = History::open(&path)
+        .and_then(|mut h| h.record(&scan.record(options, started_at, now_secs())));
     if let Err(e) = r {
         eprintln!("dfdu: history {}: {e}", path.display());
     }
@@ -60,23 +45,7 @@ fn open() -> Result<History, ExitCode> {
 
 /// `YYYY-MM-DD HH:MM UTC`.
 pub fn date(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + (m <= 2) as i64;
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02} UTC",
-        rem / 3_600,
-        rem % 3_600 / 60
-    )
+    dfdu_store::history::date_time(secs)
 }
 
 #[derive(Args)]
@@ -87,6 +56,7 @@ pub struct HistoryArgs {
 
 /// `dfdu history`: the recorded scans, newest first.
 pub fn list(args: HistoryArgs) -> ExitCode {
+    use std::io::Write;
     let h = match open() {
         Ok(h) => h,
         Err(c) => return c,
@@ -105,7 +75,6 @@ pub fn list(args: HistoryArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    use std::io::Write;
     let mut w = std::io::BufWriter::new(std::io::stdout().lock());
     let r = (|| {
         if scans.is_empty() {
@@ -116,7 +85,7 @@ pub fn list(args: HistoryArgs) -> ExitCode {
                 w,
                 "{}  {:>10}  {:>9} entries{}  {}",
                 date(s.finished_at),
-                dfdu_tui::human(s.total.disk),
+                dfdu_engine::human(s.total.disk),
                 s.total.entries,
                 if s.complete { "" } else { " (partial)" },
                 s.root.display()
@@ -190,7 +159,7 @@ fn file_side(path: &Path, depth: usize) -> Result<(Side, PathBuf), ExitCode> {
     ))
 }
 
-pub fn diff(args: DiffArgs) -> ExitCode {
+pub fn diff(args: &DiffArgs) -> ExitCode {
     let (old, new, root, complete, partial) = if args.paths.len() == 2 {
         let (old, root) = match file_side(&args.paths[0], args.depth) {
             Ok(s) => s,
@@ -202,7 +171,7 @@ pub fn diff(args: DiffArgs) -> ExitCode {
         };
         (old, new, root, usize::MAX, false)
     } else {
-        match scan_and_base(&args) {
+        match scan_and_base(args) {
             Ok(v) => v,
             Err(c) => return c,
         }
@@ -214,7 +183,7 @@ pub fn diff(args: DiffArgs) -> ExitCode {
     let total = changes.iter().find(|c| c.path.is_empty()).cloned();
     let shown: Vec<&Change> = changes
         .iter()
-        .filter(|c| !c.path.is_empty() && c.delta().unsigned_abs() >= args.min_change as u128)
+        .filter(|c| !c.path.is_empty() && c.delta().unsigned_abs() >= u128::from(args.min_change))
         .take(args.top)
         .collect();
     let r = if args.format == ReportFormat::Json {
@@ -254,10 +223,14 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
         let root_ix = m.tree.roots().next()?;
         let root = m.tree.path_buf(root_ix);
         let base = match args.since {
-            Some(age) => h.nearest(&root, &key, started - age as i64),
+            Some(age) => h.nearest(
+                &root,
+                &key,
+                started.saturating_sub(i64::try_from(age).unwrap_or(i64::MAX)),
+            ),
             None => h.latest(&root, &key, None),
         };
-        let partial = !js::complete(m, root_ix);
+        let partial = !m.complete(root_ix);
         let new = Side {
             source: "scan".into(),
             at: Some(now_secs()),
@@ -297,7 +270,7 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
 }
 
 fn signed(d: i128) -> String {
-    let h = dfdu_tui::human(d.unsigned_abs().min(u64::MAX as u128) as u64);
+    let h = dfdu_engine::human(u64::try_from(d.unsigned_abs()).unwrap_or(u64::MAX));
     match d.signum() {
         1 => format!("+{h}"),
         -1 => format!("-{h}"),
@@ -336,11 +309,11 @@ fn print_table(
         w,
         "{}: {} ({}) to {} ({}), {}",
         root.display(),
-        dfdu_tui::human(size(old)),
+        dfdu_engine::human(size(old)),
         label(old),
-        dfdu_tui::human(size(new)),
+        dfdu_engine::human(size(new)),
         label(new),
-        signed(total.map_or(0, |c| c.delta()))
+        signed(total.map_or(0, dfdu_store::history::Change::delta))
     )?;
     if shown.is_empty() {
         writeln!(w, "no other changes")?;
@@ -368,6 +341,11 @@ fn sizes_json(s: Option<Sizes>) -> Value {
     }
 }
 
+/// `d` as an `i64`, clamped to its range.
+fn saturated(d: i128) -> i64 {
+    i64::try_from(d).unwrap_or(if d < 0 { i64::MIN } else { i64::MAX })
+}
+
 fn change_json(root: &Path, c: &Change) -> Value {
     let mut o = Map::new();
     js::put_path(&mut o, "path", Path::new(&shown_path(root, &c.path)));
@@ -384,8 +362,11 @@ fn change_json(root: &Path, c: &Change) -> Value {
     );
     o.insert("old".into(), sizes_json(c.old));
     o.insert("new".into(), sizes_json(c.new));
-    o.insert("delta_disk".into(), (c.delta() as i64).into());
-    o.insert("delta_apparent".into(), (c.apparent_delta() as i64).into());
+    o.insert("delta_disk".into(), saturated(c.delta()).into());
+    o.insert(
+        "delta_apparent".into(),
+        saturated(c.apparent_delta()).into(),
+    );
     Value::Object(o)
 }
 
@@ -396,10 +377,7 @@ fn print_json(
     total: Option<&Change>,
     shown: &[&Change],
 ) -> std::io::Result<()> {
-    let mut doc = Map::new();
-    doc.insert("schema_version".into(), js::SCHEMA_VERSION.into());
-    doc.insert("tool".into(), js::tool());
-    js::put_path(&mut doc, "root", root);
+    let mut doc = js::document(root);
     doc.insert("old".into(), side_json(old));
     doc.insert("new".into(), side_json(new));
     let get = |s: &Side| s.sizes.get(&b""[..]).copied();
@@ -417,9 +395,7 @@ fn print_json(
             .collect::<Vec<_>>()
             .into(),
     );
-    let mut w = std::io::stdout().lock();
-    serde_json::to_writer_pretty(&mut w, &Value::Object(doc))?;
-    std::io::Write::write_all(&mut w, b"\n")
+    js::print(doc)
 }
 
 #[cfg(test)]

@@ -15,9 +15,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::Sender;
 use dfdu_tree::{NodeRef, RuleIx};
 use parking_lot::Mutex;
+
+use crate::threads::spawn_pool;
 
 /// How long one external command may take.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
@@ -58,20 +60,19 @@ pub enum CheckMsg {
 
 /// Starts `n` classifier threads; answers go to `out`, one batch per request batch. They exit
 /// when the returned sender is dropped.
-pub fn spawn_classifiers(n: usize, out: Sender<Vec<CheckMsg>>) -> Sender<Vec<CheckReq>> {
-    let (tx, rx) = unbounded::<Vec<CheckReq>>();
-    for i in 0..n.max(1) {
-        let (rx, out) = (rx.clone(), out.clone());
-        thread::Builder::new()
-            .name(format!("dfdu-classify-{i}"))
-            .spawn(move || {
-                for batch in rx {
-                    let _ = out.send(check_batch(&batch));
-                }
-            })
-            .expect("spawn classifier");
-    }
-    tx
+///
+/// # Panics
+///
+/// If the system cannot create a thread, as [`std::thread::spawn`] does.
+#[must_use]
+pub fn spawn_classifiers(n: usize, out: &Sender<Vec<CheckMsg>>) -> Sender<Vec<CheckReq>> {
+    spawn_pool(
+        "dfdu-classify",
+        n,
+        out,
+        || (),
+        |(), batch: Vec<CheckReq>| check_batch(&batch),
+    )
 }
 
 /// Answers a batch, reading the process list once for all of it.
@@ -117,9 +118,9 @@ pub fn check_batch(batch: &[CheckReq]) -> Vec<CheckMsg> {
 
 /// Runs `argv` with no shell, stdin closed and a time limit; its stdout, or why it failed.
 fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
-    let (prog, args) = argv.split_first().ok_or("empty command")?;
+    let (prog, prog_args) = argv.split_first().ok_or("empty command")?;
     let mut cmd = Command::new(prog);
-    cmd.args(args)
+    cmd.args(prog_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -127,7 +128,11 @@ fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
         cmd.current_dir(d);
     }
     let mut child = cmd.spawn().map_err(|e| format!("{prog}: {e}"))?;
-    let mut out = child.stdout.take().expect("piped stdout");
+    let Some(mut out) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("{prog}: no output pipe"));
+    };
     let reader = thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = out.read_to_end(&mut buf);
@@ -161,6 +166,7 @@ fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
 /// index of the nearest repository above it (`gix-index`), so no command runs and nothing in
 /// the repository's configuration is executed. `Some(false)` outside a repository, `None` when
 /// its index cannot be read.
+#[must_use]
 pub fn git_tracked(path: &Path) -> Option<bool> {
     let parent = path.parent()?;
     let Some(root) = parent.ancestors().find(|d| d.join(".git").exists()) else {
@@ -267,6 +273,7 @@ fn native_size(check: &[String], command: &[String]) -> Result<u64, String> {
 
 /// The reclaimable bytes a `size_command` printed: a plain number of bytes, or JSON lines
 /// with a `"Reclaimable"` field (`docker system df --format json`: `"1.2GB (50%)"`), summed.
+#[must_use]
 pub fn parse_reclaimable(out: &str) -> Option<u64> {
     let out = out.trim();
     if let Ok(n) = out.parse::<u64>() {
@@ -287,6 +294,11 @@ pub fn parse_reclaimable(out: &str) -> Option<u64> {
 }
 
 /// `1.2GB`, `512kB`, `0B` and the like, as docker prints them (decimal units).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a size parsed from digits is not negative, and `as` saturates past u64::MAX"
+)]
 fn parse_unit_size(s: &str) -> Option<u64> {
     let split = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))

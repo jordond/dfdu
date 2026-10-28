@@ -35,18 +35,23 @@ mod linux {
     pub fn main() -> io::Result<()> {
         let mut args = std::env::args_os().skip(1);
         let mut root = None;
-        let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let mut threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
         let mut runs = 1;
         let mut tree_search = false;
         while let Some(a) = args.next() {
             match a.to_str() {
-                Some("--threads") => threads = parse(args.next()),
-                Some("--runs") => runs = parse(args.next()),
+                Some("--threads") => threads = parse(args.next())?,
+                Some("--runs") => runs = parse(args.next())?,
                 Some("--tree-search") => tree_search = true,
                 _ => root = Some(PathBuf::from(a)),
             }
         }
-        let root = root.expect("usage: fiemap_loop <dir> [--threads N] [--runs R] [--tree-search]");
+        let root = root.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "usage: fiemap_loop <dir> [--threads N] [--runs R] [--tree-search]",
+            )
+        })?;
 
         let t = Instant::now();
         let dirs = list(root)?;
@@ -73,8 +78,9 @@ mod linux {
         Ok(())
     }
 
-    fn parse(a: Option<OsString>) -> usize {
-        a.and_then(|a| a.to_str()?.parse().ok()).expect("a number")
+    fn parse(a: Option<OsString>) -> io::Result<usize> {
+        a.and_then(|a| a.to_str()?.parse().ok())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "expected a number"))
     }
 
     /// Directories with the names of their regular files that have allocated blocks.

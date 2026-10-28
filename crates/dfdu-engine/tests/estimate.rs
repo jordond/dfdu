@@ -4,6 +4,7 @@
 //! `DFDU_QUIET_FS` if that is set (a tmpfs, say) and is skipped otherwise.
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

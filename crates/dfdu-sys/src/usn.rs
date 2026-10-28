@@ -1,4 +1,4 @@
-//! The NTFS (and ReFS) change journal: where it stands, and which directories below a root
+//! The NTFS (and `ReFS`) change journal: where it stands, and which directories below a root
 //! changed since a position, for rescanning only those.
 //!
 //! Both calls work unprivileged on Windows 10 1709 and later: the journal is queried and read
@@ -69,7 +69,7 @@ fn serial(f: &File) -> io::Result<u32> {
             f.as_raw_handle(),
             null_mut(),
             0,
-            &mut serial,
+            &raw mut serial,
             null_mut(),
             null_mut(),
             null_mut(),
@@ -94,8 +94,8 @@ fn query(f: &File) -> io::Result<USN_JOURNAL_DATA_V0> {
             null(),
             0,
             (&raw mut data).cast::<c_void>(),
-            size_of::<USN_JOURNAL_DATA_V0>() as u32,
-            &mut got,
+            crate::windows::len_u32(size_of::<USN_JOURNAL_DATA_V0>()),
+            &raw mut got,
             null_mut(),
         )
     };
@@ -115,17 +115,21 @@ fn identity(journal: u64, serial: u32) -> [u8; 16] {
 
 /// The journal of `path`'s volume, as a 16-byte identity, and its next position. Fails where
 /// the volume keeps no journal (FAT, network shares, or a journal never created).
+///
+/// # Errors
+///
+/// When `path`'s volume cannot be opened or keeps no journal.
 pub fn usn_position(path: &Path) -> io::Result<([u8; 16], u64)> {
     let f = open(path)?;
     let data = query(&f)?;
     Ok((
         identity(data.UsnJournalID, serial(&f)?),
-        data.NextUsn as u64,
+        data.NextUsn.cast_unsigned(),
     ))
 }
 
 /// A record's parent as an `OpenFileById` descriptor key: 64-bit ids (version 2 records) or
-/// 128-bit ones (version 3, ReFS).
+/// 128-bit ones (version 3, `ReFS`).
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 enum Parent {
     Short(u64),
@@ -134,6 +138,10 @@ enum Parent {
 
 /// The directories below `root` that changed after position `usn` of journal `id`
 /// ([`usn_position`]), relative to `root`.
+///
+/// # Errors
+///
+/// When `root`'s volume cannot be opened or its journal read, or a record is malformed.
 pub fn usn_changes_since(root: &Path, id: [u8; 16], usn: u64) -> io::Result<UsnChanges> {
     let full = || {
         Ok(UsnChanges {
@@ -144,14 +152,14 @@ pub fn usn_changes_since(root: &Path, id: [u8; 16], usn: u64) -> io::Result<UsnC
     let f = open(root)?;
     let data = query(&f)?;
     if identity(data.UsnJournalID, serial(&f)?) != id
-        || (usn as i64) < data.FirstUsn
-        || (usn as i64) < data.LowestValidUsn
+        || usn.cast_signed() < data.FirstUsn
+        || usn.cast_signed() < data.LowestValidUsn
     {
         return full();
     }
     let end = data.NextUsn;
     let mut parents: HashSet<Parent> = HashSet::new();
-    let mut next = usn as i64;
+    let mut next = usn.cast_signed();
     // 8-byte aligned: records hold 64-bit fields.
     let mut buf = vec![0u64; 64 * 1024 / 8];
     while next < end {
@@ -172,10 +180,10 @@ pub fn usn_changes_since(root: &Path, id: [u8; 16], usn: u64) -> io::Result<UsnC
                 f.as_raw_handle(),
                 FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
                 (&raw mut req).cast::<c_void>(),
-                size_of::<READ_USN_JOURNAL_DATA_V0>() as u32,
+                crate::windows::len_u32(size_of::<READ_USN_JOURNAL_DATA_V0>()),
                 buf.as_mut_ptr().cast::<c_void>(),
-                (buf.len() * 8) as u32,
-                &mut got,
+                crate::windows::len_u32(buf.len() * 8),
+                &raw mut got,
                 null_mut(),
             )
         };
@@ -187,7 +195,7 @@ pub fn usn_changes_since(root: &Path, id: [u8; 16], usn: u64) -> io::Result<UsnC
             if matches!(code, 1178 | 1179 | 1181) {
                 return full();
             }
-            return Err(io::Error::from_raw_os_error(code as i32));
+            return Err(io::Error::from_raw_os_error(code.cast_signed()));
         }
         let bytes: Vec<u8> = buf.iter().flat_map(|w| w.to_le_bytes()).collect();
         let (n, more) = parse(&bytes[..(got as usize).min(bytes.len())], &mut parents)?;
@@ -228,7 +236,7 @@ fn parse(out: &[u8], parents: &mut HashSet<Parent>) -> io::Result<(i64, bool)> {
     let u64_at = |b: &[u8], at: usize| -> Option<u64> {
         Some(u64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?))
     };
-    let next = u64_at(out, 0).ok_or_else(bad)? as i64;
+    let next = u64_at(out, 0).ok_or_else(bad)?.cast_signed();
     let mut at = 8;
     let mut any = false;
     while at < out.len() {
@@ -246,7 +254,10 @@ fn parse(out: &[u8], parents: &mut HashSet<Parent>) -> io::Result<(i64, bool)> {
                 parents.insert(Parent::Short(u64_at(rec, 16).ok_or_else(bad)?));
             }
             3 => {
-                let id: [u8; 16] = rec.get(24..40).ok_or_else(bad)?.try_into().unwrap();
+                let id: [u8; 16] = rec
+                    .get(24..40)
+                    .and_then(|b| b.try_into().ok())
+                    .ok_or_else(bad)?;
                 parents.insert(Parent::Long(id));
             }
             _ => {}
@@ -259,12 +270,12 @@ fn parse(out: &[u8], parents: &mut HashSet<Parent>) -> io::Result<(i64, bool)> {
 /// The path of the directory with id `p` on `volume`'s volume.
 fn path_of(volume: &File, p: Parent) -> io::Result<PathBuf> {
     let mut desc = FILE_ID_DESCRIPTOR {
-        dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
+        dwSize: crate::windows::len_u32(size_of::<FILE_ID_DESCRIPTOR>()),
         Type: FileIdType,
         Anonymous: FILE_ID_DESCRIPTOR_0 { FileId: 0 },
     };
     match p {
-        Parent::Short(id) => desc.Anonymous.FileId = id as i64,
+        Parent::Short(id) => desc.Anonymous.FileId = id.cast_signed(),
         Parent::Long(id) => {
             desc.Type = ExtendedFileIdType;
             desc.Anonymous.ExtendedFileId.Identifier = id;
@@ -275,7 +286,7 @@ fn path_of(volume: &File, p: Parent) -> io::Result<PathBuf> {
     let h = unsafe {
         OpenFileById(
             volume.as_raw_handle(),
-            &desc,
+            &raw const desc,
             FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             null(),
@@ -300,7 +311,7 @@ fn final_path(f: &File) -> io::Result<PathBuf> {
             GetFinalPathNameByHandleW(
                 f.as_raw_handle(),
                 buf.as_mut_ptr(),
-                buf.len() as u32,
+                crate::windows::len_u32(buf.len()),
                 FILE_NAME_NORMALIZED,
             )
         } as usize;

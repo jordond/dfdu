@@ -20,7 +20,6 @@ dfdu-store.workspace = true
 dfdu-dupes.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
-humansize.workspace = true
 tachyonfx.workspace = true
 nucleo-matcher.workspace = true
 terminal-colorsaurus.workspace = true

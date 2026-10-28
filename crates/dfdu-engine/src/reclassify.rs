@@ -34,9 +34,14 @@ pub(crate) fn classify_loaded<B: Backend>(
         subdir_ix.clear();
         for c in tree.children(dir) {
             let n = tree.name(c);
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "one directory's names take far less than 4 GiB"
+            )]
+            let off = names.len() as u32;
             let name = NameSpan {
-                off: names.len() as u32,
-                len: n.len().min(u16::MAX as usize) as u16,
+                off,
+                len: u16::try_from(n.len()).unwrap_or(u16::MAX),
             };
             names.extend_from_slice(&n[..name.len as usize]);
             match tree.kind(c) {

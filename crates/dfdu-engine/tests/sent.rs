@@ -1,15 +1,19 @@
 //! The count of scanner messages sent to the applier, against the applier's count of messages
 //! received.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
 
+mod common;
+
 #[test]
 fn sent_counter_counts_messages() {
-    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tmp = common::tempdir();
     for d in 0..40 {
         let dir = tmp.path().join(format!("d{d}/a/b"));
         fs::create_dir_all(&dir).unwrap();

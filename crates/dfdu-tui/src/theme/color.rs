@@ -85,7 +85,7 @@ const ANSI16: [(Color, Rgb); 16] = [
 const HUES: [(usize, usize); 6] = [(1, 9), (3, 11), (2, 10), (6, 14), (4, 12), (5, 13)];
 /// The neutral colours: black, bright black, white and bright white.
 const GREYS: [usize; 4] = [0, 8, 7, 15];
-/// OKLab chroma below which a colour counts as grey.
+/// `OKLab` chroma below which a colour counts as grey.
 const GREY_CHROMA: f64 = 0.03;
 
 /// The colour xterm shows for a 256-colour index by default.
@@ -105,7 +105,7 @@ pub fn ansi256_rgb(i: u8) -> Rgb {
 }
 
 /// The nearest entry of the 6×6×6 cube and the grey ramp (indexes 16 to 255), by distance in
-/// OKLab. Indexes 0 to 15 are left out because terminals give them their own colours.
+/// `OKLab`. Indexes 0 to 15 are left out because terminals give them their own colours.
 pub fn rgb_to_256(c: Rgb) -> u8 {
     let target = oklab(c);
     (16..=255)
@@ -120,6 +120,10 @@ pub fn rgb_to_256(c: Rgb) -> u8 {
 /// The closest of the 16 named colours: greys by lightness, other colours by hue, taking the
 /// bright variant only for colours at least as light as it (the normal variants read on more
 /// backgrounds).
+#[expect(
+    clippy::many_single_char_names,
+    reason = "l, a and b are the Oklab axes"
+)]
 pub fn rgb_to_16(c: Rgb) -> Color {
     let [l, a, b] = oklab(c);
     if a.hypot(b) < GREY_CHROMA {
@@ -191,6 +195,10 @@ fn linear((r, g, b): Rgb) -> (f64, f64, f64) {
     (channel(r), channel(g), channel(b))
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the names of the Oklab reference conversion: r, g, b in, l, m, s cone responses"
+)]
 fn oklab(c: Rgb) -> [f64; 3] {
     let (r, g, b) = linear(c);
     let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();

@@ -1,11 +1,15 @@
 //! `dfdu recover`: items an exited session left staged are listed, then restored or finished;
 //! an interrupted delete is listed and dismissed.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
+use common::ok;
 use crossbeam_channel::unbounded;
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
 use dfdu_tree::{Meta, Tree};
@@ -24,12 +28,12 @@ fn item(tree: &mut Tree, p: &Path) -> PlanItem {
             mtime: m.mtime,
         },
         bytes: 0,
-        inside: Default::default(),
+        inside: std::sync::Arc::default(),
     }
 }
 
 fn recover_status(journals: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_dfdu"))
+    common::bin()
         .arg("recover")
         .arg("--journals")
         .arg(journals)
@@ -39,9 +43,7 @@ fn recover_status(journals: &Path, args: &[&str]) -> std::process::Output {
 }
 
 fn recover(journals: &Path, args: &[&str]) -> String {
-    let o = recover_status(journals, args);
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8(o.stdout).unwrap()
+    ok(recover_status(journals, args))
 }
 
 /// Runs one plan of `items` in `mode` in a deleter session that then exits.
@@ -58,7 +60,7 @@ fn run_plan(journals: &Path, root: &Path, mode: Mode, paths: &[&Path]) {
             items,
         }))
         .unwrap();
-    for m in rx.iter() {
+    for m in &rx {
         match m {
             DeleterMsg::Item { result, .. } => assert_eq!(result, DeleteResult::Deleted),
             DeleterMsg::Done { .. } => break,
@@ -92,7 +94,7 @@ fn an_interrupted_delete_is_dismissed() {
     let cut: String = text
         .lines()
         .filter(|l| !l.contains("\"done\""))
-        .map(|l| format!("{l}\n"))
+        .flat_map(|l| [l, "\n"])
         .collect();
     fs::write(&journal, cut).unwrap();
 
@@ -162,14 +164,11 @@ fn an_interrupted_trash_delete_is_found_in_the_trash() {
     fs::write(root.join("web/package.json"), "{}").unwrap();
     fs::write(root.join("web/node_modules/pkg/index.js"), b"x").unwrap();
     let run = |args: &[&str]| {
-        let o = Command::new(env!("CARGO_BIN_EXE_dfdu"))
+        ok(common::bin_in(&state)
             .args(args)
-            .env("DFDU_STATE_DIR", &state)
             .env("XDG_DATA_HOME", tmp.path().join("data"))
             .output()
-            .unwrap();
-        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-        String::from_utf8(o.stdout).unwrap()
+            .unwrap())
     };
     let r = root.to_str().unwrap();
     run(&[
@@ -187,7 +186,7 @@ fn an_interrupted_trash_delete_is_found_in_the_trash() {
     let cut: String = text
         .lines()
         .filter(|l| !l.contains("\"done\""))
-        .map(|l| format!("{l}\n"))
+        .flat_map(|l| [l, "\n"])
         .collect();
     fs::write(&journal, cut).unwrap();
 

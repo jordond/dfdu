@@ -8,9 +8,15 @@
 pub use crossbeam_deque::Steal;
 
 #[cfg(loom)]
-pub use imp_loom::*;
+pub use imp_loom::{
+    AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Condvar, Injector, Mutex, MutexGuard, RwLock,
+    Thread, current, park_timeout,
+};
 #[cfg(not(loom))]
-pub use imp_std::*;
+pub use imp_std::{
+    AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Condvar, Injector, Mutex, RwLock, Thread,
+    current, park_timeout,
+};
 
 #[cfg(not(loom))]
 mod imp_std {
@@ -44,10 +50,19 @@ mod imp_loom {
 
     pub struct MutexGuard<'a, T>(Option<loom::sync::MutexGuard<'a, T>>);
 
+    // `parking_lot`'s locks, which these stand in for, do not poison: a poisoned lock here
+    // means a thread already panicked holding it, and the model run has failed.
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned lock means a thread already panicked holding it"
+    )]
     impl<T> Mutex<T> {
         pub fn new(v: T) -> Self {
             Mutex(loom::sync::Mutex::new(v))
         }
+        /// # Panics
+        ///
+        /// When a thread panicked holding the lock.
         pub fn lock(&self) -> MutexGuard<'_, T> {
             MutexGuard(Some(self.0.lock().expect("poisoned")))
         }
@@ -56,6 +71,10 @@ mod imp_loom {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the guard is taken out only inside `Condvar::wait`, which puts it back"
+    )]
     impl<T> Deref for MutexGuard<'_, T> {
         type Target = T;
         fn deref(&self) -> &T {
@@ -69,6 +88,10 @@ mod imp_loom {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the guard is taken out only inside `Condvar::wait`, which puts it back"
+    )]
     impl<T> DerefMut for MutexGuard<'_, T> {
         fn deref_mut(&mut self) -> &mut T {
             self.0.as_mut().expect("guard")
@@ -78,10 +101,18 @@ mod imp_loom {
     #[derive(Debug, Default)]
     pub struct Condvar(loom::sync::Condvar);
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the guard is there between waits; a poisoned lock means a thread already panicked"
+    )]
     impl Condvar {
+        #[must_use]
         pub fn new() -> Self {
             Condvar(loom::sync::Condvar::new())
         }
+        /// # Panics
+        ///
+        /// When a thread panicked holding the lock.
         pub fn wait<T>(&self, g: &mut MutexGuard<'_, T>) {
             let inner = g.0.take().expect("guard");
             g.0 = Some(self.0.wait(inner).expect("poisoned"));
@@ -94,13 +125,23 @@ mod imp_loom {
     #[derive(Debug, Default)]
     pub struct RwLock<T>(loom::sync::RwLock<T>);
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a poisoned lock means a thread already panicked holding it"
+    )]
     impl<T> RwLock<T> {
         pub fn new(v: T) -> Self {
             RwLock(loom::sync::RwLock::new(v))
         }
+        /// # Panics
+        ///
+        /// When a thread panicked holding the lock.
         pub fn read(&self) -> loom::sync::RwLockReadGuard<'_, T> {
             self.0.read().expect("poisoned")
         }
+        /// # Panics
+        ///
+        /// When a thread panicked holding the lock.
         pub fn write(&self) -> loom::sync::RwLockWriteGuard<'_, T> {
             self.0.write().expect("poisoned")
         }
@@ -116,6 +157,7 @@ mod imp_loom {
     }
 
     impl<T> Injector<T> {
+        #[must_use]
         pub fn new() -> Self {
             Injector(Mutex::new(VecDeque::new()))
         }

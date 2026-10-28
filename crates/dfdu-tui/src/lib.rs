@@ -1,11 +1,13 @@
-//! The interactive browser. The run loop reads the engine model under the read lock only to copy
-//! a [`snapshot::Snapshot`] and the features' `extras::Extras`, then draws from the copy.
+//! The interactive browser. The run loop (`run_loop`) reads the engine model under the read lock
+//! only to copy a [`snapshot::Snapshot`] and the features' `extras::Extras`, then draws from the
+//! copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
 //! `view`. Each feature has its own module with its state, keys and drawing: the views
-//! `treemap`, `cleanup` and `dupes`; the overlays `help`, `error_list`, `confirm`, `palette`
-//! and `type_filter`; the disk picker `picker`; and `marks`, `filter`, `details`, `growth`,
-//! `debug`, `motion` and `mouse`. `history_link` reads and records the scan history.
+//! `treemap`, `cleanup` and `dupes`; the overlays in `overlay` (`help`, `error_list`,
+//! `confirm`, `palette` and `type_filter`); the disk picker `picker`; and `marks`, `filter`,
+//! `details`, `growth`, `debug`, `motion` and `mouse`. `history_link` reads and records the
+//! scan history.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -17,63 +19,49 @@
 
 mod app;
 mod cleanup;
-mod confirm;
 mod debug;
 mod details;
 mod dupes;
-mod error_list;
 mod extras;
 mod filter;
 mod fuzzy;
 mod growth;
-mod help;
 mod history_link;
 mod input;
 mod marks;
 mod motion;
 mod mouse;
 mod order;
-mod palette;
+mod overlay;
 mod picker;
-mod problems;
+mod run_loop;
 mod setup;
 mod snapshot;
 mod theme;
 mod treemap;
-mod type_filter;
 mod view;
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, select, unbounded};
+use crossbeam_channel::unbounded;
 use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::{DirId, JobId, JobOptions};
+use dfdu_scan::JobOptions;
 use dfdu_store::history;
-use ratatui::Terminal;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
 pub use app::{App, Effect, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Overlay};
-pub use cleanup::recommends;
 pub use debug::summary as debug_summary;
 pub use history_link::HistoryLink;
-pub use picker::{DISK_TIMEOUT, Picked, Picker};
-pub use problems::{ErrorItem, ErrorList, errors, errors_below, problem};
-pub use setup::{ThemeChoice, UiSettings, rules_dir, theme_dir};
-pub use snapshot::{SizeMode, Snapshot, Target, subvol_label};
-pub use theme::{ColorLevel, Theme, ThemeError, ThemeFile, human, parse_color_flag};
+pub use picker::{Picked, Picker};
+pub use run_loop::{event_loop, event_loop_with};
+pub use setup::{ThemeChoice, UiSettings, theme_dir};
+pub use snapshot::{Snapshot, Target};
+pub use theme::{ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
 
-use extras::Read;
-
-/// Fastest redraw rate for scan data (ncdu's default refresh is 10 per second).
-const DATA_FRAME: Duration = Duration::from_millis(100);
-/// Most entries the error list shows.
-const ERROR_LIST_MAX: usize = 10_000;
-/// Longest sleep when nothing is going on.
-const IDLE: Duration = Duration::from_secs(3600);
 /// How long the terminal gets to answer the background-colour query at start.
 const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
 
@@ -143,6 +131,7 @@ pub struct UiOptions {
 impl UiOptions {
     /// The theme [`run`] would choose from the environment with the default settings, without
     /// asking the terminal for its background; no mouse, no debug panel, no `~`.
+    #[must_use]
     pub fn from_env() -> Self {
         let colors = setup::resolve_theme(&UiSettings::default(), |k| std::env::var_os(k), || None);
         UiOptions {
@@ -153,7 +142,7 @@ impl UiOptions {
             debug: false,
             home: None,
             history: None,
-            types: Default::default(),
+            types: dfdu_tree::filetype::TypeFilter::default(),
         }
     }
 }
@@ -162,6 +151,11 @@ impl UiOptions {
 /// quits. Before the alternate screen is entered, the colour level is detected and, when the
 /// theme depends on it, the terminal is asked for its background colour (waiting at most
 /// `BACKGROUND_QUERY` for terminals that do not answer).
+///
+/// # Errors
+///
+/// When the terminal cannot be set up or drawn to, the disk picker fails, a resumed scan has
+/// no root, or the engine stops with a fatal error.
 pub fn run(opts: RunOptions) -> io::Result<()> {
     let ui = opts.ui;
     let colors = setup::resolve_theme(
@@ -176,22 +170,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     }
     let mut terminal = ratatui::try_init()?;
     let mouse = ui.mouse;
-    // try_init installed a hook that restores the terminal on panic. Panic hooks also run for
-    // panics that are caught, and worker and applier panics are caught and recorded by the
-    // engine, so for those threads the terminal must be left alone.
-    let restore = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        if !dfdu_engine::panic_is_caught_by_engine(std::thread::current().name()) {
-            // ratatui's hook leaves raw mode and the alternate screen but does not show the
-            // cursor or end mouse capture; the terminal's Drop would show the cursor, but only
-            // if unwinding gets that far.
-            let _ = execute!(io::stdout(), ratatui::crossterm::cursor::Show);
-            if mouse {
-                let _ = execute!(io::stdout(), DisableMouseCapture);
-            }
-            restore(info);
-        }
-    }));
+    restore_on_panic(mouse);
     if mouse && let Err(e) = execute!(io::stdout(), EnableMouseCapture) {
         setup::restore_terminal(mouse);
         return Err(e);
@@ -222,49 +201,26 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                 },
             );
             engine.load(tree);
-            return browse(
-                &mut terminal,
-                engine,
-                ui_opts(theme, None),
-                mouse,
-                ui.debug_stats,
-            );
+            return browse(&mut terminal, engine, ui_opts(theme, None));
         }
         Source::Remote { engine, path, job } => {
             engine.send(Command::Scan { path, opts: job });
-            return browse(
-                &mut terminal,
-                engine,
-                ui_opts(theme, None),
-                mouse,
-                ui.debug_stats,
-            );
+            return browse(&mut terminal, engine, ui_opts(theme, None));
         }
         Source::Resumed {
             tree,
             journal,
             start,
         } => {
-            let root = tree.roots().next().expect("a loaded tree has a root");
-            let path = tree.path_buf(root);
-            let (engine, job) = start(&path, opts.engine.clone());
+            let Some((engine, path, job)) = resume(tree, journal, start, &opts.engine) else {
+                setup::restore_terminal(mouse);
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the scan read from the file has no root",
+                ));
+            };
             let history = link(&path, &job, &opts.engine);
-            let node = tree.node_ref(root);
-            engine.load(tree);
-            let changed = journal
-                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
-            engine.send(Command::Resume {
-                node,
-                opts: job,
-                changed,
-            });
-            return browse(
-                &mut terminal,
-                engine,
-                ui_opts(theme, history),
-                mouse,
-                ui.debug_stats,
-            );
+            return browse(&mut terminal, engine, ui_opts(theme, history));
         }
         Source::Local { path, start } => (path, start),
     };
@@ -286,13 +242,51 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     let (engine, job) = start(&path, opts.engine.clone());
     let history = link(&root, &job, &opts.engine);
     engine.send(Command::Scan { path, opts: job });
-    browse(
-        &mut terminal,
-        engine,
-        ui_opts(theme, history),
-        mouse,
-        ui.debug_stats,
-    )
+    browse(&mut terminal, engine, ui_opts(theme, history))
+}
+
+/// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
+/// restores it on any panic; panic hooks also run for panics that are caught, and worker and
+/// applier panics are caught and recorded by the engine, so for those threads the terminal
+/// must be left alone.
+fn restore_on_panic(mouse: bool) {
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !dfdu_engine::panic_is_caught_by_engine(std::thread::current().name()) {
+            // ratatui's hook leaves raw mode and the alternate screen but does not show the
+            // cursor or end mouse capture; the terminal's Drop would show the cursor, but only
+            // if unwinding gets that far.
+            let _ = execute!(io::stdout(), ratatui::crossterm::cursor::Show);
+            if mouse {
+                let _ = execute!(io::stdout(), DisableMouseCapture);
+            }
+            restore(info);
+        }
+    }));
+}
+
+/// Starts an engine on the root of `tree`, loads the tree into it and rescans what changed
+/// since `journal`, or all of it. Returns the engine with the root's path and the options of
+/// the scan; `None` when the tree has no root.
+fn resume(
+    tree: dfdu_tree::Tree,
+    journal: Option<dfdu_store::snapshot::Journal>,
+    start: StartLocal,
+    engine: &EngineOptions,
+) -> Option<(Engine<dfdu_scan::NativeBackend>, PathBuf, JobOptions)> {
+    let root = tree.roots().next()?;
+    let path = tree.path_buf(root);
+    let (engine, job) = start(&path, engine.clone());
+    let node = tree.node_ref(root);
+    engine.load(tree);
+    let changed =
+        journal.and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
+    engine.send(Command::Resume {
+        node,
+        opts: job.clone(),
+        changed,
+    });
+    Some((engine, path, job))
 }
 
 /// Runs the loop on `engine` until the user quits, then restores the terminal and stops the
@@ -301,9 +295,8 @@ fn browse<B: dfdu_scan::Backend>(
     terminal: &mut ratatui::DefaultTerminal,
     engine: Engine<B>,
     ui: UiOptions,
-    mouse: bool,
-    debug_stats: bool,
 ) -> io::Result<()> {
+    let (mouse, debug_stats) = (ui.mouse, ui.debug);
     let (tx, input) = unbounded();
     let spawned = thread::Builder::new()
         .name("dfdu-input".into())
@@ -327,237 +320,6 @@ fn browse<B: dfdu_scan::Backend>(
     }
     engine.shutdown(Duration::from_millis(200));
     result
-}
-
-/// The browser's loop with [`UiOptions::from_env`]. Public for `tests/latency.rs`, which passes
-/// a recording backend and a channel it writes keys to.
-pub fn event_loop<T, B>(
-    terminal: &mut Terminal<T>,
-    engine: &Engine<B>,
-    input: Receiver<Event>,
-) -> io::Result<()>
-where
-    T: ratatui::backend::Backend<Error = io::Error>,
-    B: dfdu_scan::Backend,
-{
-    event_loop_with(terminal, engine, input, UiOptions::from_env())
-}
-
-/// The browser's loop: terminal events from `input`, frames to `terminal`. Returns when the user
-/// quits or `input` closes.
-pub fn event_loop_with<T, B>(
-    terminal: &mut Terminal<T>,
-    engine: &Engine<B>,
-    input: Receiver<Event>,
-    ui: UiOptions,
-) -> io::Result<()>
-where
-    T: ratatui::backend::Backend<Error = io::Error>,
-    B: dfdu_scan::Backend,
-{
-    // Hidden, for `crates/dfdu/tests/ui_panic.rs`: panic on the first key press, to test that a
-    // panic on the UI thread restores the terminal and writes a crash report.
-    let inject_panic = std::env::var_os("DFDU_TEST_UI_PANIC").is_some();
-    let start = Instant::now();
-    let mut app = App::new(ui.theme, start);
-    app.color_level = ui.color_level;
-    app.background = ui.background;
-    app.home = ui.home;
-    app.types = ui.types;
-    motion::start(&mut app);
-    if ui.debug {
-        debug::toggle(&mut app);
-    }
-    let mut recorder = history_link::Recorder::new(ui.history.clone());
-    let mut focus = None;
-    let mut seen_version = None;
-    let mut last_draw: Option<Instant> = None;
-    // When the snapshot was last read, how long the read held the lock, and its size mode.
-    let mut last_read: Option<Instant> = None;
-    let mut snap_cost = Duration::ZERO;
-    let mut read_mode = app.size_mode;
-    // How long the last read of either kind held the lock, for the debug panel.
-    let mut read_cost = Duration::ZERO;
-    let (mut input_dirty, mut data_dirty) = (true, true);
-    // The first frame is drawn before the scan has read anything. Until a frame has shown
-    // entries, data is drawn as soon as it arrives instead of waiting for `DATA_FRAME`.
-    let mut shown_entries = false;
-    loop {
-        if recorder.poll(&mut app, engine) {
-            input_dirty = true;
-        }
-        let now = Instant::now();
-        // A read copies the current directory under the read lock, about 100 ms for one of a
-        // million entries. Scan data is read at most every `DATA_FRAME`, and at most every
-        // nine times the cost of the last read, so the lock is held at most a tenth of the
-        // time and the scan keeps going.
-        let data_interval = DATA_FRAME.max(snap_cost * 9);
-        let data_ready = data_dirty
-            && (!shown_entries || last_read.is_none_or(|t| now.duration_since(t) >= data_interval));
-        // Keys are drawn from the snapshot already held, except when they opened another
-        // directory or changed the size mode.
-        let stale = app.target.path != app.snap.dir_path
-            || app.size_mode != read_mode
-            || type_filter::stale(&app);
-        let read = extras::plan(data_ready || stale, app.extras_stale());
-        let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
-        let animating =
-            spinners_visible(&app) && last_draw.is_none_or(|t| now.duration_since(t) >= DATA_FRAME);
-        let motion_due = app.motion.next_frame_at().is_some_and(|t| now >= t);
-        if input_dirty || read != Read::Nothing || sort_due || animating || motion_due {
-            match read {
-                Read::Full => {
-                    let mut target = app.target.clone();
-                    let mode = app.size_mode;
-                    let breakdown = matches!(app.overlay, app::Overlay::Types(_));
-                    let (snap, extras, cost) = engine.read(|m| {
-                        let t = Instant::now();
-                        let snap =
-                            snapshot::build_view(m, &mut target, mode, &app.types, breakdown);
-                        let counters = debug::Counters::of(engine);
-                        let extras = extras::read(m, &app, engine.budget(), counters);
-                        (snap, extras, t.elapsed())
-                    });
-                    if let Some(msg) = engine.read(|m| m.status.fatal.clone()) {
-                        // The engine stopped; showing stale data as if it were live would
-                        // mislead.
-                        return Err(io::Error::other(msg));
-                    }
-                    (last_read, snap_cost, read_cost, read_mode) = (Some(now), cost, cost, mode);
-                    seen_version = Some(snap.version);
-                    if snap.focus != focus {
-                        if let Some((job, dir)) = snap.focus {
-                            engine.scanner().set_focus(JobId(job), DirId(dir));
-                        }
-                        focus = snap.focus;
-                    }
-                    app.target = target;
-                    app.refresh(snap, now);
-                    extras::apply(&mut app, extras);
-                    // The refresh moved the selection (another directory, a rescan): read the
-                    // extras again for the entry this frame draws.
-                    if app.extras_stale() {
-                        let extras = engine.read(|m| {
-                            let counters = debug::Counters::of(engine);
-                            extras::read(m, &app, engine.budget(), counters)
-                        });
-                        extras::apply(&mut app, extras);
-                    }
-                    data_dirty = false;
-                }
-                Read::Extras => {
-                    let (extras, cost) = engine.read(|m| {
-                        let t = Instant::now();
-                        let counters = debug::Counters::of(engine);
-                        let extras = extras::read(m, &app, engine.budget(), counters);
-                        (extras, t.elapsed())
-                    });
-                    read_cost = cost;
-                    extras::apply(&mut app, extras);
-                    app.reorder(now);
-                }
-                Read::Nothing => app.reorder(now),
-            }
-            let drawing = Instant::now();
-            terminal.draw(|f| view::draw(f, &mut app, now))?;
-            debug::frame_drawn(&mut app, drawing.elapsed(), read_cost);
-            last_draw = Some(now);
-            shown_entries |= !app.snap.entries.is_empty();
-            input_dirty = false;
-        }
-        if app.quit {
-            return Ok(());
-        }
-
-        let mut wake = IDLE;
-        let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| now.duration_since(t));
-        if data_dirty {
-            wake = wake.min(
-                DATA_FRAME
-                    .max(snap_cost * 9)
-                    .saturating_sub(since(last_read)),
-            );
-        }
-        if spinners_visible(&app) {
-            wake = wake.min(DATA_FRAME.saturating_sub(since(last_draw)));
-        }
-        if let Some(t) = app.next_sort_at() {
-            wake = wake.min(t.saturating_duration_since(now));
-        }
-        if let Some(t) = app.motion.next_frame_at() {
-            wake = wake.min(t.saturating_duration_since(now));
-        }
-        if recorder.busy() {
-            wake = wake.min(DATA_FRAME);
-        }
-        if app.extras_stale() {
-            // Something after the last read changed what the extras are read for (such as a
-            // re-sort of the snapshot held that moved the selection): read them again at once.
-            wake = Duration::ZERO;
-        }
-        select! {
-            recv(input) -> ev => match ev {
-                Ok(Event::Key(k)) => {
-                    if inject_panic {
-                        panic!("injected UI panic");
-                    }
-                    let fx = app.key(k, Instant::now());
-                    handle_effects(&mut app, engine, fx);
-                    input_dirty = true;
-                }
-                Ok(Event::Mouse(m)) if ui.mouse => {
-                    if let Some(fx) = mouse::event(&mut app, m, Instant::now()) {
-                        handle_effects(&mut app, engine, fx);
-                        input_dirty = true;
-                    }
-                }
-                Ok(Event::Resize(..)) => input_dirty = true,
-                Ok(_) => {}
-                // The input thread ended (terminal closed): leave.
-                Err(_) => return Ok(()),
-            },
-            recv(engine.changes()) -> _ => {
-                // The applier wakes only when its fingerprint changed; it can still match what
-                // was last drawn (the frame read it already), so compare before redrawing.
-                let v = engine.read(|m| m.fingerprint());
-                if Some(v) != seen_version {
-                    data_dirty = true;
-                }
-            }
-            default(wake) => {}
-        }
-    }
-}
-
-/// Carries out the effects of a key or mouse event.
-fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: Vec<Effect>) {
-    for fx in fx {
-        match fx {
-            Effect::Send(cmd) => engine.send(cmd),
-            Effect::FindDupes => {
-                let (root, cands) = engine.read(|m| match m.tree.roots().next() {
-                    Some(r) => (
-                        m.tree.path_buf(r),
-                        dfdu_dupes::candidates(&m.tree, r, dupes::MIN_SIZE),
-                    ),
-                    None => (std::path::PathBuf::new(), Vec::new()),
-                });
-                dupes::begin(app, root, cands);
-            }
-            Effect::ShowErrors => {
-                let list = engine.read(|m| match m.tree.roots().next() {
-                    Some(root) => errors(&m.tree, root, ERROR_LIST_MAX),
-                    None => ErrorList::default(),
-                });
-                app.show_errors(list);
-            }
-        }
-    }
-}
-
-/// The header spinner and clock move while the engine is busy; nothing animates otherwise.
-fn spinners_visible(app: &App) -> bool {
-    app.snap.busy || dupes::running(app)
 }
 
 #[cfg(test)]

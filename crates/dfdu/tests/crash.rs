@@ -7,11 +7,16 @@
 //! Rounds per case: `DFDU_CRASH_ROUNDS` (default 6). The seed is printed; `DFDU_CRASH_SEED`
 //! repeats a run.
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
+
+use common::ok;
 
 const PROJECTS: usize = 12;
 
@@ -19,7 +24,9 @@ const PROJECTS: usize = 12;
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 const PACKAGES: usize = 150;
 
@@ -35,11 +42,15 @@ impl Rng {
     }
     /// A duration in `[lo, hi)`.
     fn between(&mut self, lo: Duration, hi: Duration) -> Duration {
-        let span = (hi - lo).as_micros().max(1) as u64;
+        let span = u64::try_from(hi.checked_sub(lo).unwrap().as_micros().max(1)).unwrap();
         lo + Duration::from_micros(self.next() % span)
     }
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a seed: the low bits of the clock are enough"
+)]
 fn rng() -> Rng {
     let seed = std::env::var("DFDU_CRASH_SEED")
         .ok()
@@ -62,32 +73,21 @@ fn rounds() -> usize {
         .unwrap_or(6)
 }
 
-fn dfdu(state: &Path) -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_dfdu"));
-    c.env("DFDU_STATE_DIR", state)
-        .env("XDG_DATA_HOME", state.join("data"))
-        .stdin(Stdio::null());
+/// The `dfdu` binary with its state and its trash (`XDG_DATA_HOME`) below `state`.
+fn sandboxed(state: &Path) -> Command {
+    let mut c = common::bin_in(state);
+    c.env("XDG_DATA_HOME", state.join("data"));
     c
 }
 
 fn run(state: &Path, args: &[&str]) -> Output {
-    dfdu(state).args(args).output().unwrap()
-}
-
-fn ok(o: Output) -> String {
-    assert!(
-        o.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    );
-    String::from_utf8(o.stdout).unwrap()
+    sandboxed(state).args(args).output().unwrap()
 }
 
 /// Starts `dfdu args`, kills it after `after` (if it is still running), and says whether it
 /// was killed.
 fn kill_after(state: &Path, args: &[&str], after: Duration) -> bool {
-    let mut child = dfdu(state)
+    let mut child = sandboxed(state)
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -152,7 +152,11 @@ fn killed_while_writing_a_snapshot() {
     let mut rng = rng();
     let mut killed = 0;
     for _ in 0..rounds() * 2 {
-        killed += kill_after(&state, &args, rng.between(full / 3, full * 9 / 10)) as usize;
+        killed += usize::from(kill_after(
+            &state,
+            &args,
+            rng.between(full / 3, full * 9 / 10),
+        ));
         // The previous snapshot, whole: a write is a rename of a complete file.
         assert_eq!(ok(run(&state, &["import", s, "--bytes"])), total);
     }
@@ -182,7 +186,11 @@ fn killed_while_recording_history() {
     let mut killed = 0;
     for _ in 0..rounds() * 2 {
         let before = count();
-        killed += kill_after(&state, &["scan", r], rng.between(full / 3, full * 9 / 10)) as usize;
+        killed += usize::from(kill_after(
+            &state,
+            &["scan", r],
+            rng.between(full / 3, full * 9 / 10),
+        ));
         let after = count();
         assert!(
             after == before || after == before + 1,
@@ -328,7 +336,11 @@ fn killed_while_cleaning(mode: &str) {
     let (mut killed, mut reported) = (0, 0);
     for round in 0..rounds() {
         reset();
-        killed += kill_after(&state, &args, rng.between(full / 4, full * 9 / 10)) as usize;
+        killed += usize::from(kill_after(
+            &state,
+            &args,
+            rng.between(full / 4, full * 9 / 10),
+        ));
         reported += check_and_recover(&state, &root, &format!("{mode} round {round}"));
     }
     eprintln!("{mode}: {killed} runs killed, {reported} items reported");

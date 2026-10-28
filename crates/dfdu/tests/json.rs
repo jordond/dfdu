@@ -2,24 +2,16 @@
 //! against the schemas in `schema/`, its totals are the scan's, names that are not UTF-8 come
 //! back from their base64, and `--fail-above` sets the exit code.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 
+use common::dfdu;
 use serde_json::Value;
-
-fn dfdu(args: &[&std::ffi::OsStr]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfdu"))
-        .args(args)
-        // Scans are recorded in the history: not in the user's.
-        .env(
-            "DFDU_STATE_DIR",
-            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("state"),
-        )
-        .stdin(Stdio::null())
-        .output()
-        .unwrap()
-}
 
 fn json(o: &Output) -> Value {
     serde_json::from_slice(&o.stdout).unwrap_or_else(|e| {
@@ -37,23 +29,10 @@ const SCHEMAS: [&str; 4] = [
     "report.v1.json",
     "dupes.v1.json",
 ];
-const BASE: &str = "https://github.com/jordond/dfdu/schema/";
 
 /// The published schemas, compiled.
 fn schemas() -> (boon::Schemas, Vec<boon::SchemaIndex>) {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema");
-    let mut c = boon::Compiler::new();
-    for s in SCHEMAS {
-        let v: Value = serde_json::from_slice(&fs::read(dir.join(s)).unwrap()).unwrap();
-        assert_eq!(v["$id"], format!("{BASE}{s}"));
-        c.add_resource(&format!("{BASE}{s}"), v).unwrap();
-    }
-    let mut schemas = boon::Schemas::new();
-    let ix = SCHEMAS
-        .iter()
-        .map(|s| c.compile(&format!("{BASE}{s}"), &mut schemas).unwrap())
-        .collect();
-    (schemas, ix)
+    common::schemas(&SCHEMAS, &SCHEMAS)
 }
 
 fn valid(schemas: &boon::Schemas, ix: boon::SchemaIndex, v: &Value) {
@@ -104,7 +83,7 @@ fn decode_b64(s: &str) -> Vec<u8> {
         let n = q
             .iter()
             .enumerate()
-            .fold(0u32, |n, (i, &c)| n | (val(c) as u32) << (18 - 6 * i));
+            .fold(0u32, |n, (i, &c)| n | u32::from(val(c)) << (18 - 6 * i));
         out.extend(&n.to_be_bytes()[1..q.len()]);
     }
     out
@@ -284,12 +263,10 @@ fn native_commands_are_shown_for_their_item() {
     fs::write(avd.join("pixel.avd/config.ini"), "x").unwrap();
     fs::write(avd.join("pixel.ini"), "x").unwrap();
     let report = |format: &str| {
-        let o = Command::new(env!("CARGO_BIN_EXE_dfdu"))
+        let o = common::bin_in(&root.join("state"))
             .args(["report".as_ref(), root.as_os_str()])
             .args(["--format", format])
             .env("ANDROID_AVD_HOME", &avd)
-            .env("DFDU_STATE_DIR", root.join("state"))
-            .stdin(Stdio::null())
             .output()
             .unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

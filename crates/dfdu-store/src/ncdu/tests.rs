@@ -70,7 +70,7 @@ fn imports_what_ncdu_writes() {
     t.check(&[]).unwrap();
     assert_eq!(im.minor, 2);
     assert_eq!(im.meta.progname.as_deref(), Some("ncdu"));
-    assert_eq!(im.meta.timestamp, Some(1793154464));
+    assert_eq!(im.meta.timestamp, Some(1_793_154_464));
     assert_eq!(t.name(root), b"/tmp/nt");
     assert_eq!(im.entries, 10);
     // The hard link counts once.
@@ -83,7 +83,10 @@ fn imports_what_ncdu_writes() {
     let h = find(t, root, "h");
     let f = find(t, root, "bar/f");
     assert!(t.flags(h).has(NodeFlags::HARDLINK) && t.flags(f).has(NodeFlags::HARDLINK));
-    assert!(t.flags(h).has(NodeFlags::CHARGED) != t.flags(f).has(NodeFlags::CHARGED));
+    assert_ne!(
+        t.flags(h).has(NodeFlags::CHARGED),
+        t.flags(f).has(NodeFlags::CHARGED)
+    );
     assert_eq!(t.kind(find(t, root, "bar/l")), Kind::Other);
     let foo = find(t, root, "foo");
     assert_eq!(t.dir(foo).unwrap().state, DirState::Skipped);
@@ -166,7 +169,7 @@ fn zstd_flush_reaches_the_sink() {
     let mut w = crate::ZstdWriter::new(vec![]);
     w.write_all(b"first ").unwrap();
     w.flush().unwrap();
-    assert!(w.buf.is_empty());
+    assert_eq!(w.buf, [] as [u8; 0]);
     let flushed = w.inner.len();
     assert!(flushed > 0);
     w.write_all(b"second").unwrap();

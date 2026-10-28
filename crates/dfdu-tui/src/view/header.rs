@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
-use super::{mmss, spread};
+use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::mouse::Crumb;
 use crate::order::SortKey;
@@ -112,12 +112,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     };
     let mut left = vec![Span::styled(" dfdu ", t.title), Span::raw(" ")];
     let right = vec![Span::raw(state), Span::raw(" ")];
-    let start: usize = left.iter().map(|s| s.width()).sum();
-    let end: usize = right.iter().map(|s| s.width()).sum();
+    let start: usize = left.iter().map(Span::width).sum();
+    let end: usize = right.iter().map(Span::width).sum();
     // One cell stays free between the breadcrumbs and the scan state.
-    let room = (area.width as usize).saturating_sub(start + end + 1);
+    let crumb_room = usize::from(area.width).saturating_sub(start + end + 1);
     let segs = segments(&s.dir_path, &s.root_path, app.home.as_deref());
-    let (crumbs, hits) = breadcrumbs(&segs, room, t);
+    let (crumbs, hits) = breadcrumbs(&segs, crumb_room, t);
     left.extend(crumbs);
     let line1 = spread(left, right, area.width);
 
@@ -167,7 +167,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
         ));
     }
     if let Some((name, ratio)) = s.profile
-        && ratio != 1.0
+        && (ratio - 1.0).abs() > f64::EPSILON
     {
         info.push(Span::styled(
             format!(" · data stored {ratio:.1}× ({name})"),
@@ -198,7 +198,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
         .into_iter()
         .filter(|&(x, w, _)| area.height > 0 && start + x + w <= area.width as usize)
         .map(|(x, w, i)| Crumb {
-            area: Rect::new(area.x + (start + x) as u16, area.y, w as u16, 1),
+            area: Rect::new(area.x + cells(start + x), area.y, cells(w), 1),
             child: segs[i + 1].dir.clone(),
         })
         .collect();
@@ -269,11 +269,7 @@ mod tests {
     fn long_paths_collapse_from_the_left() {
         let dir = "/srv/data/projects/rust/dfdu/src/ui";
         let (app, buf) = browser(dir, "/srv/data", Theme::no_color(), 40);
-        let header: String = text(&buf)
-            .lines()
-            .take(2)
-            .map(|l| format!("{l}\n"))
-            .collect();
+        let header: String = text(&buf).lines().take(2).flat_map(|l| [l, "\n"]).collect();
         insta::assert_snapshot!("breadcrumbs_collapsed", header);
         assert!(header.starts_with(" dfdu  … › src › ui "), "{header}");
         let crumbs: Vec<_> = app

@@ -8,6 +8,7 @@
 //! browser is started with an explicit theme, which skips it.
 
 #![cfg(unix)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs::{self, File};
 use std::io::{Read, Write};

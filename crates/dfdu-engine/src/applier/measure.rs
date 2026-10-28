@@ -191,10 +191,9 @@ impl<B: Backend> Applier<B> {
         };
         match self.links.charged(key, VISIBLE) {
             Some(c) if c != at => self.extents.move_to(&mut m.tree, key, c),
-            Some(_) => {}
             None if !self.links.has(key) => self.extents.remove(&mut m.tree, key),
-            // A re-election is pending.
-            None => {}
+            // Counted where it is, or a re-election is pending.
+            Some(_) | None => {}
         }
     }
 

@@ -34,6 +34,7 @@ impl Model {
     /// but `timing` and the `stats` other than `messages` is in it, some by a summary (a count,
     /// an id) that changes with them. The tree's contents, and new values in
     /// [`Model::native_sizes`], show in the tree's version.
+    #[must_use]
     pub fn fingerprint(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let s = &self.status;
@@ -75,6 +76,13 @@ impl Model {
             (j.id.0, j.phase as u8).hash(&mut h);
         }
         h.finish()
+    }
+
+    /// The scan below `root` is complete: no entry had an error and nothing was left
+    /// unfinished.
+    #[must_use]
+    pub fn complete(&self, root: dfdu_tree::Ix) -> bool {
+        self.tree.total(root).errors == 0 && !self.status.incomplete
     }
 }
 
@@ -126,8 +134,13 @@ impl Timing {
     /// The bucket of a duration: whole microseconds below 4 µs, then four buckets per power of
     /// two (4-5 µs, 5-6, 6-7, 7-8, 8-10, ...), so a bucket's bounds are within 25% of each
     /// other.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "below 4, and bit positions below 64, fit any usize"
+    )]
     pub fn bucket(d: std::time::Duration) -> usize {
-        let us = d.as_micros().min(u64::MAX as u128) as u64;
+        let us = u64::try_from(d.as_micros()).unwrap_or(u64::MAX);
         if us < 4 {
             return us as usize;
         }
@@ -137,6 +150,7 @@ impl Timing {
     }
 
     /// The upper bound of bucket `k` (exclusive).
+    #[must_use]
     pub fn upper(k: usize) -> std::time::Duration {
         let us = if k < 4 {
             k as u64 + 1
@@ -146,7 +160,23 @@ impl Timing {
         std::time::Duration::from_micros(us)
     }
 
+    /// Records a slice of the applier that held the write lock for `held`, after waiting
+    /// `waited` for it.
+    pub fn record(&mut self, held: std::time::Duration, waited: std::time::Duration) {
+        self.slices += 1;
+        self.locked_ns += crate::nanos::nanos(held);
+        self.hold[Self::bucket(held)] += 1;
+        self.wait[Self::bucket(waited)] += 1;
+    }
+
     /// Upper bound of the `p`-th percentile (0 to 1) of a histogram.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "a fraction (0 to 1) of a count, rounded up: precision past 2^52 does not matter"
+    )]
     pub fn percentile(hist: &[u64; Self::BUCKETS], p: f64) -> std::time::Duration {
         let total: u64 = hist.iter().sum();
         let want = (total as f64 * p).ceil() as u64;
@@ -169,6 +199,7 @@ impl Timing {
 
     /// Entries of a histogram at or above `d`, rounded up to a bucket bound (2 ms counts
     /// from 2.048 ms).
+    #[must_use]
     pub fn at_least(hist: &[u64; Self::BUCKETS], d: std::time::Duration) -> u64 {
         let k = Self::bucket(d);
         let k = if k > 0 && Self::upper(k - 1) < d {
@@ -210,6 +241,10 @@ pub struct StalledInfo {
 }
 
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the engine shown to readers, not the states of one machine"
+)]
 pub struct Status {
     pub jobs: Vec<JobInfo>,
     pub stalled: Vec<StalledInfo>,
@@ -358,7 +393,7 @@ pub struct DeleteSummary {
     /// Something was deleted on btrfs, which frees the space when the transaction commits.
     pub btrfs: bool,
     /// The items not deleted and why, in the order their results came, at most
-    /// [`PROBLEMS_KEPT`].
+    /// `PROBLEMS_KEPT` (1000).
     pub problems: Vec<(NodeRef, String)>,
 }
 
@@ -366,6 +401,7 @@ pub struct DeleteSummary {
 pub const PROBLEMS_KEPT: usize = 1000;
 
 impl Status {
+    #[must_use]
     pub fn running(&self) -> usize {
         self.jobs
             .iter()
@@ -373,6 +409,7 @@ impl Status {
             .count()
     }
 
+    #[must_use]
     pub fn busy(&self) -> bool {
         self.running() > 0 || self.settling || self.deleting.is_some() || self.measuring.is_some()
     }

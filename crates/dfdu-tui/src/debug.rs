@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::app::App;
 use crate::theme::{Theme, count, human};
+use crate::view::cells;
 
 /// Stalled directories listed by path.
 const STALLED_SHOWN: usize = 3;
@@ -95,7 +96,7 @@ pub fn draw(f: &mut Frame, app: &App, body: Rect) -> Option<Rect> {
         Some((app.debug.draw, app.debug.read)),
     );
     let width = WIDTH.min(area.width);
-    let height = (lines.len() as u16 + 2).min(area.height);
+    let height = cells(lines.len()).saturating_add(2).min(area.height);
     let r = Rect::new(area.right() - width, area.y, width, height);
     f.render_widget(Clear, r);
     let block = Block::bordered()
@@ -151,12 +152,26 @@ fn text(info: &Info) -> String {
     out
 }
 
+/// How many of `n` there were per second of `d`.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a rate shown as a compact count; the float to integer cast saturates"
+)]
+fn per_second(n: u64, d: Duration) -> u64 {
+    (n as f64 / d.as_secs_f64().max(1e-9)) as u64
+}
+
 /// A duration in µs below 1 ms, in ms below 10 s, else in seconds.
 fn dur(d: Duration) -> String {
     let us = d.as_micros();
     match us {
         0..1_000 => format!("{us}µs"),
-        1_000..10_000_000 => format!("{:.1}ms", us as f64 / 1e3),
+        1_000..10_000_000 => format!(
+            "{:.1}ms",
+            f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1e3
+        ),
         _ => format!("{:.1}s", d.as_secs_f64()),
     }
 }
@@ -176,7 +191,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
         }
     };
     let locked = Duration::from_nanos(tm.locked_ns);
-    let rate = s.entries as f64 / locked.as_secs_f64().max(1e-9);
+    let rate = per_second(s.entries, locked);
     let (used, peak, capacity) = info.budget;
     let mut lines = vec![
         plain(format!(
@@ -222,7 +237,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
             "lock {}  {} slices  {} entries/s",
             dur(locked),
             count(tm.slices),
-            count(rate as u64)
+            count(rate)
         )),
         plain(format!(
             "hold p50 <{}  p99 <{}  max <{}",

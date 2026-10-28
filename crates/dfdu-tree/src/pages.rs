@@ -27,22 +27,29 @@ impl<T> Default for Pages<T> {
 }
 
 impl<T> Pages<T> {
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     pub fn push(&mut self, v: T) {
-        if self.len & MASK == 0 {
-            self.pages.push(Vec::with_capacity(PAGE));
+        match self.pages.last_mut() {
+            Some(page) if self.len & MASK != 0 => page.push(v),
+            _ => {
+                let mut page = Vec::with_capacity(PAGE);
+                page.push(v);
+                self.pages.push(page);
+            }
         }
-        self.pages.last_mut().expect("a page").push(v);
         self.len += 1;
     }
 
+    #[must_use]
     pub fn get(&self, i: usize) -> Option<&T> {
         (i < self.len).then(|| &self.pages[i >> PAGE_SHIFT][i & MASK])
     }
@@ -100,7 +107,10 @@ pub(crate) struct Kids {
     cap: u32,
     /// Boxed: 8 bytes in every directory record instead of 24, and only directories of
     /// several chunks have blocks.
-    #[allow(clippy::box_collection)]
+    #[expect(
+        clippy::box_collection,
+        reason = "8 bytes in every directory record instead of 24; few directories have blocks"
+    )]
     more: Option<Box<Vec<Vec<u32>>>>,
 }
 
@@ -168,8 +178,14 @@ impl KidArena {
             }
             let page = self.pages.len() - 1;
             let p = &mut self.pages[page];
-            k.pos = (page << KID_PAGE_BITS | p.len()) as u32;
-            k.cap = n as u32;
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "asserted above: under 2^(32 - KID_PAGE_BITS) pages of KID_PAGE slots"
+            )]
+            {
+                k.pos = (page << KID_PAGE_BITS | p.len()) as u32;
+                k.cap = n as u32;
+            }
             p.resize(p.len() + n, 0);
             return;
         }
@@ -181,26 +197,23 @@ impl KidArena {
 
     pub fn push(&mut self, k: &mut Kids, c: u32) {
         self.reserve(k, 1);
-        match k.more.as_deref_mut().and_then(|m| m.last_mut()) {
-            Some(b) => b.push(c),
-            None => {
-                let i = k.len as usize;
-                self.seg_mut(k)[i] = c;
-                k.len += 1;
-            }
+        if let Some(b) = k.more.as_deref_mut().and_then(|m| m.last_mut()) {
+            b.push(c);
+        } else {
+            let i = k.len as usize;
+            self.seg_mut(k)[i] = c;
+            k.len += 1;
         }
     }
 
     pub fn pop(&mut self, k: &mut Kids) -> Option<u32> {
         while let Some(m) = k.more.as_deref_mut() {
-            match m.last_mut().and_then(Vec::pop) {
-                Some(c) => return Some(c),
-                None => {
-                    m.pop();
-                    if m.is_empty() {
-                        k.more = None;
-                    }
-                }
+            if let Some(c) = m.last_mut().and_then(Vec::pop) {
+                return Some(c);
+            }
+            m.pop();
+            if m.is_empty() {
+                k.more = None;
             }
         }
         if k.len == 0 {
@@ -244,7 +257,7 @@ impl KidArena {
 
     /// Frees the list; its segment's slots are not reused.
     pub fn free(&mut self, k: &mut Kids) {
-        self.garbage += k.cap as u64;
+        self.garbage += u64::from(k.cap);
         *k = Kids::default();
     }
 
@@ -319,12 +332,12 @@ mod tests {
     #[test]
     fn pages_index_across_page_boundaries() {
         let mut p: Pages<u32> = Pages::default();
-        for i in 0..(3 * PAGE + 5) as u32 {
+        for i in 0..u32::try_from(3 * PAGE + 5).unwrap() {
             p.push(i);
         }
         assert_eq!(p.len(), 3 * PAGE + 5);
         for i in [0, PAGE - 1, PAGE, 2 * PAGE + 1, 3 * PAGE + 4] {
-            assert_eq!(p[i], i as u32);
+            assert_eq!(p[i], u32::try_from(i).unwrap());
         }
         assert!(p.get(3 * PAGE + 5).is_none());
         p[PAGE] = 7;
@@ -337,67 +350,67 @@ mod tests {
     /// sharing pages, lists growing past a page, and lists freed and started again.
     #[test]
     fn child_lists_match_vecs() {
-        let mut a = KidArena::default();
+        let mut arena = KidArena::default();
         let mut lists: Vec<(Kids, Vec<u32>)> = (0..40).map(|_| Default::default()).collect();
-        let mut x: u64 = 0x9e3779b97f4a7c15;
-        let mut rnd = |n: u64| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x % n
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rnd = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            usize::try_from(state % n as u64).unwrap()
         };
         let mut next = 0u32;
         for _ in 0..5_000 {
-            let i = rnd(lists.len() as u64) as usize;
+            let i = rnd(lists.len());
             let (k, v) = &mut lists[i];
             match rnd(10) {
                 0..=4 => {
                     // A chunk: reserve, then push.
-                    let n = match rnd(100) {
-                        0 => 3 * KID_PAGE as u64 / 2,
+                    let count = match rnd(100) {
+                        0 => 3 * KID_PAGE / 2,
                         1..=4 => rnd(5000),
                         _ => rnd(40),
-                    } as usize;
-                    a.reserve(k, n);
-                    for _ in 0..n {
-                        a.push(k, next);
+                    };
+                    arena.reserve(k, count);
+                    for _ in 0..count {
+                        arena.push(k, next);
                         v.push(next);
                         next += 1;
                     }
                 }
                 5 => {
-                    a.push(k, next);
+                    arena.push(k, next);
                     v.push(next);
                     next += 1;
                 }
                 6 if !v.is_empty() => {
-                    let c = v.remove(rnd(v.len() as u64) as usize);
-                    assert!(a.remove(k, c));
+                    let child = v.remove(rnd(v.len()));
+                    assert!(arena.remove(k, child));
                 }
                 7 if !v.is_empty() => {
-                    let j = rnd(v.len() as u64) as usize;
-                    assert!(a.replace(k, v[j], next));
-                    v[j] = next;
+                    let at = rnd(v.len());
+                    assert!(arena.replace(k, v[at], next));
+                    v[at] = next;
                     next += 1;
                 }
                 8 => {
                     for _ in 0..rnd(100) {
-                        assert_eq!(a.pop(k), v.pop());
+                        assert_eq!(arena.pop(k), v.pop());
                     }
                 }
                 _ if rnd(20) == 0 => {
-                    a.free(k);
+                    arena.free(k);
                     v.clear();
                 }
                 _ => k.shrink(),
             }
-            assert!(!a.remove(k, u32::MAX));
-            let (seg, more) = a.parts(k);
+            assert!(!arena.remove(k, u32::MAX));
+            let (seg, more) = arena.parts(k);
             let got: Vec<u32> = seg.iter().chain(more.iter().flatten()).copied().collect();
             assert_eq!(&got, v);
             assert_eq!(k.len(), v.len());
         }
-        let (slots, garbage) = a.slots();
+        let (slots, garbage) = arena.slots();
         assert!(garbage <= slots);
     }
 

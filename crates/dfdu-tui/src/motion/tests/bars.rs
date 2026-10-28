@@ -83,7 +83,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
     let t0 = Instant::now();
     let mut app = animated(dark(ColorLevel::TrueColor), t0);
     let mut es: Vec<EntryData> = (0..100)
-        .map(|i| test_entry(i, &format!("entry{i:03}"), 1000 + i as u64 * 10))
+        .map(|i| test_entry(i, &format!("entry{i:03}"), 1000 + u64::from(i) * 10))
         .collect();
     app.refresh(snap_with_alloc(es.clone(), 1), t0);
     render_buffer(&mut app, t0, 120, 64);

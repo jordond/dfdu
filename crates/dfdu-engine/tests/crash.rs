@@ -1,6 +1,8 @@
 //! A panic in the applier thread is reported, written to a crash file, and does not leave callers
 //! waiting forever.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions, WaitIdle};

@@ -5,10 +5,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::schema::{File, PerOs, RuleDef};
+use crate::schema::{DegradeWhen, File, MatchDef, NativeDef, PerOs, RuleDef};
 use crate::vars::Env;
 use crate::{
-    Action, Degrade, Glob, Guard, Kind, Marker, Platform, Rule, RuleSet, Safety, Source,
+    Action, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet, Safety, Source,
     category_index, glob, parse_size,
 };
 
@@ -41,11 +41,13 @@ enum Entry {
 
 /// The built-in rules for `env`, enabled ones only. Errors here are bugs; tests keep the list
 /// empty.
+#[must_use]
 pub fn builtin(env: &Env) -> (RuleSet, Vec<LoadError>) {
     load_from(env, &[(Source::Builtin, BUILTIN.to_owned())])
 }
 
 /// The built-in rules, then every `*.toml` in `user_dir` (in name order) if it exists.
+#[must_use]
 pub fn load(env: &Env, user_dir: Option<&Path>) -> (RuleSet, Vec<LoadError>) {
     let (files, mut errors) = sources(user_dir);
     let (set, mut more) = load_from(env, &files);
@@ -55,6 +57,7 @@ pub fn load(env: &Env, user_dir: Option<&Path>) -> (RuleSet, Vec<LoadError>) {
 
 /// What [`load`] loads: the built-in pack, then the text of every `*.toml` in `user_dir` (in
 /// name order) if it exists, and the files that could not be read.
+#[must_use]
 pub fn sources(user_dir: Option<&Path>) -> (Vec<(Source, String)>, Vec<LoadError>) {
     let mut files = vec![(Source::Builtin, BUILTIN.to_owned())];
     let mut errors = Vec::new();
@@ -89,6 +92,7 @@ pub fn sources(user_dir: Option<&Path>) -> (Vec<(Source, String)>, Vec<LoadError
 }
 
 /// Loads `files` in order into one set.
+#[must_use]
 pub fn load_from(env: &Env, files: &[(Source, String)]) -> (RuleSet, Vec<LoadError>) {
     let mut errors = Vec::new();
     // Kept in load order; a later rule with the same id replaces the earlier one in place.
@@ -113,12 +117,28 @@ pub fn load_from(env: &Env, files: &[(Source, String)]) -> (RuleSet, Vec<LoadErr
             }
         }
     }
-    let enabled = rules
+    let mut enabled: Vec<Rule> = rules
         .into_iter()
         .filter(|(_, on)| *on)
         .map(|(r, _)| *r)
         .collect();
+    errors.extend(keep_at_most(&mut enabled, MAX_RULES));
     (RuleSet::new(enabled, env), errors)
+}
+
+/// Drops the rules past the first `max`, naming the first one dropped.
+fn keep_at_most(rules: &mut Vec<Rule>, max: usize) -> Option<LoadError> {
+    let first = rules.get(max)?;
+    let error = LoadError {
+        source: source_name(&first.source),
+        rule: Some(first.id.clone()),
+        message: format!(
+            "more than {max} rules are enabled; this one and the {} after it are ignored",
+            rules.len() - max - 1
+        ),
+    };
+    rules.truncate(max);
+    Some(error)
 }
 
 fn source_name(s: &Source) -> String {
@@ -214,18 +234,8 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
     let category =
         category_index(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
     let name = need(def.name, "name")?;
-    let safety_s = need(def.safety, "safety")?;
-    let safety = Safety::parse(&safety_s)
-        .filter(|&s| s != Safety::Protected)
-        .ok_or_else(|| {
-            format!("unknown safety `{safety_s}` (safe, regenerable, review or manual)")
-        })?;
-    let action_s = def.action.unwrap_or_else(|| "delete".into());
-    let action = Action::parse(&action_s)
-        .ok_or_else(|| format!("unknown action `{action_s}` (delete, trash, native or report)"))?;
-    if action == Action::Native && def.native.as_ref().is_none_or(|n| n.command.is_empty()) {
-        return Err("`action = \"native\"` needs `native.command`".into());
-    }
+    let safety = safety(&need(def.safety, "safety")?)?;
+    let action = action(def.action, def.native.as_ref())?;
     let min_size = match def.min_size {
         Some(s) => parse_size(&s).ok_or_else(|| format!("min_size: cannot read `{s}`"))?,
         None => 0,
@@ -239,37 +249,10 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
         return Err("`verified` is for built-in rules only".into());
     }
     let m = def.matching.ok_or("`match` is missing")?;
-    let kind = match m.kind.as_deref().unwrap_or("any") {
-        "dir" => Kind::Dir,
-        "file" => Kind::File,
-        "any" => Kind::Any,
-        k => return Err(format!("match.kind: unknown kind `{k}` (dir, file or any)")),
-    };
+    let kind = kind(m.kind.as_deref())?;
     let p = env.platform;
-    let names_src = m.names.get(p);
-    let paths_src = m.paths.get(p);
-    let names = globs(env, "match.names", &names_src, true)?;
-    let paths = globs(env, "match.paths", &paths_src, false)?;
-    if names_src.is_empty() && paths_src.is_empty() {
-        // A rule for another platform may have no patterns on this one.
-        if on.contains(&p) && !per_os(&m.names) && !per_os(&m.paths) {
-            return Err("match needs `names` or `paths`".into());
-        }
-    }
-    let larger_than = match &m.larger_than {
-        Some(s) => parse_size(s).ok_or_else(|| format!("match.larger_than: cannot read `{s}`"))?,
-        None => 0,
-    };
-    let not_modified_days = m.not_modified_days.unwrap_or(0);
-    if (larger_than > 0 || not_modified_days > 0) && kind != Kind::File {
-        return Err("match.larger_than and match.not_modified_days need `kind = \"file\"`".into());
-    }
-    if m.broken_link && kind != Kind::File {
-        return Err("match.broken_link needs `kind = \"file\"`".into());
-    }
-    if m.empty && kind != Kind::Dir {
-        return Err("match.empty needs `kind = \"dir\"`".into());
-    }
+    let (names, paths) = names_and_paths(env, &m, on.contains(&p))?;
+    let (larger_than, not_modified_days) = entry_conditions(&m, kind)?;
     let rule = Rule {
         id: def.id,
         category,
@@ -311,20 +294,7 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
             keep_newest: def.guard.keep_newest,
             group_by: def.guard.group_by,
         },
-        degrade: def
-            .degrade
-            .when
-            .into_iter()
-            .map(|w| {
-                let safety = Safety::parse(&w.safety)
-                    .ok_or_else(|| format!("degrade: unknown safety `{}`", w.safety))?;
-                Ok(Degrade {
-                    missing_sibling: w.missing_sibling,
-                    safety,
-                    reason: w.reason,
-                })
-            })
-            .collect::<Result<_, String>>()?,
+        degrade: degrade(def.degrade.when)?,
         native: def.native,
         source: source.clone(),
     };
@@ -339,6 +309,92 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
         rule: Box::new(rule),
         enabled,
     }))
+}
+
+/// The `safety` of a rule; [`Safety::Protected`] is not one a rule can give.
+fn safety(s: &str) -> Result<Safety, String> {
+    Safety::parse(s)
+        .filter(|&s| s != Safety::Protected)
+        .ok_or_else(|| format!("unknown safety `{s}` (safe, regenerable, review or manual)"))
+}
+
+/// The `action` of a rule, `delete` when not set; `native` needs a `native.command`.
+fn action(s: Option<String>, native: Option<&NativeDef>) -> Result<Action, String> {
+    let s = s.unwrap_or_else(|| "delete".into());
+    let action = Action::parse(&s)
+        .ok_or_else(|| format!("unknown action `{s}` (delete, trash, native or report)"))?;
+    if action == Action::Native && native.is_none_or(|n| n.command.is_empty()) {
+        return Err("`action = \"native\"` needs `native.command`".into());
+    }
+    Ok(action)
+}
+
+/// `match.kind`, `any` when not set.
+fn kind(k: Option<&str>) -> Result<Kind, String> {
+    match k.unwrap_or("any") {
+        "dir" => Ok(Kind::Dir),
+        "file" => Ok(Kind::File),
+        "any" => Ok(Kind::Any),
+        k => Err(format!("match.kind: unknown kind `{k}` (dir, file or any)")),
+    }
+}
+
+/// `match.names` and `match.paths` for this platform. A rule for it (`for_here`) needs one of
+/// them unless they are given per platform.
+fn names_and_paths(
+    env: &Env,
+    m: &MatchDef,
+    for_here: bool,
+) -> Result<(Vec<Glob>, Vec<Glob>), String> {
+    let names_src = m.names.get(env.platform);
+    let paths_src = m.paths.get(env.platform);
+    let names = globs(env, "match.names", &names_src, true)?;
+    let paths = globs(env, "match.paths", &paths_src, false)?;
+    // A rule for another platform may have no patterns on this one.
+    if names_src.is_empty()
+        && paths_src.is_empty()
+        && for_here
+        && !per_os(&m.names)
+        && !per_os(&m.paths)
+    {
+        return Err("match needs `names` or `paths`".into());
+    }
+    Ok((names, paths))
+}
+
+/// The `larger_than` and `not_modified_days` of `m` (0 when not set), after checking that
+/// its conditions on the entry itself suit `kind`.
+fn entry_conditions(m: &MatchDef, kind: Kind) -> Result<(u64, u32), String> {
+    let larger_than = match &m.larger_than {
+        Some(s) => parse_size(s).ok_or_else(|| format!("match.larger_than: cannot read `{s}`"))?,
+        None => 0,
+    };
+    let not_modified_days = m.not_modified_days.unwrap_or(0);
+    if (larger_than > 0 || not_modified_days > 0) && kind != Kind::File {
+        return Err("match.larger_than and match.not_modified_days need `kind = \"file\"`".into());
+    }
+    if m.broken_link && kind != Kind::File {
+        return Err("match.broken_link needs `kind = \"file\"`".into());
+    }
+    if m.empty && kind != Kind::Dir {
+        return Err("match.empty needs `kind = \"dir\"`".into());
+    }
+    Ok((larger_than, not_modified_days))
+}
+
+/// The `degrade.when` conditions with their safety parsed.
+fn degrade(when: Vec<DegradeWhen>) -> Result<Vec<Degrade>, String> {
+    when.into_iter()
+        .map(|w| {
+            let safety = Safety::parse(&w.safety)
+                .ok_or_else(|| format!("degrade: unknown safety `{}`", w.safety))?;
+            Ok(Degrade {
+                missing_sibling: w.missing_sibling,
+                safety,
+                reason: w.reason,
+            })
+        })
+        .collect()
 }
 
 fn per_os<T>(v: &PerOs<T>) -> bool {
@@ -383,6 +439,36 @@ mod tests {
     }
 
     #[test]
+    fn rules_past_the_limit_are_dropped_and_reported() {
+        let (set, errors) = user(
+            r#"
+schema_version = 1
+[[rule]]
+id = "x.a"
+category = "dev.build"
+name = "A"
+safety = "safe"
+[rule.match]
+names = ["a"]
+"#,
+        );
+        assert!(errors.is_empty(), "{errors:#?}");
+        let mut rules = set.rules().to_vec();
+        let n = rules.len();
+        assert!(keep_at_most(&mut rules, n).is_none());
+        let error = keep_at_most(&mut rules, n - 1).expect("over the limit");
+        assert_eq!(rules.len(), n - 1);
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "/rules/mine.toml: rule `x.a`: more than {} rules are enabled; this one and the \
+                 0 after it are ignored",
+                n - 1
+            )
+        );
+    }
+
+    #[test]
     fn errors_name_the_file_and_rule() {
         let (_, errors) = user(
             r#"
@@ -397,7 +483,10 @@ names = ["x"]
 "#,
         );
         assert_eq!(
-            errors.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+            errors
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>(),
             ["/rules/mine.toml: rule `x.bad`: unknown category `dev.nope`"]
         );
     }
@@ -568,7 +657,7 @@ names = ["c"]
     #[test]
     fn missing_user_dir_is_fine() {
         let (set, errors) = load(&env(), Some(Path::new("/nonexistent/dfdu/rules")));
-        assert!(errors.is_empty());
+        assert!(errors.is_empty(), "{errors:#?}");
         assert!(!set.rules().is_empty());
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(

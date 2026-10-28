@@ -25,10 +25,13 @@ use dfdu_clean::{DeleterHandle, DeleterMsg, STAGE_UNDO_WINDOW, spawn_deleter};
 use dfdu_rules::{Env, RuleSet, Source};
 
 use super::wire::{FromAgent, ToAgent, VERSION, WireClass, read_frame, write_frame};
+use crate::classifier::CheckReq;
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
+use crate::nanos::nanos;
+use crate::threads::spawn;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::runtime::Pool;
-use dfdu_scan::{Batch, JobOptions, Limits, ScanMsg, Shared, Sink};
+use dfdu_scan::{Batch, DirId, JobId, JobOptions, Limits, ScanMsg, Shared, Sink};
 
 /// How long the agent may send nothing before it sends a heartbeat.
 pub const HEARTBEAT: Duration = Duration::from_secs(1);
@@ -53,8 +56,7 @@ impl<W: Write> Out<W> {
         {
             self.failed.store(true, SeqCst);
         }
-        self.last
-            .store(self.start.elapsed().as_nanos() as u64, SeqCst);
+        self.last.store(nanos(self.start.elapsed()), SeqCst);
     }
 }
 
@@ -73,10 +75,15 @@ impl<W: Write + Send> Sink for Out<W> {
 
 /// Runs the agent with `backend` and `workers` worker threads until `input` ends or the
 /// output fails. Deletions are journalled in `journal_dir`; without one, every item is refused.
+///
+/// # Errors
+///
+/// If the local side speaks another protocol version or sends something that is not a valid
+/// message, or the output fails.
 pub fn run<B: dfdu_scan::Backend>(
     backend: B,
     workers: usize,
-    journal_dir: Option<PathBuf>,
+    mut journal_dir: Option<PathBuf>,
     mut input: impl Read + Send + 'static,
     output: impl Write + Send + 'static,
 ) -> io::Result<()> {
@@ -86,35 +93,11 @@ pub fn run<B: dfdu_scan::Backend>(
         last: AtomicU64::new(0),
         failed: AtomicBool::new(false),
     });
-    out.send(&FromAgent::Hello {
-        min: VERSION,
-        max: VERSION,
-        tool: format!("dfdu {}", env!("CARGO_PKG_VERSION")),
-    });
-    let mut buf = Vec::new();
-    let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
-    if !read_frame(&mut input, &mut buf).map_err(bad)? {
+    if !greet(&out, &mut input)? {
         return Ok(());
     }
-    match ToAgent::decode(&buf, None).map_err(bad)? {
-        ToAgent::Hello { version } if version == VERSION => {}
-        ToAgent::Hello { version } => {
-            out.send(&FromAgent::Fatal(format!(
-                "protocol version {version} not spoken"
-            )));
-            return Err(io::Error::other("protocol version mismatch"));
-        }
-        _ => return Err(io::Error::other("expected a hello")),
-    }
-    let measurers = crate::runtime::default_measurers();
-    out.send(&FromAgent::Host {
-        measure_min: if measurers > 0 {
-            crate::applier::MEASURE_MIN
-        } else {
-            0
-        },
-        privileged: dfdu_sys::is_privileged(),
-    });
+    let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
+    let measurers = describe_host(&out);
     let shared = Arc::new(Shared::new(
         backend,
         Limits {
@@ -123,43 +106,10 @@ pub fn run<B: dfdu_scan::Backend>(
             ..Limits::default()
         },
     ));
-    let pool = Pool::start(shared.clone(), out.clone(), workers);
+    let pool = Pool::start(&shared, &out, workers);
     let done = Arc::new(AtomicBool::new(false));
-    let heart = {
-        let (out, done) = (out.clone(), done.clone());
-        thread::Builder::new()
-            .name("dfdu-heartbeat".into())
-            .spawn(move || {
-                while !done.load(SeqCst) {
-                    thread::sleep(HEARTBEAT / 4);
-                    let idle = out.start.elapsed().as_nanos() as u64 - out.last.load(SeqCst);
-                    if idle >= HEARTBEAT.as_nanos() as u64 {
-                        out.send(&FromAgent::Heartbeat);
-                    }
-                }
-            })
-            .expect("spawn heartbeat")
-    };
-    // Frames are read on a thread of their own, so a failed output is noticed while a read
-    // waits; that thread is left blocked when the agent returns for that reason.
-    let (tx, rx) = bounded::<Result<Vec<u8>, super::wire::WireError>>(16);
-    thread::Builder::new()
-        .name("dfdu-agent-in".into())
-        .spawn(move || {
-            let mut buf = Vec::new();
-            loop {
-                let r = match read_frame(&mut input, &mut buf) {
-                    Ok(true) => Ok(std::mem::take(&mut buf)),
-                    Ok(false) => return,
-                    Err(e) => Err(e),
-                };
-                let failed = r.is_err();
-                if tx.send(r).is_err() || failed {
-                    return;
-                }
-            }
-        })
-        .expect("spawn agent input");
+    let heart = start_heartbeat(&out, &done);
+    let rx = start_input(input);
     let mut rules: Option<Arc<RuleSet>> = None;
     let mut deleter: Option<DeleterHandle> = None;
     let mut measure: Option<Sender<MeasureReq>> = None;
@@ -203,16 +153,12 @@ pub fn run<B: dfdu_scan::Backend>(
                 out.send(&FromAgent::Started { job, seq });
             }
             ToAgent::Delete(req) => {
-                let d = deleter.get_or_insert_with(|| start_deleter(&out, journal_dir.clone()));
+                // Created once: the journal directory is the deleter's from then on.
+                let d = deleter.get_or_insert_with(|| start_deleter(&out, journal_dir.take()));
                 let _ = d.reqs.send(req);
             }
             ToAgent::Check(reqs) => {
-                // Guard checks read git indexes and the process list: off the control loop.
-                let out = out.clone();
-                let spawned = thread::Builder::new()
-                    .name("dfdu-agent-check".into())
-                    .spawn(move || out.send(&FromAgent::Checked(crate::check_batch(&reqs))));
-                if let Err(e) = spawned {
+                if let Err(e) = check(&out, reqs) {
                     break Err(e);
                 }
             }
@@ -230,15 +176,7 @@ pub fn run<B: dfdu_scan::Backend>(
             ToAgent::EndJob { job } => shared.end_job(job),
             ToAgent::StopDirs { job, dirs } => shared.stop_dirs(job, dirs),
             ToAgent::Abandon { job, dir } => {
-                // A worker inside the directory gives its outbox up soon.
-                let mut complete = shared.abandon(job, dir);
-                for _ in 0..100 {
-                    if complete {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(1));
-                    complete = shared.abandon(job, dir);
-                }
+                let complete = abandon(&shared, job, dir);
                 out.send(&FromAgent::Abandoned { job, dir, complete });
             }
         }
@@ -247,15 +185,123 @@ pub fn run<B: dfdu_scan::Backend>(
     // The measurers end with their requests; one stuck in a filesystem call is left behind.
     drop(measure);
     if let Some(d) = deleter {
-        // A plan still running stops after its current item; staged items are left for
-        // recovery, as when a local session ends.
-        d.abort.store(true, SeqCst);
-        drop(d.reqs);
-        let _ = d.thread.join();
+        stop_deleter(d);
     }
     let _ = heart.join();
     pool.stop(Duration::from_millis(200));
     result
+}
+
+/// Answers guard checks on a thread of their own: they read git indexes and the process list,
+/// off the control loop.
+fn check<W: Write + Send + 'static>(out: &Arc<Out<W>>, reqs: Vec<CheckReq>) -> io::Result<()> {
+    let out = out.clone();
+    thread::Builder::new()
+        .name("dfdu-agent-check".into())
+        .spawn(move || out.send(&FromAgent::Checked(crate::check_batch(&reqs))))
+        .map(drop)
+}
+
+/// Abandons directory `dir` of job `job`; whether it is complete (no worker inside it is left
+/// to give its outbox up), waiting up to about 100 ms for one that will soon.
+fn abandon<B: dfdu_scan::Backend>(shared: &Shared<B>, job: JobId, dir: DirId) -> bool {
+    let mut complete = shared.abandon(job, dir);
+    for _ in 0..100 {
+        if complete {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+        complete = shared.abandon(job, dir);
+    }
+    complete
+}
+
+/// Stops the agent's deleter: a plan still running stops after its current item; staged items
+/// are left for recovery, as when a local session ends.
+fn stop_deleter(d: DeleterHandle) {
+    d.abort.store(true, SeqCst);
+    drop(d.reqs);
+    let _ = d.thread.join();
+}
+
+/// Tells the local side what this host can measure and whether the agent runs privileged;
+/// returns the number of measurers to start.
+fn describe_host<W: Write>(out: &Out<W>) -> usize {
+    let measurers = crate::runtime::default_measurers();
+    out.send(&FromAgent::Host {
+        measure_min: if measurers > 0 {
+            crate::applier::MEASURE_MIN
+        } else {
+            0
+        },
+        privileged: dfdu_sys::is_privileged(),
+    });
+    measurers
+}
+
+/// Exchanges hellos with the local side; `false` if `input` ends first.
+fn greet<W: Write>(out: &Out<W>, input: &mut impl Read) -> io::Result<bool> {
+    out.send(&FromAgent::Hello {
+        min: VERSION,
+        max: VERSION,
+        tool: format!("dfdu {}", env!("CARGO_PKG_VERSION")),
+    });
+    let mut buf = Vec::new();
+    let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
+    if !read_frame(input, &mut buf).map_err(bad)? {
+        return Ok(false);
+    }
+    match ToAgent::decode(&buf, None).map_err(bad)? {
+        ToAgent::Hello { version } if version == VERSION => Ok(true),
+        ToAgent::Hello { version } => {
+            out.send(&FromAgent::Fatal(format!(
+                "protocol version {version} not spoken"
+            )));
+            Err(io::Error::other("protocol version mismatch"))
+        }
+        _ => Err(io::Error::other("expected a hello")),
+    }
+}
+
+/// Sends a heartbeat whenever nothing has gone out for [`HEARTBEAT`], until `done`.
+fn start_heartbeat<W: Write + Send + 'static>(
+    out: &Arc<Out<W>>,
+    done: &Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
+    let (out, done) = (out.clone(), done.clone());
+    spawn("dfdu-heartbeat", move || {
+        while !done.load(SeqCst) {
+            thread::sleep(HEARTBEAT / 4);
+            let idle = nanos(out.start.elapsed()) - out.last.load(SeqCst);
+            if idle >= nanos(HEARTBEAT) {
+                out.send(&FromAgent::Heartbeat);
+            }
+        }
+    })
+}
+
+/// Reads frames on a thread of their own, so a failed output is noticed while a read waits;
+/// that thread is left blocked when the agent returns for that reason. The channel ends with
+/// `input`, after its first error.
+fn start_input(
+    mut input: impl Read + Send + 'static,
+) -> crossbeam_channel::Receiver<Result<Vec<u8>, super::wire::WireError>> {
+    let (tx, rx) = bounded(16);
+    spawn("dfdu-agent-in", move || {
+        let mut buf = Vec::new();
+        loop {
+            let r = match read_frame(&mut input, &mut buf) {
+                Ok(true) => Ok(std::mem::take(&mut buf)),
+                Ok(false) => return,
+                Err(e) => Err(e),
+            };
+            let failed = r.is_err();
+            if tx.send(r).is_err() || failed {
+                return;
+            }
+        }
+    });
+    rx
 }
 
 /// A deleter journalling in `journal_dir`, its results sent as they come.
@@ -266,14 +312,11 @@ fn start_deleter<W: Write + Send + 'static>(
     let (tx, rx) = unbounded::<DeleterMsg>();
     let handle = spawn_deleter(journal_dir, STAGE_UNDO_WINDOW, tx);
     let out = out.clone();
-    thread::Builder::new()
-        .name("dfdu-agent-del".into())
-        .spawn(move || {
-            for msg in rx {
-                out.send(&FromAgent::Deleter(msg));
-            }
-        })
-        .expect("spawn deleter output");
+    spawn("dfdu-agent-del", move || {
+        for msg in rx {
+            out.send(&FromAgent::Deleter(msg));
+        }
+    });
     handle
 }
 
@@ -281,16 +324,13 @@ fn start_deleter<W: Write + Send + 'static>(
 /// results sent as they come.
 fn start_measurers<W: Write + Send + 'static>(out: &Arc<Out<W>>, n: usize) -> Sender<MeasureReq> {
     let (tx, rx) = unbounded::<Vec<MeasureMsg>>();
-    let reqs = spawn_measurers(n, tx);
+    let reqs = spawn_measurers(n, &tx);
     let out = out.clone();
-    thread::Builder::new()
-        .name("dfdu-agent-measure".into())
-        .spawn(move || {
-            for msgs in rx {
-                out.send(&FromAgent::Measured(msgs));
-            }
-        })
-        .expect("spawn measurer output");
+    spawn("dfdu-agent-measure", move || {
+        for msgs in rx {
+            out.send(&FromAgent::Measured(msgs));
+        }
+    });
     reqs
 }
 

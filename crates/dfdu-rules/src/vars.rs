@@ -8,6 +8,26 @@ use std::collections::HashMap;
 
 use crate::Platform;
 
+/// A pattern whose variables cannot be expanded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExpandError {
+    /// A `{` without its `}`, in this pattern.
+    Unclosed(String),
+    /// A variable name that is neither a directory variable nor a match variable.
+    Unknown(String),
+}
+
+impl std::fmt::Display for ExpandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpandError::Unclosed(s) => write!(f, "unclosed `{{` in `{s}`"),
+            ExpandError::Unknown(name) => write!(f, "unknown variable `{{{name}}}`"),
+        }
+    }
+}
+
+impl std::error::Error for ExpandError {}
+
 /// Where variables get their values: the platform and the environment.
 #[derive(Clone, Debug)]
 pub struct Env {
@@ -18,6 +38,7 @@ pub struct Env {
 impl Env {
     /// This machine's platform and environment. Directories are resolved the way scan roots
     /// are (on macOS `TMPDIR` is under `/var`, a symlink to `/private/var`).
+    #[must_use]
     pub fn current() -> Env {
         let vars = std::env::vars()
             .map(|(k, v)| {
@@ -35,6 +56,7 @@ impl Env {
     }
 
     /// `platform` with exactly the variables in `vars`.
+    #[must_use]
     pub fn with(platform: Platform, vars: &[(&str, &str)]) -> Env {
         Env {
             platform,
@@ -49,6 +71,7 @@ impl Env {
     /// directories and every `{env:NAME}`, with their values. `Env::with` of these and the
     /// same platform expands those rules as this environment does (a remote agent's rules,
     /// rebuilt on the local side).
+    #[must_use]
     pub fn used_by(&self, texts: &[&str]) -> Vec<(String, String)> {
         const NAMED: [&str; 11] = [
             "HOME",
@@ -89,6 +112,7 @@ impl Env {
     }
 
     /// The home directory, with `/` separators.
+    #[must_use]
     pub fn home(&self) -> Option<String> {
         let h = match self.platform {
             Platform::Windows => self.var("USERPROFILE"),
@@ -100,7 +124,7 @@ impl Env {
     /// Values of a named variable, empty when it has none here (no `HOME`); `None` for a name
     /// that is not a variable.
     fn named(&self, name: &str) -> Option<Vec<String>> {
-        use Platform::*;
+        use Platform::{Linux, MacOs, Windows};
         let home = self.home();
         let under_home = |rel: &str| home.as_ref().map(|h| format!("{h}/{rel}"));
         let xdg = |var: &str, rel: &str| self.var(var).map(slashes).or_else(|| under_home(rel));
@@ -153,12 +177,16 @@ impl Env {
 
     /// Expands every variable in `s`. One result per combination of multi-valued variables;
     /// none when a variable has no value here, so a rule for a missing directory matches
-    /// nothing. An unknown variable or an unclosed `{` is an error.
-    pub fn expand(&self, s: &str) -> Result<Vec<String>, String> {
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// `s` names an unknown variable or has an unclosed `{`.
+    pub fn expand(&self, s: &str) -> Result<Vec<String>, ExpandError> {
         let Some(open) = s.find('{') else {
             return Ok(vec![s.to_owned()]);
         };
-        let close = matching_brace(s, open).ok_or_else(|| format!("unclosed `{{` in `{s}`"))?;
+        let close = matching_brace(s, open).ok_or_else(|| ExpandError::Unclosed(s.to_owned()))?;
         let inner = &s[open + 1..close];
         let values = if let Some(env) = inner.strip_prefix("env:") {
             let (name, fallback) = env.split_once('|').unwrap_or((env, ""));
@@ -172,7 +200,7 @@ impl Env {
             vec![format!("{{{inner}}}")]
         } else {
             self.named(inner)
-                .ok_or_else(|| format!("unknown variable `{{{inner}}}`"))?
+                .ok_or_else(|| ExpandError::Unknown(inner.to_owned()))?
         };
         let (head, tail) = (&s[..open], &s[close + 1..]);
         let mut out = Vec::new();
@@ -214,6 +242,9 @@ fn slashes(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What [`Env::expand`] returns for a pattern that can match nothing here.
+    const NOTHING: [String; 0] = [];
 
     #[test]
     fn used_by_names_the_variables_rules_can_read() {
@@ -271,7 +302,7 @@ mod tests {
             ["C:/Users/u/AppData/Local/Temp"]
         );
         // No ProgramFiles in this environment: the pattern matches nothing.
-        assert!(win.expand("{program_files}/x").unwrap().is_empty());
+        assert_eq!(win.expand("{program_files}/x").unwrap(), NOTHING);
     }
 
     #[test]
@@ -284,7 +315,7 @@ mod tests {
             &[("HOME", "/h"), ("ANDROID_USER_HOME", "/a")],
         );
         assert_eq!(e.expand(p).unwrap(), ["/a/avd/*.avd"]);
-        assert!(e.expand("{env:NOPE}/x").unwrap().is_empty());
+        assert_eq!(e.expand("{env:NOPE}/x").unwrap(), NOTHING);
     }
 
     #[test]
@@ -293,19 +324,15 @@ mod tests {
             mac().expand("{name_stem}.ini").unwrap(),
             ["{name_stem}.ini"]
         );
-        assert!(
-            mac()
-                .expand("{nope}")
-                .unwrap_err()
-                .contains("unknown variable")
-        );
-        assert!(mac().expand("{home").unwrap_err().contains("unclosed"));
+        let unknown = mac().expand("{nope}").unwrap_err();
+        assert_eq!(unknown, ExpandError::Unknown("nope".into()));
+        assert_eq!(unknown.to_string(), "unknown variable `{nope}`");
+        let unclosed = mac().expand("{home").unwrap_err();
+        assert_eq!(unclosed.to_string(), "unclosed `{` in `{home`");
         // No home directory: nothing below it can match.
-        assert!(
-            Env::with(Platform::Linux, &[])
-                .expand("{home}/x")
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            Env::with(Platform::Linux, &[]).expand("{home}/x").unwrap(),
+            NOTHING
         );
     }
 }

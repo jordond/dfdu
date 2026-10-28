@@ -61,32 +61,7 @@ impl<B: Backend> Applier<B> {
             return;
         };
         match w {
-            Work::Free => {
-                let mut freed = Vec::new();
-                let done = m.tree.free_step(STEP_UNITS, |f| freed.push(f));
-                let mut prune = Vec::new();
-                for f in freed {
-                    let key = (f.dev, f.ino);
-                    if f.hardlink {
-                        let (reelect, prune_due) = self.links.remove(key, f.node);
-                        if let Some(scope) = reelect {
-                            self.work.push_front(Work::Reelect { key, scope });
-                        }
-                        if prune_due {
-                            prune.push(key);
-                        }
-                        self.sync_extents(m, key, false);
-                    } else if f.measured && self.extents.counted_at(key) == Some(f.node) {
-                        self.extents.remove(&mut m.tree, key);
-                    }
-                }
-                if !done {
-                    self.work.push_back(Work::Free);
-                }
-                if !prune.is_empty() {
-                    self.work.push_front(Work::Prune { keys: prune });
-                }
-            }
+            Work::Free => self.free_step(m),
             Work::Prune { mut keys } => {
                 let mut n = 0;
                 while n < LINKS_PER_STEP
@@ -144,77 +119,112 @@ impl<B: Backend> Applier<B> {
                     self.work.push_front(Work::Merge { keys, from });
                 }
             }
-            Work::CancelWalk { job, mut stack } => {
-                let mut n = 0;
-                while let Some(r) = stack.pop() {
-                    n += 1;
-                    let Some(ix) = m.tree.resolve(r) else {
-                        continue;
-                    };
-                    let Some(rec) = m.tree.dir_mut(ix) else {
-                        continue;
-                    };
-                    if rec.job != job || rec.cut {
-                        continue;
-                    }
-                    if rec.state == DirState::Pending {
-                        rec.state = DirState::Cancelled;
-                        rec.close(DirState::Cancelled);
-                        rec.pending = 0;
-                        rec.reported = true;
-                        rec.stalled = false;
-                        m.tree.touch(ix);
-                        let kids: Vec<NodeRef> = m
-                            .tree
-                            .children(ix)
-                            .filter(|&c| m.tree.dir(c).is_some())
-                            .map(|c| m.tree.node_ref(c))
-                            .collect();
-                        stack.extend(kids);
-                    }
-                    if n >= STEP_UNITS {
-                        break;
-                    }
-                }
-                if !stack.is_empty() {
-                    self.work.push_front(Work::CancelWalk { job, stack });
-                }
-            }
-            Work::LostWalk { job, mut stack } => {
-                let mut n = 0;
-                while let Some(r) = stack.pop() {
-                    n += 1;
-                    let Some(ix) = m.tree.resolve(r) else {
-                        continue;
-                    };
-                    let Some(rec) = m.tree.dir(ix) else { continue };
-                    if rec.job != job || rec.cut || rec.state.is_terminal() {
-                        continue;
-                    }
-                    let kids: Vec<NodeRef> = m
-                        .tree
-                        .children(ix)
-                        .filter(|&c| m.tree.dir(c).is_some())
-                        .map(|c| m.tree.node_ref(c))
-                        .collect();
-                    let (closed, stalled) = (rec.listing_closed, rec.stalled);
-                    stack.extend(kids);
-                    if !closed && !stalled {
-                        m.status.stats.lost += 1;
-                        m.status.incomplete = true;
-                        m.tree.set_error(ix, ErrKind::Other);
-                        self.close_listing(m, job, ix, DirState::Lost);
-                    }
-                    if n >= STEP_UNITS {
-                        break;
-                    }
-                }
-                if !stack.is_empty() {
-                    self.work.push_front(Work::LostWalk { job, stack });
-                }
-            }
+            Work::CancelWalk { job, stack } => self.cancel_walk_step(m, job, stack),
+            Work::LostWalk { job, stack } => self.lost_walk_step(m, job, stack),
             Work::FinishJob { job } => self.finish_job(m, job),
         }
         self.refresh_status(m);
+    }
+
+    /// Frees a step's worth of detached nodes, and forgets their hard links and extents.
+    fn free_step(&mut self, m: &mut Model) {
+        let mut freed = Vec::new();
+        let done = m.tree.free_step(STEP_UNITS, |f| freed.push(f));
+        let mut prune = Vec::new();
+        for f in freed {
+            let key = (f.dev, f.ino);
+            if f.hardlink {
+                let (reelect, prune_due) = self.links.remove(key, f.node);
+                if let Some(scope) = reelect {
+                    self.work.push_front(Work::Reelect { key, scope });
+                }
+                if prune_due {
+                    prune.push(key);
+                }
+                self.sync_extents(m, key, false);
+            } else if f.measured && self.extents.counted_at(key) == Some(f.node) {
+                self.extents.remove(&mut m.tree, key);
+            }
+        }
+        if !done {
+            self.work.push_back(Work::Free);
+        }
+        if !prune.is_empty() {
+            self.work.push_front(Work::Prune { keys: prune });
+        }
+    }
+
+    /// Cancels a step's worth of the directories of job `job` still pending below `stack`.
+    fn cancel_walk_step(&mut self, m: &mut Model, job: u32, mut stack: Vec<NodeRef>) {
+        let mut n = 0;
+        while let Some(r) = stack.pop() {
+            n += 1;
+            let Some(ix) = m.tree.resolve(r) else {
+                continue;
+            };
+            let Some(rec) = m.tree.dir_mut(ix) else {
+                continue;
+            };
+            if rec.job != job || rec.cut {
+                continue;
+            }
+            if rec.state == DirState::Pending {
+                rec.state = DirState::Cancelled;
+                rec.close(DirState::Cancelled);
+                rec.pending = 0;
+                rec.reported = true;
+                rec.stalled = false;
+                m.tree.touch(ix);
+                let kids: Vec<NodeRef> = m
+                    .tree
+                    .children(ix)
+                    .filter(|&c| m.tree.dir(c).is_some())
+                    .map(|c| m.tree.node_ref(c))
+                    .collect();
+                stack.extend(kids);
+            }
+            if n >= STEP_UNITS {
+                break;
+            }
+        }
+        if !stack.is_empty() {
+            self.work.push_front(Work::CancelWalk { job, stack });
+        }
+    }
+
+    /// Closes as `Lost` a step's worth of the directories of job `job` below `stack` whose
+    /// listing never closed and that are not stalled.
+    fn lost_walk_step(&mut self, m: &mut Model, job: u32, mut stack: Vec<NodeRef>) {
+        let mut n = 0;
+        while let Some(r) = stack.pop() {
+            n += 1;
+            let Some(ix) = m.tree.resolve(r) else {
+                continue;
+            };
+            let Some(rec) = m.tree.dir(ix) else { continue };
+            if rec.job != job || rec.cut || rec.state.is_terminal() {
+                continue;
+            }
+            let kids: Vec<NodeRef> = m
+                .tree
+                .children(ix)
+                .filter(|&c| m.tree.dir(c).is_some())
+                .map(|c| m.tree.node_ref(c))
+                .collect();
+            let (closed, stalled) = (rec.listing_closed, rec.stalled);
+            stack.extend(kids);
+            if !closed && !stalled {
+                m.status.stats.lost += 1;
+                m.status.incomplete = true;
+                m.tree.set_error(ix, ErrKind::Other);
+                self.close_listing(m, job, ix, DirState::Lost);
+            }
+            if n >= STEP_UNITS {
+                break;
+            }
+        }
+        if !stack.is_empty() {
+            self.work.push_front(Work::LostWalk { job, stack });
+        }
     }
 }

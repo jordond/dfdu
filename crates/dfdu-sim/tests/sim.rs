@@ -1,6 +1,8 @@
 //! Seeded simulation runs. Set `DFDU_SIM_SEEDS` to run more
 //! seeds and `DFDU_SIM_SEED` to rerun one.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use dfdu_sim::{SimConfig, SpecConfig, quiet_injected_panics, run, sim_rules};
 
 fn seeds(default: u64) -> Vec<u64> {

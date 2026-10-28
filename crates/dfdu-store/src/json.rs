@@ -19,11 +19,17 @@ impl Num {
     /// The value as an unsigned integer, if it is one in range (fractions are dropped, as ncdu
     /// does for `mtime`).
     pub fn as_u64(self) -> Option<u64> {
+        /// 2^64, the smallest float above every `u64`.
+        const U64_END: f64 = 18_446_744_073_709_551_616.0;
         match self {
             Num::U(u) => Some(u),
-            Num::I(_) => None,
-            Num::F(f) if f >= 0.0 && f < u64::MAX as f64 => Some(f as u64),
-            Num::F(_) => None,
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "f is in [0, 2^64), so it fits in u64 once its fraction is dropped"
+            )]
+            Num::F(f) if (0.0..U64_END).contains(&f) => Some(f as u64),
+            Num::I(_) | Num::F(_) => None,
         }
     }
 }
@@ -50,7 +56,7 @@ impl<R: BufRead> Reader<R> {
         loop {
             match self.r.fill_buf() {
                 Ok(b) => return Ok(b.first().copied()),
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -124,7 +130,7 @@ impl<R: BufRead> Reader<R> {
                 let buf = loop {
                     match self.r.fill_buf() {
                         Ok(b) => break b,
-                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                         Err(e) => return Err(e.into()),
                     }
                 };
@@ -146,7 +152,7 @@ impl<R: BufRead> Reader<R> {
             self.r.consume(n);
             self.pos += n as u64;
             match end {
-                None => continue,
+                None => {}
                 Some(b'"') => {
                     self.bump();
                     return Ok(out);

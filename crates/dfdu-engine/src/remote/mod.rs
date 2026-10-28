@@ -43,6 +43,8 @@ use std::time::{Duration, Instant};
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::extents::Inode;
 use crate::measure::{MeasureMsg, MeasureReq, MeasureResult};
+use crate::nanos::nanos;
+use crate::threads::spawn;
 use crossbeam_channel::{RecvTimeoutError, Sender};
 use dfdu_clean::{DeleterHandle, DeleterMsg, DeleterReq};
 use dfdu_rules::hash::FastMap as HashMap;
@@ -282,8 +284,7 @@ struct Timed<R> {
 
 impl<R: Read> Read for Timed<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.since
-            .store(self.start.elapsed().as_nanos() as u64 + 1, SeqCst);
+        self.since.store(nanos(self.start.elapsed()) + 1, SeqCst);
         let r = self.inner.read(buf);
         self.since.store(0, SeqCst);
         r
@@ -302,14 +303,15 @@ pub(crate) fn connect(
         child,
     } = io;
     let mut buf = Vec::new();
-    let bad = |e: wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
-    if !read_frame(&mut reader, &mut buf).map_err(bad)? {
-        return Err(io::Error::new(
+    let hello = next_message(
+        &mut reader,
+        &mut buf,
+        io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "the agent closed the link before saying hello",
-        ));
-    }
-    let tool = match FromAgent::decode(&buf, None).map_err(bad)? {
+        ),
+    )?;
+    let tool = match hello {
         FromAgent::Hello { min, max, tool } if (min..=max).contains(&wire::VERSION) => tool,
         FromAgent::Hello { min, max, tool } => {
             return Err(io::Error::other(format!(
@@ -338,10 +340,8 @@ pub(crate) fn connect(
         version: wire::VERSION,
     });
     let (measure_min, privileged) = loop {
-        if !read_frame(&mut reader, &mut buf).map_err(bad)? {
-            return Err(io::Error::other("the agent closed the link"));
-        }
-        match FromAgent::decode(&buf, None).map_err(bad)? {
+        let closed = io::Error::other("the agent closed the link");
+        match next_message(&mut reader, &mut buf, closed)? {
             FromAgent::Heartbeat => {}
             FromAgent::Fatal(s) => return Err(io::Error::other(s)),
             FromAgent::Host {
@@ -359,52 +359,77 @@ pub(crate) fn connect(
         privileged,
     };
     if let Some(r) = rules {
-        link.send(&ToAgent::Rules {
-            files: r
-                .files
-                .iter()
-                .map(|(src, text)| {
-                    let name = match src {
-                        Source::Builtin => None,
-                        Source::File(p) => Some(p.display().to_string()),
-                    };
-                    (name, text.clone())
-                })
-                .collect(),
-            root: dfdu_tree::name_bytes(r.root.as_os_str()).into_owned(),
-        });
-        let answer = loop {
-            if !read_frame(&mut reader, &mut buf).map_err(bad)? {
-                return Err(io::Error::other("the agent closed the link"));
-            }
-            match FromAgent::decode(&buf, None).map_err(bad)? {
-                // Before a job starts, batches only say the agent's workers are idle.
-                FromAgent::Heartbeat | FromAgent::Batch(_) => {}
-                FromAgent::Fatal(s) => return Err(io::Error::other(s)),
-                FromAgent::Rules {
-                    platform,
-                    vars,
-                    fingerprint,
-                    root,
-                } => break (platform, vars, fingerprint, root),
-                _ => return Err(io::Error::other("the agent did not answer the rules")),
-            }
-        };
-        let (platform, vars, fingerprint, root) = answer;
-        match agree(&r.files, &platform, &vars, fingerprint, &root) {
-            Ok((set, errors)) => {
-                let set = Arc::new(set);
-                let _ = link.rules.set(set.clone());
-                connected.class = Some(root.with(set));
-                connected.errors = errors;
-            }
-            Err(e) => connected.errors.push(e),
-        }
+        exchange_rules(&link, &mut reader, &mut buf, &r, &mut connected)?;
     }
     if link.dead.load(SeqCst) {
         return Err(io::Error::other("the agent closed the link"));
     }
     Ok((link, reader, connected))
+}
+
+/// Sends `r` to the agent and builds the set it built from them, into `connected`; rules the
+/// two sides do not build alike are left out, with why in `connected.errors`.
+fn exchange_rules(
+    link: &Link,
+    reader: &mut impl Read,
+    buf: &mut Vec<u8>,
+    r: &RemoteRules,
+    connected: &mut Connected,
+) -> io::Result<()> {
+    link.send(&ToAgent::Rules {
+        files: r
+            .files
+            .iter()
+            .map(|(src, text)| {
+                let name = match src {
+                    Source::Builtin => None,
+                    Source::File(p) => Some(p.display().to_string()),
+                };
+                (name, text.clone())
+            })
+            .collect(),
+        root: dfdu_tree::name_bytes(r.root.as_os_str()).into_owned(),
+    });
+    let answer = loop {
+        let closed = io::Error::other("the agent closed the link");
+        match next_message(reader, buf, closed)? {
+            // Before a job starts, batches only say the agent's workers are idle.
+            FromAgent::Heartbeat | FromAgent::Batch(_) => {}
+            FromAgent::Fatal(s) => return Err(io::Error::other(s)),
+            FromAgent::Rules {
+                platform,
+                vars,
+                fingerprint,
+                root,
+            } => break (platform, vars, fingerprint, root),
+            _ => return Err(io::Error::other("the agent did not answer the rules")),
+        }
+    };
+    let (platform, vars, fingerprint, root) = answer;
+    match agree(&r.files, &platform, &vars, fingerprint, &root) {
+        Ok((set, errors)) => {
+            let set = Arc::new(set);
+            let _ = link.rules.set(set.clone());
+            connected.class = Some(root.with(set));
+            connected.errors = errors;
+        }
+        Err(e) => connected.errors.push(e),
+    }
+    Ok(())
+}
+
+/// The next message from the agent while it is greeted, decoded without rules; `closed` if
+/// the link ends first.
+fn next_message(
+    reader: &mut impl Read,
+    buf: &mut Vec<u8>,
+    closed: io::Error,
+) -> io::Result<FromAgent> {
+    let bad = |e: wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
+    if !read_frame(reader, buf).map_err(bad)? {
+        return Err(closed);
+    }
+    FromAgent::decode(buf, None).map_err(bad)
 }
 
 /// Builds `files` as the agent did, for its `platform` and `vars`; the set must have the
@@ -426,7 +451,13 @@ fn agree(
             "the agent built different rules (another dfdu version?): not classified".into(),
         );
     }
-    Ok((set, errors.iter().map(|e| e.to_string()).collect()))
+    Ok((
+        set,
+        errors
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+    ))
 }
 
 /// A deleter whose plans run on the agent: requests are sent as they come, and an abort is
@@ -436,46 +467,43 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
     let (reqs, rx) = crossbeam_channel::unbounded::<DeleterReq>();
     let abort = Arc::new(AtomicBool::new(false));
     let ab = abort.clone();
-    let thread = thread::Builder::new()
-        .name("dfdu-remote-del".into())
-        .spawn(move || {
-            loop {
-                if ab.swap(false, SeqCst) {
-                    link.send(&ToAgent::AbortDelete);
-                }
-                match rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(DeleterReq::Plan(p)) => {
-                        link.plans
-                            .lock()
-                            .insert(p.id, p.items.iter().map(|i| (i.node, i.bytes)).collect());
-                        // A plan starting clears an abort asked for before it, as locally.
-                        ab.store(false, SeqCst);
-                        link.send(&ToAgent::Delete(DeleterReq::Plan(p)));
-                        if link.dead.load(SeqCst) {
-                            link.end_plans(&deleted);
-                        }
-                    }
-                    Ok(DeleterReq::Native(n)) => {
-                        if n.rule.is_none() {
-                            let _ = deleted.send(DeleterMsg::NativeDone {
-                                id: n.id,
-                                result: Err("not from a rule: not sent to the agent".into()),
-                            });
-                            continue;
-                        }
-                        link.natives.lock().insert(n.id);
-                        link.send(&ToAgent::Delete(DeleterReq::Native(n)));
-                        if link.dead.load(SeqCst) {
-                            link.end_plans(&deleted);
-                        }
-                    }
-                    Ok(r) => link.send(&ToAgent::Delete(r)),
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => return,
-                }
+    let thread = spawn("dfdu-remote-del", move || {
+        loop {
+            if ab.swap(false, SeqCst) {
+                link.send(&ToAgent::AbortDelete);
             }
-        })
-        .expect("spawn remote deleter");
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(DeleterReq::Plan(p)) => {
+                    link.plans
+                        .lock()
+                        .insert(p.id, p.items.iter().map(|i| (i.node, i.bytes)).collect());
+                    // A plan starting clears an abort asked for before it, as locally.
+                    ab.store(false, SeqCst);
+                    link.send(&ToAgent::Delete(DeleterReq::Plan(p)));
+                    if link.dead.load(SeqCst) {
+                        link.end_plans(&deleted);
+                    }
+                }
+                Ok(DeleterReq::Native(n)) => {
+                    if n.rule.is_none() {
+                        let _ = deleted.send(DeleterMsg::NativeDone {
+                            id: n.id,
+                            result: Err("not from a rule: not sent to the agent".into()),
+                        });
+                        continue;
+                    }
+                    link.natives.lock().insert(n.id);
+                    link.send(&ToAgent::Delete(DeleterReq::Native(n)));
+                    if link.dead.load(SeqCst) {
+                        link.end_plans(&deleted);
+                    }
+                }
+                Ok(r) => link.send(&ToAgent::Delete(r)),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    });
     DeleterHandle {
         reqs,
         abort,
@@ -487,16 +515,13 @@ pub(crate) fn spawn_deleter(link: Arc<Link>, deleted: Sender<DeleterMsg>) -> Del
 /// arrive through the reader ([`spawn_reader`]'s `checked`).
 pub(crate) fn spawn_checker(link: Arc<Link>) -> Sender<Vec<CheckReq>> {
     let (tx, rx) = crossbeam_channel::unbounded::<Vec<CheckReq>>();
-    thread::Builder::new()
-        .name("dfdu-remote-check".into())
-        .spawn(move || {
-            for batch in rx {
-                if !batch.is_empty() {
-                    link.send(&ToAgent::Check(batch));
-                }
+    spawn("dfdu-remote-check", move || {
+        for batch in rx {
+            if !batch.is_empty() {
+                link.send(&ToAgent::Check(batch));
             }
-        })
-        .expect("spawn remote checker");
+        }
+    });
     tx
 }
 
@@ -508,26 +533,23 @@ pub(crate) fn spawn_measurer(
     measured: Sender<Vec<MeasureMsg>>,
 ) -> Sender<MeasureReq> {
     let (tx, rx) = crossbeam_channel::unbounded::<MeasureReq>();
-    thread::Builder::new()
-        .name("dfdu-remote-measure".into())
-        .spawn(move || {
-            while let Ok(first) = rx.recv() {
-                let reqs: Vec<MeasureReq> = std::iter::once(first).chain(rx.try_iter()).collect();
-                {
-                    let mut pending = link.measuring.lock();
-                    for r in &reqs {
-                        for f in &r.files {
-                            *pending.entry((r.round, f.node, f.inode)).or_default() += 1;
-                        }
+    spawn("dfdu-remote-measure", move || {
+        while let Ok(first) = rx.recv() {
+            let reqs: Vec<MeasureReq> = std::iter::once(first).chain(rx.try_iter()).collect();
+            {
+                let mut pending = link.measuring.lock();
+                for r in &reqs {
+                    for f in &r.files {
+                        *pending.entry((r.round, f.node, f.inode)).or_default() += 1;
                     }
                 }
-                link.send(&ToAgent::Measure(reqs));
-                if link.dead.load(SeqCst) {
-                    link.end_measures(&measured);
-                }
             }
-        })
-        .expect("spawn remote measurer");
+            link.send(&ToAgent::Measure(reqs));
+            if link.dead.load(SeqCst) {
+                link.end_measures(&measured);
+            }
+        }
+    });
     tx
 }
 
@@ -558,33 +580,27 @@ pub(crate) fn spawn_reader<S: Sink + Send + Sync + 'static>(
     };
     {
         let (link, stop, since) = (link.clone(), stop.clone(), since.clone());
-        thread::Builder::new()
-            .name("dfdu-link-watch".into())
-            .spawn(move || {
-                while !stop.load(SeqCst) && !link.dead.load(SeqCst) {
-                    thread::sleep(Duration::from_millis(100));
-                    let s = since.load(SeqCst);
-                    if s != 0 && start.elapsed().as_nanos() as u64 - s > DEAD.as_nanos() as u64 {
-                        link.timed_out.store(true, SeqCst);
-                        link.kill();
-                    }
+        spawn("dfdu-link-watch", move || {
+            while !stop.load(SeqCst) && !link.dead.load(SeqCst) {
+                thread::sleep(Duration::from_millis(100));
+                let s = since.load(SeqCst);
+                if s != 0 && nanos(start.elapsed()) - s > nanos(DEAD) {
+                    link.timed_out.store(true, SeqCst);
+                    link.kill();
                 }
-            })
-            .expect("spawn link watchdog");
-    }
-    thread::Builder::new()
-        .name("dfdu-link".into())
-        .spawn(move || {
-            let why = pump(&link, &mut r, &*sink, &answers);
-            link.dead.store(true, SeqCst);
-            link.end_plans(&answers.deleted);
-            link.end_measures(&answers.measured);
-            if !stop.load(SeqCst) {
-                *link.lost.lock() = Some(why);
-                on_end();
             }
-        })
-        .expect("spawn link reader");
+        });
+    }
+    spawn("dfdu-link", move || {
+        let why = pump(&link, &mut r, &*sink, &answers);
+        link.dead.store(true, SeqCst);
+        link.end_plans(&answers.deleted);
+        link.end_measures(&answers.measured);
+        if !stop.load(SeqCst) {
+            *link.lost.lock() = Some(why);
+            on_end();
+        }
+    });
 }
 
 /// Reads frames until the link ends; returns why it ended.
@@ -655,7 +671,7 @@ mod tests {
         let root = WireClass {
             path: b"/home/u/p".to_vec(),
             inside: vec![],
-            protection: Default::default(),
+            protection: dfdu_rules::protected::State::default(),
             chain: vec![],
         };
         let fp = set.fingerprint();

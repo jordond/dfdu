@@ -5,13 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use clap::Args;
 use dfdu_engine::{Engine, Model};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef};
+use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
@@ -133,12 +133,6 @@ impl Item {
     }
 }
 
-pub fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// Every match not inside another, largest first, that passes `f`.
 pub fn items(m: &Model, rules: &RuleSet, f: &Filter, now: i64) -> Vec<Item> {
     let t = &m.tree;
@@ -169,7 +163,7 @@ fn item(m: &Model, rules: &RuleSet, ix: Ix, class: Class, now: i64) -> Item {
         shared_out: tot.shared_out,
         mtime,
         scanning,
-        recommended: dfdu_tui::recommends(
+        recommended: dfdu_engine::recommends(
             rules.rule(class.rule),
             class,
             tot.alloc,
@@ -183,8 +177,9 @@ fn item(m: &Model, rules: &RuleSet, ix: Ix, class: Class, now: i64) -> Item {
 fn keep(rules: &RuleSet, f: &Filter, it: &Item, now: i64) -> bool {
     let cat = rules.rule(it.class.rule).category().id;
     f.min_size.is_none_or(|min| it.disk >= min)
-        && f.older_than
-            .is_none_or(|age| now.saturating_sub(it.mtime) >= age as i64)
+        && f.older_than.is_none_or(|age| {
+            now.saturating_sub(it.mtime) >= i64::try_from(age).unwrap_or(i64::MAX)
+        })
         && (f.category.is_empty()
             || f.category
                 .iter()
@@ -329,7 +324,7 @@ pub fn reclaimable(items: &[Item]) -> u64 {
         .sum()
 }
 
-pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> ExitCode {
+pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
     let (engine, elapsed) = match scan(&args.path, args.mounts, rules.clone(), args.threads, false)
     {
         Ok(e) => e,
@@ -341,24 +336,26 @@ pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> ExitCode {
             return ExitCode::from(1);
         };
         let max = args.safety.unwrap_or(Safety::Protected);
-        let list: Vec<Item> = items(m, &rules, &args.filter, now)
+        let list: Vec<Item> = items(m, rules, &args.filter, now)
             .into_iter()
             .filter(|i| i.safety() <= max)
             .collect();
         let total = reclaimable(&list);
         let exceeded = args.fail_above.is_some_and(|t| total > t);
         let r = if args.format == ReportFormat::Json {
-            let mut doc = Map::new();
-            doc.insert("schema_version".into(), js::SCHEMA_VERSION.into());
-            doc.insert("tool".into(), js::tool());
-            js::put_path(&mut doc, "root", &m.tree.path_buf(root));
+            let mut doc = js::document(&m.tree.path_buf(root));
             doc.insert("generated_at".into(), now.into());
-            doc.insert("complete".into(), js::complete(m, root).into());
-            doc.insert("elapsed_ms".into(), (elapsed.as_millis() as u64).into());
+            doc.insert("complete".into(), m.complete(root).into());
+            doc.insert(
+                "elapsed_ms".into(),
+                u64::try_from(elapsed.as_millis())
+                    .unwrap_or(u64::MAX)
+                    .into(),
+            );
             doc.insert(
                 "items".into(),
                 list.iter()
-                    .map(|i| item_json(m, &rules, i, now))
+                    .map(|i| item_json(m, rules, i, now))
                     .collect::<Vec<_>>()
                     .into(),
             );
@@ -369,19 +366,16 @@ pub fn run(args: ReportArgs, rules: Arc<RuleSet>) -> ExitCode {
                     json!({ "fail_above": t, "exceeded": exceeded }),
                 );
             }
-            let mut w = std::io::stdout().lock();
-            serde_json::to_writer_pretty(&mut w, &Value::Object(doc))
-                .map_err(std::io::Error::from)
-                .and_then(|()| std::io::Write::write_all(&mut w, b"\n"))
+            js::print(doc)
         } else {
-            table(&rules, &list, now, args.fail_above, exceeded)
+            table(rules, &list, now, args.fail_above, exceeded)
         };
         if let Err(code) = written(r) {
             return code;
         }
         if exceeded {
             ExitCode::from(EXIT_THRESHOLD)
-        } else if !js::complete(m, root) {
+        } else if !m.complete(root) {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
@@ -432,7 +426,7 @@ fn table(
             w,
             "{:<12} {:>10} {:>5}d  {:<28} {}  [{}]",
             it.safety().as_str(),
-            dfdu_tui::human(it.disk),
+            dfdu_engine::human(it.disk),
             age_days(now, it.mtime),
             truncate(&r.name, 28),
             it.path.display(),
@@ -447,7 +441,7 @@ fn table(
                 w,
                 "{:<12} {:>10}  {} item{}",
                 s.as_str(),
-                dfdu_tui::human(of.iter().map(|i| i.disk).sum()),
+                dfdu_engine::human(of.iter().map(|i| i.disk).sum()),
                 of.len(),
                 if of.len() == 1 { "" } else { "s" }
             )?;
@@ -458,7 +452,7 @@ fn table(
         w,
         "{:<12} {:>10}  {} item{} (dfdu clean deletes these)",
         "recommended",
-        dfdu_tui::human(rec.iter().map(|i| i.disk).sum()),
+        dfdu_engine::human(rec.iter().map(|i| i.disk).sum()),
         rec.len(),
         if rec.len() == 1 { "" } else { "s" }
     )?;
@@ -466,13 +460,13 @@ fn table(
         writeln!(
             w,
             "{} {} (--fail-above {})",
-            dfdu_tui::human(reclaimable(list)),
+            dfdu_engine::human(reclaimable(list)),
             if exceeded {
                 "is over the limit"
             } else {
                 "is within the limit"
             },
-            dfdu_tui::human(t)
+            dfdu_engine::human(t)
         )?;
     }
     w.flush()

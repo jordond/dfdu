@@ -1,4 +1,4 @@
-//! NTFS master file table parsing, for the MFT backend on Windows ([`crate::WindowsBackend`]
+//! NTFS master file table parsing, for the MFT backend on Windows (`WindowsBackend`
 //! with `mft`): the boot sector, file records with their update sequence fixups, the
 //! attributes the scan needs and data runs. Pure code on byte buffers, so it is tested (and
 //! fuzzed) on every platform; reading the volume is the Windows backend's.
@@ -29,6 +29,7 @@ pub struct Boot {
 }
 
 impl Boot {
+    #[must_use]
     pub fn parse(b: &[u8]) -> Option<Boot> {
         if b.get(3..11)? != b"NTFS    " {
             return None;
@@ -42,11 +43,11 @@ impl Boot {
             u32::from(spc)
         };
         let cluster = sector.checked_mul(spc)?;
-        let cpr = *b.get(0x40)? as i8;
+        let cpr = b.get(0x40)?.cast_signed();
         let record = if cpr < 0 {
             1u32.checked_shl(u32::from(cpr.unsigned_abs()))?
         } else {
-            cluster.checked_mul(cpr as u32)?
+            cluster.checked_mul(u32::from(cpr.cast_unsigned()))?
         };
         let pow2 = |n: u32| n.is_power_of_two();
         if !(512..=4096).contains(&sector)
@@ -126,6 +127,7 @@ pub struct Run {
 
 /// Decodes a mapping pairs array; `None` when it is malformed (a run past the buffer, a length
 /// of zero, a cluster number below zero).
+#[must_use]
 pub fn data_runs(b: &[u8]) -> Option<Vec<Run>> {
     let mut runs = Vec::new();
     let mut at = 0;
@@ -161,11 +163,11 @@ fn le_unsigned(b: &[u8]) -> u64 {
 
 fn le_signed(b: &[u8]) -> i64 {
     let n = le_unsigned(b);
-    let bits = 8 * b.len() as u32;
+    let bits = 8 * b.len();
     if bits < 64 && n >> (bits - 1) & 1 == 1 {
-        (n | !0u64 << bits) as i64
+        (n | !0u64 << bits).cast_signed()
     } else {
-        n as i64
+        n.cast_signed()
     }
 }
 
@@ -173,6 +175,7 @@ fn le_signed(b: &[u8]) -> i64 {
 /// for record 0, where the `$MFT` itself is. Fixups must have been applied. `None` when the
 /// stream is resident, missing or malformed, or continues in an extension record (a `$MFT`
 /// in so many fragments is not read).
+#[must_use]
 pub fn mft_data(rec: &[u8]) -> Option<(Vec<Run>, u64)> {
     let used = (u32_at(rec, 0x18)? as usize).min(rec.len());
     let mut at = u16_at(rec, 0x14)? as usize;
@@ -337,9 +340,9 @@ impl MftBuilder {
                 let (off, len) = value(a)?;
                 let v = &a[off..off + len];
                 let parent = u64_at(v, 0)?;
-                let chars = *v.get(0x40)? as usize;
+                let chars = *v.get(0x40)?;
                 let ns = *v.get(0x41)?;
-                let name = v.get(0x42..0x42 + 2 * chars)?;
+                let name = v.get(0x42..0x42 + 2 * usize::from(chars))?;
                 if f.reparse_tag == 0 && u32_at(v, 0x38)? & win_attr::REPARSE_POINT != 0 {
                     f.reparse_tag = u32_at(v, 0x3C)?;
                 }
@@ -351,7 +354,7 @@ impl MftBuilder {
                             .iter()
                             .map(|&c| u16::from_le_bytes(c)),
                     );
-                    f.names.push((parent, start, chars as u16));
+                    f.names.push((parent, start, u16::from(chars)));
                 }
             }
             AT_DATA if name_len == 0 => {
@@ -382,6 +385,11 @@ impl MftBuilder {
     }
 
     /// The index of every file in use, its names grouped by directory.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "entries are names, whose offsets `MftBuilder::add` keeps within `u32`"
+    )]
     pub fn finish(self) -> MftIndex {
         let MftBuilder { files, names, .. } = self;
         let mut entries: Vec<MftEntry> = Vec::new();
@@ -476,6 +484,7 @@ pub struct MftIndex {
 impl MftIndex {
     /// The entries of the directory with file reference `dir` (record number and sequence
     /// number); `None` when no directory in use has that reference.
+    #[must_use]
     pub fn children(&self, dir: u64) -> Option<&[MftEntry]> {
         let (n, seq) = (dir & 0xFFFF_FFFF_FFFF, (dir >> 48) as u16);
         if self.dirs.get(&n) != Some(&seq) {
@@ -487,6 +496,7 @@ impl MftIndex {
         })
     }
 
+    #[must_use]
     pub fn name(&self, e: &MftEntry) -> &[u16] {
         &self.names[e.name.0 as usize..e.name.0 as usize + e.name.1 as usize]
     }
@@ -497,10 +507,12 @@ impl MftIndex {
     }
 
     /// Names in the index.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -535,7 +547,7 @@ pub(crate) mod tests {
             let a = &mut self.buf[self.at..self.at + len];
             a[..body.len()].copy_from_slice(body);
             a[..4].copy_from_slice(&ty.to_le_bytes());
-            a[4..8].copy_from_slice(&(len as u32).to_le_bytes());
+            a[4..8].copy_from_slice(&u32::try_from(len).unwrap().to_le_bytes());
             self.at += len;
             self
         }
@@ -543,7 +555,7 @@ pub(crate) mod tests {
         fn resident(&mut self, ty: u32, name_len: u8, value: &[u8]) -> &mut Self {
             let mut body = vec![0u8; 0x18];
             body[9] = name_len;
-            body[0x10..0x14].copy_from_slice(&(value.len() as u32).to_le_bytes());
+            body[0x10..0x14].copy_from_slice(&u32::try_from(value.len()).unwrap().to_le_bytes());
             body[0x14..0x16].copy_from_slice(&0x18u16.to_le_bytes());
             body.extend(value);
             self.attr(ty, &body)
@@ -568,7 +580,7 @@ pub(crate) mod tests {
                 v[0x38..0x3C].copy_from_slice(&win_attr::REPARSE_POINT.to_le_bytes());
                 v[0x3C..0x40].copy_from_slice(&tag.to_le_bytes());
             }
-            v[0x40] = units.len() as u8;
+            v[0x40] = u8::try_from(units.len()).unwrap();
             v[0x41] = ns;
             v.extend(units.iter().flat_map(|u| u.to_le_bytes()));
             self.resident(AT_FILE_NAME, 0, &v)
@@ -597,7 +609,7 @@ pub(crate) mod tests {
         pub fn bytes(&mut self) -> Vec<u8> {
             let at = self.at;
             self.buf[at..at + 4].copy_from_slice(&AT_END.to_le_bytes());
-            self.buf[0x18..0x1C].copy_from_slice(&((at + 8) as u32).to_le_bytes());
+            self.buf[0x18..0x1C].copy_from_slice(&u32::try_from(at + 8).unwrap().to_le_bytes());
             let mut b = self.buf.clone();
             let check = [0x5A, 0xA5];
             b[0x30..0x32].copy_from_slice(&check);

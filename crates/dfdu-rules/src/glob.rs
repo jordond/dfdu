@@ -36,6 +36,10 @@ fn shape(p: &[u8]) -> Shape {
     if p.contains(&b'/') || p.contains(&b'?') {
         return Shape::General;
     }
+    #[expect(
+        clippy::naive_bytecount,
+        reason = "patterns and paths are short; not worth the `bytecount` dependency"
+    )]
     let stars = p.iter().filter(|&&b| b == b'*').count();
     match (stars, p.first(), p.last()) {
         (1, _, _) if p == b"*" => Shape::Any,
@@ -80,6 +84,11 @@ impl std::fmt::Display for GlobError {
 }
 
 impl Glob {
+    /// Compiles `pattern`, lower-cased when `fold_case`.
+    ///
+    /// # Errors
+    ///
+    /// The pattern is empty, has a `**` that is not a whole component, or uses `[...]`.
     pub fn new(pattern: &str, fold_case: bool) -> Result<Glob, GlobError> {
         if pattern.is_empty() {
             return Err(GlobError::Empty);
@@ -97,6 +106,10 @@ impl Glob {
         } else {
             pattern.as_bytes().to_vec()
         };
+        #[expect(
+            clippy::naive_bytecount,
+            reason = "patterns and paths are short; not worth the `bytecount` dependency"
+        )]
         let depth = (!pattern.split(|&b| b == b'/').any(|c| c == b"**"))
             .then(|| pattern.iter().filter(|&&b| b == b'/').count() + 1);
         Ok(Glob {
@@ -109,26 +122,31 @@ impl Glob {
     }
 
     /// The pattern as compiled (lower case when case is folded).
+    #[must_use]
     pub fn pattern(&self) -> &[u8] {
         &self.pattern
     }
 
     /// The literal part before the first component with a wildcard (ending in `/`), or the
     /// whole pattern when it has none. Every path the glob matches starts with it.
+    #[must_use]
     pub fn prefix(&self) -> &[u8] {
         &self.prefix
     }
 
     /// The number of `/`-separated components every match has; `None` with `**`.
+    #[must_use]
     pub fn depth(&self) -> Option<usize> {
         self.depth
     }
 
     /// The pattern without any wildcard: a plain name or path, compared directly.
+    #[must_use]
     pub fn literal(&self) -> Option<&[u8]> {
         (!self.pattern.iter().any(|b| matches!(b, b'*' | b'?'))).then_some(&self.pattern)
     }
 
+    #[must_use]
     pub fn matches(&self, text: &[u8]) -> bool {
         let fold = self.fold_case;
         match &self.shape {

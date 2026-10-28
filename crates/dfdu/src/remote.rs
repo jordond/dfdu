@@ -35,18 +35,19 @@ fn agent_io(host: &str) -> std::io::Result<dfdu_engine::RemoteIo> {
             .map(str::to_string)
             .to_vec(),
     };
-    let (prog, args) = argv
+    let (prog, rest) = argv
         .split_first()
         .ok_or_else(|| std::io::Error::other("DFDU_REMOTE_COMMAND is empty"))?;
     let mut child = Proc::new(prog)
-        .args(args)
+        .args(rest)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| std::io::Error::new(e.kind(), format!("{prog}: {e}")))?;
-    let reader = Box::new(child.stdout.take().expect("piped stdout"));
-    let writer = Box::new(child.stdin.take().expect("piped stdin"));
+    let pipe = |what| std::io::Error::other(format!("{prog}: no {what} pipe"));
+    let reader = Box::new(child.stdout.take().ok_or_else(|| pipe("stdout"))?);
+    let writer = Box::new(child.stdin.take().ok_or_else(|| pipe("stdin"))?);
     Ok(dfdu_engine::RemoteIo {
         reader,
         writer,

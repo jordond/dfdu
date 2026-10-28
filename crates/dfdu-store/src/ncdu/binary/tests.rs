@@ -33,14 +33,18 @@ fn every_cut_is_refused_and_no_byte_flip_panics() {
 }
 
 /// CBOR head.
+#[expect(
+    clippy::decimal_bitwise_operands,
+    reason = "RFC 8949 gives the additional information values (24, 25, 27) in decimal"
+)]
 fn head(out: &mut Vec<u8>, major: u8, n: u64) {
     let m = major << 5;
     match n {
-        0..=23 => out.push(m | n as u8),
-        24..=0xff => out.extend([m | 24, n as u8]),
+        0..=23 => out.push(m | u8::try_from(n).unwrap()),
+        24..=0xff => out.extend([m | 24, u8::try_from(n).unwrap()]),
         0x100..=0xffff => {
             out.push(m | 25);
-            out.extend((n as u16).to_be_bytes());
+            out.extend(u16::try_from(n).unwrap().to_be_bytes());
         }
         _ => {
             out.push(m | 27);
@@ -65,8 +69,8 @@ fn entry(fields: &[(u64, V)], indefinite: bool) -> Vec<u8> {
     for (k, v) in fields {
         head(&mut out, 0, *k);
         match v {
-            V::I(i) if *i >= 0 => head(&mut out, 0, *i as u64),
-            V::I(i) => head(&mut out, 1, (-1 - *i) as u64),
+            V::I(i) if *i >= 0 => head(&mut out, 0, u64::try_from(*i).unwrap()),
+            V::I(i) => head(&mut out, 1, u64::try_from(-1 - *i).unwrap()),
             V::S(s) => {
                 head(&mut out, 3, s.len() as u64);
                 out.extend(s.as_bytes());
@@ -88,14 +92,14 @@ fn file(blocks: &[Vec<u8>], root: u64) -> Vec<u8> {
             &data[..],
             ruzstd::encoding::CompressionLevel::Fastest,
         );
-        let len = (z.len() + 12) as u32;
+        let len = u32::try_from(z.len() + 12).unwrap();
         ptrs.push(((out.len() as u64) << 24) | u64::from(len));
         out.extend(len.to_be_bytes());
-        out.extend((n as u32).to_be_bytes());
+        out.extend(u32::try_from(n).unwrap().to_be_bytes());
         out.extend(z);
         out.extend(len.to_be_bytes());
     }
-    let len = (8 + ptrs.len() * 8 + 8) as u32 | (1 << 28);
+    let len = u32::try_from(8 + ptrs.len() * 8 + 8).unwrap() | (1 << 28);
     out.extend(len.to_be_bytes());
     for p in ptrs {
         out.extend(p.to_be_bytes());
@@ -119,7 +123,7 @@ fn reads_relative_and_absolute_references_across_blocks() {
             (1, V::S("b")),
             (0, V::I(1)),
             (3, V::I(20)),
-            (2, V::I(-(b_at as i64))),
+            (2, V::I(-i64::try_from(b_at).unwrap())),
         ],
         true,
     ));
@@ -130,8 +134,8 @@ fn reads_relative_and_absolute_references_across_blocks() {
         &[
             (0, V::I(0)),
             (1, V::S("d")),
-            (12, V::I(-(d_at as i64))),
-            (2, V::I(b_at as i64)),
+            (12, V::I(-i64::try_from(d_at).unwrap())),
+            (2, V::I(i64::try_from(b_at).unwrap())),
         ],
         false,
     ));
@@ -140,7 +144,7 @@ fn reads_relative_and_absolute_references_across_blocks() {
         &[
             (0, V::I(0)),
             (1, V::S("r")),
-            (12, V::I(((1 << 24) | d_at) as i64)),
+            (12, V::I(i64::try_from((1 << 24) | d_at).unwrap())),
         ],
         false,
     ));
@@ -190,9 +194,9 @@ fn limits_hold() {
             &[(0, V::I(0)), (1, V::S("d")), (12, V::I(at))],
             false,
         ));
-        at = next as i64;
+        at = i64::try_from(next).unwrap();
     }
-    let f = file(&[b0], at as u64);
+    let f = file(&[b0], u64::try_from(at).unwrap());
     let lim = Limits {
         max_depth: 4,
         ..Default::default()

@@ -19,8 +19,8 @@ use rustix::fs::CWD;
 use rustix::ioctl::{ioctl, opcode};
 
 use super::{
-    BTRFS_IOCTL_MAGIC, BTRFS_SUBVOL_ROOT_INO, Key, SearchArgs, errno, is_btrfs_fd, open_dir,
-    search, subvol_args,
+    BTRFS_IOCTL_MAGIC, BTRFS_SUBVOL_ROOT_INO, Key, SearchArgs, errno, is_btrfs_fd, le_u32, le_u64,
+    open_dir, search, subvol_args,
 };
 
 const INODE_ITEM_KEY: u32 = 1;
@@ -28,7 +28,7 @@ const INODE_REF_KEY: u32 = 12;
 const INODE_EXTREF_KEY: u32 = 13;
 /// Objectids of files and directories (`BTRFS_FIRST_FREE_OBJECTID..=LAST_FREE`).
 const FIRST_INODE: u64 = BTRFS_SUBVOL_ROOT_INO;
-const LAST_INODE: u64 = -256i64 as u64;
+const LAST_INODE: u64 = (-256i64).cast_unsigned();
 /// Bytes of `struct btrfs_inode_item`.
 const INODE_ITEM_LEN: usize = 160;
 /// Results of one search call: an item can be as large as a leaf (64 KiB nodes at most).
@@ -50,6 +50,11 @@ pub struct BtrfsChanges {
 
 /// The uuid and generation of the btrfs subvolume holding `path`, when this process may search
 /// its tree (else `PermissionDenied`; `Unsupported` off btrfs). Syncs the filesystem first.
+///
+/// # Errors
+///
+/// `Unsupported` off btrfs, `PermissionDenied` when the tree cannot be searched, and the
+/// errors of opening `path`, `syncfs` and the ioctls.
 pub fn btrfs_position(path: &Path) -> io::Result<([u8; 16], u64)> {
     let fd = open_dir(CWD, path)?;
     if !is_btrfs_fd(&fd)? {
@@ -72,6 +77,11 @@ pub fn btrfs_position(path: &Path) -> io::Result<([u8; 16], u64)> {
 /// so that reading a file or listing a directory, which update atimes, does not. The
 /// filesystem is synced first (`syncfs`): inode updates are written to the tree lazily.
 /// Fails when `root` is not in that subvolume.
+///
+/// # Errors
+///
+/// `Unsupported` when `root` is not on btrfs, `NotFound` when it is not in subvolume `uuid`,
+/// and the errors of opening it, `syncfs` and the ioctls (`EPERM` without `CAP_SYS_ADMIN`).
 pub fn btrfs_changes_since(
     root: &Path,
     uuid: [u8; 16],
@@ -100,7 +110,7 @@ pub fn btrfs_changes_since(
         fd.as_fd(),
         0,
         (FIRST_INODE, 0, 0),
-        (LAST_INODE, u8::MAX as u32, u64::MAX),
+        (LAST_INODE, u32::from(u8::MAX), u64::MAX),
         generation.saturating_add(1),
         |it| {
             found.add(
@@ -164,15 +174,18 @@ struct Found {
 
 impl Found {
     fn add(&mut self, ino: u64, item_type: u32, offset: u64, d: &[u8], after: u64, since: u64) {
-        let le = |o: usize| u64::from_le_bytes(d[o..o + 8].try_into().expect("8 bytes"));
         match item_type {
             INODE_ITEM_KEY if d.len() >= INODE_ITEM_LEN => {
                 // `struct btrfs_inode_item`: transid at 8, mode at 52, ctime at 124.
-                if le(8) <= after || (since > 0 && le(124) < since.saturating_sub(1)) {
+                let (Some(transid), Some(mode), Some(ctime)) =
+                    (le_u64(d, 8), le_u32(d, 52), le_u64(d, 124))
+                else {
+                    return;
+                };
+                if transid <= after || (since > 0 && ctime < since.saturating_sub(1)) {
                     return;
                 }
-                let mode = u32::from_le_bytes(d[52..56].try_into().expect("4 bytes"));
-                if mode & 0o170000 == 0o040000 {
+                if mode & 0o170_000 == 0o040_000 {
                     self.dirs.insert(ino);
                 } else {
                     self.files.push(ino);
@@ -195,7 +208,7 @@ fn extref_parents(d: &[u8]) -> Vec<u64> {
     let mut out = Vec::new();
     let mut at = 0;
     while let Some(h) = d.get(at..at + 18) {
-        out.push(u64::from_le_bytes(h[..8].try_into().expect("8 bytes")));
+        out.extend(le_u64(h, 0));
         at += 18 + u16::from_le_bytes([h[16], h[17]]) as usize;
     }
     out
@@ -264,7 +277,7 @@ mod tests {
         for (parent, name) in [(300u64, &b"a"[..]), (301, b"longer name")] {
             d.extend(parent.to_le_bytes());
             d.extend(7u64.to_le_bytes());
-            d.extend((name.len() as u16).to_le_bytes());
+            d.extend(u16::try_from(name.len()).unwrap().to_le_bytes());
             d.extend(name);
         }
         assert_eq!(extref_parents(&d), [300, 301]);
@@ -276,7 +289,7 @@ mod tests {
     fn atime_updates_are_not_changes() {
         let mut item = vec![0u8; INODE_ITEM_LEN];
         item[8..16].copy_from_slice(&11u64.to_le_bytes());
-        item[52..56].copy_from_slice(&0o040755u32.to_le_bytes());
+        item[52..56].copy_from_slice(&0o040_755_u32.to_le_bytes());
         item[124..132].copy_from_slice(&1_000u64.to_le_bytes());
         let mut f = Found::default();
         // Changed in transaction 11, ctime 1000: before the position's time, so atime only.
@@ -287,7 +300,7 @@ mod tests {
         f.add(302, INODE_ITEM_KEY, 0, &item, 10, 1_001);
         f.add(303, INODE_ITEM_KEY, 0, &item, 10, 0);
         assert_eq!(f.dirs, HashSet::from([302, 303]));
-        item[52..56].copy_from_slice(&0o100644u32.to_le_bytes());
+        item[52..56].copy_from_slice(&0o100_644_u32.to_le_bytes());
         f.add(304, INODE_ITEM_KEY, 0, &item, 10, 0);
         assert_eq!(f.files, [304]);
     }

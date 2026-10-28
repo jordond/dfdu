@@ -1,6 +1,8 @@
 //! Shutdown waits for workers within its bound and leaves a worker stuck in a filesystem call
 //! behind.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;

@@ -4,6 +4,8 @@
 //! simulation (invariants after each step, totals against the spec, no lost, corrupt or duplicate
 //! messages). The random tail runs for several seeds, so what follows the scripted part varies too.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use dfdu_scan::{ChunkStatus, DirId, JobId, ListingStatus, ScanMsg, StepResult};
 use dfdu_sim::{Fault, Sim, SimConfig, Spec, SpecBuilder, quiet_injected_panics};
 use dfdu_tree::{Class, DirState, Ix, Safety};
@@ -116,6 +118,10 @@ fn wide(fault: Fault) -> Spec {
 }
 
 /// Runs the scripted part `script` for each seed, then the random tail with every final check.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "scenarios build their config inline at the call"
+)]
 fn for_seeds(spec: impl Fn() -> Spec, cfg: SimConfig, script: impl Fn(&mut Sim)) {
     quiet_injected_panics();
     for seed in 0..SEEDS {
@@ -1017,7 +1023,7 @@ fn charged(sim: &Sim, paths: &[&str]) -> Vec<String> {
                 .flags(find(sim, p))
                 .has(dfdu_tree::NodeFlags::CHARGED)
         })
-        .map(|p| p.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
@@ -1025,6 +1031,10 @@ fn charged(sim: &Sim, paths: &[&str]) -> Vec<String> {
 /// outside a rescanned subtree. The charge moves to the lowest remaining path after the
 /// delete, and stays single after the rescan's scope is merged.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "short names for the spec's directories and files, as in the other scenarios"
+)]
 fn hard_links_across_delete_and_rescan() {
     for_seeds(
         || {
@@ -1114,9 +1124,7 @@ fn dense_links_swapped_in() {
         assert!(steps > 10, "the swap ran in {steps} steps");
         let t = &sim.model.tree;
         let root = find(&sim, "");
-        let store_alloc: u64 = (0..40)
-            .map(|i| (1000 + i as u64).div_ceil(4096) * 4096)
-            .sum();
+        let store_alloc: u64 = (0..40u64).map(|i| (1000 + i).div_ceil(4096) * 4096).sum();
         let dirs = (1 + 1 + 1 + 50) * 4096;
         assert_eq!(t.total(root).alloc, store_alloc + dirs);
         if let Err(e) = sim.run_to_end() {
@@ -1327,7 +1335,10 @@ fn markers_in_other_chunks_parent_first() {
         sim.flush_worker(2);
         sim.flush_worker(1);
         sim.apply_all().unwrap();
-        assert!(close_classes(sim, w).is_empty());
+        assert_eq!(
+            close_classes(sim, w),
+            [] as [(dfdu_scan::DirId, dfdu_tree::Class); 0]
+        );
         assert_eq!(close_classes(sim, t).len(), 1);
         assert_eq!(close_classes(sim, n).len(), 1);
         assert_eq!(
@@ -1421,7 +1432,7 @@ fn classifier_answer_for_a_freed_and_reused_slot() {
                     tracked: Some(true),
                     running: None,
                 },
-                other => other,
+                other @ dfdu_engine::CheckMsg::NativeSize { .. } => other,
             })
             .collect();
         assert_eq!(held.len(), 1, "one guard check, for target");

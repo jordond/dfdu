@@ -1,4 +1,4 @@
-//! What changed below a directory since an FSEvents event id: the history the FSEvents
+//! What changed below a directory since an `FSEvents` event id: the history the `FSEvents`
 //! daemon keeps per volume, replayed through a stream with `sinceWhen` until it reports
 //! `HistoryDone`. Used to rescan only the directories that changed since a snapshot.
 //!
@@ -8,7 +8,7 @@
 //! wrapped, or when the watched directory itself was moved or deleted (`RootChanged`), the
 //! subtree must be scanned again in full; [`Changes::full`] says so. Event ids belong to one
 //! volume: [`volume_uuid`] tells whether the volume is still the one the id came from (it is
-//! not after the volume was erased or its FSEvents store reset).
+//! not after the volume was erased or its `FSEvents` store reset).
 //!
 //! The daemon holds the newest events for up to a second or so before they reach the history
 //! or a stream, so a replay alone can miss what changed just before it. After `HistoryDone`,
@@ -109,18 +109,25 @@ const CREATE_WATCH_ROOT: u32 = 0x04;
 const SINCE_NOW: u64 = u64::MAX;
 
 /// The id of the newest event; a later [`changes_since`] with it reports what changes after.
+#[must_use]
 pub fn current_event_id() -> u64 {
     // SAFETY: no arguments; returns a plain integer.
     unsafe { FSEventsGetCurrentEventId() }
 }
 
-/// The identity of the FSEvents store of device `dev` (`st_dev`); `None` when the volume
-/// keeps no history (read-only, or FSEvents disabled on it).
+/// The identity of the `FSEvents` store of device `dev` (`st_dev`); `None` when the volume
+/// keeps no history (read-only, or `FSEvents` disabled on it).
+#[must_use]
 pub fn volume_uuid(dev: u64) -> Option<[u8; 16]> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "macOS `st_dev` is an i32 that `MetadataExt::dev` widened to u64; this undoes it"
+    )]
+    let dev = dev as i32;
     // SAFETY: `dev` is passed by value; the returned reference is owned by us (Copy rule) and
     // released below after its bytes are copied.
     unsafe {
-        let u = FSEventsCopyUUIDForDevice(dev as i32);
+        let u = FSEventsCopyUUIDForDevice(dev);
         if u.is_null() {
             return None;
         }
@@ -161,19 +168,24 @@ extern "C" fn on_events(
     flags: *const u32,
     ids: *const u64,
 ) {
+    // Nothing to read; `from_raw_parts` also needs non-null pointers even for no elements.
+    if n == 0 || info.is_null() || paths.is_null() || flags.is_null() || ids.is_null() {
+        return;
+    }
     // SAFETY: `info` is the `Mutex<Collect>` that `changes_since` keeps alive until the stream
-    // is invalidated; without `kFSEventStreamCreateFlagUseCFTypes`, `paths` is an array of `n`
-    // NUL-terminated C strings and `flags` and `ids` arrays of `n` values, valid during the
-    // call.
-    let (c, paths, flags, ids) = unsafe {
-        (
-            &*(info as *const Mutex<Collect>),
-            std::slice::from_raw_parts(paths as *const *const c_char, n),
-            std::slice::from_raw_parts(flags, n),
-            std::slice::from_raw_parts(ids, n),
-        )
-    };
-    let mut c = c.lock().unwrap_or_else(|e| e.into_inner());
+    // is invalidated; it is only ever borrowed shared, and the mutex serializes the writes.
+    let c = unsafe { &*(info as *const Mutex<Collect>) };
+    // SAFETY: without `kFSEventStreamCreateFlagUseCFTypes`, `paths` points at an array of `n`
+    // C string pointers (non-null, checked above, and aligned), allocated by the daemon, so
+    // its size fits in `isize`. The daemon neither frees nor writes it during the call, and
+    // nothing here writes through it, so the shared slice aliases no mutable access.
+    let paths = unsafe { std::slice::from_raw_parts(paths as *const *const c_char, n) };
+    // SAFETY: as for `paths`: `flags` is a non-null, aligned array of `n` initialized `u32`s
+    // that the daemon owns and leaves unchanged for the call; it is only read here.
+    let flags = unsafe { std::slice::from_raw_parts(flags, n) };
+    // SAFETY: as for `flags`, with `n` initialized `u64` event ids.
+    let ids = unsafe { std::slice::from_raw_parts(ids, n) };
+    let mut c = c.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (mut done, mut synced) = (None, None);
     for i in 0..n {
         let f = flags[i];
@@ -228,10 +240,15 @@ fn sync_dir(dev: u64) -> Option<PathBuf> {
     Some(d)
 }
 
-/// The directories at or below `root` (a real path: FSEvents reports paths without symlinks)
+/// The directories at or below `root` (a real path: `FSEvents` reports paths without symlinks)
 /// that changed after event `since`, up to the moment of the call. Waits at most `timeout`
 /// for the daemon to replay its history and deliver the newest events; on timeout the result
 /// is marked [`Changes::full`].
+///
+/// # Errors
+///
+/// `InvalidInput` when `since` is not a real event id or a path holds a NUL byte, the error of
+/// reading `root`'s metadata, and an error when the stream cannot be created or started.
 pub fn changes_since(root: &Path, since: u64, timeout: Duration) -> io::Result<Changes> {
     if since == SINCE_NOW {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -289,7 +306,8 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
         let array = CFArrayCreate(
             std::ptr::null(),
             values.as_ptr(),
-            values.len() as isize,
+            // At most two values.
+            values.len().cast_signed(),
             &raw const kCFTypeArrayCallBacks,
         );
         for v in values {
@@ -301,7 +319,7 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
         let stream = FSEventStreamCreate(
             std::ptr::null(),
             on_events,
-            &ctx,
+            &raw const ctx,
             array,
             since,
             0.0,
@@ -336,7 +354,9 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
         if !started {
             return Err(io::Error::other("FSEventStreamStart failed"));
         }
-        let mut c = (*collect).into_inner().unwrap_or_else(|e| e.into_inner());
+        let mut c = (*collect)
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         c.full |= !finished;
         c.dirs.sort();
         c.dirs.dedup();

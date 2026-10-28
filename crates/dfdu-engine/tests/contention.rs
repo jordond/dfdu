@@ -1,6 +1,8 @@
 //! A reader holding the read lock for long stretches (a slow renderer) delays the applier between
 //! slices but cannot stop a scan or change its result.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,11 +12,8 @@ use dfdu_engine::{Command, Engine, EngineOptions, Timing};
 use dfdu_scan::{JobOptions, PortableBackend};
 use tempfile::TempDir;
 
-/// A temporary directory under the canonical temp dir, so its path matches the scan root the
-/// engine reports (on macOS the temp dir is behind the /var symlink).
-fn tempdir() -> TempDir {
-    tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
-}
+mod common;
+use common::tempdir;
 
 fn tree() -> TempDir {
     let tmp = tempdir();
@@ -115,7 +114,7 @@ fn idle_engine_does_not_spin() {
         std::thread::sleep(Duration::from_millis(300));
         let slices = e.read(|m| m.status.timing.slices) - before;
         let elapsed = t0.elapsed();
-        let allowed = (elapsed.as_millis() / IDLE_WAIT.as_millis()) as u64 + 3;
+        let allowed = u64::try_from(elapsed.as_millis() / IDLE_WAIT.as_millis()).unwrap() + 3;
         assert!(
             slices <= allowed,
             "{slices} slices in {elapsed:?} with {measure_workers} measurers"

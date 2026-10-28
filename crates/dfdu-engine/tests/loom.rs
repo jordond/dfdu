@@ -9,6 +9,7 @@
 //! own operations, so each channel call is one atomic step in every explored order. The model
 //! lock is `loom`'s, and the two sides do what `applier_loop` and the TUI loop do.
 #![cfg(loom)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crossbeam_channel::{TryRecvError, bounded};
 use loom::sync::{Arc, RwLock};

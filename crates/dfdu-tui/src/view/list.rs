@@ -9,8 +9,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
-use crate::snapshot::Mark;
-use crate::theme::{bar, count, human, spinner};
+use crate::snapshot::{EntryData, Mark};
+use crate::theme::{Theme, bar, count, human, percent, ratio, spinner};
 use crate::{filter, growth, marks, motion};
 
 fn bar_width(width: u16) -> usize {
@@ -25,7 +25,7 @@ fn bar_width(width: u16) -> usize {
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
     let height = area.height as usize;
     app.list_height = height;
-    let extra = (app.new_count > 0) as usize;
+    let extra = usize::from(app.new_count > 0);
     let rows = app.rows.len();
     // Never scroll further than needed to fill the screen, then keep the selection visible.
     app.scroll = app.scroll.min((rows + extra).saturating_sub(height));
@@ -84,6 +84,40 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     f.render_widget(Paragraph::new(lines), area);
 }
 
+/// The glyph after the gutter that shows `e`'s mark, in its style; the spinner turns with
+/// `frame`, offset per entry.
+fn mark_glyph(e: &EntryData, t: &Theme, frame: u64) -> (char, Style) {
+    match e.mark {
+        Mark::Scanning | Mark::Rescanning => (spinner(frame + (e.dev_ino.1 % 10)), t.fg_dim),
+        Mark::Stalled => ('~', t.status_warn),
+        Mark::Error => ('!', t.status_error),
+        Mark::OtherFs | Mark::Network | Mark::Kernel => ('>', t.fg_dim),
+        Mark::DupMount => ('=', t.fg_dim),
+        Mark::ErrorsInside => ('.', t.status_error),
+        Mark::Deleting => ('x', t.status_warn),
+        Mark::Incomplete => ('?', t.status_warn),
+        Mark::None => (' ', Style::new()),
+    }
+}
+
+/// What the row says about `mark` after the name, if anything.
+fn mark_note(mark: Mark, t: &Theme) -> Option<(&'static str, Style)> {
+    match mark {
+        Mark::Stalled => Some(("  not responding", t.status_warn)),
+        Mark::Rescanning => Some(("  rescanning", t.fg_dim)),
+        Mark::OtherFs => Some(("  other filesystem", t.fg_dim)),
+        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.fg_dim)),
+        Mark::Network => Some((
+            "  network filesystem: start with --network to scan",
+            t.fg_dim,
+        )),
+        Mark::Kernel => Some(("  kernel filesystem", t.fg_dim)),
+        Mark::Incomplete => Some(("  incomplete: r to rescan", t.status_warn)),
+        Mark::Deleting => Some(("  deleting", t.status_warn)),
+        _ => None,
+    }
+}
+
 /// The row of entry `index` of the snapshot. A ghost (a deleted entry kept in its place until
 /// the next re-sort) is struck through and dimmed, and says so.
 fn entry_line(
@@ -96,18 +130,7 @@ fn entry_line(
 ) -> Line<'static> {
     let t = &app.theme;
     let e = &app.snap.entries[index];
-    let (glyph, gstyle) = match e.mark {
-        Mark::Scanning | Mark::Rescanning => (spinner(frame + (e.dev_ino.1 % 10)), t.fg_dim),
-        Mark::Stalled => ('~', t.status_warn),
-        Mark::Error => ('!', t.status_error),
-        Mark::OtherFs => ('>', t.fg_dim),
-        Mark::DupMount => ('=', t.fg_dim),
-        Mark::Network | Mark::Kernel => ('>', t.fg_dim),
-        Mark::ErrorsInside => ('.', t.status_error),
-        Mark::Deleting => ('x', t.status_warn),
-        Mark::Incomplete => ('?', t.status_warn),
-        Mark::None => (' ', Style::new()),
-    };
+    let (glyph, gstyle) = mark_glyph(e, t, frame);
     // The gutter cell takes the mark's style where the gutter sets none of its own.
     let gutter = marks::gutter(app, e);
     // A size that can still grow, or is only a lower bound, is dim.
@@ -126,7 +149,7 @@ fn entry_line(
         Span::styled(format!("{:>10}", human(e.size)), size_style),
     ];
     if bw > 0 {
-        let frac = motion::bar(app, e, e.size as f64 / max as f64);
+        let frac = motion::bar(app, e, ratio(e.size, max));
         spans.push(Span::raw("  "));
         spans.push(Span::styled(bar(frac, bw), t.bar_fill));
     }
@@ -134,7 +157,7 @@ fn entry_line(
     spans.push(Span::raw(if e.ghost {
         " ".repeat(8)
     } else {
-        format!("  {:>5.1}%", e.size as f64 * 100.0 / total as f64)
+        format!("  {:>5.1}%", percent(e.size, total))
     }));
     spans.push(Span::styled(format!("  {:>6}", count(e.items)), t.fg_dim));
     if let Some(rules) = &app.snap.rules {
@@ -156,20 +179,7 @@ fn entry_line(
     if let Some(r) = motion::rank(app, e) {
         spans.push(r);
     }
-    let note = match e.mark {
-        Mark::Stalled => Some(("  not responding", t.status_warn)),
-        Mark::Rescanning => Some(("  rescanning", t.fg_dim)),
-        Mark::OtherFs => Some(("  other filesystem", t.fg_dim)),
-        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.fg_dim)),
-        Mark::Network => Some((
-            "  network filesystem: start with --network to scan",
-            t.fg_dim,
-        )),
-        Mark::Kernel => Some(("  kernel filesystem", t.fg_dim)),
-        Mark::Incomplete => Some(("  incomplete: r to rescan", t.status_warn)),
-        Mark::Deleting => Some(("  deleting", t.status_warn)),
-        _ => None,
-    };
+    let note = mark_note(e.mark, t);
     if let Some(p) = &e.problem {
         spans.push(Span::styled(format!("  {p}"), t.status_error));
     } else if e.mark == Mark::Error {
@@ -345,7 +355,9 @@ mod tests {
             .find(|&x| cells[x..x + 4].concat() == "gone")
             .expect("name");
         assert!(
-            buf[(at as u16, 2)].modifier.contains(Modifier::CROSSED_OUT),
+            buf[(u16::try_from(at).unwrap(), 2)]
+                .modifier
+                .contains(Modifier::CROSSED_OUT),
             "{row}"
         );
 

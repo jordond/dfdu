@@ -19,6 +19,9 @@ fn linux() -> RuleSet {
     set
 }
 
+/// What [`classify`] returns for an entry no rule offers.
+const NO_HITS: [String; 0] = [];
+
 /// A directory listing: its path and the names in it (directories end in `/`).
 struct Listing<'a> {
     path: &'a str,
@@ -179,18 +182,21 @@ fn node_modules_drops_to_review_without_a_lockfile() {
         path: "/home/u/dev/x",
         names: &["node_modules/"],
     };
-    assert!(classify(&set, &bare, "node_modules", &[]).is_empty());
+    assert_eq!(classify(&set, &bare, "node_modules", &[]), NO_HITS);
     // A global install and a nested node_modules are not offered.
     let global = Listing {
         path: "/home/u/.local/lib",
         names: &["package.json", "node_modules/"],
     };
-    assert!(classify(&set, &global, "node_modules", &[]).is_empty());
+    assert_eq!(classify(&set, &global, "node_modules", &[]), NO_HITS);
     let nested = Listing {
         path: "/home/u/dev/site/node_modules/left-pad",
         names: &["package.json", "node_modules/"],
     };
-    assert!(classify(&set, &nested, "node_modules", &["node.node_modules"]).is_empty());
+    assert_eq!(
+        classify(&set, &nested, "node_modules", &["node.node_modules"]),
+        NO_HITS
+    );
 }
 
 /// In one block of a wide directory a missing sibling may be in another block: the hit stays
@@ -211,7 +217,7 @@ fn siblings_in_other_blocks_leave_the_hit_open() {
         is_dir: true,
         sibling: &sibling,
         inside: &[],
-        protection: Default::default(),
+        protection: protected::State::default(),
         partial: true,
         stat: None,
         link: None,
@@ -348,8 +354,8 @@ fn path_rules_on_macos() {
         path: "/Users/u/Library/Developer/Xcode/DerivedData",
         names: &["ModuleCache.noindex/", "notes.txt"],
     };
-    assert!(classify(&set, &l, "ModuleCache.noindex", &[]).is_empty());
-    assert!(classify(&set, &l, "notes.txt", &[]).is_empty());
+    assert_eq!(classify(&set, &l, "ModuleCache.noindex", &[]), NO_HITS);
+    assert_eq!(classify(&set, &l, "notes.txt", &[]), NO_HITS);
 }
 
 #[test]
@@ -383,14 +389,14 @@ fn content_rules_check_size_age_and_extracted_copies() {
         got(&home, "trip.mov", file(2 * gib, 3)),
         ["content.large-videos review"]
     );
-    assert!(got(&home, "small.mov", file(gib, 400)).is_empty());
+    assert_eq!(got(&home, "small.mov", file(gib, 400)), NO_HITS);
     assert_eq!(
         got(&home, "disk.img", file(5 * gib, 180)),
         ["content.large-old review"]
     );
-    assert!(got(&home, "disk.img", file(5 * gib, 179)).is_empty());
+    assert_eq!(got(&home, "disk.img", file(5 * gib, 179)), NO_HITS);
     // Without a stat (a directory, or not known) the conditions fail.
-    assert!(got(&home, "disk.img", None).is_empty());
+    assert_eq!(got(&home, "disk.img", None), NO_HITS);
     // Not in Library or hidden directories.
     for path in [
         "/Users/u/Library/Application Support/x",
@@ -422,8 +428,8 @@ fn content_rules_check_size_age_and_extracted_copies() {
             "{name}"
         );
     }
-    assert!(got(&dl, "lone.zip", file(50 << 20, 1)).is_empty());
-    assert!(got(&dl, "tiny.zip", file(4096, 1)).is_empty());
+    assert_eq!(got(&dl, "lone.zip", file(50 << 20, 1)), NO_HITS);
+    assert_eq!(got(&dl, "tiny.zip", file(4096, 1)), NO_HITS);
 }
 
 #[test]
@@ -445,7 +451,7 @@ fn avd_needs_its_ini_next_to_it() {
         names: &["pixel.avd/", "pixel.ini", "old.avd/"],
     };
     assert_eq!(classify(&set, &l, "pixel.avd", &[]), ["android.avd review"]);
-    assert!(classify(&set, &l, "old.avd", &[]).is_empty());
+    assert_eq!(classify(&set, &l, "old.avd", &[]), NO_HITS);
     assert!(inside_ok(
         &set,
         "android.avd",
@@ -463,7 +469,10 @@ fn stop_descent_and_protected_paths() {
         path: "/Users/u/Library/Caches/pip/http",
         names: &["node_modules/", "package.json"],
     };
-    assert!(classify(&set, &l, "node_modules", &["sys.user-caches", "pip.cache"]).is_empty());
+    assert_eq!(
+        classify(&set, &l, "node_modules", &["sys.user-caches", "pip.cache"]),
+        NO_HITS
+    );
     // ...but below the user caches, which do not stop the descent, the specific rules apply.
     let l = Listing {
         path: "/Users/u/Library/Caches",
@@ -531,7 +540,7 @@ fn every_builtin_rule_is_in_the_verification_table() {
 /// Cost of classifying one entry with the built-in pack, the work the applier will add per
 /// entry. `cargo test --release -p dfdu-rules classify_cost -- --ignored --nocapture`.
 #[test]
-#[ignore]
+#[ignore = "benchmark: run in release with --nocapture"]
 fn classify_cost() {
     let set = mac();
     let names: Vec<String> = (0..100_000)
@@ -559,7 +568,7 @@ fn classify_cost() {
             is_dir: i % 10 < 4,
             sibling: &siblings,
             inside: &[],
-            protection: Default::default(),
+            protection: protected::State::default(),
             partial: false,
             stat: None,
             link: None,
@@ -568,7 +577,7 @@ fn classify_cost() {
             matched += 1;
         }
     }
-    let per = start.elapsed() / names.len() as u32;
+    let per = start.elapsed() / u32::try_from(names.len()).unwrap();
     println!("classify: {per:?} per entry ({matched} candidates)");
 }
 
@@ -639,7 +648,7 @@ fn reach_handed_down_matches_trying_every_pattern() {
                         Verdict::Hits(h)
                             if h.iter().any(|h| !set.rule(h.rule).paths.is_empty()) =>
                         {
-                            matched += 1
+                            matched += 1;
                         }
                         Verdict::Protected(_) => protected += 1,
                         _ => {}
@@ -716,7 +725,7 @@ broken_link = true
             is_dir: false,
             sibling: &sibling,
             inside: &[],
-            protection: Default::default(),
+            protection: protected::State::default(),
             partial: false,
             stat: None,
             link,
@@ -728,6 +737,13 @@ broken_link = true
     };
     let (missing, there) = (|| true, || false);
     assert_eq!(classify(Some(&missing)), ["t.broken"]);
-    assert!(classify(Some(&there)).is_empty());
-    assert!(classify(None).is_empty());
+    assert_eq!(classify(Some(&there)), NO_HITS);
+    assert_eq!(classify(None), NO_HITS);
+}
+
+#[test]
+#[should_panic(expected = "at most 65536 fit a rule index")]
+fn more_rules_than_indices_panics() {
+    let one = linux().rules()[0].clone();
+    let _ = RuleSet::new(vec![one; MAX_RULES + 1], &Env::with(Platform::Linux, &[]));
 }

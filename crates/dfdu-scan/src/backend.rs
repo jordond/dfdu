@@ -38,6 +38,10 @@ impl<L> Default for Block<L> {
 }
 
 impl<L> Block<L> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a block holds at most `Limits::block_name_bytes` of names, far below `u32::MAX`"
+    )]
     pub fn push(&mut self, name: &[u8], meta: Result<Meta, ErrKind>, child: Option<L>) {
         crate::late::yield_if_applier_late(self.entries.len());
         // No filesystem allows a name this long; a truncated name would not convert back to an
@@ -47,19 +51,17 @@ impl<L> Block<L> {
         } else {
             (name, meta)
         };
-        let len = name.len();
+        let len = u16::try_from(name.len()).unwrap_or(u16::MAX);
         let off = self.names.len() as u32;
         self.names.extend_from_slice(name);
         self.entries.push(BlockEntry {
-            name: NameSpan {
-                off,
-                len: len as u16,
-            },
+            name: NameSpan { off, len },
             meta,
             child,
         });
     }
 
+    #[must_use]
     pub fn name(&self, s: NameSpan) -> &[u8] {
         &self.names[s.off as usize..s.off as usize + s.len as usize]
     }
@@ -83,6 +85,10 @@ pub trait RawBlock<L>: Send {
     /// Stats every entry into `out`, in any order. Entries that cannot be stat'ed are recorded
     /// with their error. `ErrorKind::WouldBlock` means "not ready, call again later" (simulated
     /// backends only); the next call continues where this one stopped.
+    ///
+    /// # Errors
+    ///
+    /// `WouldBlock` when not ready; an error that ends the block early otherwise.
     fn stat(&mut self, out: &mut Block<L>) -> io::Result<()>;
 }
 
@@ -96,6 +102,10 @@ pub trait DirStream: Send {
     /// `false` at the end. An error after a partial read is returned on the next call, so the
     /// entries already read are kept. `ErrorKind::WouldBlock` means "not ready, call again
     /// later"; only simulated backends return it.
+    ///
+    /// # Errors
+    ///
+    /// The directory could not be read further, or `WouldBlock` (simulated backends).
     fn next_raw(
         &mut self,
         max_entries: usize,
@@ -112,14 +122,26 @@ pub trait Backend: Send + Sync + 'static {
 
     fn loc_from_path(&self, path: &Path) -> Self::Loc;
     /// Stat of a job root, following a symlink given as the root.
+    ///
+    /// # Errors
+    ///
+    /// The root could not be stat'ed.
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta>;
     /// Opens a directory for listing. `storage` is what the directory's mount is stored on
     /// ([`Backend::mount_storage`], read once when the scan enters the mount, `Unknown` when
     /// not known), so a backend can read the directory in the order that suits it (inode order
     /// on a spinning disk). A backend that has no use for it ignores it.
+    ///
+    /// # Errors
+    ///
+    /// The directory could not be opened.
     fn open(&self, loc: &Self::Loc, storage: dfdu_sys::Storage) -> io::Result<Self::Stream>;
     /// The subvolume record if `loc` is a btrfs subvolume root. Called for job roots and for
     /// directories whose `dev` differs from their parent's.
+    ///
+    /// # Errors
+    ///
+    /// The filesystem could not be asked.
     fn subvolume(&self, _loc: &Self::Loc) -> io::Result<Option<Subvol>> {
         Ok(None)
     }
@@ -173,6 +195,10 @@ pub trait Forward: Send + Sync + 'static {
 
     fn inner(&self) -> &Self::Inner;
     /// [`Backend::open`] of the wrapper.
+    ///
+    /// # Errors
+    ///
+    /// The directory could not be opened.
     fn open(
         &self,
         loc: &<Self::Inner as Backend>::Loc,
@@ -324,14 +350,13 @@ fn windows_meta(entry: &fs::DirEntry, volume: &mut Option<u32>) -> io::Result<(M
         nlink: 1,
     };
     if w.recalls_on_open() {
-        w.volume = match *volume {
-            Some(v) => v,
-            None => {
-                let dir = entry.path();
-                let v = dfdu_sys::stat_path(dir.parent().unwrap_or(&dir), true)?.volume;
-                *volume = Some(v);
-                v
-            }
+        w.volume = if let Some(v) = *volume {
+            v
+        } else {
+            let dir = entry.path();
+            let v = dfdu_sys::stat_path(dir.parent().unwrap_or(&dir), true)?.volume;
+            *volume = Some(v);
+            v
         };
         return Ok((Meta::from_windows(&w), false));
     }

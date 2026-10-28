@@ -16,7 +16,7 @@
 //! links: listed with their own size and never entered, so a scan stays on its volume except
 //! for a scan root given as a link, which is followed. Cloud placeholders and offline files
 //! (`WinStat::recalls_on_open`) are never opened: their sizes are the enumeration's (0 on disk
-//! for OneDrive's online-only files), and a placeholder directory not yet listed is not
+//! for `OneDrive`'s online-only files), and a placeholder directory not yet listed is not
 //! entered. A directory on another volume is a mount root (its `dev`, the volume serial
 //! number, differs), as on other systems.
 //!
@@ -56,7 +56,7 @@ pub struct WindowsBackend {
 }
 
 /// A volume's file table as read, or why it could not be, and when it was read.
-type Table = Arc<OnceLock<(std::time::Instant, Result<Arc<MftIndex>, String>)>>;
+type Table = Arc<OnceLock<(std::time::Instant, Result<Arc<MftIndex>, Arc<io::Error>>)>>;
 
 /// A table read this recently is not read again for a new job (the check before a scan).
 const FRESH: std::time::Duration = std::time::Duration::from_secs(2);
@@ -80,16 +80,16 @@ impl std::fmt::Debug for MftCache {
 impl MftCache {
     /// The table of volume `serial`, which `path` is on, read on first use; other workers
     /// wanting it wait for that read.
-    fn get(&self, serial: u32, path: &Path) -> Result<Arc<MftIndex>, String> {
+    fn get(&self, serial: u32, path: &Path) -> Result<Arc<MftIndex>, Arc<io::Error>> {
         let slot = self
             .vols
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(serial)
             .or_default()
             .clone();
         slot.get_or_init(|| {
-            let t = read_mft(path).map(Arc::new).map_err(|e| e.to_string());
+            let t = read_mft(path).map(Arc::new).map_err(Arc::new);
             (std::time::Instant::now(), t)
         })
         .1
@@ -98,7 +98,10 @@ impl MftCache {
 
     /// Reads volume `serial`'s table again on its next use, unless it was read just now.
     fn forget(&self, serial: u32) {
-        let mut vols = self.vols.lock().unwrap_or_else(|e| e.into_inner());
+        let mut vols = self
+            .vols
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if vols
             .get(&serial)
             .and_then(|t| t.get())
@@ -153,14 +156,15 @@ fn read_mft(path: &Path) -> io::Result<MftIndex> {
             .checked_mul(cluster)
             .ok_or_else(|| bad("$MFT runs"))?;
         let Some(lcn) = run.lcn else {
-            pending.resize(pending.len() + left as usize, 0);
+            let left = usize::try_from(left).map_err(|_| bad("$MFT runs"))?;
+            pending.resize(pending.len() + left, 0);
             continue;
         };
         f.seek(SeekFrom::Start(
             lcn.checked_mul(cluster).ok_or_else(|| bad("$MFT runs"))?,
         ))?;
         while left > 0 && n < records {
-            let len = (left as usize).min(buf.len());
+            let len = usize::try_from(left).unwrap_or(usize::MAX).min(buf.len());
             f.read_exact(&mut buf[..len])?;
             left -= len as u64;
             pending.extend_from_slice(&buf[..len]);
@@ -189,6 +193,7 @@ pub struct WinLoc {
 }
 
 impl WinLoc {
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -255,7 +260,7 @@ impl RawBlock<WinLoc> for MftRaw {
             let child = (meta.kind == Kind::Dir && !st.recalls_on_open()).then(|| WinLoc {
                 path: self.path.join(OsString::from_wide(name)),
                 follow: false,
-                mft: Some((self.serial, st.file_id as u64)),
+                mft: u64::try_from(st.file_id).ok().map(|id| (self.serial, id)),
             });
             out.push(&name8, Ok(meta), child);
         }
@@ -366,6 +371,10 @@ impl DirStream for WindowsStream {
 }
 
 impl Listed {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a block holds at most `Limits::block_name_bytes` of names, far below `u32::MAX`"
+    )]
     fn next_raw(
         &mut self,
         max_entries: usize,
@@ -407,6 +416,7 @@ impl Listed {
 impl WindowsBackend {
     /// Lists NTFS volumes from their master file tables (needs administrator rights; other
     /// volumes are listed by enumeration).
+    #[must_use]
     pub fn with_mft() -> WindowsBackend {
         WindowsBackend {
             mft: Some(TABLES.clone()),
@@ -415,11 +425,18 @@ impl WindowsBackend {
     }
 }
 
-/// Reads the file table of `path`'s volume, or says why it cannot be read; the table is kept
-/// for a scan starting right after.
-pub fn check_mft(path: &Path) -> Result<(), String> {
-    let st = dfdu_sys::stat_path(path, true).map_err(|e| e.to_string())?;
-    TABLES.get(st.volume, path).map(|_| ())
+/// Reads the file table of `path`'s volume; the table is kept for a scan starting right after.
+///
+/// # Errors
+///
+/// Why the table cannot be read: `path` cannot be stat'ed, its volume is not NTFS, the volume
+/// cannot be opened (administrator rights are needed) or its table is damaged.
+pub fn check_mft(path: &Path) -> io::Result<()> {
+    let st = dfdu_sys::stat_path(path, true)?;
+    TABLES
+        .get(st.volume, path)
+        .map(|_| ())
+        .map_err(|e| io::Error::new(e.kind(), e.to_string()))
 }
 
 impl Backend for WindowsBackend {
@@ -459,7 +476,8 @@ impl Backend for WindowsBackend {
                 None => dfdu_sys::stat_path(&loc.path, loc.follow)
                     .ok()
                     .filter(|st| st.kind() == Kind::Dir && !st.recalls_on_open())
-                    .map(|st| (st.volume, st.file_id as u64)),
+                    // A reference wider than 64 bits is not one in an NTFS file table.
+                    .and_then(|st| Some((st.volume, u64::try_from(st.file_id).ok()?))),
             };
             if let Some((serial, dir)) = at
                 && let Ok(index) = cache.get(serial, &loc.path)

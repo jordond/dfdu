@@ -19,7 +19,7 @@ fn cand(path: &Path) -> Candidate {
     }
 }
 
-fn run(cands: Vec<Candidate>) -> Found {
+fn run(cands: &[Candidate]) -> Found {
     let opts = Options {
         min_size: 1,
         threads: 3,
@@ -56,7 +56,7 @@ fn identical_files_are_grouped_and_near_misses_are_not() {
     fs::write(d.join("y"), b"hello").unwrap();
     fs::write(d.join("z"), b"jello").unwrap();
     let all = ["a", "b", "c", "m", "s", "x", "y", "z"].map(|n| cand(&d.join(n)));
-    let found = run(all.to_vec());
+    let found = run(&all);
     assert!(!found.cancelled);
     assert_eq!(found.compared, 8);
     assert_eq!(found.skipped, 0);
@@ -81,7 +81,7 @@ fn changed_and_unreadable_files_are_skipped() {
     fs::write(d.join("c"), [1u8; 6000]).unwrap();
     fs::remove_file(d.join("b")).unwrap();
     std::os::unix::fs::symlink(d.join("a"), d.join("b")).unwrap();
-    let found = run(cands.to_vec());
+    let found = run(&cands);
     assert!(found.groups.is_empty(), "{:#?}", found.groups);
     assert_eq!(found.skipped, 2);
     assert!(still_same(&cands[0]) && !still_same(&cands[1]) && !still_same(&cands[2]));
@@ -100,7 +100,7 @@ fn a_fifo_in_place_of_a_file_does_not_block() {
         .status()
         .unwrap();
     assert!(made.success());
-    let found = run(cands.to_vec());
+    let found = run(&cands);
     assert!(found.groups.is_empty());
     assert_eq!(found.skipped, 1);
 }
@@ -112,7 +112,7 @@ fn cancel_returns_nothing() {
     fs::write(tmp.path().join("b"), [1u8; 5000]).unwrap();
     let cands = ["a", "b"].map(|n| cand(&tmp.path().join(n)));
     let found = find(
-        cands.to_vec(),
+        &cands,
         &Options::default(),
         &Progress::default(),
         &AtomicBool::new(true),
@@ -175,7 +175,7 @@ fn clones_free_nothing() {
         .status()
         .unwrap();
     assert!(ok.success());
-    let found = run(["a", "b"].map(|n| cand(&d.join(n))).to_vec());
+    let found = run(&["a", "b"].map(|n| cand(&d.join(n))));
     let g = &found.groups[0];
     if g.files[0].private.is_none() {
         return; // not APFS
@@ -183,7 +183,7 @@ fn clones_free_nothing() {
     assert!(g.all_clones());
     assert_eq!(g.wasted(), 0);
     fs::write(d.join("c"), vec![3u8; 300_000]).unwrap();
-    let found = run(["a", "b", "c"].map(|n| cand(&d.join(n))).to_vec());
+    let found = run(&["a", "b", "c"].map(|n| cand(&d.join(n))));
     let g = &found.groups[0];
     assert_eq!(g.files.len(), 3);
     assert!(!g.all_clones());
@@ -210,7 +210,7 @@ fn reflinks_free_nothing() {
     assert!(ok.success());
     fs::write(d.join("c"), &data).unwrap();
     std::process::Command::new("sync").status().unwrap();
-    let found = run(["a", "b", "c"].map(|n| cand(&d.join(n))).to_vec());
+    let found = run(&["a", "b", "c"].map(|n| cand(&d.join(n))));
     let g = &found.groups[0];
     assert_eq!(g.files.len(), 3);
     let by = |n: &str| g.files.iter().find(|f| f.path.ends_with(n)).unwrap();

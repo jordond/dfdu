@@ -14,13 +14,14 @@ use serde_json::value::RawValue;
 use crate::{DeleteResult, Mode, PlanItem};
 
 /// `$DFDU_STATE_DIR`, else the platform state directory, plus `dfdu/ops`.
+#[must_use]
 pub fn default_journal_dir() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("DFDU_STATE_DIR") {
-        return Some(PathBuf::from(d).join("ops"));
-    }
     // The CLI convention: XDG directories on Linux and macOS, Known Folders on Windows (which
     // has no state directory, so the data directory is used there).
     use etcetera::BaseStrategy;
+    if let Some(d) = std::env::var_os("DFDU_STATE_DIR") {
+        return Some(PathBuf::from(d).join("ops"));
+    }
     let dirs = etcetera::choose_base_strategy().ok()?;
     let base = dirs.state_dir().unwrap_or_else(|| dirs.data_dir());
     Some(base.join("dfdu").join("ops"))
@@ -164,6 +165,10 @@ mod kind_name {
     use dfdu_tree::Kind;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's `with` attribute passes the field by reference"
+    )]
     pub fn serialize<S: Serializer>(k: &Kind, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(match k {
             Kind::File => "file",
@@ -185,6 +190,10 @@ mod kind_name {
 
 impl Journal {
     /// Creates this session's journal in `dir`.
+    ///
+    /// # Errors
+    ///
+    /// `dir` or the journal file could not be created.
     pub fn create(dir: &Path) -> io::Result<Journal> {
         fs::create_dir_all(dir)?;
         let now = SystemTime::now()
@@ -211,19 +220,21 @@ impl Journal {
             last_sync: Instant::now(),
             dirty: false,
         };
-        j.write(Record::Session {
+        j.write(&Record::Session {
             pid: std::process::id(),
         })?;
         j.sync()?;
         Ok(j)
     }
 
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// The session id: the journal's file name without `.jsonl`, also the name of the
     /// session's staging directories.
+    #[must_use]
     pub fn session(&self) -> String {
         self.path
             .file_stem()
@@ -241,8 +252,8 @@ impl Journal {
         }
     }
 
-    pub(crate) fn write(&mut self, rec: Record) -> io::Result<()> {
-        let body = serde_json::value::to_raw_value(&rec).map_err(io::Error::other)?;
+    pub(crate) fn write(&mut self, rec: &Record) -> io::Result<()> {
+        let body = serde_json::value::to_raw_value(rec).map_err(io::Error::other)?;
         let crc = format!("{:08x}", crc32c::crc32c(body.get().as_bytes()));
         let mut line =
             serde_json::to_string(&Line { rec: &body, crc }).map_err(io::Error::other)?;
@@ -254,6 +265,10 @@ impl Journal {
 
     /// Records the intent to act on `item` (to stage it at `stage`) and syncs it to disk
     /// before returning.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn intent(
         &mut self,
         plan: u64,
@@ -265,7 +280,7 @@ impl Journal {
             subvol_uuid: crate::verify::subvolume_uuid(&item.path, item.identity.dev),
             ..ItemRec::of(plan, item)
         };
-        self.write(Record::Intent {
+        self.write(&Record::Intent {
             item: rec,
             mode,
             stage_hex: stage.map(hex_path),
@@ -274,22 +289,36 @@ impl Journal {
     }
 
     /// Before a staged item's background delete starts; synced.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn commit_intent(&mut self, plan: u64, item: &PlanItem) -> io::Result<()> {
-        self.write(Record::CommitIntent {
+        self.write(&Record::CommitIntent {
             item: ItemRec::of(plan, item),
         })?;
         self.sync()
     }
 
+    /// After a staged item's background delete; synced.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn commit_done(&mut self, plan: u64, item: &PlanItem) -> io::Result<()> {
-        self.write(Record::CommitDone {
+        self.write(&Record::CommitDone {
             item: ItemRec::of(plan, item),
         })?;
         self.sync()
     }
 
+    /// After a staged item was put back at `to`; synced.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn restored(&mut self, plan: u64, item: &PlanItem, to: &Path) -> io::Result<()> {
-        self.write(Record::Restored {
+        self.write(&Record::Restored {
             item: ItemRec::of(plan, item),
             to_hex: hex_path(to),
         })?;
@@ -297,9 +326,13 @@ impl Journal {
     }
 
     /// Records the outcome; synced at least every 100 ms and at the end of a plan.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn result(&mut self, plan: u64, item: &PlanItem, result: &DeleteResult) -> io::Result<()> {
         let item = ItemRec::of(plan, item);
-        self.write(match result {
+        self.write(&match result {
             DeleteResult::Deleted => Record::Done { item },
             other => Record::Failed {
                 item,
@@ -313,8 +346,12 @@ impl Journal {
     }
 
     /// Before a native command runs; synced.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn native(&mut self, req: &crate::NativeReq) -> io::Result<()> {
-        self.write(Record::Native {
+        self.write(&Record::Native {
             id: req.id,
             argv: req.command.clone(),
             cwd: req.cwd.as_ref().map(|p| p.display().to_string()),
@@ -322,8 +359,13 @@ impl Journal {
         self.sync()
     }
 
+    /// After a native command ran, with its outcome; synced.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be written or synced.
     pub fn native_done(&mut self, id: u64, result: &Result<(), String>) -> io::Result<()> {
-        self.write(Record::NativeDone {
+        self.write(&Record::NativeDone {
             id,
             result: match result {
                 Ok(()) => "ok".into(),
@@ -333,6 +375,11 @@ impl Journal {
         self.sync()
     }
 
+    /// Syncs what was written since the last sync to disk.
+    ///
+    /// # Errors
+    ///
+    /// The journal could not be synced.
     pub fn sync(&mut self) -> io::Result<()> {
         if self.dirty {
             self.file.sync_data()?;
@@ -345,6 +392,7 @@ impl Journal {
 
 /// Parses a journal line and checks its CRC. Returns the record type, or `None` for a damaged
 /// or torn line.
+#[must_use]
 pub fn check_line(line: &str) -> Option<&'static str> {
     parse_line(line).map(|r| r.kind())
 }
@@ -392,7 +440,7 @@ mod tests {
                 mtime: 4,
             },
             bytes: 4096,
-            inside: Default::default(),
+            inside: std::sync::Arc::default(),
         };
         j.intent(7, Mode::Trash, &item, None).unwrap();
         j.result(7, &item, &DeleteResult::Deleted).unwrap();

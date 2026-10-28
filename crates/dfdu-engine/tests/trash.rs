@@ -3,6 +3,7 @@
 //! `XDG_DATA_HOME` set, because changing the environment of a running process needs `unsafe`.
 
 #![cfg(all(unix, not(target_os = "macos")))]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::PathBuf;

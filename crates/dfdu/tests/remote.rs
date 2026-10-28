@@ -1,26 +1,23 @@
 //! `--remote`: `dfdu scan` and `dfdu export` through `dfdu agent`, here run directly instead of
 //! through ssh (`DFDU_REMOTE_COMMAND`), give what a local scan gives.
 
-use std::fs;
-use std::process::{Command, Stdio};
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-fn dfdu(args: &[&str], remote: bool) -> String {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_dfdu"));
-    c.args(args)
-        .env(
-            "DFDU_STATE_DIR",
-            std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("state"),
-        )
-        .stdin(Stdio::null());
+mod common;
+
+use std::fs;
+
+/// The stdout of `dfdu args`, run locally or with `--remote`.
+fn output(args: &[&str], remote: bool) -> String {
+    let mut c = common::bin_in(&common::shared_state());
+    c.args(args);
     if remote {
         c.args(["--remote", "elsewhere"]).env(
             "DFDU_REMOTE_COMMAND",
             format!("{} agent --threads 2", env!("CARGO_BIN_EXE_dfdu")),
         );
     }
-    let o = c.output().unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8(o.stdout).unwrap()
+    common::ok(c.output().unwrap())
 }
 
 #[test]
@@ -50,8 +47,8 @@ fn remote_scans_match_local_ones() {
             "--no-history",
         ],
     ] {
-        let local = dfdu(args, false);
-        let remote = dfdu(args, true);
+        let local = output(args, false);
+        let remote = output(args, true);
         // The table ends with the scan's duration, the JSON document has it as a field.
         let body = |s: &str| {
             s.lines()
@@ -62,7 +59,7 @@ fn remote_scans_match_local_ones() {
         assert_eq!(body(&remote), body(&local), "{args:?}");
     }
     assert!(
-        dfdu(
+        output(
             &[
                 "scan",
                 r,
@@ -77,12 +74,12 @@ fn remote_scans_match_local_ones() {
         .contains("\"rule\": \"node.node_modules\"")
     );
     let snap = tmp.path().join("remote.snap");
-    dfdu(
+    output(
         &["export", r, "--snapshot", "-o", snap.to_str().unwrap()],
         true,
     );
     assert_eq!(
-        dfdu(&["import", snap.to_str().unwrap(), "--bytes"], false),
-        dfdu(&["scan", r, "--bytes", "--no-history"], false)
+        output(&["import", snap.to_str().unwrap(), "--bytes"], false),
+        output(&["scan", r, "--bytes", "--no-history"], false)
     );
 }

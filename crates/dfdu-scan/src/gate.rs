@@ -98,6 +98,10 @@ impl<T> Gate<T> {
     /// Takes back the permit of a part stuck in a call; returns a pending task to requeue,
     /// which takes the permit when a worker takes it. `None` if the lock is busy (the watchdog
     /// never blocks; it retries next round).
+    #[expect(
+        clippy::option_option,
+        reason = "`None`: the lock is busy; `Some(None)`: no task is pending"
+    )]
     pub fn revoke(&self) -> Option<Option<T>> {
         let mut s = self.state.try_lock()?;
         s.running -= 1;
@@ -131,7 +135,8 @@ impl<T> State<T> {
     }
 }
 
-#[cfg(all(test, not(loom)))]
+#[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use super::*;
 

@@ -13,18 +13,18 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dfdu_engine::Command;
+use dfdu_engine::{Command, ErrorList, SizeMode};
 use dfdu_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::extras::Extras;
 use crate::motion::Motion;
 use crate::order::{Order, SortSpec};
-use crate::problems::ErrorList;
-use crate::snapshot::{EntryData, SizeMode, Snapshot, Target};
+use crate::overlay::{confirm, error_list, help, palette, type_filter};
+use crate::snapshot::{EntryData, Snapshot, Target};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
-use crate::{confirm, debug, details, error_list, filter, help, marks, mouse, palette, treemap};
+use crate::{debug, details, filter, marks, mouse, treemap};
 
 /// Automatic re-sort after this long without input...
 pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -36,7 +36,7 @@ pub enum Effect {
     Send(Command),
     /// Read the error list from the engine and pass it to [`App::show_errors`].
     ShowErrors,
-    /// Read the duplicate candidates and start comparing them ([`crate::dupes::begin`]).
+    /// Read the duplicate candidates and start comparing them (`dupes::begin`).
     FindDupes,
 }
 
@@ -52,7 +52,7 @@ pub enum Overlay {
     ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
     /// The file type picker.
-    Types(crate::type_filter::Picker),
+    Types(type_filter::Picker),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -81,6 +81,10 @@ struct Cursor {
     scroll: usize,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags of the browser state, not one state spread over several bools"
+)]
 pub struct App {
     pub theme: Theme,
     /// The terminal's colour level, which a theme chosen in the palette is resolved for. It
@@ -113,7 +117,7 @@ pub struct App {
     pub quit: bool,
     pub marks: marks::Marks,
     pub filter: filter::Filter,
-    /// The file type filter ([`crate::types`]); empty when off.
+    /// The file type filter (`overlay::type_filter`); empty when off.
     pub types: dfdu_tree::filetype::TypeFilter,
     pub details: details::Details,
     pub debug: debug::Debug,
@@ -146,9 +150,21 @@ pub struct App {
     sel_hint: Cell<usize>,
 }
 
+/// How a snapshot just folded in differs from the one before.
+#[derive(Clone, Copy, Default)]
+struct Folded {
+    /// Its entries are not the previous ones with new ones appended (another directory, or a
+    /// rescan replaced some), so indices into the previous entries mean nothing in the new ones.
+    replaced: bool,
+    /// It is of another directory.
+    dir_changed: bool,
+    /// The scan finished with it.
+    finished: bool,
+}
+
 /// Whether `e` gets a row when no filter hides it.
 fn shown(hide_hidden: bool, e: &EntryData) -> bool {
-    !e.ghost && !(hide_hidden && e.hidden())
+    !e.ghost && (!hide_hidden || !e.hidden())
 }
 
 /// One line describing a finished delete plan. On btrfs the freed space shows up in the free
@@ -175,7 +191,7 @@ pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
         }
     }
     let mut s = parts.join(", ");
-    if d.deleted > 0 && d.mode.is_some_and(|m| m.undoable()) {
+    if d.deleted > 0 && d.mode.is_some_and(dfdu_engine::Mode::undoable) {
         s.push_str("; U puts it back");
     }
     if d.btrfs {
@@ -187,6 +203,7 @@ pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
 impl App {
     /// An empty browser drawn with `theme`, on a terminal with the theme's colour level and
     /// background.
+    #[must_use]
     pub fn new(theme: Theme, now: Instant) -> Self {
         App {
             color_level: theme.level(),
@@ -213,14 +230,14 @@ impl App {
             quit: false,
             marks: marks::Marks::default(),
             filter: filter::Filter::default(),
-            types: Default::default(),
+            types: dfdu_tree::filetype::TypeFilter::default(),
             details: details::Details::default(),
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
             treemap: treemap::Treemap::default(),
-            cleanup: Default::default(),
-            dupes: Default::default(),
+            cleanup: crate::cleanup::Cleanup::default(),
+            dupes: crate::dupes::Dupes::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
@@ -341,29 +358,30 @@ impl App {
             });
         }
         drop(old);
-        self.update_order(true, !appended, dir_changed, finished, old_index, now);
+        let folded = Folded {
+            replaced: !appended,
+            dir_changed,
+            finished,
+        };
+        self.update_order(Some(folded), old_index, now);
     }
 
     /// Applies sort requests and the automatic sort to the snapshot already held, for a frame
     /// drawn without reading the engine again.
     pub fn reorder(&mut self, now: Instant) {
         let old_index = self.selected_index();
-        self.update_order(false, false, false, false, old_index, now);
+        self.update_order(None, old_index, now);
     }
 
     /// Sorts or updates the row order, then puts the selection and scroll position back.
-    /// `fresh`: a new snapshot was just folded in. `replaced`: its entries are not the previous
-    /// ones with new ones appended (another directory, or a rescan replaced some), so indices
-    /// into the previous entries mean nothing in the new ones.
-    fn update_order(
-        &mut self,
-        fresh: bool,
-        replaced: bool,
-        dir_changed: bool,
-        finished: bool,
-        old_index: Option<usize>,
-        now: Instant,
-    ) {
+    /// `folded`: how the snapshot just folded in differs, `None` when none was.
+    fn update_order(&mut self, folded: Option<Folded>, old_index: Option<usize>, now: Instant) {
+        let fresh = folded.is_some();
+        let Folded {
+            replaced,
+            dir_changed,
+            finished,
+        } = folded.unwrap_or_default();
         let requested = std::mem::take(&mut self.sort_requested);
         let refilter = std::mem::take(&mut self.refilter_requested);
         // `Some(automatic)` when the rows are sorted, `None` when new entries are synced.
@@ -552,9 +570,9 @@ impl App {
             return;
         }
         self.moved = true;
-        let cur = self.selected_index().unwrap_or(0) as isize;
-        let next = (cur + delta).clamp(0, self.rows.len() as isize - 1);
-        self.select(next as usize);
+        let cur = self.selected_index().unwrap_or(0);
+        let next = cur.saturating_add_signed(delta).min(self.rows.len() - 1);
+        self.select(next);
     }
 
     fn save_cursor(&mut self) {
@@ -658,7 +676,7 @@ impl App {
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
             Overlay::Types(_) => {
-                crate::type_filter::key(self, k);
+                type_filter::key(self, k);
                 return Vec::new();
             }
         }
@@ -704,7 +722,7 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         let mut es: Vec<EntryData> = (0..10)
-            .map(|i| test_entry(i, &format!("e{i}"), 1000 - i as u64 * 10))
+            .map(|i| test_entry(i, &format!("e{i}"), 1000 - u64::from(i) * 10))
             .collect();
         app.refresh(snap_without_totals(es.clone(), 1), t0);
         app.list_height = 5;

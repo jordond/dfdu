@@ -8,6 +8,7 @@
 //! Needs `/dev/fuse` and root (or `fusermount3`); skipped with a message otherwise, unless
 //! `DFDU_FUSE_REQUIRED` is set (CI).
 #![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -17,6 +18,8 @@ use dfdu_engine::{Command, Engine, EngineOptions, Model};
 use dfdu_hangfs::{Mounted, Options, Spec};
 use dfdu_scan::{JobOptions, Limits, NativeBackend};
 use dfdu_tree::{DirState, Ix, Tree};
+
+mod common;
 
 /// Mounts `spec` at `at`, or explains why it cannot and returns `None`.
 fn mount(spec: Spec, at: &Path, opts: Options) -> Option<Mounted> {
@@ -32,16 +35,14 @@ fn mount(spec: Spec, at: &Path, opts: Options) -> Option<Mounted> {
 
 /// Worker threads of this process.
 fn workers() -> usize {
-    std::fs::read_dir("/proc/self/task")
-        .map(|rd| {
-            rd.flatten()
-                .filter(|t| {
-                    std::fs::read_to_string(t.path().join("comm"))
-                        .is_ok_and(|c| c.trim() == "dfdu-worker")
-                })
-                .count()
-        })
-        .unwrap_or(0)
+    std::fs::read_dir("/proc/self/task").map_or(0, |rd| {
+        rd.flatten()
+            .filter(|t| {
+                std::fs::read_to_string(t.path().join("comm"))
+                    .is_ok_and(|c| c.trim() == "dfdu-worker")
+            })
+            .count()
+    })
 }
 
 fn find(tree: &Tree, root: Ix, rel: &str) -> Option<Ix> {
@@ -103,8 +104,12 @@ fn totals_below(m: &Model, root: Ix) -> HashMap<String, (u64, u64, u64)> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario: mount, scan, then every check of the result"
+)]
 fn hung_network_mount_is_abandoned_and_the_rest_counted() {
-    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let tmp = common::tempdir();
     let root = tmp.path().to_path_buf();
     std::fs::write(root.join("local"), vec![1u8; 10_000]).unwrap();
     let at = root.join("mnt");

@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(input.text(), "sort ");
         // In the middle: only the word before the cursor goes.
         let mut input = typed("one two three");
-        for _ in 0.."three".len() + 1 {
+        for _ in 0..="three".len() {
             press(&mut input, KeyCode::Left);
         }
         ctrl(&mut input, 'w');

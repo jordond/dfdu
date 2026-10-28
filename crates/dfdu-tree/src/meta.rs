@@ -45,6 +45,7 @@ pub struct Subvol {
 impl Meta {
     /// Metadata as std reports it, without following symlinks when `m` came from
     /// `symlink_metadata` or a directory entry.
+    #[must_use]
     pub fn from_metadata(m: &std::fs::Metadata) -> Meta {
         let ft = m.file_type();
         let kind = if ft.is_dir() {
@@ -60,7 +61,7 @@ impl Meta {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs() as i64);
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -71,7 +72,7 @@ impl Meta {
                 mtime,
                 dev: m.dev(),
                 ino: m.ino(),
-                nlink: m.nlink() as u32,
+                nlink: u32::try_from(m.nlink()).unwrap_or(u32::MAX),
                 mount: 0,
             }
         }
@@ -109,22 +110,28 @@ impl Meta {
     }
 
     /// A file with `nlink > 1` takes part in hard-link charging.
+    #[must_use]
     pub fn is_hardlink(&self) -> bool {
         self.kind != Kind::Dir && self.nlink > 1
     }
 
     /// Metadata from what Windows reports ([`WinStat`]). Both Windows backends and the
     /// deleter's check go through this, so their values compare like for like.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "folds a 128-bit file id into the 64 bits the tree stores, on purpose"
+    )]
     pub fn from_windows(w: &WinStat) -> Meta {
         // FILETIME counts 100 ns intervals since 1601; std's `modified()` rounds the same way
-        // and has no time before 1970.
-        let secs = (w.last_write / 10_000_000) as i64 - 11_644_473_600;
+        // and has no time before 1970. Whole seconds fit an `i64` with room to spare.
+        let secs = (w.last_write / 10_000_000).cast_signed() - 11_644_473_600;
         Meta {
             kind: w.kind(),
             apparent: w.size,
             alloc: w.alloc,
             mtime: secs.max(0),
-            dev: w.volume as u64,
+            dev: u64::from(w.volume),
             // NTFS file ids are 64-bit file reference numbers in the low half; ReFS uses all
             // 128 bits, folded here into the 64 the tree stores.
             ino: (w.file_id as u64) ^ ((w.file_id >> 64) as u64),
@@ -169,6 +176,7 @@ impl WinStat {
     /// The kind as std decides it: a reparse point whose tag is a name surrogate (symlink,
     /// junction, volume mount point) is a link and never followed; other reparse points (cloud
     /// placeholders, deduplicated or WOF-compressed files) are what their attributes say.
+    #[must_use]
     pub fn kind(&self) -> Kind {
         if self.attributes & win_attr::REPARSE_POINT != 0
             && self.reparse_tag & win_attr::TAG_NAME_SURROGATE != 0
@@ -181,9 +189,10 @@ impl WinStat {
         }
     }
 
-    /// Whether opening it can fetch data from elsewhere: cloud placeholders (OneDrive
+    /// Whether opening it can fetch data from elsewhere: cloud placeholders (`OneDrive`
     /// "online-only" files and folders not yet listed) and files moved to offline storage.
     /// Scanners take their sizes from the directory enumeration and never open them.
+    #[must_use]
     pub fn recalls_on_open(&self) -> bool {
         self.attributes
             & (win_attr::OFFLINE | win_attr::RECALL_ON_OPEN | win_attr::RECALL_ON_DATA_ACCESS)

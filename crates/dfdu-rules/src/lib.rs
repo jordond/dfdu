@@ -2,7 +2,7 @@
 //!
 //! A rule names a kind of disk use (a Rust `target/`, the npm cache), how safe it is to delete
 //! and how. Rules are TOML: a built-in pack ships in the binary ([`builtin`]) and users add or
-//! override rules in their rule directory ([`load`]). [`RuleSet::classify`] decides, from one
+//! override rules in their rule directory ([`load()`]). [`RuleSet::classify`] decides, from one
 //! directory listing, which rule an entry matches; conditions on the entry's own contents
 //! (`child`, `marker`) are checked when its listing arrives ([`RuleSet::check_inside`]).
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
@@ -18,8 +18,10 @@ pub mod vars;
 pub use dfdu_tree::{RuleIx, Safety};
 pub use glob::{Glob, GlobError};
 pub use load::{LoadError, builtin, load, load_from, sources};
-pub use matcher::{Candidate, Dir, Hit, Inside, Reach, ReadMarker, RuleSet, Stat, Verdict, stem};
-pub use vars::Env;
+pub use matcher::{
+    Candidate, Dir, Hit, Inside, MAX_RULES, Reach, ReadMarker, RuleSet, Stat, Verdict, stem,
+};
+pub use vars::{Env, ExpandError};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Platform {
@@ -29,6 +31,7 @@ pub enum Platform {
 }
 
 impl Platform {
+    #[must_use]
     pub fn current() -> Platform {
         if cfg!(target_os = "macos") {
             Platform::MacOs
@@ -39,6 +42,7 @@ impl Platform {
         }
     }
 
+    #[must_use]
     pub fn parse(s: &str) -> Option<Platform> {
         Some(match s {
             "macos" => Platform::MacOs,
@@ -48,6 +52,7 @@ impl Platform {
         })
     }
 
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Platform::MacOs => "macos",
@@ -69,6 +74,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[must_use]
     pub fn parse(s: &str) -> Option<Action> {
         Some(match s {
             "delete" => Action::Delete,
@@ -196,12 +202,13 @@ pub const CATEGORIES: &[Category] = &[
 ];
 
 /// The number of category `id`, `None` for an id outside the taxonomy.
+#[must_use]
 pub fn category_index(id: &str) -> Option<u16> {
     CATEGORIES
         .iter()
         .skip(1)
         .position(|c| c.id == id)
-        .map(|i| i as u16 + 1)
+        .and_then(|i| u16::try_from(i + 1).ok())
 }
 
 /// A file inside a candidate whose presence (and first bytes) a rule checks.
@@ -239,6 +246,10 @@ pub enum Source {
 
 /// A checked, compiled rule.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags of a rule file's schema, not states of one machine"
+)]
 pub struct Rule {
     pub id: String,
     /// Index into [`CATEGORIES`].
@@ -280,11 +291,13 @@ pub struct Rule {
 }
 
 impl Rule {
+    #[must_use]
     pub fn category(&self) -> &'static Category {
         &CATEGORIES[self.category as usize]
     }
 
     /// Whether some condition can only be checked once the candidate's own listing is known.
+    #[must_use]
     pub fn looks_inside(&self) -> bool {
         !self.child.is_empty() || self.markers.iter().any(|m| m.required) || self.empty
     }
@@ -306,6 +319,12 @@ pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
 
 /// Parses a size such as `100 MiB`, `1.5 GB` or `0`: binary units (KiB to TiB) and decimal
 /// units (KB to TB), case as written.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the size is checked non-negative, and `as` saturates a size past u64::MAX"
+)]
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.trim();
     let split = s

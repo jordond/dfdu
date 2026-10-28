@@ -2,21 +2,16 @@
 //! deleted and the others are left with their reason; the JSON output validates against
 //! `schema/clean.v1.json`.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
 use std::time::{Duration, SystemTime};
 
+use common::dfdu_in;
 use serde_json::Value;
-
-fn dfdu(state: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfdu"))
-        .args(args)
-        .env("DFDU_STATE_DIR", state)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap()
-}
 
 /// Sets the modification time of `p` (a file or directory) `days` back.
 fn age(p: &Path, days: u64) {
@@ -62,18 +57,11 @@ fn fixture(root: &Path) {
 }
 
 fn schema() -> (boon::Schemas, boon::SchemaIndex) {
-    const BASE: &str = "https://github.com/jordond/dfdu/schema/";
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema");
-    let mut c = boon::Compiler::new();
-    for s in ["scan.v1.json", "report.v1.json", "clean.v1.json"] {
-        let v: Value = serde_json::from_slice(&fs::read(dir.join(s)).unwrap()).unwrap();
-        c.add_resource(&format!("{BASE}{s}"), v).unwrap();
-    }
-    let mut schemas = boon::Schemas::new();
-    let ix = c
-        .compile(&format!("{BASE}clean.v1.json"), &mut schemas)
-        .unwrap();
-    (schemas, ix)
+    let (schemas, ix) = common::schemas(
+        &["scan.v1.json", "report.v1.json", "clean.v1.json"],
+        &["clean.v1.json"],
+    );
+    (schemas, ix[0])
 }
 
 fn outcomes(doc: &Value) -> Vec<(String, String)> {
@@ -112,7 +100,7 @@ fn clean_without_yes_changes_nothing() {
     ] {
         let mut args = vec!["clean", r, "--format", "json"];
         args.extend(extra);
-        let o = dfdu(&state, &args);
+        let o = dfdu_in(&state, &args);
         assert_eq!(
             o.status.code(),
             Some(0),
@@ -131,7 +119,7 @@ fn clean_without_yes_changes_nothing() {
         );
         assert_eq!(listing(&root), before, "{extra:?}");
     }
-    let o = dfdu(&state, &["clean", r]);
+    let o = dfdu_in(&state, &["clean", r]);
     let text = String::from_utf8_lossy(&o.stdout);
     assert!(text.contains("dry run: 1 item"), "{text}");
     assert_eq!(listing(&root), before);
@@ -147,7 +135,7 @@ fn clean_deletes_what_is_recommended() {
     let (schemas, ix) = schema();
     let r = root.to_str().unwrap();
     for mode in ["delete", "stage"] {
-        let o = dfdu(
+        let o = dfdu_in(
             &state,
             &["clean", r, "--yes", "--mode", mode, "--format", "json"],
         );
@@ -191,7 +179,7 @@ fn clean_deletes_what_is_recommended() {
     }
 
     // Review-level matches only at --safety review; staged, then committed before exit.
-    let o = dfdu(
+    let o = dfdu_in(
         &state,
         &[
             "clean", r, "--yes", "--all", "--safety", "review", "--mode", "stage",
@@ -210,7 +198,7 @@ fn clean_deletes_what_is_recommended() {
     let staged: Vec<_> = walk_files(&state.join("stage"));
     assert!(staged.is_empty(), "left in the state directory: {staged:?}");
     assert_eq!(
-        String::from_utf8_lossy(&dfdu(&state, &["recover"]).stdout).trim(),
+        String::from_utf8_lossy(&dfdu_in(&state, &["recover"]).stdout).trim(),
         "nothing unfinished"
     );
 }
@@ -244,7 +232,7 @@ fn clean_reports_and_finishes_what_earlier_sessions_staged() {
     let r = root.to_str().unwrap();
     // Stage the old project's dependencies, then lose the commit: as if the session had been
     // killed inside its undo window.
-    let o = dfdu(&state, &["clean", r, "--yes", "--mode", "stage"]);
+    let o = dfdu_in(&state, &["clean", r, "--yes", "--mode", "stage"]);
     assert!(o.status.success());
     let journal = fs::read_dir(state.join("ops"))
         .unwrap()
@@ -256,32 +244,31 @@ fn clean_reports_and_finishes_what_earlier_sessions_staged() {
     let cut: String = text
         .lines()
         .filter(|l| !l.contains("\"commit-"))
-        .map(|l| format!("{l}\n"))
+        .flat_map(|l| [l, "\n"])
         .collect();
     fs::write(&journal, cut).unwrap();
     // The staged copy is gone already (the commit ran); put a stand-in there.
-    let list = String::from_utf8(dfdu(&state, &["recover"]).stdout).unwrap();
-    let stage = list
+    let list = String::from_utf8(dfdu_in(&state, &["recover"]).stdout).unwrap();
+    let stand_in = list
         .split(": staged at ")
         .nth(1)
-        .map(|s| std::path::PathBuf::from(s.trim()))
-        .unwrap_or_else(|| panic!("{list}"));
-    fs::create_dir_all(stage.join("pkg")).unwrap();
-    fs::write(stage.join("pkg/index.js"), b"x").unwrap();
+        .map_or_else(|| panic!("{list}"), |s| std::path::PathBuf::from(s.trim()));
+    fs::create_dir_all(stand_in.join("pkg")).unwrap();
+    fs::write(stand_in.join("pkg/index.js"), b"x").unwrap();
 
-    let o = dfdu(&state, &["clean", r, "--finish-staged"]);
+    let o = dfdu_in(&state, &["clean", r, "--finish-staged"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(
         err.contains("1 item earlier sessions left unfinished"),
         "{err}"
     );
-    assert!(stage.exists(), "without --yes nothing is done");
-    let o = dfdu(&state, &["clean", r, "--finish-staged", "--yes"]);
+    assert!(stand_in.exists(), "without --yes nothing is done");
+    let o = dfdu_in(&state, &["clean", r, "--finish-staged", "--yes"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("staged earlier, deleted"), "{err}");
-    assert!(!stage.exists());
+    assert!(!stand_in.exists());
     assert_eq!(
-        String::from_utf8_lossy(&dfdu(&state, &["recover"]).stdout).trim(),
+        String::from_utf8_lossy(&dfdu_in(&state, &["recover"]).stdout).trim(),
         "nothing unfinished"
     );
 }

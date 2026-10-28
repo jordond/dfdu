@@ -39,7 +39,7 @@ enum Format {
     Json,
 }
 
-pub fn run(args: DupesArgs) -> ExitCode {
+pub fn run(args: &DupesArgs) -> ExitCode {
     let t0 = Instant::now();
     // Its own --threads are the threads reading files.
     let engine = match launch::scan(&args.path, args.mounts, None, None, false) {
@@ -65,7 +65,7 @@ pub fn run(args: DupesArgs) -> ExitCode {
     let cancel = AtomicBool::new(false);
     let show = std::io::stderr().is_terminal();
     let found = std::thread::scope(|s| {
-        let job = s.spawn(|| dfdu_dupes::find(cands, &opts, &progress, &cancel));
+        let job = s.spawn(|| dfdu_dupes::find(&cands, &opts, &progress, &cancel));
         while !job.is_finished() {
             std::thread::sleep(Duration::from_millis(100));
             if show {
@@ -121,8 +121,8 @@ fn progress_line(p: &Progress) -> String {
         "{round}: {}/{} files, {} of {}",
         get(&p.files),
         get(&p.round_files),
-        dfdu_tui::human(get(&p.bytes)),
-        dfdu_tui::human(get(&p.round_bytes)),
+        dfdu_engine::human(get(&p.bytes)),
+        dfdu_engine::human(get(&p.round_bytes)),
     )
 }
 
@@ -139,12 +139,12 @@ fn table(found: &Found, top: Option<usize>) {
         let free = if g.all_clones() {
             "clones sharing their data: deleting copies frees nothing".to_string()
         } else {
-            format!("{} to free", dfdu_tui::human(g.wasted()))
+            format!("{} to free", dfdu_engine::human(g.wasted()))
         };
         outln!(
             "{} copies of {} ({free})",
             g.files.len(),
-            dfdu_tui::human(g.size),
+            dfdu_engine::human(g.size),
         );
         for f in &g.files {
             outln!("  {}", f.path.display());
@@ -160,7 +160,7 @@ fn table(found: &Found, top: Option<usize>) {
                 1 => "1 group".to_string(),
                 n => format!("{n} groups"),
             },
-            dfdu_tui::human(wasted)
+            dfdu_engine::human(wasted)
         );
     }
 }
@@ -201,7 +201,7 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
         "min_size": min_size,
         "compared": found.compared,
         "skipped": found.skipped,
-        "wasted": found.groups.iter().map(|g| g.wasted()).sum::<u64>(),
+        "wasted": found.groups.iter().map(dfdu_dupes::Group::wasted).sum::<u64>(),
         "groups": groups,
     })
 }

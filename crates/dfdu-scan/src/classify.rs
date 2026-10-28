@@ -77,6 +77,7 @@ impl ClassOpts {
     /// What a scan of `root` classifies against: nothing decided above it, and its own hits
     /// from its parent directory, whose entries it asks about one by one (a few names, such as
     /// `Cargo.toml` next to a `target` root).
+    #[must_use]
     pub fn for_root(rules: Arc<RuleSet>, root: &std::path::Path) -> ClassOpts {
         let canon = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         let path = rule_path(&canon);
@@ -115,6 +116,7 @@ impl ClassOpts {
 }
 
 impl TaskClass {
+    #[must_use]
     pub fn root(opts: &ClassOpts) -> TaskClass {
         let path = opts.path.clone();
         let name_at = path.iter().rposition(|&b| b == b'/').map_or(0, |i| i + 1);
@@ -143,26 +145,32 @@ type Sides = (Option<Vec<bool>>, Option<Vec<Sib>>);
 impl Rendezvous {
     /// The subdirectory's side: whether each hit's look inside held. `Some` with the class when
     /// the parent's side is already there.
+    #[expect(
+        clippy::option_option,
+        reason = "`None`: the other side is not there yet; `Some(None)`: it is, and there is no class"
+    )]
     fn inside(&self, chain: &[Hit], inside: Vec<bool>) -> Option<Option<Class>> {
         let mut g = self.0.lock();
-        match &g.1 {
-            Some(sib) => Some(pick(chain, &inside, Some(sib))),
-            None => {
-                g.0 = Some(inside);
-                None
-            }
+        if let Some(sib) = &g.1 {
+            Some(pick(chain, &inside, Some(sib)))
+        } else {
+            g.0 = Some(inside);
+            None
         }
     }
 
     /// The parent's side: each hit's sibling conditions.
+    #[expect(
+        clippy::option_option,
+        reason = "`None`: the other side is not there yet; `Some(None)`: it is, and there is no class"
+    )]
     fn siblings(&self, chain: &[Hit], sib: Vec<Sib>) -> Option<Option<Class>> {
         let mut g = self.0.lock();
-        match &g.0 {
-            Some(inside) => Some(pick(chain, inside, Some(&sib))),
-            None => {
-                g.1 = Some(sib);
-                None
-            }
+        if let Some(inside) = &g.0 {
+            Some(pick(chain, inside, Some(&sib)))
+        } else {
+            g.1 = Some(sib);
+            None
         }
     }
 }
@@ -246,6 +254,7 @@ pub struct BlockClass {
 }
 
 impl Listing {
+    #[must_use]
     pub fn new(rules: Arc<RuleSet>, dir: DirId, task: TaskClass) -> Listing {
         let name = &task.path[task.name_at..];
         let mut wanted: Vec<(Vec<u8>, Option<usize>)> = Vec::new();
@@ -281,7 +290,18 @@ impl Listing {
 
     /// Classifies one block. `whole` is set when the block is the directory's whole listing;
     /// `first_subdir` is the id of the block's first subdirectory.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the parts of a block as the worker holds them, borrowed for the call"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "files, then subdirectories, against one locked state and one set of closures"
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "entry indexes within a block, which holds at most `Limits::block_entries`"
+    )]
     pub fn block(
         &self,
         names: &[u8],
@@ -361,11 +381,10 @@ impl Listing {
                 (f.meta.kind == Kind::Symlink).then_some(&target_missing as &dyn Fn() -> bool);
             match classify(n, false, Some(stat), link) {
                 Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
-                Verdict::None => {}
                 Verdict::Protected(_) if !parent_protected => {
-                    out.marks.push((entry, Mark::Protected))
+                    out.marks.push((entry, Mark::Protected));
                 }
-                Verdict::Protected(_) => {}
+                Verdict::None | Verdict::Protected(_) => {}
                 Verdict::Hits(chain) => {
                     if parent_protected {
                         out.marks.push((entry, Mark::Excepted));

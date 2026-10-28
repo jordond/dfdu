@@ -4,38 +4,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model};
+use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model, SizeMode, subvol_label};
 use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, NodeRef, Totals, Tree, name_bytes};
-
-/// Which size the list shows.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum SizeMode {
-    /// Disk usage, data shared between files counted once.
-    #[default]
-    Disk,
-    Apparent,
-    /// Disk usage as `du` counts it: shared data once per file.
-    Referenced,
-}
-
-impl SizeMode {
-    pub fn of(self, t: &Totals) -> u64 {
-        match self {
-            SizeMode::Disk => t.alloc,
-            SizeMode::Apparent => t.apparent,
-            SizeMode::Referenced => t.referenced,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            SizeMode::Disk => "disk usage",
-            SizeMode::Apparent => "apparent size",
-            SizeMode::Referenced => "disk usage like du",
-        }
-    }
-}
 
 /// How an entry is marked in the list.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -84,7 +55,7 @@ impl From<&[u8]> for Name {
         if b.len() <= Name::INLINE {
             let mut buf = [0; Name::INLINE];
             buf[..b.len()].copy_from_slice(b);
-            Name::Inline(b.len() as u8, buf)
+            Name::Inline(u8::try_from(b.len()).unwrap_or(u8::MAX), buf)
         } else {
             Name::Heap(b.into())
         }
@@ -160,6 +131,10 @@ pub fn tag_of(tree: &Tree, dir: Option<dfdu_tree::Class>, c: Ix) -> Option<Tag> 
 }
 
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about one row, copied out of the tree"
+)]
 pub struct EntryData {
     pub node: NodeRef,
     pub name: Name,
@@ -172,7 +147,7 @@ pub struct EntryData {
     pub dev_ino: (u64, u64),
     pub mark: Mark,
     pub error: Option<ErrKind>,
-    /// What went wrong reading it ([`crate::problem`]).
+    /// What went wrong reading it ([`dfdu_engine::problem`]).
     pub problem: Option<String>,
     /// Errors below it, not counting its own.
     pub errors_inside: u64,
@@ -213,6 +188,7 @@ pub struct Target {
 }
 
 impl Target {
+    #[must_use]
     pub fn root() -> Self {
         Target {
             node: None,
@@ -221,6 +197,7 @@ impl Target {
         }
     }
 
+    #[must_use]
     pub fn of(tree: &Tree, ix: Ix) -> Self {
         Target {
             node: Some(tree.node_ref(ix)),
@@ -231,6 +208,7 @@ impl Target {
 
     /// By reference if it still resolves, otherwise by path with an identity check. `None` if
     /// neither works.
+    #[must_use]
     pub fn resolve(&self, tree: &Tree) -> Option<Ix> {
         if let Some(ix) = self.node.and_then(|r| tree.resolve_visible(r)) {
             return Some(ix);
@@ -242,6 +220,7 @@ impl Target {
     /// The identity check for a node found by path: `ix` has the target's kind and device and
     /// inode numbers, so a new file or directory under the old name is not taken for it. A
     /// target without an identity, or without device and inode numbers, passes.
+    #[must_use]
     pub fn matches(&self, tree: &Tree, ix: Ix) -> bool {
         self.ident
             .is_none_or(|id| id.dev_ino == (0, 0) || ident(tree, ix) == id)
@@ -273,6 +252,10 @@ pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
 }
 
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the engine and the directory, copied out of the model"
+)]
 pub struct Snapshot {
     /// The rules the scan classifies against, when it does: rows have a category column.
     pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
@@ -311,41 +294,11 @@ pub struct Snapshot {
     pub focus: Option<(u32, u32)>,
     /// Cheap fingerprint of the model, to skip redraws when nothing changed.
     pub version: u64,
-    /// The file type filter the entries were read with ([`crate::types`]); empty: none. With
+    /// The file type filter the entries were read with (`overlay::type_filter`); empty: none. With
     /// one, entries and `dir_total` count the matching files only.
     pub types: TypeFilter,
     /// The directory's files by type and extension, read while the type picker is open.
     pub breakdown: Option<std::sync::Arc<Breakdown>>,
-}
-
-/// "subvolume" or "snapshot of NAME", with ", read-only", for btrfs subvolume roots.
-pub fn subvol_label(m: &Model, ix: Ix) -> Option<String> {
-    let tree = &m.tree;
-    let sv = m.subvols.get(&tree.node_ref(ix))?;
-    let mut s = match sv.parent_uuid {
-        Some(origin) => match m
-            .subvols
-            .iter()
-            .find(|(_, o)| o.uuid == origin)
-            .and_then(|(r, _)| tree.resolve_visible(*r))
-        {
-            Some(o) => format!("snapshot of {}", String::from_utf8_lossy(tree.name(o))),
-            None => "snapshot".into(),
-        },
-        None if sv.id == 5 => "btrfs top level".into(),
-        None => "subvolume".into(),
-    };
-    if sv.read_only {
-        s.push_str(", read-only");
-    }
-    if let Some((rfer, excl)) = sv.qgroup {
-        s.push_str(&format!(
-            "; quota: {} referenced, {} exclusive",
-            crate::theme::human(rfer),
-            crate::theme::human(excl)
-        ));
-    }
-    Some(s)
 }
 
 fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
@@ -392,7 +345,7 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     build_view(m, target, mode, &TypeFilter::default(), false)
 }
 
-/// [`build`] counting only the files `types` matches (none left out when it is empty), and with
+/// `build` counting only the files `types` matches (none left out when it is empty), and with
 /// the directory's [`Breakdown`] when `breakdown` is set. Both walk the directory's subtree.
 pub fn build_view(
     m: &Model,
@@ -402,8 +355,69 @@ pub fn build_view(
     breakdown: bool,
 ) -> Snapshot {
     let tree = &m.tree;
-    let size = |t: &Totals| mode.of(t);
-    let mut snap = Snapshot {
+    let mut snap = status_of(m, types);
+    let Some(root) = tree.roots().next() else {
+        return snap;
+    };
+    snap.root_total = tree.total(root);
+
+    let mut dir = target.resolve(tree);
+    // The directory is gone: go up until something resolves.
+    let mut path = target.path.clone();
+    while dir.is_none() && path.pop() {
+        dir = find_path(tree, &path);
+    }
+    let dir = dir.filter(|&d| tree.dir(d).is_some()).unwrap_or(root);
+    *target = Target::of(tree, dir);
+    let Some(rec) = tree.dir(dir) else {
+        return snap;
+    };
+
+    let rescanning: HashSet<NodeRef> = m
+        .status
+        .jobs
+        .iter()
+        .filter(|j| {
+            j.kind == JobKind::Rescan && matches!(j.phase, JobPhase::Running | JobPhase::Finishing)
+        })
+        .map(|j| j.target)
+        .collect();
+
+    snap.focus = Some((rec.job, rec.dir_id));
+    snap.dir_path = tree.path_buf(dir);
+    snap.root_path = tree.path_buf(root);
+    snap.dir_node = Some(tree.node_ref(dir));
+    snap.at_root = dir == root;
+    snap.dir_total = tree.total(dir);
+    snap.dir_mark = Some(mark_of(tree, dir, &rescanning));
+    let dir_class = tree.class_in_effect(dir).map(|(_, c)| c);
+    // This runs under the read lock for every entry of the directory, which can have a
+    // million: each lookup is done once, and the error and subvolume lookups only when the
+    // entry has an error or the scan has subvolumes.
+    snap.entries = tree
+        .children(dir)
+        .map(|c| entry_of(m, c, dir_class, &rescanning, mode))
+        .collect();
+    if breakdown {
+        let mut b = Breakdown::default();
+        filetype::sum(tree, dir, &TypeFilter::default(), Some(&mut b));
+        snap.breakdown = Some(std::sync::Arc::new(b));
+    }
+    if !types.is_empty() {
+        only_types(tree, dir, types, mode, &mut snap);
+        return snap;
+    }
+    // Data the entries share is counted at the directory: show it as its own row.
+    let home = tree.home(dir);
+    if mode == SizeMode::Disk && home > 0 {
+        snap.entries.push(shared_row(tree, dir, home));
+    }
+    snap
+}
+
+/// A snapshot with the engine's status and nothing of a directory yet.
+fn status_of(m: &Model, types: &TypeFilter) -> Snapshot {
+    Snapshot {
         busy: m.status.busy(),
         stalled: m.status.stalled.len(),
         incomplete: m.status.incomplete,
@@ -422,108 +436,68 @@ pub fn build_view(
         rules: m.rules.clone(),
         types: types.clone(),
         ..Default::default()
-    };
-    let Some(root) = tree.roots().next() else {
-        return snap;
-    };
-    snap.root_total = tree.total(root);
+    }
+}
 
-    let mut dir = target.resolve(tree);
-    // The directory is gone: go up until something resolves.
-    let mut path = target.path.clone();
-    while dir.is_none() && path.pop() {
-        dir = find_path(tree, &path);
+/// The row of child `c` of the directory shown.
+fn entry_of(
+    m: &Model,
+    c: Ix,
+    dir_class: Option<dfdu_tree::Class>,
+    rescanning: &HashSet<NodeRef>,
+    mode: SizeMode,
+) -> EntryData {
+    let tree = &m.tree;
+    let t = tree.total(c);
+    let error = tree.error(c);
+    EntryData {
+        node: tree.node_ref(c),
+        name: tree.name(c).into(),
+        kind: tree.kind(c),
+        is_dir: tree.dir(c).is_some(),
+        size: mode.of(&t),
+        items: t.items,
+        mtime: tree.mtime(c),
+        dev_ino: tree.dev_ino(c),
+        mark: mark_of(tree, c, rescanning),
+        error,
+        problem: error.and_then(|_| dfdu_engine::problem(tree, c)),
+        errors_inside: t.errors - u64::from(error.is_some()),
+        label: if m.subvols.is_empty() {
+            None
+        } else {
+            subvol_label(m, c)
+        },
+        tag: tag_of(tree, dir_class, c),
+        shared_out: t.shared_out,
+        compressed: tree.flags(c).has(dfdu_tree::NodeFlags::COMPRESSED),
+        pseudo: false,
+        ghost: false,
     }
-    let dir = dir.filter(|&d| tree.dir(d).is_some()).unwrap_or(root);
-    *target = Target::of(tree, dir);
+}
 
-    let rescanning: HashSet<NodeRef> = m
-        .status
-        .jobs
-        .iter()
-        .filter(|j| {
-            j.kind == JobKind::Rescan && matches!(j.phase, JobPhase::Running | JobPhase::Finishing)
-        })
-        .map(|j| j.target)
-        .collect();
-
-    let rec = tree.dir(dir).expect("directory");
-    snap.focus = Some((rec.job, rec.dir_id));
-    snap.dir_path = tree.path_buf(dir);
-    snap.root_path = tree.path_buf(root);
-    snap.dir_node = Some(tree.node_ref(dir));
-    snap.at_root = dir == root;
-    snap.dir_total = tree.total(dir);
-    snap.dir_mark = Some(mark_of(tree, dir, &rescanning));
-    let dir_class = tree.class_in_effect(dir).map(|(_, c)| c);
-    // This runs under the read lock for every entry of the directory, which can have a
-    // million: each lookup is done once, and the error and subvolume lookups only when the
-    // entry has an error or the scan has subvolumes.
-    snap.entries = tree
-        .children(dir)
-        .map(|c| {
-            let t = tree.total(c);
-            let error = tree.error(c);
-            EntryData {
-                node: tree.node_ref(c),
-                name: tree.name(c).into(),
-                kind: tree.kind(c),
-                is_dir: tree.dir(c).is_some(),
-                size: size(&t),
-                items: t.items,
-                mtime: tree.mtime(c),
-                dev_ino: tree.dev_ino(c),
-                mark: mark_of(tree, c, &rescanning),
-                error,
-                problem: error.and_then(|_| crate::problem(tree, c)),
-                errors_inside: t.errors - error.is_some() as u64,
-                label: if m.subvols.is_empty() {
-                    None
-                } else {
-                    subvol_label(m, c)
-                },
-                tag: tag_of(tree, dir_class, c),
-                shared_out: t.shared_out,
-                compressed: tree.flags(c).has(dfdu_tree::NodeFlags::COMPRESSED),
-                pseudo: false,
-                ghost: false,
-            }
-        })
-        .collect();
-    if breakdown {
-        let mut b = Breakdown::default();
-        filetype::sum(tree, dir, &TypeFilter::default(), Some(&mut b));
-        snap.breakdown = Some(std::sync::Arc::new(b));
+/// The row for the `home` bytes the entries of `dir` share, counted at the directory.
+fn shared_row(tree: &Tree, dir: Ix, home: u64) -> EntryData {
+    EntryData {
+        node: tree.node_ref(dir),
+        name: b"(shared between entries)"[..].into(),
+        kind: Kind::Other,
+        is_dir: false,
+        size: home,
+        items: 0,
+        mtime: 0,
+        dev_ino: (0, 0),
+        mark: Mark::None,
+        error: None,
+        problem: None,
+        errors_inside: 0,
+        label: None,
+        tag: None,
+        shared_out: 0,
+        compressed: false,
+        pseudo: true,
+        ghost: false,
     }
-    if !types.is_empty() {
-        only_types(tree, dir, types, mode, &mut snap);
-        return snap;
-    }
-    // Data the entries share is counted at the directory: show it as its own row.
-    let home = tree.home(dir);
-    if mode == SizeMode::Disk && home > 0 {
-        snap.entries.push(EntryData {
-            node: tree.node_ref(dir),
-            name: b"(shared between entries)"[..].into(),
-            kind: Kind::Other,
-            is_dir: false,
-            size: home,
-            items: 0,
-            mtime: 0,
-            dev_ino: (0, 0),
-            mark: Mark::None,
-            error: None,
-            problem: None,
-            errors_inside: 0,
-            label: None,
-            tag: None,
-            shared_out: 0,
-            compressed: false,
-            pseudo: true,
-            ghost: false,
-        });
-    }
-    snap
 }
 
 /// Keeps the entries with files `types` matches, sized by those files, and sets `dir_total` to
@@ -571,7 +545,7 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         size,
         items: 1,
         mtime: 0,
-        dev_ino: (1, i as u64 + 10),
+        dev_ino: (1, u64::from(i) + 10),
         mark: Mark::None,
         error: None,
         problem: None,

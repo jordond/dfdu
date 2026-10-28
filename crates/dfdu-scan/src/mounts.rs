@@ -10,6 +10,7 @@ use dfdu_sys::MountEntry;
 /// another mount of the same filesystem. Of two mounts showing the same directory, the one
 /// whose source is larger (a shorter `root`) is kept, then the one with the lower mount point,
 /// so the answer does not depend on scan order.
+#[must_use]
 pub fn duplicate_mounts(table: &[MountEntry], scope: &Path) -> HashSet<u64> {
     let mut dups = HashSet::new();
     for m in table {
@@ -75,7 +76,7 @@ mod tests {
         let mut v: Vec<u64> = duplicate_mounts(table, Path::new(scope))
             .into_iter()
             .collect();
-        v.sort();
+        v.sort_unstable();
         v
     }
 

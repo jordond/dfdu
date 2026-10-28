@@ -99,9 +99,10 @@ impl<'a> Cursor<'a> {
         let b = self
             .rec
             .get(self.pos..self.pos + N)
+            .and_then(|b| b.try_into().ok())
             .ok_or_else(|| bad("field past the end"))?;
         self.pos += N;
-        Ok(b.try_into().expect("N bytes"))
+        Ok(b)
     }
 
     fn u32(&mut self) -> io::Result<u32> {
@@ -139,12 +140,17 @@ impl<'a> Cursor<'a> {
 
 /// Parses the record at byte `pos` of `buf`, which holds what one `getattrlistbulk` call
 /// returned for `BULK_COMMON` and `BULK_FILE`. Returns the entry and the position of the
-/// next record. A record that does not fit in `buf` or contradicts itself is `InvalidData`.
+/// next record.
+///
+/// # Errors
+///
+/// `InvalidData` if the record does not fit in `buf` or contradicts itself.
 pub fn parse_bulk_record(buf: &[u8], pos: usize) -> io::Result<(BulkEntry<'_>, usize)> {
-    let len_bytes = buf
+    let len_bytes: [u8; 4] = buf
         .get(pos..pos + 4)
+        .and_then(|b| b.try_into().ok())
         .ok_or_else(|| bad("length past the end"))?;
-    let len = u32::from_ne_bytes(len_bytes.try_into().expect("4 bytes")) as usize;
+    let len = u32::from_ne_bytes(len_bytes) as usize;
     let rec = pos
         .checked_add(len)
         .and_then(|end| buf.get(pos..end))
@@ -234,9 +240,10 @@ mod tests {
             if let Some((at, name)) = name_at {
                 let fixed_len = fixed.len() + 8;
                 let mut r = Vec::new();
-                let off = (head + fixed_len) as i32 - (head + at) as i32;
+                let off =
+                    i32::try_from(head + fixed_len).unwrap() - i32::try_from(head + at).unwrap();
                 r.extend_from_slice(&off.to_ne_bytes());
-                r.extend_from_slice(&(name.len() as u32 + 1).to_ne_bytes());
+                r.extend_from_slice(&(u32::try_from(name.len()).unwrap() + 1).to_ne_bytes());
                 fixed.splice(at..at, r);
                 var.extend_from_slice(name);
                 var.push(0);
@@ -246,7 +253,7 @@ mod tests {
             }
             let len = head + fixed.len() + var.len();
             let mut out = Vec::new();
-            out.extend_from_slice(&(len as u32).to_ne_bytes());
+            out.extend_from_slice(&u32::try_from(len).unwrap().to_ne_bytes());
             let common = self.common | if name_at.is_some() { ATTR_CMN_NAME } else { 0 };
             for w in [common, 0, 0, self.file, 0] {
                 out.extend_from_slice(&w.to_ne_bytes());

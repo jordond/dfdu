@@ -3,7 +3,6 @@
 
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use dfdu_sys::{Disk, FsClass};
 use ratatui::Frame;
@@ -12,10 +11,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::theme::{Theme, bar, human};
-
-/// How long each filesystem gets to report its size.
-pub const DISK_TIMEOUT: Duration = Duration::from_secs(2);
+use crate::theme::{Theme, bar, human, ratio};
 
 pub struct Picker {
     pub disks: Vec<Disk>,
@@ -29,6 +25,7 @@ pub enum Picked {
 }
 
 impl Picker {
+    #[must_use]
     pub fn new(disks: Vec<Disk>) -> Self {
         Picker {
             disks,
@@ -44,7 +41,7 @@ impl Picker {
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => {
-                self.cursor = (self.cursor + 1).min(n.saturating_sub(1))
+                self.cursor = (self.cursor + 1).min(n.saturating_sub(1));
             }
             KeyCode::Home | KeyCode::Char('g') => self.cursor = 0,
             KeyCode::End | KeyCode::Char('G') => self.cursor = n.saturating_sub(1),
@@ -140,7 +137,7 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
                 human(s.used),
                 human(s.available)
             )));
-            let frac = s.used as f64 / s.total.max(1) as f64;
+            let frac = ratio(s.used, s.total.max(1));
             if bw > 0 {
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled(bar(frac, bw), t.bar_fill));
@@ -164,7 +161,7 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
 
 /// Runs the picker on an initialised terminal until a disk is chosen or the user quits.
 pub fn pick(terminal: &mut ratatui::DefaultTerminal, theme: &Theme) -> io::Result<Picked> {
-    let mut p = Picker::new(dfdu_sys::disks(DISK_TIMEOUT)?);
+    let mut p = Picker::new(dfdu_sys::disks(dfdu_sys::DISK_TIMEOUT)?);
     loop {
         terminal.draw(|f| draw(f, &p, theme))?;
         if let Event::Key(k) = event::read()? {

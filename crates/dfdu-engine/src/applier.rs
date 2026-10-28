@@ -38,6 +38,7 @@ use crate::links::{LinkTable, Scope, VISIBLE};
 use crate::measure::MeasureReq;
 use crate::recent::Event;
 use delete::ActivePlan;
+use jobs::JobStart;
 use undo::Undoable;
 use work::Work;
 
@@ -162,6 +163,10 @@ impl Job {
     }
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent settings of the session, not the states of one machine"
+)]
 pub struct Applier<B: Backend> {
     pub scan: Arc<Shared<B>>,
     /// Set for a remote scan: scanner calls go to the agent instead of `scan`.
@@ -192,7 +197,7 @@ pub struct Applier<B: Backend> {
     pub imported: bool,
     /// Measure extents after each job.
     pub measure: bool,
-    /// Files allocating less are not measured ([`MEASURE_MIN`] in the engine).
+    /// Files allocating less are not measured (`MEASURE_MIN` in the engine).
     pub measure_min: u64,
     /// The deleter runs as root, so read-only btrfs snapshots can be deleted.
     pub privileged: bool,
@@ -275,11 +280,13 @@ impl<B: Backend> Applier<B> {
         }
     }
 
+    #[must_use]
     pub fn has_work(&self) -> bool {
         !self.work.is_empty() || self.measure_ready()
     }
 
     /// Roots of running rescan shadows, for the structural invariant check.
+    #[must_use]
     pub fn shadow_roots(&self, tree: &Tree) -> Vec<Ix> {
         self.jobs
             .values()
@@ -318,7 +325,33 @@ impl<B: Backend> Applier<B> {
         }
     }
 
+    /// Starts a scan of `path` into a new visible root.
+    fn start_scan(&mut self, m: &mut Model, path: PathBuf, opts: JobOptions) {
+        let id = self.next_job;
+        self.next_job += 1;
+        let name = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
+        let root = m.tree.new_root(&name, &empty_dir_meta(), true);
+        if let Some(c) = &opts.class {
+            m.rules = Some(c.rules.clone());
+            m.tree.set_protection(root, c.protection.protected(), false);
+        }
+        let start = JobStart {
+            kind: JobKind::Initial,
+            target: root,
+            root,
+            scope: VISIBLE,
+            path,
+            opts,
+        };
+        self.start(m, id, start);
+    }
+
     /// Applies one command.
+    ///
+    /// # Panics
+    ///
+    /// On `Command::InjectPanic` (with the `fault-injection` feature), to test what follows
+    /// an applier panic.
     pub fn apply_command(&mut self, m: &mut Model, cmd: Command) {
         m.recent.push(Event::of_command(&cmd));
         if self.imported
@@ -349,17 +382,7 @@ impl<B: Backend> Applier<B> {
             return;
         }
         match cmd {
-            Command::Scan { path, opts } => {
-                let id = self.next_job;
-                self.next_job += 1;
-                let name = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
-                let root = m.tree.new_root(&name, &empty_dir_meta(), true);
-                if let Some(c) = &opts.class {
-                    m.rules = Some(c.rules.clone());
-                    m.tree.set_protection(root, c.protection.protected(), false);
-                }
-                self.start(m, id, JobKind::Initial, root, root, VISIBLE, path, opts);
-            }
+            Command::Scan { path, opts } => self.start_scan(m, path, opts),
             Command::Rescan { node } => self.rescan(m, node, None),
             Command::Resume {
                 node,
@@ -403,6 +426,7 @@ impl<B: Backend> Applier<B> {
             }
             Command::NativeSizes => self.native_sizes(m),
             #[cfg(feature = "fault-injection")]
+            #[expect(clippy::panic, reason = "the command exists to test the crash path")]
             Command::InjectPanic => panic!("injected applier panic"),
             Command::AbortDelete => {
                 for p in std::mem::take(&mut self.queued_plans) {

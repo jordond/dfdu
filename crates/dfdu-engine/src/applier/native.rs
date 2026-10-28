@@ -11,7 +11,7 @@ use dfdu_tree::{NodeRef, RuleIx};
 use super::{Applier, Model, NativeRun};
 
 /// How long a native cleanup command may run.
-const NATIVE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const NATIVE_TIMEOUT: Duration = Duration::from_mins(30);
 
 impl<B: Backend> Applier<B> {
     pub(super) fn run_native(
@@ -57,6 +57,7 @@ impl<B: Backend> Applier<B> {
 }
 
 /// A rule's native command as it runs for the matched node at `path`.
+#[must_use]
 pub fn native_argv(argv: &[String], path: &Path) -> Vec<String> {
     argv.iter().map(|a| native_var(a, path)).collect()
 }
@@ -113,4 +114,36 @@ fn native_var(arg: &str, path: &Path) -> String {
         .replace("{parent}", &path.parent().unwrap_or(path).to_string_lossy())
         .replace("{name_stem}", &stem)
         .replace("{name}", &name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variables_expand_for_the_matched_node() {
+        let argv = [
+            "tar",
+            "-czf",
+            "{name_stem}.tgz",
+            "-C",
+            "{parent}",
+            "{name}",
+            "{path}",
+        ]
+        .map(String::from);
+        let got = native_argv(&argv, Path::new("/srv/web/src.tar.gz"));
+        assert_eq!(
+            got,
+            [
+                "tar",
+                "-czf",
+                "src.tgz",
+                "-C",
+                "/srv/web",
+                "src.tar.gz",
+                "/srv/web/src.tar.gz"
+            ]
+        );
+    }
 }

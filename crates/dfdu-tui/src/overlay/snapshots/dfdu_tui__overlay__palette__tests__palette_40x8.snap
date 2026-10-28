@@ -1,0 +1,12 @@
+---
+source: crates/dfdu-tui/src/overlay/palette.rs
+expression: frame
+---
+ dfdu  /r              ⠋ scanning 00:00
+ 3┌ Commands 44/44 ──────────────────┐sa
+  │ : ▌                              │
+  │ Theme: ansi              setting │li
+  │ Theme: mono              setting │
+  │ Theme: high-contrast     setting │
+  └──────────────────────────────────┘
+ ↑↓ move  Enter run  Esc close

@@ -4,13 +4,13 @@
 
 use std::time::Instant;
 
-use dfdu_engine::{Command, Mode};
+use dfdu_engine::{Command, Mode, SizeMode};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Effect, Overlay};
 use crate::order::{SortKey, SortSpec};
-use crate::snapshot::SizeMode;
-use crate::{confirm, debug, details, filter, help, marks, palette, treemap};
+use crate::overlay::{confirm, help, palette, type_filter};
+use crate::{debug, details, filter, marks, treemap};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -315,7 +315,7 @@ pub fn action_for(k: &KeyEvent) -> Option<Action> {
 /// Carries out `a` on the list (no overlay open) and returns the effects for the run loop.
 pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
     let mut fx = Vec::new();
-    let page = app.list_height.max(1) as isize;
+    let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
     match a {
         Action::Quit => app.quit = true,
         Action::Up => app.move_by(-1),
@@ -374,14 +374,14 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
-            if !filter::clear(app) && !crate::type_filter::clear(app) {
+            if !filter::clear(app) && !type_filter::clear(app) {
                 app.overlay = Overlay::None;
             }
         }
         Action::ToggleMark => marks::toggle(app),
         Action::ClearMarks => marks::clear(app),
         Action::Filter => filter::open(app),
-        Action::Types => crate::type_filter::open(app),
+        Action::Types => type_filter::open(app),
         Action::Details => details::toggle(app),
         Action::FocusDetails => details::focus(app),
         Action::Palette => palette::open(app),
@@ -389,16 +389,16 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::ViewList => {
             crate::dupes::show(app, false);
             crate::cleanup::show(app, false);
-            treemap::show(app, false)
+            treemap::show(app, false);
         }
         Action::ViewTreemap => {
             crate::dupes::show(app, false);
             crate::cleanup::show(app, false);
-            treemap::show(app, true)
+            treemap::show(app, true);
         }
         Action::ViewCleanup => {
             crate::dupes::show(app, false);
-            fx.extend(crate::cleanup::show(app, true))
+            fx.extend(crate::cleanup::show(app, true));
         }
         Action::ViewDupes => fx.extend(crate::dupes::show(app, true)),
         Action::TreemapDeeper => treemap::deeper(app, 1),

@@ -5,17 +5,20 @@
 
 use std::time::Instant;
 
+use dfdu_engine::{ErrorItem, ErrorList, SizeMode};
 use dfdu_scan::Budget;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::{Color, Modifier, Style};
 
-use super::{assert_cue, mid_scan_app, press, render_buffer, shared_model, style_at, styled, text};
+use super::{
+    assert_cue, mid_scan_app, press, render_buffer, shared_model, style_at, styled, text, typed,
+};
 use crate::app::{App, Effect, Overlay};
 use crate::debug::Counters;
 use crate::snapshot::{self, EntryData, Mark, Target, test_entry};
 use crate::theme::{ColorLevel, Theme, choose_theme, detect_color_level, spinner};
-use crate::{ErrorItem, ErrorList, SizeMode, details, extras, filter};
+use crate::{details, extras, filter};
 
 /// The built-in themes `auto` picks for a dark or light truecolor terminal, a 16-colour one
 /// and `NO_COLOR`, each at that colour level.
@@ -79,12 +82,6 @@ fn press_all(app: &mut App, now: Instant, codes: &[KeyCode]) -> Vec<Effect> {
     codes.iter().flat_map(|&c| app.key(press(c), now)).collect()
 }
 
-fn typed(app: &mut App, now: Instant, s: &str) {
-    for c in s.chars() {
-        assert!(app.key(press(KeyCode::Char(c)), now).is_empty());
-    }
-}
-
 /// What the mid-scan home directory could not read.
 fn error_list() -> ErrorList {
     let node = test_entry(4, "locked", 0).node;
@@ -137,9 +134,9 @@ fn frame(state: State, theme: Theme) -> Buffer {
         State::Delete => {
             press_all(&mut app, now, &[c(' '), KeyCode::Down, c(' '), c('d')]);
         }
-        State::Filter => typed(&mut app, now, "/li"),
-        State::Help => typed(&mut app, now, "?"),
-        State::Palette => typed(&mut app, now, ":sort"),
+        State::Filter => typed(&mut app, "/li", now),
+        State::Help => typed(&mut app, "?", now),
+        State::Palette => typed(&mut app, ":sort", now),
         State::Errors => {
             let fx = press_all(&mut app, now, &[c('!')]);
             assert!(matches!(fx[..], [Effect::ShowErrors]));
@@ -301,7 +298,7 @@ fn row_with(buf: &Buffer, needle: &str) -> (u16, String) {
         .enumerate()
         .find(|(_, l)| l.contains(needle))
         .unwrap_or_else(|| panic!("{needle:?} is not in the frame:\n{frame}"));
-    (y as u16, line.to_owned())
+    (u16::try_from(y).unwrap(), line.to_owned())
 }
 
 #[test]
@@ -315,7 +312,7 @@ fn every_mark_has_a_glyph() {
             items: 3,
             mark,
             errors_inside: if mark == Mark::ErrorsInside { 2 } else { 0 },
-            ..test_entry(i as u32, &format!("entry-{i:02}"), 1 << 20)
+            ..test_entry(u32::try_from(i).unwrap(), &format!("entry-{i:02}"), 1 << 20)
         })
         .collect();
     let mut app = App::new(mono(), t0);
@@ -365,7 +362,7 @@ fn every_mark_has_a_glyph() {
     assert!(text(&buf).contains("● 1 marked"));
 
     // Matched characters of the filter are underlined.
-    typed(&mut app, t0, "/y-07");
+    typed(&mut app, "/y-07", t0);
     let buf = render_buffer(&mut app, t0, 140, 20);
     assert_cue(&buf, "y-07", |s| {
         s.add_modifier.contains(Modifier::UNDERLINED)

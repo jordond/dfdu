@@ -12,7 +12,7 @@ fn has_rgb(buf: &Buffer) -> bool {
     })
 }
 
-/// Themes, and whether the colour effects run for them: only at TrueColor, on a background that
+/// Themes, and whether the colour effects run for them: only at `TrueColor`, on a background that
 /// is known or that the theme's RGB text colour was chosen for.
 fn color_themes() -> [(Theme, bool); 8] {
     let truecolor = |name, background| {
@@ -109,7 +109,7 @@ fn flashes_are_rate_limited() {
     // The next automatic re-sort, 2 s later.
     es[1].size = 5000;
     app.refresh(snap_with_alloc(es.clone(), 3), t2);
-    assert_eq!(names(&app), ["b", "c", "a"]);
+    assert_eq!(row_names(&app), ["b", "c", "a"]);
     let t3 = t2 + ms(100);
     note_flashes(&mut app, t2, t3, &mut flashes);
     // The scan finishes 100 ms later: a re-sort at once, with markers but no flash.
@@ -117,7 +117,7 @@ fn flashes_are_rate_limited() {
     let mut done = snap_with_alloc(es, 4);
     done.busy = false;
     app.refresh(done, t3);
-    assert_eq!(names(&app), ["a", "b", "c"]);
+    assert_eq!(row_names(&app), ["a", "b", "c"]);
     note_flashes(&mut app, t3, t3 + Duration::from_secs(5), &mut flashes);
     assert!(app.motion.next_frame_at().is_none());
     assert_eq!(flashes, [t1, t2]);
@@ -133,7 +133,7 @@ fn flash_colors_only_at_truecolor() {
         let es = resort_fixture(&mut app, t0);
         let t1 = t0 + Duration::from_secs(3);
         app.refresh(snap_with_alloc(es, 2), t1);
-        assert_eq!(names(&app), ["c", "a", "b"]);
+        assert_eq!(row_names(&app), ["c", "a", "b"]);
         assert_eq!(app.selected_index(), Some(0), "the top row stays selected");
         let buf = render_buffer(&mut app, t1, W, H);
         assert_eq!(has_rgb(&buf), truecolor, "{name}\n{}", styled(&buf));
@@ -177,7 +177,7 @@ fn effects_skip(open: impl Fn(&mut App, Instant), cover: impl Fn(&App) -> Option
     let (w, h) = (100, 30);
     let t0 = Instant::now();
     let es: Vec<EntryData> = (0..30)
-        .map(|i| test_entry(i, &format!("e{i:02}"), 1000 + i as u64 * 10))
+        .map(|i| test_entry(i, &format!("e{i:02}"), 1000 + u64::from(i) * 10))
         .collect();
     // Every row moves in the re-sort, so every row flashes.
     let reversed: Vec<EntryData> = es

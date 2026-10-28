@@ -32,22 +32,24 @@
 //! `scripts/pty-latency.py` measures the real binary from outside, in a pseudo-terminal: start
 //! of the process to the first data frame, and sort keys to frame.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
 use std::collections::VecDeque;
 use std::fs;
-use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use common::Recording;
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
 use ratatui::Terminal;
-use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Position, Size};
 
 /// Keys sent in turn: moves, open, back and sort changes.
 const KEYS: &[char] = &[
@@ -136,57 +138,6 @@ fn shows_data(buf: &ratatui::buffer::Buffer) -> bool {
     !first.is_empty() && !first.starts_with('(')
 }
 
-fn ok<T>(r: Result<T, std::convert::Infallible>) -> io::Result<T> {
-    let Ok(v) = r;
-    Ok(v)
-}
-
-/// `TestBackend` that reports each flush to the probe.
-struct Recording {
-    inner: TestBackend,
-    probe: Arc<Probe>,
-}
-
-impl Backend for Recording {
-    type Error = io::Error;
-
-    fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
-    where
-        I: Iterator<Item = (u16, u16, &'a Cell)>,
-    {
-        ok(self.inner.draw(content))
-    }
-    fn hide_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.hide_cursor())
-    }
-    fn show_cursor(&mut self) -> io::Result<()> {
-        ok(self.inner.show_cursor())
-    }
-    fn get_cursor_position(&mut self) -> io::Result<Position> {
-        ok(self.inner.get_cursor_position())
-    }
-    fn set_cursor_position<P: Into<Position>>(&mut self, p: P) -> io::Result<()> {
-        ok(self.inner.set_cursor_position(p))
-    }
-    fn clear(&mut self) -> io::Result<()> {
-        ok(self.inner.clear())
-    }
-    fn clear_region(&mut self, t: ClearType) -> io::Result<()> {
-        ok(self.inner.clear_region(t))
-    }
-    fn size(&self) -> io::Result<Size> {
-        ok(self.inner.size())
-    }
-    fn window_size(&mut self) -> io::Result<WindowSize> {
-        ok(self.inner.window_size())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        ok(self.inner.flush())?;
-        self.probe.flushed(self.inner.buffer());
-        Ok(())
-    }
-}
-
 /// Deterministic jitter for key intervals (xorshift).
 struct Rng(u64);
 
@@ -219,11 +170,9 @@ fn measure(tree: &Path, workers: Option<usize>, after: usize, seed: u64) -> Run 
         state: Mutex::default(),
     });
     // Wide enough that a long tree path does not push "done in" off the header line.
-    let mut terminal = Terminal::new(Recording {
-        inner: TestBackend::new(200, 40),
-        probe: probe.clone(),
-    })
-    .expect("terminal");
+    let flushed = probe.clone();
+    let mut terminal =
+        Terminal::new(Recording::new(200, 40, move |buf| flushed.flushed(buf))).expect("terminal");
 
     let start = Instant::now();
     let storage = dfdu_sys::storage(tree);
@@ -313,6 +262,12 @@ fn ms(d: Duration) -> f64 {
 }
 
 /// Nearest-rank percentile of sorted values.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a percentile's index: p is 0 to 100, so it lies between 0 and the length"
+)]
 fn pct(sorted: &[Duration], p: f64) -> Duration {
     let i = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
     sorted[i.clamp(1, sorted.len()) - 1]
@@ -333,9 +288,10 @@ fn summary(v: &mut [Duration]) -> String {
 }
 
 fn load() -> String {
-    fs::read_to_string("/proc/loadavg")
-        .map(|s| s.split_whitespace().take(3).collect::<Vec<_>>().join(" "))
-        .unwrap_or_else(|_| "?".into())
+    fs::read_to_string("/proc/loadavg").map_or_else(
+        |_| "?".into(),
+        |s| s.split_whitespace().take(3).collect::<Vec<_>>().join(" "),
+    )
 }
 
 #[test]
@@ -347,7 +303,7 @@ fn latency_large_tree() {
     let runs: usize = std::env::var("DFDU_LATENCY_RUNS").map_or(10, |s| s.parse().expect("runs"));
     let workers = std::env::var("DFDU_LATENCY_WORKERS").unwrap_or_else(|_| "default".into());
     let verbose = std::env::var_os("DFDU_LATENCY_VERBOSE").is_some();
-    let cpus = thread::available_parallelism().map_or(0, |n| n.get());
+    let cpus = thread::available_parallelism().map_or(0, std::num::NonZero::get);
     println!(
         "tree {}, {cpus} CPUs, {runs} runs per setting",
         tree.display()
