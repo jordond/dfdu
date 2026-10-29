@@ -4,10 +4,10 @@
 //! Switching the view on starts the comparison in a thread of its own, from the candidates read
 //! under the read lock ([`Effect::FindDupes`]); the view shows its progress and then the groups,
 //! the most space to free first. Marks are the list's: `Space` marks a copy, or on a group every
-//! copy but the one kept, `a` does that for every group, and `d` and `D` delete what is marked
+//! copy but the one kept, `A` does that for every group, and `d` and `D` delete what is marked
 //! through the usual dialog, which checks each file against the scan. The copy kept is the
-//! oldest, and `K` cycles the rule ([`Keep`]). Groups of APFS clones, which free nothing, are
-//! listed but `a` leaves them alone.
+//! oldest, and `K` cycles the rule ([`Keep`]); `R` compares again. Groups of APFS clones, which
+//! free nothing, are listed but `A` leaves them alone.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -77,8 +77,9 @@ pub fn cycle_keep(app: &mut App) {
     let d = &mut app.dupes;
     d.keep = d.keep.next();
     app.status = Some(format!(
-        "duplicates: keep the {} copy (a marks the others)",
-        d.keep.label()
+        "duplicates: keep the {} copy ({} marks the others)",
+        d.keep.label(),
+        crate::app::keys::first_key(crate::app::keys::Action::TickSuggested)
     ));
 }
 
@@ -148,7 +149,10 @@ fn start(app: &mut App) -> Vec<Effect> {
         return Vec::new();
     }
     if app.snap.busy {
-        app.status = Some("duplicates: wait until the scan is done, then press r".into());
+        let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
+        app.status = Some(format!(
+            "duplicates: wait until the scan is done, then press {again}"
+        ));
         return Vec::new();
     }
     app.dupes.cursor = 0;
@@ -327,24 +331,6 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::PageDown => d.cursor = (d.cursor + page).min(last),
         KeyCode::Home | KeyCode::Char('g') => d.cursor = 0,
         KeyCode::End | KeyCode::Char('G') => d.cursor = last,
-        KeyCode::Char('r') => {
-            if let Some(r) = d.run.take() {
-                r.cancel.store(true, Ordering::Relaxed);
-            }
-            return Some(start(app));
-        }
-        KeyCode::Char('a') if app.read_only => {
-            app.status = Some(crate::app::keys::READ_ONLY.into());
-        }
-        KeyCode::Char('a') => {
-            let n = mark_all(app);
-            let keep = app.dupes.keep.label();
-            app.status = Some(match n {
-                0 => "every copy is marked already, or there are none to free".into(),
-                1 => format!("marked 1 copy (the {keep} file of each group is kept)"),
-                n => format!("marked {n} copies (the {keep} file of each group is kept)"),
-            });
-        }
         KeyCode::Char(' ') => {
             let Some(f) = found(app) else {
                 return Some(Vec::new());
@@ -382,6 +368,31 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         _ => return None,
     }
     Some(Vec::new())
+}
+
+/// `R` ([`Action::CompareAgain`](crate::app::keys::Action)): stops the comparison that runs,
+/// if one does, and starts another.
+pub fn compare_again(app: &mut App) -> Vec<Effect> {
+    if let Some(r) = app.dupes.run.take() {
+        r.cancel.store(true, Ordering::Relaxed);
+    }
+    start(app)
+}
+
+/// `A` ([`Action::TickSuggested`](crate::app::keys::Action)): marks every copy but the one
+/// kept in each group that frees something.
+pub fn tick_suggested(app: &mut App) {
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
+    let n = mark_all(app);
+    let keep = app.dupes.keep.label();
+    app.status = Some(match n {
+        0 => "every copy is marked already, or there are none to free".into(),
+        1 => format!("marked 1 copy (the {keep} file of each group is kept)"),
+        n => format!("marked {n} copies (the {keep} file of each group is kept)"),
+    });
 }
 
 #[cfg(test)]

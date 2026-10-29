@@ -1,5 +1,6 @@
 ---
 source: crates/dfdu-tui/src/tests/matrix.rs
+assertion_line: 170
 expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
@@ -22,29 +23,29 @@ L7 0-1 fg=#ff8f8f | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 97-97 fg=#88c0d0
 L8 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
 L9 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
-  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
+  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
 L10 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ → l              open directory (tree mode:            passed (v or Esc ends)                ┃
+  ┃ → l              open directory (tree mode:            suggests deleting                     ┃
 L11 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                  expand it)                     :      mark by pattern: names in this        ┃
-L12 2-2 fg=#88c0d0 | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
-  ┃ Enter            open directory, even in               directory matching a glob (in the     ┃
-L13 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                  tree mode                             palette)                              ┃
+  ┃                  expand it)                     R      duplicates: compare the files again   ┃
+L12 2-2 fg=#88c0d0 | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ Enter            open directory, even in        N      cleanup: the item's own cleanup       ┃
+L13 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃                  tree mode                             command (dry run first)               ┃
 L14 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
-  ┃ ← h Backspace <  parent directory (tree         :      invert the marks in this directory,   ┃
-L15 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
-  ┃                  mode: collapse)                       as * does in the marks pane (in the   ┃
+  ┃ ← h Backspace <  parent directory (tree         v      mark a range: moving marks every row  ┃
+L15 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃                  mode: collapse)                       passed (v or Esc ends)                ┃
 L16 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
-  ┃                                                        palette)                              ┃
-L17 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
-  ┃ Sort                                            y      copy the selected path (through the   ┃
-L18 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ s  sort by size (again: reverse)                       terminal, OSC 52)                     ┃
+  ┃                                                 :      mark by pattern: names in this        ┃
+L17 2-2 fg=#88c0d0 | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
+  ┃ Sort                                                   directory matching a glob (in the     ┃
+L18 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 97-97 fg=#88c0d0
+  ┃ s  sort by size (again: reverse)                       palette)                              ┃
 L19 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ n  sort by name (again: reverse)                o      open in the file manager (a file: its ┃
-L20 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- 1┃ C  sort by items (again: reverse)                      folder)                               ┃
+  ┃ n  sort by name (again: reverse)                :      invert the marks in this directory,   ┃
+L20 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
+ 1┃ C  sort by items (again: reverse)                      as * does in the marks pane (in the   ┃
 L21 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=#8b94a7 | 2-88 fg=#88c0d0 | 89-96 fg=#8b94a7 | 97-97 fg=#88c0d0

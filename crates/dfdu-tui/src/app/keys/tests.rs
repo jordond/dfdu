@@ -1,11 +1,12 @@
 use std::collections::HashSet;
+use std::time::Instant;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::*;
 use crate::tests::press;
 
-const ALL: [Action; 57] = [
+const ALL: [Action; 61] = [
     Action::Quit,
     Action::Up,
     Action::Down,
@@ -59,7 +60,11 @@ const ALL: [Action; 57] = [
     Action::ViewLargest,
     Action::PrevView,
     Action::NextView,
+    Action::TickSuggested,
     Action::DupesKeep,
+    Action::CompareAgain,
+    Action::CleanupFilter,
+    Action::CleanupCommand,
     Action::TreemapDeeper,
     Action::TreemapShallower,
     Action::TreemapColor,
@@ -197,4 +202,60 @@ fn navigation_and_mark_keys() {
     assert_eq!(half_page(&ctrl('u'), 20), Some(-10));
     assert_eq!(half_page(&ctrl('d'), 1), Some(1), "at least a row");
     assert_eq!(half_page(&press(c('d')), 20), None);
+}
+
+/// What a view may do with a registry key before the registry sees it: move its own cursor
+/// (the navigation keys), mark the row its cursor is on (`Space`, as in the list), and, with
+/// nothing marked, say what to mark before the delete keys delete anything. Every other key
+/// means the same in every view.
+fn view_may_take(a: Action) -> bool {
+    let nav = ACTIONS
+        .iter()
+        .any(|r| r.action == a && r.group == Group::Navigate);
+    nav || matches!(
+        a,
+        Action::ToggleMark | Action::Trash | Action::DeletePermanent
+    )
+}
+
+#[test]
+fn no_view_rebinds_a_global_key() {
+    use crate::app::views::{self, View};
+    use crate::features::treemap::tests::{classified, sync};
+    use crate::features::{cleanup, dupes, largest, treemap};
+    let fx = classified();
+    let t0 = Instant::now();
+    let opened = |view: View| {
+        let mut app = App::new(crate::theme::Theme::no_color(), t0);
+        sync(&mut app, &fx.m, t0);
+        views::switch(&mut app, view);
+        sync(&mut app, &fx.m, t0);
+        app
+    };
+    for view in [View::Map, View::Cleanup, View::Duplicates, View::Largest] {
+        for info in ACTIONS {
+            for key in info.keys.split_whitespace() {
+                let (code, ctrl) = parse(key).expect("a key");
+                let mods = if ctrl {
+                    KeyModifiers::CONTROL
+                } else {
+                    KeyModifiers::NONE
+                };
+                let k = KeyEvent::new(code, mods);
+                let mut app = opened(view);
+                let taken = match view {
+                    View::Map => treemap::key(&mut app, &k).is_some(),
+                    View::Cleanup => cleanup::key(&mut app, &k).is_some(),
+                    View::Duplicates => dupes::key(&mut app, &k).is_some(),
+                    View::Largest => largest::key(&mut app, &k).is_some(),
+                    View::Files => false,
+                };
+                assert!(
+                    !taken || view_may_take(info.action),
+                    "{view:?} takes {key}, bound to {:?}",
+                    info.action
+                );
+            }
+        }
+    }
 }

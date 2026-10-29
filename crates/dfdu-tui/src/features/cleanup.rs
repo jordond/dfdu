@@ -5,9 +5,10 @@
 //! The first time the user opens the view and it has items, it marks the recommended ones:
 //! `safe` items above their rule's minimum size, `regenerable` ones only when stale, never
 //! `review` or worse, and nothing changed in the last 7 days or in use. A read-only browser
-//! marks nothing, as nothing marked could be deleted. `n` opens an item's native command: its dry
+//! marks nothing, as nothing marked could be deleted. `N` opens an item's native command: its dry
 //! run first, then `y` runs it; `v` picks a further-reaching form, which `y` must confirm
-//! twice.
+//! twice. `A` marks the recommended items again and `f` shows only the safer levels; like `N`,
+//! they are registry actions (`app::keys`) that act only while the view is shown.
 
 use std::collections::HashSet;
 
@@ -407,36 +408,48 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
         }
         KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
-        KeyCode::Char('f') => {
-            c.filter = match c.filter {
-                None => Some(Safety::Safe),
-                Some(Safety::Safe) => Some(Safety::Regenerable),
-                Some(Safety::Regenerable) => Some(Safety::Review),
-                Some(_) => None,
-            };
-            c.cursor = 0;
-            let label = c.filter.map_or("everything", |f| match f {
-                Safety::Safe => "safe only",
-                Safety::Regenerable => "safe and regenerable",
-                _ => "up to review",
-            });
-            app.status = Some(format!("cleanup: showing {label}"));
-        }
-        KeyCode::Char('a') if app.read_only => {
-            app.status = Some(crate::app::keys::READ_ONLY.into());
-        }
-        KeyCode::Char('a') => {
-            let (n, size) = mark_recommended(app);
-            app.status = Some(if n == 0 {
-                "every recommended item is marked already".into()
-            } else {
-                marked_status(n, size)
-            });
-        }
-        KeyCode::Char('n') => return Some(pane::open_pane(app)),
         _ => return None,
     }
     Some(Vec::new())
+}
+
+/// `f` ([`Action::CleanupFilter`](crate::app::keys::Action)): shows only the safer levels,
+/// one level fewer each time, then everything again.
+pub fn cycle_filter(app: &mut App) {
+    let c = &mut app.cleanup;
+    c.filter = match c.filter {
+        None => Some(Safety::Safe),
+        Some(Safety::Safe) => Some(Safety::Regenerable),
+        Some(Safety::Regenerable) => Some(Safety::Review),
+        Some(_) => None,
+    };
+    c.cursor = 0;
+    let label = c.filter.map_or("everything", |f| match f {
+        Safety::Safe => "safe only",
+        Safety::Regenerable => "safe and regenerable",
+        _ => "up to review",
+    });
+    app.status = Some(format!("cleanup: showing {label}"));
+}
+
+/// `A` ([`Action::TickSuggested`](crate::app::keys::Action)): marks every recommended item.
+pub fn tick_suggested(app: &mut App) {
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
+    let (n, size) = mark_recommended(app);
+    app.status = Some(if n == 0 {
+        "every recommended item is marked already".into()
+    } else {
+        marked_status(n, size)
+    });
+}
+
+/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
+/// native command, with its dry run.
+pub fn command(app: &mut App) -> Vec<Effect> {
+    pane::open_pane(app)
 }
 
 fn toggle(app: &mut App, row: Option<Row>) {

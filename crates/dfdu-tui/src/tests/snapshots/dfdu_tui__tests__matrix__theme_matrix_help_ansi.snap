@@ -22,29 +22,29 @@ L7 0-1 fg=red | 2-2 fg=cyan | 4-9 bold | 97-97 fg=cyan
 L8 0-1 fg=yellow | 2-2 fg=cyan | 4-9 bold | 52-56 bold | 97-97 fg=cyan
   ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
 L9 2-2 fg=cyan | 4-9 bold | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
+  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
 L10 2-2 fg=cyan | 4-8 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ → l              open directory (tree mode:            passed (v or Esc ends)                ┃
+  ┃ → l              open directory (tree mode:            suggests deleting                     ┃
 L11 2-2 fg=cyan | 4-6 bold | 97-97 fg=cyan
-  ┃                  expand it)                     :      mark by pattern: names in this        ┃
-L12 2-2 fg=cyan | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃ Enter            open directory, even in               directory matching a glob (in the     ┃
-L13 2-2 fg=cyan | 4-8 bold | 97-97 fg=cyan
-  ┃                  tree mode                             palette)                              ┃
+  ┃                  expand it)                     R      duplicates: compare the files again   ┃
+L12 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
+  ┃ Enter            open directory, even in        N      cleanup: the item's own cleanup       ┃
+L13 2-2 fg=cyan | 4-8 bold | 52-52 bold | 97-97 fg=cyan
+  ┃                  tree mode                             command (dry run first)               ┃
 L14 2-2 fg=cyan | 97-97 fg=cyan
-  ┃ ← h Backspace <  parent directory (tree         :      invert the marks in this directory,   ┃
-L15 2-2 fg=cyan | 4-18 bold | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃                  mode: collapse)                       as * does in the marks pane (in the   ┃
+  ┃ ← h Backspace <  parent directory (tree         v      mark a range: moving marks every row  ┃
+L15 2-2 fg=cyan | 4-18 bold | 52-52 bold | 97-97 fg=cyan
+  ┃                  mode: collapse)                       passed (v or Esc ends)                ┃
 L16 2-2 fg=cyan | 97-97 fg=cyan
-  ┃                                                        palette)                              ┃
-L17 2-2 fg=cyan | 97-97 fg=cyan
-  ┃ Sort                                            y      copy the selected path (through the   ┃
-L18 2-2 fg=cyan | 3-7 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ s  sort by size (again: reverse)                       terminal, OSC 52)                     ┃
+  ┃                                                 :      mark by pattern: names in this        ┃
+L17 2-2 fg=cyan | 52-52 fg=darkgray | 97-97 fg=cyan
+  ┃ Sort                                                   directory matching a glob (in the     ┃
+L18 2-2 fg=cyan | 3-7 bold | 97-97 fg=cyan
+  ┃ s  sort by size (again: reverse)                       palette)                              ┃
 L19 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
-  ┃ n  sort by name (again: reverse)                o      open in the file manager (a file: its ┃
-L20 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
- 1┃ C  sort by items (again: reverse)                      folder)                               ┃
+  ┃ n  sort by name (again: reverse)                :      invert the marks in this directory,   ┃
+L20 2-2 fg=cyan | 4-4 bold | 52-52 fg=darkgray | 97-97 fg=cyan
+ 1┃ C  sort by items (again: reverse)                      as * does in the marks pane (in the   ┃
 L21 0-1 fg=yellow | 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=darkgray | 2-88 fg=cyan | 89-96 fg=darkgray | 97-97 fg=cyan

@@ -2,6 +2,7 @@
 
 use dfdu_engine::{Command, SizeMode};
 
+use crate::app::views::View;
 use crate::app::{App, Effect};
 use crate::model::snapshot::Mark;
 use crate::state::order::{SortKey, SortSpec};
@@ -33,6 +34,18 @@ pub(super) fn enter_mount(app: &mut App) -> Option<Effect> {
             None
         }
     }
+}
+
+/// The status line after the key of `a`, which acts only in `views`, in another view.
+pub(super) fn only_in(app: &mut App, a: super::Action, views: &[View]) {
+    let names: Vec<String> = (views.iter())
+        .map(|v| format!("{} ({})", v.name(), super::first_key(v.action())))
+        .collect();
+    app.status = Some(format!(
+        "{} works in {}",
+        super::first_key(a),
+        names.join(" and ")
+    ));
 }
 
 /// Switches to `mode`, or back to disk usage if `mode` is shown already.

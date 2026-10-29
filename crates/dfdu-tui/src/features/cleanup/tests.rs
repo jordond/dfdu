@@ -117,8 +117,8 @@ fn a_read_only_browser_never_marks() {
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
     assert!(app.marks.is_empty());
-    // `a` and Space say why instead.
-    app.key(press(KeyCode::Char('a')), t0);
+    // `A` and Space say why instead.
+    app.key(press(KeyCode::Char('A')), t0);
     assert!(app.marks.is_empty());
     assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
     app.status = None;
@@ -363,7 +363,7 @@ fn native_commands_start_with_their_dry_run() {
     app.cleanup.cursor = at;
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
-    let out = app.key(press(KeyCode::Char('n')), t0);
+    let out = app.key(press(KeyCode::Char('N')), t0);
     assert!(
         matches!(
             out.as_slice(),
@@ -421,7 +421,7 @@ fn read_only_runs_only_the_dry_run() {
     app.cleanup.cursor = at;
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
-    let out = app.key(press(KeyCode::Char('n')), t0);
+    let out = app.key(press(KeyCode::Char('N')), t0);
     assert!(
         matches!(
             out.as_slice(),

@@ -1,9 +1,10 @@
 ---
 source: crates/dfdu-tui/src/overlay/palette.rs
+assertion_line: 446
 expression: frame
 ---
  dfdu │ [1 Files] 2 3 4 5       ⠋ 00:00
- /┌ Commands 61/61 ──────────────────┐k
+ /┌ Commands 65/65 ──────────────────┐k
   │ : ▌                              │
   │ Theme: ansi              setting │
   │ Theme: mono              setting │

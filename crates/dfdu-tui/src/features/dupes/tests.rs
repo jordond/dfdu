@@ -75,10 +75,10 @@ fn duplicates_are_found_marked_and_shown() {
     assert!(out.contains("3 copies of 1.0 MiB"), "{out}");
     assert!(out.contains("photos/old/a copy.jpg"), "{out}");
     assert!(!out.contains("other.jpg"), "{out}");
-    // `a` marks every copy but the oldest.
-    app.key(press(KeyCode::Char('a')), t0);
+    // `A` marks every copy but the oldest.
+    app.key(press(KeyCode::Char('A')), t0);
     assert_eq!(app.marks.items().len(), 2);
-    app.key(press(KeyCode::Char('a')), t0);
+    app.key(press(KeyCode::Char('A')), t0);
     assert_eq!(app.marks.items().len(), 2);
     // Space on the group unmarks its copies again.
     app.dupes.cursor = 0;
@@ -206,7 +206,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
     );
     let kept_after_a = |app: &mut App| {
         marks::clear(app);
-        app.key(press(KeyCode::Char('a')), t0);
+        app.key(press(KeyCode::Char('A')), t0);
         let marked: Vec<String> = (app.marks.items().iter())
             .map(|i| i.target.path.display().to_string())
             .collect();

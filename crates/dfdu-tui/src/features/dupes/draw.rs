@@ -108,7 +108,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     app.list_height = height.saturating_sub(1);
     let Some(run) = app.dupes.run.clone() else {
-        let msg = " duplicates: not compared yet (r compares the files of the scan)";
+        let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
+        let msg = format!(" duplicates: not compared yet ({again} compares the files of the scan)");
         f.render_widget(Paragraph::new(Line::styled(msg, t.fg_dim)), area);
         return;
     };

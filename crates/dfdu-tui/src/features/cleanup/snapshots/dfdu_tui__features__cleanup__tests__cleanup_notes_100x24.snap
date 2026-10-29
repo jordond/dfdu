@@ -1,5 +1,6 @@
 ---
 source: crates/dfdu-tui/src/features/cleanup/tests.rs
+assertion_line: 317
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup 1.0G │ 4 Duplicates │ 5 Largest                   done in 00:00
@@ -25,4 +26,4 @@ cache.
 
 
  marked 1 recommended item (1.0 GiB) · Space unmarks                           ● 1 marked (1.0 GiB)
- ↑↓ move  Enter open  Space mark  a recommended  f filter  d trash marked  ? help  q quit  [ ] views
+ ↑↓ move  Enter open  Space mark  A mark suggested  d trash marked  ? help  q quit  [ ] views

@@ -11,6 +11,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{Item, Row, group_items, is_marked, markable, pane, plural, recommended, rows};
 use crate::app::App;
+use crate::app::keys::{Action, first_key};
 use crate::model::outside::tilde;
 use crate::theme::{count, human, truncate_middle};
 use crate::view::cells;
@@ -269,11 +270,12 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
         d.push(Line::styled(format!(" {}", reason(v)), t.fg_dim));
     }
     if r.action.native().is_some() {
+        let key = first_key(Action::CleanupCommand);
         d.push(Line::styled(
             if app.read_only {
-                " n shows its own cleanup command and runs its dry run"
+                format!(" {key} shows its own cleanup command and runs its dry run")
             } else {
-                " n runs its own cleanup command"
+                format!(" {key} runs its own cleanup command")
             },
             t.fg_dim,
         ));

@@ -8,7 +8,7 @@ use dfdu_engine::{Command, Mode, SizeMode};
 
 use super::views::{self, View};
 use super::{App, Effect, Overlay};
-use crate::features::{debug, details, selected_path, treemap};
+use crate::features::{cleanup, debug, details, dupes, selected_path, treemap};
 use crate::overlay::{confirm, help, mark_pattern, palette, type_filter};
 use crate::state::order::SortKey;
 use crate::state::{filter, marks, tree};
@@ -16,7 +16,7 @@ use crate::state::{filter, marks, tree};
 mod act;
 mod lookup;
 
-use act::{enter_mount, sort_by, toggle_size};
+use act::{enter_mount, only_in, sort_by, toggle_size};
 #[cfg(test)]
 use lookup::parse;
 pub use lookup::{action_for, first_key, half_page, offered};
@@ -76,7 +76,11 @@ pub enum Action {
     ViewLargest,
     PrevView,
     NextView,
+    TickSuggested,
     DupesKeep,
+    CompareAgain,
+    CleanupFilter,
+    CleanupCommand,
     TreemapDeeper,
     TreemapShallower,
     TreemapColor,
@@ -237,6 +241,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Display,
     ),
     row(
+        Action::CleanupFilter,
+        "f",
+        "cleanup: only the safer levels, one fewer each time",
+        Group::Display,
+    ),
+    row(
         Action::TreemapDeeper,
         "+",
         "map: one level deeper",
@@ -321,6 +331,24 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Act,
     ),
     row(Action::ClearMarks, "", "clear all marks", Group::Act),
+    row(
+        Action::TickSuggested,
+        "A",
+        "mark what Cleanup or Duplicates suggests deleting",
+        Group::Act,
+    ),
+    row(
+        Action::CompareAgain,
+        "R",
+        "duplicates: compare the files again",
+        Group::Act,
+    ),
+    row(
+        Action::CleanupCommand,
+        "N",
+        "cleanup: the item's own cleanup command (dry run first)",
+        Group::Act,
+    ),
     row(
         Action::RangeMark,
         "v",
@@ -515,6 +543,16 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::PrevView => fx.extend(views::step(app, -1)),
         Action::NextView => fx.extend(views::step(app, 1)),
         Action::DupesKeep => crate::features::dupes::cycle_keep(app),
+        Action::TickSuggested => match views::current(app) {
+            View::Cleanup => cleanup::tick_suggested(app),
+            View::Duplicates => dupes::tick_suggested(app),
+            _ => only_in(app, a, &[View::Cleanup, View::Duplicates]),
+        },
+        Action::CompareAgain if dupes::active(app) => fx.extend(dupes::compare_again(app)),
+        Action::CleanupFilter if cleanup::active(app) => cleanup::cycle_filter(app),
+        Action::CleanupCommand if cleanup::active(app) => fx.extend(cleanup::command(app)),
+        Action::CompareAgain => only_in(app, a, &[View::Duplicates]),
+        Action::CleanupFilter | Action::CleanupCommand => only_in(app, a, &[View::Cleanup]),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
         Action::TreemapColor => treemap::cycle_color(app),

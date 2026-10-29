@@ -1,5 +1,6 @@
 ---
 source: crates/dfdu-tui/src/overlay/help/tests.rs
+assertion_line: 69
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
@@ -12,23 +13,23 @@ expression: frame
   ┃ Ctrl-U           half a page up                        responding                            ┃
   ┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
   ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
-  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
-  ┃ → l              open directory (tree mode:            passed (v or Esc ends)                ┃
-  ┃                  expand it)                     :      mark by pattern: names in this        ┃
-  ┃ Enter            open directory, even in               directory matching a glob (in the     ┃
-  ┃                  tree mode                             palette)                              ┃
-  ┃ ← h Backspace <  parent directory (tree         :      invert the marks in this directory,   ┃
-  ┃                  mode: collapse)                       as * does in the marks pane (in the   ┃
-  ┃                                                        palette)                              ┃
-  ┃ Sort                                            y      copy the selected path (through the   ┃
-  ┃ s  sort by size (again: reverse)                       terminal, OSC 52)                     ┃
-  ┃ n  sort by name (again: reverse)                o      open in the file manager (a file: its ┃
-  ┃ C  sort by items (again: reverse)                      folder)                               ┃
-  ┃ M  sort by modification time (again:            d      move to Trash                         ┃
-  ┃    reverse)                                     D      delete permanently (type delete)      ┃
-  ┃ S  re-sort now                                  U      put back what was last moved to the   ┃
-  ┃                                                        Trash or staged                       ┃
-  ┃ Display                                                                                      ┃
-  ┃ 1  Files view: the entries of this directory    Panels                                       ┃
+  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
+  ┃ → l              open directory (tree mode:            suggests deleting                     ┃
+  ┃                  expand it)                     R      duplicates: compare the files again   ┃
+  ┃ Enter            open directory, even in        N      cleanup: the item's own cleanup       ┃
+  ┃                  tree mode                             command (dry run first)               ┃
+  ┃ ← h Backspace <  parent directory (tree         v      mark a range: moving marks every row  ┃
+  ┃                  mode: collapse)                       passed (v or Esc ends)                ┃
+  ┃                                                 :      mark by pattern: names in this        ┃
+  ┃ Sort                                                   directory matching a glob (in the     ┃
+  ┃ s  sort by size (again: reverse)                       palette)                              ┃
+  ┃ n  sort by name (again: reverse)                :      invert the marks in this directory,   ┃
+  ┃ C  sort by items (again: reverse)                      as * does in the marks pane (in the   ┃
+  ┃ M  sort by modification time (again:                   palette)                              ┃
+  ┃    reverse)                                     y      copy the selected path (through the   ┃
+  ┃ S  re-sort now                                         terminal, OSC 52)                     ┃
+  ┃                                                 o      open in the file manager (a file: its ┃
+  ┃ Display                                                folder)                               ┃
+  ┃ 1  Files view: the entries of this directory    d      move to Trash                         ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close
