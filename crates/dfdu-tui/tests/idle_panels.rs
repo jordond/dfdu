@@ -235,7 +235,7 @@ fn switching_to_the_treemap_draws_one_frame_then_nothing() {
             // That one frame already has the levels below the top: the read for them comes
             // before it, and nothing is read or drawn after it.
             let screen = frames.lock().expect("frames").screen.clone();
-            assert!(screen.contains("colour: top folder"), "{screen}");
+            assert!(screen.contains("colour by top folder"), "{screen}");
             assert!(screen.contains("sub/"), "{screen}");
             assert_eq!(count(frames), before + 1, "{screen}");
         }

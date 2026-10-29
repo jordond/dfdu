@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/features/details/tests.rs
 expression: out
 ---
  dfdu  /r                                                                                                 done in 00:00
- 3 items · 8.0 KiB                                                                             sort: size ↓  disk usage
+ 3 items · 8.0 KiB                                                                           sort size ↓  ·  disk usage
         size                     share  name                                    ╭ data/ ───────────────────────────────╮
  >   8.0 KiB  ████████████████  100.0%  data/  other filesystem (zfs, 1.3 TiB u…│ /r/data                              │
  >   8.0 KiB  ████████████████  100.0%  nas/  network filesystem (nfs4): m scan…│ directory                            │

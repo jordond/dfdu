@@ -86,6 +86,7 @@ pub fn run(cli: Cli) -> ExitCode {
         ui: UiSettings {
             theme,
             color: cli.color.0,
+            bars: cli.bars,
             mouse: !cli.no_mouse,
             debug_stats: cli.debug_stats,
             types: cli.types.unwrap_or_default(),

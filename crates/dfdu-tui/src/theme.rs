@@ -18,7 +18,7 @@ pub use detect::{
 };
 pub use dfdu_engine::human;
 pub use file::{ThemeError, ThemeFile};
-pub use format::{bar, count, percent, ratio, spinner, truncate_middle};
+pub use format::{Bars, bar, count, percent, ratio, spinner, truncate_middle};
 
 /// A themable style. [`Token::name`] is its key in a theme file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -267,6 +267,8 @@ pub struct Theme {
     pub cat: [Style; 8],
     /// Indexed by `SafetyStyle as usize`.
     pub safety: [Style; 3],
+    /// How bars and the treemap's frames are drawn.
+    pub bars: Bars,
     name: String,
     level: ColorLevel,
     background: Option<Rgb>,
@@ -352,6 +354,7 @@ impl Theme {
             r#match: style(Token::Match),
             cat: Category::ALL.map(|c| style(c.token())),
             safety: SafetyStyle::ALL.map(|s| style(s.token())),
+            bars: Bars::default(),
             name,
             level,
             background,

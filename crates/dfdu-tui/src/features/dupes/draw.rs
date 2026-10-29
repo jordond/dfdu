@@ -1,6 +1,7 @@
-//! Drawing the view: the progress of a comparison, then the summary and the groups. A group's
-//! header names the directory all its files are in; each file's row shows the rest of its path,
-//! shortened in the middle, and its date in a column at the right edge.
+//! Drawing the view: the progress of a comparison, then the summary with the keep rule, and the
+//! groups. A group's header names the directory all its files are in; each file's row shows the
+//! rest of its path, shortened in the middle, `keep` on the copy marking leaves, and its date in a
+//! column at the right edge.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -11,7 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Row, live, min_size, rows};
+use super::{Row, kept, live, min_size, rows};
 use crate::app::App;
 use crate::theme::{count, human, truncate_middle};
 
@@ -61,6 +62,30 @@ fn group_paths(app: &App, group: &Group, root: &Path) -> GroupPaths {
         })
         .collect();
     (dir, rest)
+}
+
+/// The label of the copy marking leaves, in a column of its own before the dates.
+const KEEP: &str = "  keep";
+
+/// `s` cut to `w` cells, ending in `…` when it was cut.
+fn clip_end(s: &str, w: usize) -> String {
+    if Span::raw(s).width() <= w {
+        return s.to_owned();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let cw = Span::raw(c.to_string()).width();
+        if used + cw + 1 > w {
+            break;
+        }
+        out.push(c);
+        used += cw;
+    }
+    if w > 0 {
+        out.push('…');
+    }
+    out
 }
 
 fn progress_line(p: &Progress) -> String {
@@ -118,7 +143,16 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         summary.push_str(&count(found.skipped));
         summary.push_str(" skipped");
     }
-    let mut lines = vec![Line::styled(summary, t.fg_dim)];
+    // The keep rule at the right edge, where a narrow terminal does not cut it.
+    let keep = format!("  keep: {} ", app.dupes.keep.label());
+    let room = (area.width as usize).saturating_sub(Span::raw(&keep).width());
+    let summary = clip_end(&summary, room);
+    let pad = room.saturating_sub(Span::raw(&summary).width());
+    let mut lines = vec![Line::from(vec![
+        Span::styled(summary, t.fg_dim),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(keep, t.fg_dim),
+    ])];
     if rows.is_empty() {
         lines.push(Line::raw(" no duplicates"));
     }
@@ -175,14 +209,20 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     .map(|(_, p)| p.display().to_string())
                     .unwrap_or_default();
                 let lead = Span::styled(format!("   {mark} "), t.key);
+                let keep = if kept(app, &found.groups[group]) == Some(file) {
+                    Span::styled(KEEP, t.status_ok)
+                } else {
+                    Span::raw(" ".repeat(KEEP.len()))
+                };
                 let date = Span::styled(format!("  {date}"), t.fg_dim);
-                let room = width.saturating_sub(lead.width() + date.width());
+                let room = width.saturating_sub(lead.width() + keep.width() + date.width());
                 let path = truncate_middle(&rest, room);
                 let pad = room.saturating_sub(Span::raw(&path).width());
                 Line::from(vec![
                     lead,
                     Span::raw(path),
                     Span::raw(" ".repeat(pad)),
+                    keep,
                     date,
                 ])
             }

@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/state/filter/tests.rs
 expression: "render(&mut app, t0, 80, 9)"
 ---
  dfdu  /r                                                      ⠋ scanning 00:00
- 8 items · 250.9 GiB                                   sort: size ↓  disk usage
+ 8 items · 250.9 GiB                                              size ↓ · disk
         size                     share  name
    112.0 GiB  ████████████████   44.6%  Library/
    625.0 MiB  ▏                   0.2%  notes.sqlite

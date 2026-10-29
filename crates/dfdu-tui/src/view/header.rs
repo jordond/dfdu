@@ -1,9 +1,12 @@
 //! The two header lines: breadcrumbs from the scan root to the current directory and the scan
-//! state, then totals and the sort.
+//! state, then totals and the modes that change the numbers: the sort, the size shown, and what
+//! differs from the defaults.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use dfdu_engine::SizeMode;
+use dfdu_store::history;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
@@ -12,6 +15,8 @@ use ratatui::widgets::Paragraph;
 use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::input::mouse::Crumb;
+use crate::model::growth;
+use crate::state::filter;
 use crate::state::order::SortKey;
 use crate::theme::{Theme, count, human, spinner, truncate_middle};
 
@@ -145,6 +150,130 @@ fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
     forms
 }
 
+/// Between two modes on the right of the second line, on wide terminals and on narrow ones.
+const WIDE_SEPARATOR: &str = "  ·  ";
+const NARROW_SEPARATOR: &str = " · ";
+/// The wide forms of the modes are used from this many columns, as in the mockups: the list
+/// has its widest layout there too.
+const WIDE_FROM: u16 = 110;
+/// At most this many cells of a filter query or a type filter in the header.
+const QUERY_MAX: usize = 16;
+
+/// One mode on the right of the second line, in its form for wide terminals and its short one.
+struct Flag {
+    wide: Vec<Span<'static>>,
+    narrow: Vec<Span<'static>>,
+}
+
+impl Flag {
+    /// A mode written `wide`, or `narrow` when the line is short.
+    fn new(wide: impl Into<String>, narrow: impl Into<String>) -> Flag {
+        Flag {
+            wide: vec![Span::raw(wide.into())],
+            narrow: vec![Span::raw(narrow.into())],
+        }
+    }
+}
+
+/// Tree mode, shown before the sort when it is on. Tree mode is not built yet, so there is
+/// nothing to show; this is where its flag goes.
+fn tree_flag(_app: &App) -> Option<Flag> {
+    None
+}
+
+/// The sort, always shown: `sort size ↓`, or `size ↓` when the line is short.
+fn sort_flag(app: &App) -> Flag {
+    let key = match app.sort.key {
+        SortKey::Size => "size",
+        SortKey::Name => "name",
+        SortKey::Items => "items",
+        SortKey::Mtime => "mtime",
+    };
+    let arrow = if app.sort.desc { "↓" } else { "↑" };
+    let sort = format!("{key} {arrow}");
+    Flag {
+        wide: vec![
+            Span::styled("sort ", app.theme.fg_dim),
+            Span::raw(sort.clone()),
+        ],
+        narrow: vec![Span::raw(sort)],
+    }
+}
+
+/// The modes after the sort, in the order they give way when the line is short (the last
+/// first): the size shown, the treemap's colouring and depth while it is shown, then only what
+/// differs from the defaults: hidden files hidden, the filter kept, the type filter, and the day
+/// of the last recorded scan the changes are from.
+fn flags(app: &App) -> Vec<Flag> {
+    let mut out = vec![match app.size_mode {
+        SizeMode::Disk => Flag::new("disk usage", "disk"),
+        SizeMode::Apparent => Flag::new("apparent size", "apparent"),
+        SizeMode::Referenced => Flag::new("disk usage like du", "du-like"),
+    }];
+    if app.treemap.shown {
+        let colour = app.treemap.color.label();
+        out.push(Flag::new(format!("colour by {colour}"), colour));
+        let depth = format!("depth {}", app.treemap.depth);
+        out.push(Flag::new(depth.clone(), depth));
+    }
+    if app.hide_hidden {
+        out.push(Flag::new("hiding hidden files", "hidden"));
+    }
+    if app.filter.active() && !filter::editing(app) {
+        let query = format!("/{}", truncate_middle(app.filter.query(), QUERY_MAX));
+        out.push(Flag::new(query.clone(), query));
+    }
+    if !app.snap.types.is_empty() {
+        let types = truncate_middle(&app.snap.types.to_string(), QUERY_MAX);
+        out.push(Flag::new(format!("type {types}"), format!("t {types}")));
+    }
+    // The size `du` counts is not recorded, so there are no changes to show then.
+    if let Some(g) = &app.growth
+        && app.size_mode != SizeMode::Referenced
+    {
+        out.push(Flag::new(
+            format!("Δ since {}", history::day(g.at)),
+            growth::column_title(app),
+        ));
+    }
+    out
+}
+
+/// The right of the second line in the forms to try, longest first: every mode in its wide
+/// form (used from [`WIDE_FROM`] columns), then every mode short, then short with the last
+/// modes left out and `+N` in their place. Tree mode and the sort are never left out.
+fn mode_forms(app: &App) -> Vec<Vec<Span<'static>>> {
+    let t = &app.theme;
+    let lead: Vec<Flag> = tree_flag(app).into_iter().chain([sort_flag(app)]).collect();
+    let rest = flags(app);
+    let join = |parts: Vec<Vec<Span<'static>>>, sep: &'static str| {
+        let mut spans = Vec::new();
+        for (i, part) in parts.into_iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(sep, t.fg_dim));
+            }
+            spans.extend(part);
+        }
+        spans.push(Span::raw(" "));
+        spans
+    };
+    let wide = lead.iter().chain(&rest).map(|f| f.wide.clone()).collect();
+    let mut forms = vec![join(wide, WIDE_SEPARATOR)];
+    for kept in (0..=rest.len()).rev() {
+        let mut parts: Vec<_> = lead
+            .iter()
+            .chain(&rest[..kept])
+            .map(|f| f.narrow.clone())
+            .collect();
+        let dropped = rest.len() - kept;
+        if dropped > 0 {
+            parts.push(vec![Span::styled(format!("+{dropped}"), t.fg_dim)]);
+        }
+        forms.push(join(parts, NARROW_SEPARATOR));
+    }
+    forms
+}
+
 /// Draws the header in `area` and records where each breadcrumb went, for the mouse.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
     let t = &app.theme;
@@ -228,18 +357,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
             t.fg_dim,
         ));
     }
-    let key = match app.sort.key {
-        SortKey::Size => "size",
-        SortKey::Name => "name",
-        SortKey::Items => "items",
-        SortKey::Mtime => "mtime",
-    };
-    let arrow = if app.sort.desc { "↓" } else { "↑" };
-    let mode = app.size_mode.label();
-    let right2 = vec![Span::styled(
-        format!("sort: {key} {arrow}  {mode} "),
-        t.fg_dim,
-    )];
+    // The modes take their longest form that leaves a cell free after the totals, or give way.
+    let used: usize = info.iter().map(Span::width).sum();
+    let right2 = mode_forms(app)
+        .into_iter()
+        .skip(usize::from(area.width < WIDE_FROM))
+        .find(|r| used + 1 + r.iter().map(Span::width).sum::<usize>() <= usize::from(area.width))
+        .unwrap_or_default();
     let line2 = spread(info, right2, area.width);
     f.render_widget(Paragraph::new(vec![line1, line2]), area);
     app.mouse.crumbs = hits
@@ -253,183 +377,4 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
 }
 
 #[cfg(test)]
-mod tests {
-    use ratatui::buffer::Buffer;
-
-    use super::*;
-    use crate::model::snapshot::Snapshot;
-    use crate::tests::{render_buffer, snap_without_totals, style_at, text};
-
-    fn texts(dir: &str, root: &str, home: Option<&str>) -> Vec<String> {
-        segments(Path::new(dir), Path::new(root), home.map(Path::new))
-            .into_iter()
-            .map(|s| s.text)
-            .collect()
-    }
-
-    /// A browser of `dir` below the scan root `root`, drawn `width` columns wide.
-    fn browser(dir: &str, root: &str, theme: Theme, width: u16) -> (App, Buffer) {
-        let t0 = Instant::now();
-        let mut app = App::new(theme, t0);
-        let below = Snapshot {
-            dir_path: dir.into(),
-            root_path: root.into(),
-            at_root: dir == root,
-            ..snap_without_totals(Vec::new(), 1)
-        };
-        app.refresh(below, t0);
-        let buf = render_buffer(&mut app, t0, width, 8);
-        (app, buf)
-    }
-
-    fn first_line(buf: &Buffer) -> String {
-        text(buf).lines().next().unwrap_or_default().to_owned()
-    }
-
-    #[test]
-    fn breadcrumbs_show_path_below_root() {
-        assert_eq!(
-            texts("/srv/data/dev/rust", "/srv/data", None),
-            ["/srv/data", "dev", "rust"]
-        );
-        assert_eq!(texts("/srv/data", "/srv/data", None), ["/srv/data"]);
-        // Before the first snapshot nothing is known about the root.
-        assert_eq!(texts("/srv/data/dev", "", None), ["/srv/data/dev"]);
-
-        let (app, buf) = browser("/srv/data/dev/rust", "/srv/data", Theme::ansi16(), 100);
-        let first = first_line(&buf);
-        assert!(
-            first.starts_with(" dfdu  /srv/data › dev › rust "),
-            "{first}"
-        );
-        // The current directory is styled as the title, the way to it dimmed.
-        assert_eq!(style_at(&buf, "rust"), style_at(&buf, "dfdu"));
-        assert_eq!(style_at(&buf, "dev"), style_at(&buf, "›"));
-        assert_ne!(style_at(&buf, "dev"), style_at(&buf, "rust"));
-        let children: Vec<_> = app.mouse.crumbs.iter().map(|c| c.child.clone()).collect();
-        assert_eq!(
-            children,
-            ["/srv/data/dev", "/srv/data/dev/rust"].map(PathBuf::from)
-        );
-    }
-
-    #[test]
-    fn long_paths_collapse_from_the_left() {
-        let dir = "/srv/data/projects/rust/dfdu/src/ui";
-        let (app, buf) = browser(dir, "/srv/data", Theme::no_color(), 40);
-        let header: String = text(&buf).lines().take(2).flat_map(|l| [l, "\n"]).collect();
-        insta::assert_snapshot!("breadcrumbs_collapsed", header);
-        assert!(header.starts_with(" dfdu  … › src › ui "), "{header}");
-        let crumbs: Vec<_> = app
-            .mouse
-            .crumbs
-            .iter()
-            .map(|c| (c.area, c.child.clone()))
-            .collect();
-        assert_eq!(crumbs, [(Rect::new(11, 0, 3, 1), PathBuf::from(dir))]);
-
-        let (_, buf) = browser(dir, "/srv/data", Theme::no_color(), 100);
-        let first = first_line(&buf);
-        assert!(
-            first.starts_with(" dfdu  /srv/data › projects › rust › dfdu › src › ui "),
-            "{first}"
-        );
-    }
-
-    /// The first line of a read-only browser at the scan root `root`, done scanning, drawn
-    /// `width` columns wide.
-    fn done_at_root(root: &str, width: u16) -> String {
-        let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        app.read_only = true;
-        let snap = Snapshot {
-            dir_path: root.into(),
-            root_path: root.into(),
-            busy: false,
-            ..snap_without_totals(Vec::new(), 1)
-        };
-        app.refresh(snap, t0);
-        first_line(&render_buffer(&mut app, t0, width, 8))
-    }
-
-    #[test]
-    fn the_scan_state_shortens_before_the_path_does() {
-        let root = "/Volumes/Backup Drive/archive/client-deliverables";
-        let at = |width| done_at_root(root, width);
-        assert!(
-            at(100).ends_with(" read-only · done in 00:00"),
-            "{}",
-            at(100)
-        );
-        assert!(at(80).ends_with(" read-only · done 00:00"), "{}", at(80));
-        let first = at(70);
-        assert!(
-            first.contains(root) && first.ends_with(" done 00:00"),
-            "{first}"
-        );
-        assert!(!first.contains("read-only"), "{first}");
-        // Then the scan root itself gives way, in the middle.
-        let first = at(50);
-        assert!(!first.contains(root) && first.contains('…'), "{first}");
-        assert!(first.ends_with("deliverables 00:00"), "{first}");
-        // The last cell, a space, is trimmed.
-        assert_eq!(Span::raw(&first).width(), 49, "{first}");
-    }
-
-    #[test]
-    fn a_long_scan_root_is_shortened_in_the_middle() {
-        let root = "/Volumes/Backup Drive/archive/projects/2026/client-deliverables/final";
-        insta::assert_snapshot!("long_root_70", done_at_root(root, 70));
-        insta::assert_snapshot!("long_root_50", done_at_root(root, 50));
-        // Below the root, the current directory keeps its name and the root collapses first.
-        let (_, buf) = browser(&format!("{root}/renders"), root, Theme::no_color(), 50);
-        let first = first_line(&buf);
-        assert!(first.starts_with(" dfdu  … › renders "), "{first}");
-        assert!(first.contains("scanning 00:00"), "{first}");
-    }
-
-    #[test]
-    fn home_is_shown_as_tilde() {
-        let home = Some("/home/jo");
-        assert_eq!(
-            texts("/home/jo/dev/rust", "/home/jo", home),
-            ["~", "dev", "rust"]
-        );
-        assert_eq!(
-            texts("/home/jo/dev/rust", "/home/jo/dev", home),
-            // Joined as paths are, with `\` on Windows.
-            [
-                Path::new("~").join("dev").display().to_string(),
-                "rust".into()
-            ]
-        );
-        assert_eq!(
-            texts("/home/joe/dev", "/home/joe", home),
-            ["/home/joe", "dev"]
-        );
-        assert_eq!(texts("/srv", "/srv", home), ["/srv"]);
-        // A home directory of `/` is not shown as `~`.
-        assert_eq!(texts("/srv/a", "/srv", Some("/")), ["/srv", "a"]);
-    }
-
-    #[test]
-    fn header_shows_the_home_directory_as_tilde() {
-        let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        let below = Snapshot {
-            dir_path: "/home/jo/dev".into(),
-            root_path: "/home/jo".into(),
-            at_root: false,
-            ..snap_without_totals(Vec::new(), 1)
-        };
-        app.refresh(below, t0);
-        let first = first_line(&render_buffer(&mut app, t0, 80, 8));
-        assert!(first.starts_with(" dfdu  /home/jo › dev "), "{first}");
-
-        app.home = Some("/home/jo".into());
-        let first = first_line(&render_buffer(&mut app, t0, 80, 8));
-        assert!(first.starts_with(" dfdu  ~ › dev "), "{first}");
-        let crumbs: Vec<_> = app.mouse.crumbs.iter().map(|c| c.child.clone()).collect();
-        assert_eq!(crumbs, [PathBuf::from("/home/jo/dev")]);
-    }
-}
+mod tests;

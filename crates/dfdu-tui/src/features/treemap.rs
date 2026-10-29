@@ -59,7 +59,7 @@ pub enum ColorBy {
 }
 
 impl ColorBy {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             ColorBy::Folder => "top folder",
             ColorBy::Age => "age",

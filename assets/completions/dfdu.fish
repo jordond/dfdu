@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_dfdu_global_optspecs
-    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= type= no-history theme= color= no-mouse debug-stats h/help V/version
+    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= type= no-history theme= color= bars= no-mouse debug-stats h/help V/version
 end
 
 function __fish_dfdu_needs_command
@@ -30,6 +30,7 @@ complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on HOS
 complete -c dfdu -n "__fish_dfdu_needs_command" -l type -d 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l theme -d 'Colour theme: auto, dark, light, ansi (the terminal\'s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l color -d 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set' -r
+complete -c dfdu -n "__fish_dfdu_needs_command" -l bars -d 'Bars: unicode (eighth blocks, the default) or ascii (# and =, for terminals and fonts without block characters). Overrides the theme file\'s `bars`' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l cross-mounts -d 'Descend into other local filesystems (disks, tmpfs)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l network -d 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'

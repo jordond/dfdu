@@ -1,10 +1,9 @@
 ---
 source: crates/dfdu-tui/src/overlay/type_filter.rs
-assertion_line: 430
 expression: out
 ---
  dfdu  /r                                                         done in 00:00
- 1.5k items · 1.7 KiB                                  sort: size ↓  disk usage
+ 1.5k items · 1.7 KiB                                             size ↓ · disk
         size                     share  name
  ⠋   1.5┌ File types ──────────────────────────────────────────────────┐
  ⠹     1│ type or extension: ▌                                         │

@@ -3,32 +3,32 @@ source: crates/dfdu-tui/src/overlay/help/tests.rs
 expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00
- 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+ 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
   ┃ Navigate                                        Act                                          ┃
   ┃ ↑ k              move up                        r      rescan the selected directory         ┃
   ┃ ↓ j              move down                      m      scan into the selected mount (another ┃
   ┃ PgUp             page up                               filesystem)                           ┃
   ┃ PgDn             page down                      x      skip directories that are not         ┃
-  ┃ g Home           first entry                           responding                            ┃
-  ┃ G End            last entry                     Space  mark or unmark, then move down        ┃
-  ┃ → l Enter        open directory                 :      clear all marks (in the palette)      ┃
-  ┃ ← h Backspace <  parent directory               d      move to Trash                         ┃
-  ┃                                                 D      delete permanently (type delete)      ┃
-  ┃ Sort                                            U      put back what was last moved to the   ┃
-  ┃ s  sort by size (again: reverse)                       Trash or staged                       ┃
-  ┃ n  sort by name (again: reverse)                                                             ┃
-  ┃ C  sort by items (again: reverse)               Panels                                       ┃
-  ┃ M  sort by modification time (again:            /         filter this directory              ┃
-  ┃    reverse)                                     t         show only files of some types      ┃
-  ┃ S  re-sort now                                            (video, audio, .iso...)            ┃
-  ┃                                                 i         details of the selected entry      ┃
-  ┃ Display                                         Tab       move focus between the list and    ┃
-  ┃ 1  list view                                              the details                        ┃
-  ┃ 2  treemap view                                 !         list what could not be read, and   ┃
-  ┃ 3  cleanup view: what the rules found, by                 go to it                           ┃
-  ┃    safety                                       ? F1      keys                               ┃
-  ┃ 4  duplicate files (compares the scanned        : Ctrl-P  command palette                    ┃
-  ┃    files)                                       F12       debug overlay                      ┃
-  ┃ +  treemap: one level deeper                                                                 ┃
+  ┃ Ctrl-U           half a page up                        responding                            ┃
+  ┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
+  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
+  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
+  ┃ → l Enter        open directory                        passed (v or Esc ends)                ┃
+  ┃ ← h Backspace <  parent directory               :      mark by pattern: names in this        ┃
+  ┃                                                        directory matching a glob (in the     ┃
+  ┃ Sort                                                   palette)                              ┃
+  ┃ s  sort by size (again: reverse)                y      copy the selected path (through the   ┃
+  ┃ n  sort by name (again: reverse)                       terminal, OSC 52)                     ┃
+  ┃ C  sort by items (again: reverse)               o      open in the file manager (a file: its ┃
+  ┃ M  sort by modification time (again:                   folder)                               ┃
+  ┃    reverse)                                     d      move to Trash                         ┃
+  ┃ S  re-sort now                                  D      delete permanently (type delete)      ┃
+  ┃                                                 U      put back what was last moved to the   ┃
+  ┃ Display                                                Trash or staged                       ┃
+  ┃ 1  list view                                                                                 ┃
+  ┃ 2  treemap view                                 Panels                                       ┃
+  ┃ 3  cleanup view: what the rules found, by       /         filter this directory              ┃
+  ┃    safety                                       t         show only files of some types      ┃
+  ┃ 4  duplicate files (compares the scanned                  (video, audio, .iso...)            ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

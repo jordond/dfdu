@@ -175,3 +175,92 @@ fn rows_show_the_path_below_the_shared_directory_and_align_the_dates() {
     assert!(!lines[6].contains(" in "), "{out}");
     assert!(files[3].contains(" backup/a.bin "), "{out}");
 }
+
+/// Marking every copy keeps the oldest, labelled `keep` in its row; `K` cycles the rule through
+/// newest, shortest path and first in path order, and the summary line names it.
+#[test]
+fn the_keep_rule_picks_the_copy_marking_leaves() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[
+            ("/r/b/new.bin", 1_760_000_000),
+            ("/r/a/archive/old.bin", 1_700_000_000),
+            ("/r/c.bin", 1_730_000_000),
+        ]],
+    );
+    let kept_after_a = |app: &mut App| {
+        marks::clear(app);
+        app.key(press(KeyCode::Char('a')), t0);
+        let marked: Vec<String> = (app.marks.items().iter())
+            .map(|i| i.target.path.display().to_string())
+            .collect();
+        let files = &found(app).unwrap().groups[0].files;
+        let left: Vec<String> = (files.iter())
+            .map(|c| c.path.display().to_string())
+            .filter(|p| !marked.contains(p))
+            .collect();
+        assert_eq!(left.len(), 1, "{marked:?}");
+        left[0].clone()
+    };
+    assert_eq!(kept_after_a(&mut app), "/r/a/archive/old.bin");
+    let out = render(&mut app, t0, 80, 10);
+    assert!(out.contains("keep: oldest"), "{out}");
+    let row = |out: &str, name: &str| {
+        (out.lines())
+            .find(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("{name}: {out}"))
+            .to_owned()
+    };
+    assert!(row(&out, "old.bin").contains("keep  "), "{out}");
+    assert!(!row(&out, "new.bin").contains("keep  "), "{out}");
+    insta::assert_snapshot!("dupes_keep_80x10", out);
+
+    for want in ["newest", "shortest path", "first in path order", "oldest"] {
+        app.key(press(KeyCode::Char('K')), t0);
+        assert_eq!(app.dupes.keep.label(), want);
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains(want), "{status}");
+        let kept = kept_after_a(&mut app);
+        let out = render(&mut app, t0, 80, 10);
+        assert!(out.contains(&format!("keep: {want}")), "{out}");
+        let expect = match want {
+            "newest" => "/r/b/new.bin",
+            "shortest path" => "/r/c.bin",
+            "first in path order" | "oldest" => "/r/a/archive/old.bin",
+            _ => unreachable!(),
+        };
+        assert_eq!(kept, expect, "{want}");
+        let name = expect.rsplit('/').next().unwrap();
+        assert!(row(&out, name).contains("keep  "), "{out}");
+    }
+}
+
+#[test]
+fn half_pages_move_the_cursor_and_y_copies_the_file() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[("/r/a", 1), ("/r/b", 2), ("/r/c", 3), ("/r/d", 4)]],
+    );
+    app.list_height = 4;
+    let ctrl = |c| {
+        KeyEvent::new(
+            KeyCode::Char(c),
+            ratatui::crossterm::event::KeyModifiers::CONTROL,
+        )
+    };
+    app.key(ctrl('d'), t0);
+    assert_eq!(app.dupes.cursor, 2);
+    let fx = app.key(press(KeyCode::Char('y')), t0);
+    assert!(
+        matches!(&fx[..], [Effect::Copy(p)] if p.as_str() == "/r/b"),
+        "{fx:?}"
+    );
+    app.key(ctrl('u'), t0);
+    assert_eq!(app.dupes.cursor, 0);
+    let fx = app.key(press(KeyCode::Char('y')), t0);
+    assert!(fx.is_empty(), "a group's row has no path: {fx:?}");
+}

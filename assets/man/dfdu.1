@@ -4,7 +4,7 @@
 .SH NAME
 dfdu \- Disk usage browser for the terminal
 .SH SYNOPSIS
-\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-remote\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
+\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-remote\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-bars\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Disk usage browser for the terminal
 .SH OPTIONS
@@ -50,6 +50,9 @@ Colour theme: auto, dark, light, ansi (the terminal\*(Aqs own 16 colours), mono,
 .TP
 \fB\-\-color\fR \fI<WHEN>\fR [default: auto]
 Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set
+.TP
+\fB\-\-bars\fR \fI<STYLE>\fR
+Bars: unicode (eighth blocks, the default) or ascii (# and =, for terminals and fonts without block characters). Overrides the theme file\*(Aqs `bars`
 .TP
 \fB\-\-no\-mouse\fR
 Do not capture the mouse (click to select, double\-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down

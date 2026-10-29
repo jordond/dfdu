@@ -33,11 +33,41 @@ pub fn count(n: u64) -> String {
     }
 }
 
-/// A bar of `width` cells filled to `frac` (0..=1), with eighth-block resolution.
+/// How bars are drawn: `--bars` and the theme key `bars`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Bars {
+    /// Eighth blocks (`█▌`).
+    #[default]
+    Unicode,
+    /// `#` for terminals and fonts without block characters; treemap frames in `=`, `|` and `+`.
+    Ascii,
+}
+
+impl Bars {
+    /// The names [`Bars::parse`] accepts.
+    pub const NAMES: [&'static str; 2] = ["unicode", "ascii"];
+
+    /// `unicode` or `ascii`.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Bars> {
+        match s {
+            "unicode" => Some(Bars::Unicode),
+            "ascii" => Some(Bars::Ascii),
+            _ => None,
+        }
+    }
+}
+
+/// A bar of `width` cells filled to `frac` (0..=1): with eighth-block resolution, or in whole
+/// cells of `#` for [`Bars::Ascii`].
 #[must_use]
-pub fn bar(frac: f64, width: usize) -> String {
+pub fn bar(frac: f64, width: usize, bars: Bars) -> String {
     const PARTS: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
     let eighths = eighths(frac, width);
+    if bars == Bars::Ascii {
+        let full = (eighths + 4) / 8;
+        return format!("{}{}", "#".repeat(full), " ".repeat(width - full));
+    }
     let mut s = String::with_capacity(width * 3);
     for _ in 0..eighths / 8 {
         s.push('█');
@@ -117,11 +147,17 @@ mod tests {
     #[test]
     fn bars_have_fixed_width() {
         for f in [0.0, 0.01, 0.5, 0.999, 1.0] {
-            assert_eq!(bar(f, 10).chars().count(), 10, "frac {f}");
+            assert_eq!(bar(f, 10, Bars::Unicode).chars().count(), 10, "frac {f}");
+            assert_eq!(bar(f, 10, Bars::Ascii).chars().count(), 10, "frac {f}");
         }
-        assert_eq!(bar(1.0, 4), "████");
-        assert_eq!(bar(0.5, 4), "██  ");
-        assert_eq!(bar(0.0625, 4), "▎   ");
+        assert_eq!(bar(1.0, 4, Bars::Unicode), "████");
+        assert_eq!(bar(0.5, 4, Bars::Unicode), "██  ");
+        assert_eq!(bar(0.0625, 4, Bars::Unicode), "▎   ");
+        assert_eq!(bar(1.0, 4, Bars::Ascii), "####");
+        assert_eq!(bar(0.5, 4, Bars::Ascii), "##  ");
+        assert_eq!(bar(0.0625, 4, Bars::Ascii), "    ");
+        assert_eq!(bar(0.125, 4, Bars::Ascii), "#   ");
+        assert!(bar(0.37, 24, Bars::Ascii).is_ascii());
     }
 
     #[test]

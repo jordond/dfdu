@@ -107,7 +107,7 @@ _dfdu() {
 
     case "${cmd}" in
         dfdu)
-            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --type --no-history --theme --color --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover man completions agent help"
+            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --type --no-history --theme --color --bars --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover man completions agent help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -138,6 +138,10 @@ _dfdu() {
                     return 0
                     ;;
                 --color)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --bars)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

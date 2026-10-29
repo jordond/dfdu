@@ -341,6 +341,26 @@ fn arrows_move_between_tiles_and_enter_zooms() {
 }
 
 #[test]
+fn the_line_under_the_map_shows_the_selected_tiles_place() {
+    let fx = tree();
+    let t0 = Instant::now();
+    let mut app = treemap_app(&fx.m, t0);
+    // The line under the map is the third from the bottom, above the status and the hints.
+    let info = |app: &mut App| {
+        let frame = render(app, t0, 100, 30);
+        frame.lines().rev().nth(2).unwrap_or_default().to_owned()
+    };
+    let line = info(&mut app);
+    let tops = app.treemap.layout.as_ref().map_or(0, |l| l.tops.len());
+    assert!(tops > 1, "{line}");
+    assert!(line.ends_with(&format!(" 1/{tops}")), "{line}");
+    app.key(press(KeyCode::Char('l')), t0);
+    let line = info(&mut app);
+    assert!(!line.ends_with(&format!(" 1/{tops}")), "{line}");
+    assert!(line.contains(&format!("/{tops}")), "{line}");
+}
+
+#[test]
 fn click_selects_a_tile_and_a_second_click_zooms_in() {
     let fx = tree();
     let t0 = Instant::now();
@@ -523,4 +543,96 @@ fn list_and_details_show_the_category() {
     let frame = render(&mut app, t0, 120, 24);
     assert!(frame.contains("by category"), "{frame}");
     assert!(frame.contains("OS and user caches"), "{frame}");
+}
+
+/// The list and the treemap share one selection: switching views keeps the selected entry.
+#[test]
+fn switching_views_keeps_the_selection() {
+    let fx = tree();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    render(&mut app, t0, 100, 30);
+    app.key(press(KeyCode::Down), t0);
+    assert_eq!(selected(&app), "mid");
+    app.key(press(KeyCode::Char('2')), t0);
+    sync(&mut app, &fx.m, t0);
+    let buf = render_buffer(&mut app, t0, 100, 30);
+    assert_eq!(selected(&app), "mid");
+    let l = app.treemap.layout.as_ref().expect("layout");
+    let top = l.tops[selected_top(&app).expect("a selected tile")];
+    assert_eq!(l.tiles[top].name, "mid");
+    let r = l.tiles[top].rect;
+    assert_eq!(
+        buf[(r.x, r.y)].symbol(),
+        "┏",
+        "the selected tile has the heavy frame"
+    );
+
+    app.key(press(KeyCode::Char('j')), t0);
+    let moved = selected(&app);
+    assert_ne!(moved, "mid");
+    app.key(press(KeyCode::Char('1')), t0);
+    sync(&mut app, &fx.m, t0);
+    render(&mut app, t0, 100, 30);
+    assert_eq!(selected(&app), moved);
+    app.key(press(KeyCode::Char('2')), t0);
+    sync(&mut app, &fx.m, t0);
+    render(&mut app, t0, 100, 30);
+    assert_eq!(selected(&app), moved);
+}
+
+/// Tiles too narrow for their label show a "+N small" tile's count alone, or no text below
+/// three cells, and slivers at the edges are left blank.
+#[test]
+fn narrow_tiles_show_short_labels_or_none() {
+    let (mut fx, root) = Fixture::new();
+    fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
+    for i in 0..30u64 {
+        let d = fx.dir(root, &format!("dir-{i}"));
+        for j in 0..20u64 {
+            fx.file(d, &format!("f{j}.bin"), (40 - i) * 1000 + j * 700);
+        }
+    }
+    let t0 = Instant::now();
+    let mut app = treemap_app(&fx.m, t0);
+    for (w, h) in [(80, 24), (100, 30)] {
+        let buf = render_buffer(&mut app, t0, w, h);
+        let frame = render(&mut app, t0, w, h);
+        assert!(frame.contains("+19"), "{frame}");
+        for cut in ["+19 s…", "+19 sm…", "+19 sma…", "+19 …"] {
+            assert!(!frame.contains(cut), "{w}x{h} has {cut:?}:\n{frame}");
+        }
+        let l = app.treemap.layout.as_ref().expect("layout");
+        let slivers: Vec<&Tile> = l.tiles.iter().filter(|t| t.rect.width < 3).collect();
+        assert!(!slivers.is_empty(), "{w}x{h}: the fixture has slivers");
+        for t in slivers {
+            for (x, y) in t.rect.positions().map(|p| (p.x, p.y)) {
+                assert_eq!(buf[(x, y)].symbol(), " ", "{w}x{h}: {:?}\n{frame}", t.name);
+            }
+        }
+    }
+    insta::assert_snapshot!("treemap_narrow_tiles_80x24", render(&mut app, t0, 80, 24));
+}
+
+/// With ASCII bars, the list's bars are `#` and the treemap's frames `=`, `|` and `+`: no block
+/// or box-drawing characters.
+#[test]
+fn ascii_bars_draw_without_block_characters() {
+    let fx = tree();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    app.theme.bars = crate::theme::Bars::Ascii;
+    sync(&mut app, &fx.m, t0);
+    let list = render(&mut app, t0, 100, 30);
+    assert!(list.contains("#####"), "{list}");
+    let blocks = ['█', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '░'];
+    assert!(!list.contains(blocks), "{list}");
+    app.key(press(KeyCode::Char('2')), t0);
+    sync(&mut app, &fx.m, t0);
+    let map = render(&mut app, t0, 100, 30);
+    assert!(map.contains("+====") && map.contains("#####"), "{map}");
+    assert!(!map.contains(blocks), "{map}");
+    assert!(!map.contains(['─', '│', '┌', '━', '┃', '┏']), "{map}");
+    insta::assert_snapshot!("treemap_ascii_100x30", map);
 }

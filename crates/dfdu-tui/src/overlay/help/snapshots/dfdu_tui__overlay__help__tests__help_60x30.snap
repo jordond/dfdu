@@ -3,12 +3,14 @@ source: crates/dfdu-tui/src/overlay/help/tests.rs
 expression: frame
 ---
  dfdu  /r                                  ⠋ scanning 00:00
- 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
+ 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
   ┃ Navigate                                             ┃
   ┃ ↑ k              move up                             ┃
   ┃ ↓ j              move down                           ┃
   ┃ PgUp             page up                             ┃
   ┃ PgDn             page down                           ┃
+  ┃ Ctrl-U           half a page up                      ┃
+  ┃ Ctrl-D           half a page down                    ┃
   ┃ g Home           first entry                         ┃
   ┃ G End            last entry                          ┃
   ┃ → l Enter        open directory                      ┃
@@ -26,9 +28,7 @@ expression: frame
   ┃ 2  treemap view                                      ┃
   ┃ 3  cleanup view: what the rules found, by safety     ┃
   ┃ 4  duplicate files (compares the scanned files)      ┃
-  ┃ +  treemap: one level deeper                         ┃
-  ┃ -  treemap: one level less                           ┃
-  ┃ p  treemap: colour by top folder or age              ┃
-  ┃ a  toggle apparent size / disk usage                 ┃
+  ┃ 5  largest files anywhere below this directory       ┃
+  ┃ K  duplicates: change which copy is kept             ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

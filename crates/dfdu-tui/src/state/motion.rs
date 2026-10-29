@@ -36,6 +36,8 @@ const MAX_STEP: Duration = Duration::from_millis(100);
 const SNAP: f64 = 1.0 / (16.0 * 24.0);
 /// How long rank markers stay after an automatic re-sort.
 const MARKERS: Duration = Duration::from_secs(2);
+/// The fewest places the selected row moves by to get a rank marker.
+const RANK_MIN: u32 = 3;
 /// How long moved rows flash.
 const FLASH: Duration = Duration::from_millis(400);
 /// Shortest time between the starts of two flashes.
@@ -215,6 +217,11 @@ impl Motion {
         self.before.clear();
     }
 
+    /// Whether deleted entries are kept as placeholders, until the next re-sort.
+    pub fn has_ghosts(&self) -> bool {
+        !self.ghosts.is_empty()
+    }
+
     /// When the next animation frame is due; `None` while nothing moves.
     pub fn next_frame_at(&self) -> Option<Instant> {
         self.next
@@ -360,9 +367,15 @@ pub fn bar(app: &App, e: &EntryData, frac: f64) -> f64 {
     app.motion.bars.get(&e.node).copied().unwrap_or(frac)
 }
 
-/// The rank marker after the name of `e`, if it moved in the last automatic re-sort.
+/// The rank marker after the name of `e`, if it is the selected row and moved by at least
+/// [`RANK_MIN`] places in the last automatic re-sort. Other rows that moved only flash: a marker
+/// on each of them would cover the list in arrows while a scan runs.
 pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
     let &d = app.motion.markers.get(&e.node)?;
+    let selected = app.selected.as_ref().and_then(|s| s.node) == Some(e.node);
+    if !selected || d.unsigned_abs() < RANK_MIN {
+        return None;
+    }
     let arrow = if d > 0 { '↑' } else { '↓' };
     Some(Span::styled(
         format!("  {arrow}{}", d.unsigned_abs().min(99)),

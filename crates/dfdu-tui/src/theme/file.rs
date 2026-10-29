@@ -1,8 +1,9 @@
-//! Theme files: TOML with a `name`, a built-in `base` and a `[tokens]` table.
+//! Theme files: TOML with a `name`, a built-in `base`, the `bars` style and a `[tokens]` table.
 //!
 //! ```toml
 //! name = "my-theme"
 //! base = "dark"            # inherit unset tokens from a built-in theme
+//! bars = "ascii"           # or "unicode" (the default); --bars overrides it
 //!
 //! [tokens]
 //! fg          = "#d8dee9"
@@ -20,13 +21,14 @@ use std::fmt;
 use ratatui::style::{Color, Modifier};
 use toml::{Table, Value};
 
-use super::{BuiltinTheme, ColorLevel, ColorSpec, Rgb, Theme, Token, builtin};
+use super::{Bars, BuiltinTheme, ColorLevel, ColorSpec, Rgb, Theme, Token, builtin};
 
 /// A parsed theme file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeFile {
     pub name: Option<String>,
     base: BuiltinTheme,
+    bars: Option<Bars>,
     tokens: Vec<Setting>,
 }
 
@@ -99,6 +101,7 @@ impl ThemeFile {
         let mut file = ThemeFile {
             name: None,
             base: BuiltinTheme::Dark,
+            bars: None,
             tokens: Vec::new(),
         };
         for (key, value) in &table {
@@ -108,6 +111,11 @@ impl ThemeFile {
                     let base = string(key, value)?;
                     file.base = BuiltinTheme::parse(base)
                         .ok_or_else(|| ThemeError::UnknownBase(base.to_owned()))?;
+                }
+                "bars" => {
+                    let bars = Bars::parse(string(key, value)?);
+                    file.bars =
+                        Some(bars.ok_or_else(|| bad_value(key, "\"unicode\" or \"ascii\""))?);
                 }
                 "tokens" => {
                     let Value::Table(tokens) = value else {
@@ -151,7 +159,9 @@ impl ThemeFile {
             .name
             .clone()
             .unwrap_or_else(|| self.base.name().to_owned());
-        Theme::resolve(name, &palette, level, background)
+        let mut theme = Theme::resolve(name, &palette, level, background);
+        theme.bars = self.bars.unwrap_or_default();
+        theme
     }
 }
 
@@ -437,6 +447,16 @@ fg          = "#d8dee9"
         }
         let syntax = ThemeFile::parse("[tokens\nfg = 1").expect_err("syntax");
         assert!(matches!(syntax, ThemeError::Syntax(_)), "{syntax:?}");
+    }
+
+    #[test]
+    fn bars_key_picks_the_bar_style() {
+        let t = ThemeFile::parse("bars = \"ascii\"").expect("parses");
+        assert_eq!(t.resolve(ColorLevel::TrueColor, None).bars, Bars::Ascii);
+        let t = ThemeFile::parse("base = \"mono\"").expect("parses");
+        assert_eq!(t.resolve(ColorLevel::None, None).bars, Bars::Unicode);
+        let e = ThemeFile::parse("bars = \"blocks\"").expect_err("bars");
+        assert_eq!(e.to_string(), "`bars` must be \"unicode\" or \"ascii\"");
     }
 
     #[test]

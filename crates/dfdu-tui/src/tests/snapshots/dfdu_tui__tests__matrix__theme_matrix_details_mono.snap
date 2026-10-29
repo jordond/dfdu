@@ -4,8 +4,8 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /r                                                                             done in 00:00
 L0 0-5 bold | 7-8 bold
- 3 items · 1.4 KiB                                                         sort: size ↓  disk usage
-L1 75-99 dim
+ 3 items · 1.4 KiB                                                                    size ↓ · disk
+L1 92-94 dim
         size           share  name                          ┏ a ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 L2 0-59 dim | 60-99 bold
        600 B  ██████   42.9%  (shared between entries)      ┃ /r/a                                 ┃

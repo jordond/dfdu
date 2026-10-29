@@ -12,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use super::columns::{self, CATEGORY_MAX, Col, ColSet};
+use super::columns::{self, CATEGORY_MAX, Col, ColSet, cursor, left, right};
 use crate::app::App;
 use crate::model::growth::{self, RowNote};
 use crate::model::snapshot::{EntryData, Mark};
@@ -167,39 +167,6 @@ fn header(app: &App, cols: &[(Col, u16)]) -> Line<'static> {
     Line::from(spans).style(app.theme.fg_dim)
 }
 
-/// `s` right-aligned in `w` cells.
-fn right(s: String, w: u16, style: Style) -> Span<'static> {
-    let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
-    Span::styled(format!("{}{s}", " ".repeat(pad)), style)
-}
-
-/// `s` left-aligned in `w` cells, cut to fit.
-fn left(s: String, w: u16, style: Style) -> Span<'static> {
-    let s = name::cut_end(&s, w.into());
-    let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
-    Span::styled(format!("{s}{}", " ".repeat(pad)), style)
-}
-
-/// The cursor row: `line` filled to `width` cells in the cursor style, with dim text in the
-/// normal text colour so it stays readable on the cursor's background.
-fn cursor(t: &Theme, line: Line<'static>, width: u16) -> Line<'static> {
-    let dim = t.fg_dim;
-    let mut spans = line.spans;
-    for s in &mut spans {
-        let is_dim = (dim.fg.is_some() && s.style.fg == dim.fg)
-            || (!dim.add_modifier.is_empty() && s.style.add_modifier.contains(dim.add_modifier));
-        if is_dim {
-            s.style.fg = t.fg.fg;
-            s.style.add_modifier = s.style.add_modifier.difference(dim.add_modifier);
-        }
-    }
-    let used: usize = spans.iter().map(Span::width).sum();
-    spans.push(Span::raw(
-        " ".repeat(usize::from(width).saturating_sub(used)),
-    ));
-    Line::from(spans).style(t.cursor)
-}
-
 /// The glyph after the gutter that shows `e`'s mark, in its style; the spinner turns with
 /// `frame`, offset per entry.
 fn mark_glyph(e: &EntryData, t: &Theme, frame: u64) -> (char, Style) {
@@ -251,7 +218,7 @@ fn entry_line(app: &App, row: &Row, cols: &[(Col, u16)]) -> Line<'static> {
             Col::Size => spans.push(right(human(e.size), w, size_style(e, t))),
             Col::Bar => {
                 let frac = motion::bar(app, e, ratio(e.size, row.max));
-                spans.push(Span::styled(bar(frac, w.into()), t.bar_fill));
+                spans.push(Span::styled(bar(frac, w.into(), t.bars), t.bar_fill));
             }
             // A ghost's size is no longer part of the total: its share would be meaningless.
             Col::Share if e.ghost => spans.push(right(String::new(), w, Style::new())),

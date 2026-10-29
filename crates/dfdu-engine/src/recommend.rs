@@ -7,6 +7,38 @@ use dfdu_tree::{Class, Safety};
 /// Nothing changed this recently is recommended.
 const QUIET_DAYS: i64 = 7;
 
+/// Why a match is or is not recommended for deletion ([`verdict`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// Recommended: `safe` and at least the rule's minimum size.
+    Safe,
+    /// Recommended: `regenerable`, at least the rule's minimum size, and unchanged for at least
+    /// this many days.
+    Stale(i64),
+    /// Not recommended at this safety level (`review` or worse).
+    Level(Safety),
+    /// Not: in use by a running program.
+    InUse,
+    /// Not: tracked by version control.
+    Tracked,
+    /// Not: whether version control tracks it could not be told.
+    VcsUnknown,
+    /// Not: still being scanned.
+    Scanning,
+    /// Not: changed within this many days.
+    Newer(i64),
+    /// Not: below the rule's minimum size, in bytes.
+    Below(u64),
+}
+
+impl Verdict {
+    /// Whether the match is recommended.
+    #[must_use]
+    pub fn recommended(self) -> bool {
+        matches!(self, Verdict::Safe | Verdict::Stale(_))
+    }
+}
+
 /// Whether a match of `rule` is recommended for deletion: `safe` above the rule's minimum
 /// size, `regenerable` only when also unchanged for the rule's minimum age, never `review` or
 /// worse, nothing changed in the last 7 days, in use, tracked by version control
@@ -21,17 +53,42 @@ pub fn recommends(
     scanning: bool,
     now: i64,
 ) -> bool {
+    verdict(rule, class, size, mtime, scanning, now).recommended()
+}
+
+/// What [`recommends`] decides, with the reason: the safety level first, then what is in use or
+/// tracked, the scan, the age and the size.
+#[must_use]
+pub fn verdict(
+    rule: &Rule,
+    class: Class,
+    size: u64,
+    mtime: i64,
+    scanning: bool,
+    now: i64,
+) -> Verdict {
     let days = |d: i64| now - mtime >= d * 86_400;
     let c = &class;
-    let flagged = c.has(Class::IN_USE) || c.has(Class::VCS_TRACKED) || c.has(Class::VCS_UNKNOWN);
-    if flagged || scanning || !days(QUIET_DAYS) {
-        return false;
-    }
-    match c.safety {
-        Safety::Safe => size >= rule.min_size,
-        Safety::Regenerable => {
-            size >= rule.min_size && days(i64::from(rule.min_age_days).max(QUIET_DAYS))
-        }
-        _ => false,
+    let min_age = match c.safety {
+        Safety::Safe => QUIET_DAYS,
+        Safety::Regenerable => i64::from(rule.min_age_days).max(QUIET_DAYS),
+        s => return Verdict::Level(s),
+    };
+    if c.has(Class::IN_USE) {
+        Verdict::InUse
+    } else if c.has(Class::VCS_TRACKED) {
+        Verdict::Tracked
+    } else if c.has(Class::VCS_UNKNOWN) {
+        Verdict::VcsUnknown
+    } else if scanning {
+        Verdict::Scanning
+    } else if !days(min_age) {
+        Verdict::Newer(min_age)
+    } else if size < rule.min_size {
+        Verdict::Below(rule.min_size)
+    } else if c.safety == Safety::Safe {
+        Verdict::Safe
+    } else {
+        Verdict::Stale(min_age)
     }
 }

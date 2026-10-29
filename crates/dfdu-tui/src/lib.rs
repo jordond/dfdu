@@ -52,7 +52,7 @@ pub use model::outside::{
 pub use model::snapshot::{Snapshot, Target};
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings, theme_dir};
-pub use theme::{BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
+pub use theme::{Bars, BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
 
 /// How long the terminal gets to answer the background-colour query at start.
 const BACKGROUND_QUERY: Duration = Duration::from_secs(1);

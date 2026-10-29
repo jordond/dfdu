@@ -7,7 +7,7 @@ use clap::{Args, Parser, Subcommand};
 use dfdu_rules::RuleSet;
 use dfdu_scan::JobOptions;
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tui::ColorLevel;
+use dfdu_tui::{Bars, ColorLevel};
 
 /// `println!` that ends the process quietly when stdout is closed (`dfdu scan | head`), instead
 /// of panicking.
@@ -129,6 +129,10 @@ struct Cli {
     )]
     #[arg(long, value_name = "WHEN", default_value = "auto", value_parser = color_flag)]
     color: ColorFlag,
+    /// Bars: unicode (eighth blocks, the default) or ascii (# and =, for terminals and fonts
+    /// without block characters). Overrides the theme file's `bars`.
+    #[arg(long, value_name = "STYLE", value_parser = bars_flag)]
+    bars: Option<Bars>,
     /// Do not capture the mouse (click to select, double-click to open, wheel to scroll). While
     /// it is captured, most terminals select text with Shift held down.
     #[arg(long)]
@@ -144,6 +148,10 @@ struct ColorFlag(Option<ColorLevel>);
 
 fn color_flag(s: &str) -> Result<ColorFlag, String> {
     dfdu_tui::parse_color_flag(s).map(ColorFlag)
+}
+
+fn bars_flag(s: &str) -> Result<Bars, String> {
+    Bars::parse(s).ok_or_else(|| format!("expected {}", Bars::NAMES.join(" or ")))
 }
 
 #[derive(Subcommand)]
@@ -443,6 +451,10 @@ mod tests {
             assert_eq!(cli.color, ColorFlag(Some(level)));
         }
         assert!(Cli::try_parse_from(["dfdu", "--color", "always"]).is_err());
+        assert_eq!(cli.bars, None);
+        let cli = Cli::try_parse_from(["dfdu", "--bars", "ascii"]).expect("bars");
+        assert_eq!(cli.bars, Some(Bars::Ascii));
+        assert!(Cli::try_parse_from(["dfdu", "--bars", "blocks"]).is_err());
         // Browser options are not options of `dfdu scan`.
         assert!(Cli::try_parse_from(["dfdu", "--theme", "dark", "scan", "/x"]).is_err());
     }

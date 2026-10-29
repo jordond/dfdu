@@ -4,8 +4,8 @@ expression: styled(&buf)
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 bold | 7-14 bold
- 3.0k items · 241.6 GiB                                                    sort: size ↓  disk usage
-L1 75-99 fg=darkgray
+ 3.0k items · 241.6 GiB                                                               size ↓ · disk
+L1 92-94 fg=darkgray
         size                     share   items  name
 L2 0-99 fg=darkgray
 ●⠋ 112.0 GiB  ████████████████   46.4%    1.0k  Library/

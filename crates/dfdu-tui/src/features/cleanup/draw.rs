@@ -1,6 +1,7 @@
 //! Drawing the view: the summary, the groups and items, the selected row's explanation, and the
 //! native command pane over them.
 
+use dfdu_engine::Verdict;
 use dfdu_rules::Safety;
 use dfdu_tree::{Class, now_secs};
 use ratatui::Frame;
@@ -8,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::{Item, Row, group_items, is_marked, markable, pane, plural, rows};
+use super::{Item, Row, group_items, is_marked, markable, pane, plural, recommended, rows};
 use crate::app::App;
 use crate::model::outside::tilde;
 use crate::theme::{count, human, truncate_middle};
@@ -56,13 +57,20 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         }
         lines.push(Line::from(spans));
     }
-    let [top, bottom] = ratatui::layout::Layout::vertical([
-        ratatui::layout::Constraint::Min(1),
-        ratatui::layout::Constraint::Length(detail_h),
-    ])
-    .areas(area);
+    // The explanation goes in the space under the rows, one blank line below the last.
+    let used = cells(lines.len()).min(area.height);
+    let below = area.height - used;
+    let top = Rect {
+        height: used,
+        ..area
+    };
+    let bottom = Rect {
+        y: area.y + used + 1.min(below),
+        height: below.saturating_sub(1),
+        ..area
+    };
     f.render_widget(Paragraph::new(lines), top);
-    let detail = detail_lines(app, rows.get(cursor));
+    let detail = detail_lines(app, rows.get(cursor), now);
     f.render_widget(Paragraph::new(detail).wrap(Wrap { trim: false }), bottom);
     pane::draw(f, app, area, t);
 }
@@ -161,8 +169,39 @@ fn group_line(app: &App, cat: u16, safety: Safety, w: Columns) -> Vec<Span<'stat
     ]
 }
 
-/// The row of `it`, `width` cells wide: its mark, size, items, age in days at `now`, path and
-/// warnings. The path is shortened in the middle to the room the rest leaves.
+/// Why an item is or is not recommended, in a few words for its row; `None` for what the row's
+/// warnings already say.
+fn note(v: Verdict) -> Option<String> {
+    Some(match v {
+        Verdict::Safe => "recommended".into(),
+        Verdict::Stale(d) => format!("older than {d} d"),
+        Verdict::Level(Safety::Review) => "in review".into(),
+        Verdict::Level(s) => s.as_str().into(),
+        Verdict::InUse | Verdict::Tracked | Verdict::VcsUnknown => return None,
+        Verdict::Scanning => "scanning".into(),
+        Verdict::Newer(d) => format!("newer than {d} d"),
+        Verdict::Below(min) => format!("below {}", human(min)),
+    })
+}
+
+/// The same as a sentence, for the explanation under the rows.
+fn reason(v: Verdict) -> String {
+    match v {
+        Verdict::Safe => "Recommended: safe to delete.".into(),
+        Verdict::Stale(d) => format!("Recommended: unchanged for over {d} days."),
+        Verdict::Level(s) => format!("Not recommended: {} items never are.", s.as_str()),
+        Verdict::InUse => "Not recommended: in use.".into(),
+        Verdict::Tracked => "Not recommended: tracked by git.".into(),
+        Verdict::VcsUnknown => "Not recommended: git could not tell if it is tracked.".into(),
+        Verdict::Scanning => "Not recommended until its scan finishes.".into(),
+        Verdict::Newer(d) => format!("Not recommended: changed in the last {d} days."),
+        Verdict::Below(min) => format!("Not recommended: below the rule's {}.", human(min)),
+    }
+}
+
+/// The row of `it`, `width` cells wide: its mark, size, items, age in days at `now`, path,
+/// warnings and why it is or is not recommended. The path is shortened in the middle to the room
+/// the rest leaves.
 fn item_line(app: &App, it: &Item, now: i64, width: u16) -> Vec<Span<'static>> {
     let t = &app.theme;
     let mark = if is_marked(app, it) {
@@ -187,6 +226,11 @@ fn item_line(app: &App, it: &Item, now: i64, width: u16) -> Vec<Span<'static>> {
     .into_iter()
     .filter(|&(flag, _)| it.class.has(flag))
     .map(|(_, what)| Span::styled(format!("  {what}"), t.status_warn))
+    .chain(
+        recommended(app, it, now)
+            .and_then(note)
+            .map(|n| Span::styled(format!("  {n}"), t.fg_dim)),
+    )
     .collect();
     let used: usize = v.iter().chain(&warnings).map(Span::width).sum();
     let path = tilde(&it.path, app.home.as_deref());
@@ -196,16 +240,19 @@ fn item_line(app: &App, it: &Item, now: i64, width: u16) -> Vec<Span<'static>> {
     v
 }
 
-/// The selected item's rule: what it is and what deleting it loses; the keys on a group.
-fn detail_lines<'a>(app: &'a App, row: Option<&Row>) -> Vec<Line<'a>> {
+/// The selected item's rule: what it is, what deleting it loses and why it is or is not
+/// recommended at `now`. On a group, the rule of its first item.
+fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> {
     let t = &app.theme;
-    let (Some(Row::Item(i)), Some(rules)) = (row, &app.snap.rules) else {
-        return vec![Line::styled(
-            " Enter opens a group · Space marks · a marks the recommended · f filters by safety",
-            t.fg_dim,
-        )];
+    let i = match row {
+        Some(&Row::Item(i)) => Some(i),
+        Some(&Row::Group { cat, safety }) => group_items(app, cat, safety).first().copied(),
+        None => None,
     };
-    let it = &app.extras.cleanup.items[*i];
+    let (Some(i), Some(rules)) = (i, &app.snap.rules) else {
+        return Vec::new();
+    };
+    let it = &app.extras.cleanup.items[i];
     let r = rules.rule(it.class.rule);
     let mut d = vec![
         Line::from(vec![
@@ -215,6 +262,12 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>) -> Vec<Line<'a>> {
         Line::raw(format!(" {}", r.explanation)),
         Line::styled(format!(" Lost: {}", r.lost), t.fg_dim),
     ];
+    if !matches!(row, Some(Row::Item(_))) {
+        return d;
+    }
+    if let Some(v) = recommended(app, it, now) {
+        d.push(Line::styled(format!(" {}", reason(v)), t.fg_dim));
+    }
     if r.action.native().is_some() {
         d.push(Line::styled(
             if app.read_only {

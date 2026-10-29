@@ -23,6 +23,8 @@ struct Folded {
     dir_changed: bool,
     /// The scan finished with it.
     finished: bool,
+    /// Its version differs from the previous one's: sizes or entries may have changed.
+    changed: bool,
 }
 
 /// How [`App::update_order`] brings the rows up to date.
@@ -34,9 +36,19 @@ enum Reorder {
     Auto,
     /// No sort: the new entries of a fresh snapshot are synced into the order.
     Sync,
+    /// The new entries are synced and the rows on the first screen sorted, while the cursor is
+    /// at the top ([`App::keeps_top_sorted`]).
+    Top,
 }
 
 impl App {
+    /// Whether a fresh snapshot sorts the rows on the first screen: while the user has not moved
+    /// the cursor in this directory, or it is on the first row (`index`, before the snapshot).
+    /// Deleted rows kept as placeholders hold still until the next re-sort.
+    fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
+        (!self.moved || index == Some(0)) && !self.motion.has_ghosts()
+    }
+
     fn auto_sort_due(&self, now: Instant) -> bool {
         self.sort_pending()
             && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
@@ -70,7 +82,8 @@ impl App {
         } else {
             self.carry_over_swapped(&snap)
         };
-        if snap.version != self.snap.version {
+        let changed = snap.version != self.snap.version;
+        if changed {
             self.changed_since_sort = true;
         }
         // A scan that just finished gets one more automatic sort right away (if the user is
@@ -104,6 +117,7 @@ impl App {
             replaced: !appended,
             dir_changed,
             finished,
+            changed,
         };
         self.update_order(Some(folded), old_index, now);
     }
@@ -123,6 +137,7 @@ impl App {
             replaced,
             dir_changed,
             finished,
+            changed,
         } = folded.unwrap_or_default();
         let requested = std::mem::take(&mut self.sort_requested);
         let refilter = std::mem::take(&mut self.refilter_requested);
@@ -132,6 +147,8 @@ impl App {
             || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
         {
             Reorder::Auto
+        } else if fresh && changed && self.keeps_top_sorted(old_index) {
+            Reorder::Top
         } else if fresh {
             Reorder::Sync
         } else {
@@ -162,8 +179,13 @@ impl App {
             }
             Reorder::Auto => self.order.sort_auto(entries, visible, self.sort),
             Reorder::Sync => self.order.sync(entries, visible, self.sort),
+            Reorder::Top => {
+                self.order
+                    .sort_top(entries, visible, self.sort, self.list_height);
+            }
         }
-        let resorted = mode != Reorder::Sync;
+        // Sorting the first screen leaves the rows below it waiting for the automatic sort.
+        let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
         if resorted {
             self.sort_gen += 1;
             self.last_sort = now;
@@ -199,6 +221,10 @@ impl App {
             .unwrap_or(0);
 
         self.fix_selection(old_index);
+        if mode == Reorder::Top && !self.moved {
+            self.select(0);
+            self.scroll = 0;
+        }
         if resorted && !dir_changed {
             if self.moved {
                 // Keep the selected row on the same screen line.

@@ -4,8 +4,8 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 bold | 7-14 bold
- 1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
-L1 26-32 bold | 75-99 dim
+ 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
+L1 26-32 bold | 92-94 dim
         size                     share   items  name╭ Debug ───────────────────────────────────────╮
 L2 0-51 dim | 53-59 bold
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Libr│ sent 0  received 0  pending 0                │

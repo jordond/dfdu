@@ -25,6 +25,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --type 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)'
             cand --theme 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown'
             cand --color 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set'
+            cand --bars 'Bars: unicode (eighth blocks, the default) or ascii (# and =, for terminals and fonts without block characters). Overrides the theme file''s `bars`'
             cand -x 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --one-file-system 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'

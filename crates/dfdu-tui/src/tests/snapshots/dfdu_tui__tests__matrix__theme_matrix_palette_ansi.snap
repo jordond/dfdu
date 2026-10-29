@@ -4,41 +4,43 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 bold | 7-14 bold
- 1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
-L1 26-32 fg=red | 75-99 fg=darkgray
+ 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
+L1 26-32 fg=red | 92-94 fg=darkgray
         size                     share   items  name
 L2 0-99 fg=darkgray
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
 L3 0-13 reversed | 14-29 fg=cyan reversed | 30-47 reversed | 48-55 fg=blue bold reversed | 56-99 reversed
- ⠙  78.0 GiB  ███████████▏       32.3%    1.1M  dev/
-L4 0-11 fg=darkgray | 14-29 fg=cyan | 40-45 fg=darkgray | 48-51 fg=blue bold
-    51.0 GiB┌ Commands 11/46 ──────────────────────────────────────────────────────────┐
-   625.0 MiB│ : sort▌                                                                  │
-L6 13-14 bold | 20-20 bold
- !       0 B│ sort by size (again: reverse)                                    sort  s │
-L7 0-1 fg=red | 2-11 fg=darkgray | 13-13 reversed | 14-17 fg=cyan underlined reversed | 18-78 reversed | 79-82 fg=darkgray reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
- ~       0 B│ sort by name (again: reverse)                                    sort  n │
+ ⠙  78.0 GiB┌ Commands 13/54 ──────────────────────────────────────────────────────────┐
+L4 0-11 fg=darkgray
+    51.0 GiB│ : sort▌                                                                  │
+L5 13-14 bold | 20-20 bold
+   625.0 MiB│ sort by size (again: reverse)                                    sort  s │
+L6 13-13 reversed | 14-17 fg=cyan underlined reversed | 18-78 reversed | 79-82 fg=darkgray reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
+ !       0 B│ sort by name (again: reverse)                                    sort  n │
+L7 0-1 fg=red | 2-11 fg=darkgray | 14-17 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
+ ~       0 B│ sort by items (again: reverse)                                   sort  C │
 L8 0-1 fg=yellow | 2-11 fg=darkgray | 14-17 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
-            │ sort by items (again: reverse)                                   sort  C │
-L9 14-17 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
             │ sort by modification time (again: reverse)                       sort  M │
-L10 14-17 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
+L9 14-17 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
             │ re-sort now                                                      sort  S │
-L11 17-20 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
+L10 17-20 fg=cyan underlined | 79-82 fg=darkgray | 85-85 bold
             │ skip directories that are not responding                          act  x │
-L12 14-14 fg=cyan underlined | 25-26 fg=cyan underlined | 31-31 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
+L11 14-14 fg=cyan underlined | 25-26 fg=cyan underlined | 31-31 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
             │ put back what was last moved to the Trash or staged               act  U │
-L13 53-53 fg=cyan underlined | 56-57 fg=cyan underlined | 60-60 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
+L12 53-53 fg=cyan underlined | 56-57 fg=cyan underlined | 60-60 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
             │ close the overlay, or clear the filter                       global  Esc │
-L14 17-17 fg=cyan underlined | 33-34 fg=cyan underlined | 42-42 fg=cyan underlined | 75-80 fg=darkgray | 83-85 bold
+L13 17-17 fg=cyan underlined | 33-34 fg=cyan underlined | 42-42 fg=cyan underlined | 75-80 fg=darkgray | 83-85 bold
             │ duplicate files (compares the scanned files)                  display  4 │
-L15 28-28 fg=cyan underlined | 32-32 fg=cyan underlined | 36-36 fg=cyan underlined | 40-40 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
+L14 28-28 fg=cyan underlined | 32-32 fg=cyan underlined | 36-36 fg=cyan underlined | 40-40 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
+            │ mark by pattern: names in this directory matching a glob             act │
+L15 43-43 fg=cyan underlined | 51-52 fg=cyan underlined | 57-57 fg=cyan underlined | 83-85 fg=darkgray
             │ scan into the selected mount (another filesystem)                 act  m │
 L16 28-28 fg=cyan underlined | 38-38 fg=cyan underlined | 50-50 fg=cyan underlined | 59-59 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
 L17 16-16 fg=cyan underlined | 25-25 fg=cyan underlined | 37-37 fg=cyan underlined | 50-50 fg=cyan underlined | 77-82 fg=darkgray | 85-85 bold
+            │ largest files anywhere below this directory                   display  5 │
+L18 26-26 fg=cyan underlined | 40-40 fg=cyan underlined | 50-50 fg=cyan underlined | 53-53 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
 
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 fg=yellow

@@ -4,41 +4,43 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold
- 1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
-L1 26-32 fg=#ff8f8f | 75-99 fg=#8b94a7
+ 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
+L1 26-32 fg=#ff8f8f | 92-94 fg=#8b94a7
         size                     share   items  name
 L2 0-99 fg=#8b94a7
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
 L3 0-11 fg=#d8dee9 bg=#4c566a bold | 12-13 fg=#eceff4 bg=#4c566a bold | 14-29 fg=#88c0d0 bg=#4c566a bold | 30-39 fg=#eceff4 bg=#4c566a bold | 40-45 fg=#d8dee9 bg=#4c566a bold | 46-47 fg=#eceff4 bg=#4c566a bold | 48-55 fg=#8fbcf0 bg=#4c566a bold | 56-99 fg=#eceff4 bg=#4c566a bold
- ⠙  78.0 GiB  ███████████▏       32.3%    1.1M  dev/
-L4 0-11 fg=#8b94a7 | 14-29 fg=#88c0d0 | 40-45 fg=#8b94a7 | 48-51 fg=#8fbcf0 bold
-    51.0 GiB┌ Commands 11/46 ──────────────────────────────────────────────────────────┐
-   625.0 MiB│ : sort▌                                                                  │
-L6 13-14 fg=#88c0d0 bold | 20-20 fg=#88c0d0 bold
- !       0 B│ sort by size (again: reverse)                                    sort  s │
-L7 0-1 fg=#ff8f8f | 2-11 fg=#8b94a7 | 13-13 fg=#eceff4 bg=#4c566a bold | 14-17 fg=#f0c674 bg=#4c566a bold underlined | 18-78 fg=#eceff4 bg=#4c566a bold | 79-82 fg=#8b94a7 bg=#4c566a bold | 83-84 fg=#eceff4 bg=#4c566a bold | 85-85 fg=#88c0d0 bg=#4c566a bold | 86-86 fg=#eceff4 bg=#4c566a bold
- ~       0 B│ sort by name (again: reverse)                                    sort  n │
+ ⠙  78.0 GiB┌ Commands 13/54 ──────────────────────────────────────────────────────────┐
+L4 0-11 fg=#8b94a7
+    51.0 GiB│ : sort▌                                                                  │
+L5 13-14 fg=#88c0d0 bold | 20-20 fg=#88c0d0 bold
+   625.0 MiB│ sort by size (again: reverse)                                    sort  s │
+L6 13-13 fg=#eceff4 bg=#4c566a bold | 14-17 fg=#f0c674 bg=#4c566a bold underlined | 18-78 fg=#eceff4 bg=#4c566a bold | 79-82 fg=#8b94a7 bg=#4c566a bold | 83-84 fg=#eceff4 bg=#4c566a bold | 85-85 fg=#88c0d0 bg=#4c566a bold | 86-86 fg=#eceff4 bg=#4c566a bold
+ !       0 B│ sort by name (again: reverse)                                    sort  n │
+L7 0-1 fg=#ff8f8f | 2-11 fg=#8b94a7 | 14-17 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+ ~       0 B│ sort by items (again: reverse)                                   sort  C │
 L8 0-1 fg=#ebcb8b | 2-11 fg=#8b94a7 | 14-17 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
-            │ sort by items (again: reverse)                                   sort  C │
-L9 14-17 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ sort by modification time (again: reverse)                       sort  M │
-L10 14-17 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L9 14-17 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ re-sort now                                                      sort  S │
-L11 17-20 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L10 17-20 fg=#f0c674 underlined | 79-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ skip directories that are not responding                          act  x │
-L12 14-14 fg=#f0c674 underlined | 25-26 fg=#f0c674 underlined | 31-31 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L11 14-14 fg=#f0c674 underlined | 25-26 fg=#f0c674 underlined | 31-31 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ put back what was last moved to the Trash or staged               act  U │
-L13 53-53 fg=#f0c674 underlined | 56-57 fg=#f0c674 underlined | 60-60 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L12 53-53 fg=#f0c674 underlined | 56-57 fg=#f0c674 underlined | 60-60 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ close the overlay, or clear the filter                       global  Esc │
-L14 17-17 fg=#f0c674 underlined | 33-34 fg=#f0c674 underlined | 42-42 fg=#f0c674 underlined | 75-80 fg=#8b94a7 | 83-85 fg=#88c0d0 bold
+L13 17-17 fg=#f0c674 underlined | 33-34 fg=#f0c674 underlined | 42-42 fg=#f0c674 underlined | 75-80 fg=#8b94a7 | 83-85 fg=#88c0d0 bold
             │ duplicate files (compares the scanned files)                  display  4 │
-L15 28-28 fg=#f0c674 underlined | 32-32 fg=#f0c674 underlined | 36-36 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L14 28-28 fg=#f0c674 underlined | 32-32 fg=#f0c674 underlined | 36-36 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+            │ mark by pattern: names in this directory matching a glob             act │
+L15 43-43 fg=#f0c674 underlined | 51-52 fg=#f0c674 underlined | 57-57 fg=#f0c674 underlined | 83-85 fg=#8b94a7
             │ scan into the selected mount (another filesystem)                 act  m │
 L16 28-28 fg=#f0c674 underlined | 38-38 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 59-59 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ list what could not be read, and go to it                      panels  ! │
 L17 16-16 fg=#f0c674 underlined | 25-25 fg=#f0c674 underlined | 37-37 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 77-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+            │ largest files anywhere below this directory                   display  5 │
+L18 26-26 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 53-53 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
 
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 fg=#ebcb8b

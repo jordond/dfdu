@@ -10,7 +10,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
-use crate::app::keys::{Action, ActionInfo, Group, first_key, offered};
+use crate::app::keys::{self, Action, ActionInfo, Group, first_key, offered};
 use crate::app::{App, Effect, Overlay};
 use crate::input::fuzzy::{Fuzzy, char_pos};
 use crate::input::line::{Edit, LineInput};
@@ -135,6 +135,8 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         KeyCode::Down => Some(top + 1),
         KeyCode::PageUp => Some(top.saturating_sub(page)),
         KeyCode::PageDown => Some(top + page),
+        // While a search is typed, Ctrl-U clears it instead.
+        _ if !h.searching => keys::half_page(&k, page).map(|n| top.saturating_add_signed(n)),
         _ => None,
     };
     if let Some(top) = scrolled {

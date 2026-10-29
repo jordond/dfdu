@@ -215,7 +215,7 @@ fn largest(out: &mut Text, t: &Theme, f: &Facts) {
                 let style = if k.is_dir { t.dir } else { Style::new() };
                 out.push(Line::from(vec![
                     Span::raw(" "),
-                    Span::styled(bar(ratio(k.size, total), BAR), t.bar_fill),
+                    Span::styled(bar(ratio(k.size, total), BAR, t.bars), t.bar_fill),
                     Span::raw(format!(" {:>10}  ", human(k.size))),
                     Span::styled(
                         format!("{}{}", k.name, if k.is_dir { "/" } else { "" }),

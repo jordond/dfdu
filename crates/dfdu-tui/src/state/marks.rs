@@ -1,4 +1,5 @@
 //! Marked entries: `Space` marks, the footer shows their live total, and a delete acts on them.
+//! `v` marks a range as the cursor moves ([`range`]).
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -11,6 +12,8 @@ use ratatui::text::Span;
 use crate::app::App;
 use crate::model::snapshot::{EntryData, Ident, Mark, Target, find_path};
 use crate::theme::human;
+
+pub mod range;
 
 /// One marked entry: how to find it again, and its sizes as the last read found them.
 #[derive(Clone, Debug)]
@@ -39,6 +42,8 @@ pub struct Marks {
     version: u64,
     /// The `version` the last [`apply`] took in.
     applied: u64,
+    /// The directory a range mark is going on in ([`range`]).
+    range: Option<std::path::PathBuf>,
 }
 
 impl Marks {
@@ -126,35 +131,40 @@ pub fn toggle(app: &mut App) {
         app.status = Some(crate::overlay::type_filter::NO_FOLDERS.into());
         return;
     }
-    let path = app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name));
+    let item = item_of(app, &e);
     let marks = &mut app.marks;
     match marks
         .items
         .iter()
-        .position(|it| it.target.node == Some(e.node) || it.target.path == path)
+        .position(|it| it.target.node == Some(e.node) || it.target.path == item.target.path)
     {
         Some(i) => {
             marks.items.remove(i);
         }
-        None => marks.items.push(Item {
-            target: Target {
-                node: Some(e.node),
-                path,
-                ident: Some(Ident {
-                    dev_ino: e.dev_ino,
-                    kind: e.kind,
-                }),
-            },
-            is_dir: e.is_dir,
-            size: e.size,
-            items: e.items,
-            shared_out: e.shared_out,
-            scanning: matches!(e.mark, Mark::Scanning | Mark::Stalled | Mark::Rescanning),
-            inside: false,
-        }),
+        None => marks.items.push(item),
     }
     marks.changed();
     app.move_by(1);
+}
+
+/// The mark of `e`, an entry of the current directory.
+pub(crate) fn item_of(app: &App, e: &EntryData) -> Item {
+    Item {
+        target: Target {
+            node: Some(e.node),
+            path: app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name)),
+            ident: Some(Ident {
+                dev_ino: e.dev_ino,
+                kind: e.kind,
+            }),
+        },
+        is_dir: e.is_dir,
+        size: e.size,
+        items: e.items,
+        shared_out: e.shared_out,
+        scanning: matches!(e.mark, Mark::Scanning | Mark::Stalled | Mark::Rescanning),
+        inside: false,
+    }
 }
 
 /// Marks `item` or unmarks it (found by its node or path), as the cleanup view does for whole
@@ -178,6 +188,34 @@ pub fn set(app: &mut App, item: Item, on: bool) {
         _ => return,
     }
     marks.changed();
+}
+
+/// Marks every one of `items` not marked yet, with one look-up each, and returns how many it
+/// marked: for a range or a pattern, which can mark a whole directory at once. A read-only
+/// browser marks nothing, as [`set`] does.
+pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return 0;
+    }
+    let marks = &mut app.marks;
+    let mut paths: HashSet<std::path::PathBuf> = marks
+        .items
+        .iter()
+        .map(|it| it.target.path.clone())
+        .collect();
+    let before = marks.items.len();
+    for it in items {
+        let known = it.target.node.is_some_and(|n| marks.nodes.contains(&n));
+        if !known && paths.insert(it.target.path.clone()) {
+            marks.items.push(it);
+        }
+    }
+    let added = marks.items.len() - before;
+    if added > 0 {
+        marks.changed();
+    }
+    added
 }
 
 pub fn clear(app: &mut App) {

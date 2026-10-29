@@ -4,7 +4,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use crate::app::App;
 use crate::model::snapshot::{EntryData, test_entry};
-use crate::tests::{press, snap_without_totals};
+use crate::tests::{press, row_names, snap_without_totals};
 use crate::theme::Theme;
 
 #[test]
@@ -143,4 +143,63 @@ fn untouched_cursor_stays_at_top_after_resort() {
         Some(b"b".to_vec())
     );
     assert_eq!(app.scroll, 0);
+}
+
+/// Six entries a to f, largest first, in a list three rows high.
+fn six(app: &mut App, t0: Instant) -> Vec<EntryData> {
+    let es: Vec<EntryData> = ["a", "b", "c", "d", "e", "f"]
+        .into_iter()
+        .zip(0u32..)
+        .map(|(name, i)| test_entry(i, name, 600 - u64::from(i) * 100))
+        .collect();
+    app.refresh(snap_without_totals(es.clone(), 1), t0);
+    app.list_height = 3;
+    es
+}
+
+fn selected_name(app: &App) -> Option<String> {
+    app.selected_entry()
+        .map(|e| String::from_utf8_lossy(&e.name).into_owned())
+}
+
+#[test]
+fn untouched_cursor_keeps_the_first_screen_sorted() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    let mut es = six(&mut app, t0);
+    // Within the idle window, e and f grow past a and b, and a new entry passes everything.
+    let t1 = t0 + Duration::from_millis(100);
+    es[4].size = 1000;
+    es[5].size = 900;
+    es.push(test_entry(6, "g", 2000));
+    es.push(test_entry(7, "h", 50));
+    app.refresh(snap_without_totals(es, 2), t1);
+    // The three rows on screen are sorted at once; the rows below wait for the automatic sort.
+    assert_eq!(row_names(&app), ["g", "e", "f", "a", "b", "c", "d"]);
+    assert_eq!(app.new_count, 1);
+    assert_eq!(selected_name(&app).as_deref(), Some("g"));
+    assert_eq!(app.scroll, 0);
+    assert!(app.sort_pending(), "the rows below the screen still wait");
+}
+
+#[test]
+fn rows_freeze_while_the_cursor_is_off_the_top() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    let mut es = six(&mut app, t0);
+    app.key(press(KeyCode::Down), t0);
+    let t1 = t0 + Duration::from_millis(100);
+    es[4].size = 1000;
+    app.refresh(snap_without_totals(es.clone(), 2), t1);
+    assert_eq!(row_names(&app), ["a", "b", "c", "d", "e", "f"]);
+    assert_eq!(selected_name(&app).as_deref(), Some("b"));
+
+    // Back on the first row, the next snapshot sorts the first screen, and the cursor stays on
+    // the entry it is on.
+    app.key(press(KeyCode::Up), t1);
+    es[5].size = 900;
+    app.refresh(snap_without_totals(es, 3), t1);
+    assert_eq!(row_names(&app), ["e", "f", "a", "b", "c", "d"]);
+    assert_eq!(selected_name(&app).as_deref(), Some("a"));
+    assert_eq!(app.selected_index(), Some(2));
 }

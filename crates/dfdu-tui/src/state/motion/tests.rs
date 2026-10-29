@@ -45,13 +45,6 @@ fn shown(app: &App, name: &str) -> f64 {
     bar(app, e, f64::NAN)
 }
 
-/// The list rows of a frame `H` lines high, without the header, status line and footer (they
-/// have arrows of their own).
-fn list_rows(frame: &str) -> String {
-    let rows: Vec<&str> = frame.lines().skip(2).take(H as usize - 4).collect();
-    rows.join("\n")
-}
-
 /// Draws a frame at each time the motion asks for, up to `until`; returns the time of the last.
 fn run_until(app: &mut App, mut now: Instant, until: Instant) -> Instant {
     while let Some(t) = app.motion.next_frame_at().filter(|&t| t <= until) {

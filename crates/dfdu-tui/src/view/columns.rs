@@ -2,7 +2,13 @@
 //! and the columns the rows on screen have something to show in ([`ColSet`]), which columns are
 //! drawn and how wide. The name always comes last and takes what is left, at least [`NAME_MIN`]
 //! cells while the other columns can make room: the optional columns go first, and the bar
-//! shrinks step by step.
+//! shrinks step by step. A row's cells are aligned in their columns with [`right`] and [`left`],
+//! and the cursor row is filled with [`cursor`].
+
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+
+use crate::theme::Theme;
 
 /// A column of the list, in the order they are drawn from left to right.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -217,6 +223,39 @@ fn name_width(width: u16, cols: &[(Col, u16)]) -> u16 {
         prev = Some(c);
     }
     width.saturating_sub(used + Col::Name.gap(prev))
+}
+
+/// `s` right-aligned in `w` cells.
+pub fn right(s: String, w: u16, style: Style) -> Span<'static> {
+    let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
+    Span::styled(format!("{}{s}", " ".repeat(pad)), style)
+}
+
+/// `s` left-aligned in `w` cells, cut to fit.
+pub fn left(s: String, w: u16, style: Style) -> Span<'static> {
+    let s = super::list::name::cut_end(&s, w.into());
+    let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
+    Span::styled(format!("{s}{}", " ".repeat(pad)), style)
+}
+
+/// The cursor row: `line` filled to `width` cells in the cursor style, with dim text in the
+/// normal text colour so it stays readable on the cursor's background.
+pub fn cursor(t: &Theme, line: Line<'static>, width: u16) -> Line<'static> {
+    let dim = t.fg_dim;
+    let mut spans = line.spans;
+    for s in &mut spans {
+        let is_dim = (dim.fg.is_some() && s.style.fg == dim.fg)
+            || (!dim.add_modifier.is_empty() && s.style.add_modifier.contains(dim.add_modifier));
+        if is_dim {
+            s.style.fg = t.fg.fg;
+            s.style.add_modifier = s.style.add_modifier.difference(dim.add_modifier);
+        }
+    }
+    let used: usize = spans.iter().map(Span::width).sum();
+    spans.push(Span::raw(
+        " ".repeat(usize::from(width).saturating_sub(used)),
+    ));
+    Line::from(spans).style(t.cursor)
 }
 
 #[cfg(test)]

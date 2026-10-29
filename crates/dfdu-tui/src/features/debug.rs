@@ -440,7 +440,7 @@ mod tests {
         assert!(fx.is_empty());
         let sorted = render(&mut app, t0, 100, 20);
         assert!(
-            sorted.contains("sort: name") && sorted.contains("Debug"),
+            sorted.contains("name ↑") && sorted.contains("Debug"),
             "{sorted}"
         );
         app.key(press(KeyCode::F(12)), t0);

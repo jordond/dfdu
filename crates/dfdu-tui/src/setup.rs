@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::{cursor, execute};
 
-use crate::theme::{self, BuiltinTheme, ColorLevel, Rgb, Theme, ThemeFile};
+use crate::theme::{self, Bars, BuiltinTheme, ColorLevel, Rgb, Theme, ThemeFile};
 
 /// Which theme to use.
 #[derive(Clone, Debug, Default)]
@@ -39,6 +39,8 @@ pub struct UiSettings {
     pub theme: ThemeChoice,
     /// The colour level asked for; `None` detects it from the environment.
     pub color: Option<ColorLevel>,
+    /// How bars are drawn (`--bars`); `None` leaves it to the theme.
+    pub bars: Option<Bars>,
     /// Capture the mouse, so clicks and the wheel reach the browser.
     pub mouse: bool,
     /// Start with the debug panel open, and print its numbers after the browser exits.
@@ -52,6 +54,7 @@ impl Default for UiSettings {
         UiSettings {
             theme: ThemeChoice::Auto,
             color: None,
+            bars: None,
             mouse: true,
             debug_stats: false,
             types: dfdu_tree::filetype::TypeFilter::default(),
@@ -102,12 +105,15 @@ pub(crate) fn resolve_theme(
     } else {
         None
     };
-    let theme = if let ThemeChoice::File(file) = &settings.theme {
+    let mut theme = if let ThemeChoice::File(file) = &settings.theme {
         file.resolve(detected.level, background)
     } else {
         let b = theme::choose_theme(explicit, detected.level, background);
         Theme::builtin(b, detected.level, background)
     };
+    if let Some(bars) = settings.bars {
+        theme.bars = bars;
+    }
     Colors {
         theme,
         level: detected.level,

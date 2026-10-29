@@ -4,9 +4,10 @@
 //! Switching the view on starts the comparison in a thread of its own, from the candidates read
 //! under the read lock ([`Effect::FindDupes`]); the view shows its progress and then the groups,
 //! the most space to free first. Marks are the list's: `Space` marks a copy, or on a group every
-//! copy but the oldest, `a` does that for every group, and `d` and `D` delete what is marked
-//! through the usual dialog, which checks each file against the scan. Groups of APFS clones,
-//! which free nothing, are listed but `a` leaves them alone.
+//! copy but the one kept, `a` does that for every group, and `d` and `D` delete what is marked
+//! through the usual dialog, which checks each file against the scan. The copy kept is the
+//! oldest, and `K` cycles the rule ([`Keep`]). Groups of APFS clones, which free nothing, are
+//! listed but `a` leaves them alone.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +39,47 @@ pub struct Dupes {
     cursor: usize,
     scroll: usize,
     run: Option<Run>,
+    keep: Keep,
+}
+
+/// Which copy of a group marking leaves unmarked. Ties go to the first in path order.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum Keep {
+    #[default]
+    Oldest,
+    Newest,
+    ShortestPath,
+    FirstPath,
+}
+
+impl Keep {
+    fn next(self) -> Keep {
+        match self {
+            Keep::Oldest => Keep::Newest,
+            Keep::Newest => Keep::ShortestPath,
+            Keep::ShortestPath => Keep::FirstPath,
+            Keep::FirstPath => Keep::Oldest,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Keep::Oldest => "oldest",
+            Keep::Newest => "newest",
+            Keep::ShortestPath => "shortest path",
+            Keep::FirstPath => "first in path order",
+        }
+    }
+}
+
+/// The next keep rule, with the status line saying so.
+pub fn cycle_keep(app: &mut App) {
+    let d = &mut app.dupes;
+    d.keep = d.keep.next();
+    app.status = Some(format!(
+        "duplicates: keep the {} copy (a marks the others)",
+        d.keep.label()
+    ));
 }
 
 /// A comparison, running or done.
@@ -197,25 +239,29 @@ fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
     }
 }
 
-/// The files of `group` still in the tree, but the oldest (ties: the first in path order).
-fn copies(app: &App, group: &Group) -> Vec<(Candidate, NodeRef)> {
-    let mut left: Vec<(Candidate, NodeRef)> = group
-        .files
-        .iter()
-        .filter_map(|c| Some((c.clone(), live(app, c)?)))
-        .collect();
-    let keep = left
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, (c, _))| c.mtime)
-        .map(|(i, _)| i);
-    if let Some(i) = keep {
-        left.remove(i);
+/// The index in `group` of the file still in the tree that the keep rule keeps.
+fn kept(app: &App, group: &Group) -> Option<usize> {
+    let left = (group.files.iter().enumerate()).filter(|(_, c)| live(app, c).is_some());
+    let by_path = |c: &Candidate| c.path.clone();
+    match app.dupes.keep {
+        Keep::Oldest => left.min_by_key(|(_, c)| (c.mtime, by_path(c))),
+        Keep::Newest => left.min_by_key(|(_, c)| (std::cmp::Reverse(c.mtime), by_path(c))),
+        Keep::ShortestPath => left.min_by_key(|(_, c)| (c.path.as_os_str().len(), by_path(c))),
+        Keep::FirstPath => left.min_by_key(|(_, c)| by_path(c)),
     }
-    left
+    .map(|(i, _)| i)
 }
 
-/// Marks every copy but the oldest in each group that frees something; returns how many were
+/// The files of `group` still in the tree, but the one [`kept`].
+fn copies(app: &App, group: &Group) -> Vec<(Candidate, NodeRef)> {
+    let keep = kept(app, group);
+    (group.files.iter().enumerate())
+        .filter(|&(i, _)| Some(i) != keep)
+        .filter_map(|(_, c)| Some((c.clone(), live(app, c)?)))
+        .collect()
+}
+
+/// Marks every copy but the one kept in each group that frees something; returns how many were
 /// newly marked.
 fn mark_all(app: &mut App) -> usize {
     let Some(f) = found(app) else {
@@ -234,11 +280,23 @@ fn mark_all(app: &mut App) -> usize {
     picks.len()
 }
 
+/// The path of the selected file, for `y` and `o`; `None` on a group's row.
+pub(crate) fn selected_path(app: &App) -> Option<PathBuf> {
+    match rows(app).get(app.dupes.cursor)? {
+        &Row::File(g, i) => Some(found(app)?.groups[g].files[i].path.clone()),
+        Row::Group(_) => None,
+    }
+}
+
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let page = app.list_height.max(1);
     let d = &mut app.dupes;
+    if let Some(n) = crate::app::keys::half_page(k, page) {
+        d.cursor = d.cursor.saturating_add_signed(n).min(last);
+        return Some(Vec::new());
+    }
     match k.code {
         KeyCode::Up | KeyCode::Char('k') => d.cursor = d.cursor.saturating_sub(1),
         KeyCode::Down | KeyCode::Char('j') => d.cursor = (d.cursor + 1).min(last),
@@ -257,10 +315,11 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         }
         KeyCode::Char('a') => {
             let n = mark_all(app);
+            let keep = app.dupes.keep.label();
             app.status = Some(match n {
                 0 => "every copy is marked already, or there are none to free".into(),
-                1 => "marked 1 copy (the oldest file of each group is kept)".into(),
-                n => format!("marked {n} copies (the oldest file of each group is kept)"),
+                1 => format!("marked 1 copy (the {keep} file of each group is kept)"),
+                n => format!("marked {n} copies (the {keep} file of each group is kept)"),
             });
         }
         KeyCode::Char(' ') => {

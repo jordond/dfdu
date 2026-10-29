@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/tests/columns.rs
 expression: "render(&mut dev(t0), t0, 100, 24)"
 ---
  dfdu  ~/dev                                                                          done in 00:00
- 4.5M items · 163.3 GiB                                                    sort: size ↓  disk usage
+ 4.5M items · 163.3 GiB                                                     size ↓ · disk · Δ 10-18
         size                     share   items  ↔ name
     40.7 GiB  ████████████████   24.9%    1.5M    dfdu/                                            ┃
     16.6 GiB  ██████▌            10.2%  227.4k  ↔ brewd/                                           ┃

@@ -3,16 +3,16 @@ source: crates/dfdu-tui/src/overlay/palette.rs
 expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00
- 3 items · 3┌ Commands 46/46 ──────────────────────────────────────────────────────────┐ disk usage
+ 3 items · 3┌ Commands 54/54 ──────────────────────────────────────────────────────────┐ze ↓ · disk
         size│ : ▌                                                                      │
-     3.0 GiB│ toggle disk usage like du (shared data once per file)         display  u │
-   625.0 MiB│ hide or show hidden files                                     display  e │
-            │ list columns: items, then items and modified, then neither    display  c │
-            │ rescan the selected directory                                     act  r │
-            │ scan into the selected mount (another filesystem)                 act  m │
-            │ skip directories that are not responding                          act  x │
+     3.0 GiB│ scan into the selected mount (another filesystem)                 act  m │
+   625.0 MiB│ skip directories that are not responding                          act  x │
             │ mark or unmark, then move down                                act  Space │
             │ clear all marks                                                      act │
+            │ mark a range: moving marks every row passed (v or Esc ends)       act  v │
+            │ mark by pattern: names in this directory matching a glob             act │
+            │ copy the selected path (through the terminal, OSC 52)             act  y │
+            │ open in the file manager (a file: its folder)                     act  o │
             │ move to Trash                                                     act  d │
             │ delete permanently (type delete)                                  act  D │
             │ put back what was last moved to the Trash or staged               act  U │

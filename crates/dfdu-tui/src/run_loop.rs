@@ -12,7 +12,7 @@ use ratatui::Terminal;
 use ratatui::crossterm::event::Event;
 
 use crate::app::{self, App, Effect};
-use crate::features::{debug, dupes};
+use crate::features::{debug, dupes, selected_path};
 use crate::input::mouse;
 use crate::model::extras::{self, Read};
 use crate::model::history_link::Recorder;
@@ -347,6 +347,13 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
                 });
                 app.show_errors(list);
             }
+            Effect::Copy(text) => {
+                // To the terminal the frames go to; a frame is never being drawn here.
+                if let Err(e) = selected_path::write_osc52(&mut io::stdout(), &text) {
+                    app.status = Some(format!("cannot copy: {e}"));
+                }
+            }
+            Effect::Open { path, is_dir } => selected_path::spawn_open(app, &path, is_dir),
         }
     }
 }

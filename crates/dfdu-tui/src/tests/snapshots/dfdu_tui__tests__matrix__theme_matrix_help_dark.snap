@@ -4,8 +4,8 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold
- 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
-L1 2-2 fg=#88c0d0 | 3-8 fg=#eceff4 bold | 9-86 fg=#88c0d0 | 87-96 fg=#8b94a7 | 97-97 fg=#88c0d0 | 98-99 fg=#8b94a7
+ 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
+L1 2-2 fg=#88c0d0 | 3-8 fg=#eceff4 bold | 9-86 fg=#88c0d0 | 87-96 fg=#8b94a7 | 97-97 fg=#88c0d0
   ┃ Navigate                                        Act                                          ┃
 L2 0-1 fg=#8b94a7 | 2-2 fg=#88c0d0 | 3-11 fg=#eceff4 bold | 51-54 fg=#eceff4 bold | 97-97 fg=#88c0d0 | 98-99 fg=#8b94a7
  ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃
@@ -16,36 +16,36 @@ L4 0-1 fg=#8b94a7 | 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold
 L5 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ PgDn             page down                      x      skip directories that are not         ┃
 L6 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- !┃ g Home           first entry                           responding                            ┃
+ !┃ Ctrl-U           half a page up                        responding                            ┃
 L7 0-1 fg=#ff8f8f | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- ~┃ G End            last entry                     Space  mark or unmark, then move down        ┃
-L8 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ → l Enter        open directory                 :      clear all marks (in the palette)      ┃
-L9 2-2 fg=#88c0d0 | 4-12 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
-  ┃ ← h Backspace <  parent directory               d      move to Trash                         ┃
-L10 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                                                 D      delete permanently (type delete)      ┃
-L11 2-2 fg=#88c0d0 | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ Sort                                            U      put back what was last moved to the   ┃
-L12 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ s  sort by size (again: reverse)                       Trash or staged                       ┃
-L13 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ n  sort by name (again: reverse)                                                             ┃
-L14 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ C  sort by items (again: reverse)               Panels                                       ┃
-L15 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 51-57 fg=#eceff4 bold | 97-97 fg=#88c0d0
-  ┃ M  sort by modification time (again:            /         filter this directory              ┃
-L16 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃    reverse)                                     t         show only files of some types      ┃
-L17 2-2 fg=#88c0d0 | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ S  re-sort now                                            (video, audio, .iso...)            ┃
+ ~┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
+L8 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
+L9 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
+  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
+L10 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ → l Enter        open directory                        passed (v or Esc ends)                ┃
+L11 2-2 fg=#88c0d0 | 4-12 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ ← h Backspace <  parent directory               :      mark by pattern: names in this        ┃
+L12 2-2 fg=#88c0d0 | 4-18 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
+  ┃                                                        directory matching a glob (in the     ┃
+L13 2-2 fg=#88c0d0 | 97-97 fg=#88c0d0
+  ┃ Sort                                                   palette)                              ┃
+L14 2-2 fg=#88c0d0 | 3-7 fg=#eceff4 bold | 97-97 fg=#88c0d0
+  ┃ s  sort by size (again: reverse)                y      copy the selected path (through the   ┃
+L15 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ n  sort by name (again: reverse)                       terminal, OSC 52)                     ┃
+L16 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ C  sort by items (again: reverse)               o      open in the file manager (a file: its ┃
+L17 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ M  sort by modification time (again:                   folder)                               ┃
 L18 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃                                                 i         details of the selected entry      ┃
+  ┃    reverse)                                     d      move to Trash                         ┃
 L19 2-2 fg=#88c0d0 | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ Display                                         Tab       move focus between the list and    ┃
-L20 2-2 fg=#88c0d0 | 3-10 fg=#eceff4 bold | 52-54 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- 1┃ 1  list view                                              the details                        ┃
-L21 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ S  re-sort now                                  D      delete permanently (type delete)      ┃
+L20 2-2 fg=#88c0d0 | 4-4 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+ 1┃                                                 U      put back what was last moved to the   ┃
+L21 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=#8b94a7 | 2-88 fg=#88c0d0 | 89-96 fg=#8b94a7 | 97-97 fg=#88c0d0
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

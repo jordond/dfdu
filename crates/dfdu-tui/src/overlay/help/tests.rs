@@ -36,7 +36,7 @@ fn help_lists_every_action() {
     let mut app = app_with_help(t0);
     // One column on a tall screen: everything fits, and each action shows its keys before
     // its label.
-    let frame = render(&mut app, t0, 76, 80);
+    let frame = render(&mut app, t0, 76, 100);
     assert!(!frame.contains("↓ more"), "{frame}");
     let rows = inside(&frame);
     for info in ACTIONS {
@@ -184,7 +184,8 @@ fn help_search_filters_rows() {
     typed(&mut app, "F12", t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("debug overlay"), "{frame}");
-    assert!(frame.contains("1 of 42"), "{frame}");
+    let one_of_all = format!("1 of {}", ACTIONS.len());
+    assert!(frame.contains(&one_of_all), "{frame}");
     typed(&mut app, " zzz", t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("nothing matches"), "{frame}");
@@ -194,7 +195,7 @@ fn help_search_filters_rows() {
     app.key(press(KeyCode::Enter), t0);
     assert!(!help(&app).searching);
     let frame = render(&mut app, t0, 100, 30);
-    assert!(frame.contains(" / F12   1 of 42"), "{frame}");
+    assert!(frame.contains(&format!(" / F12   {one_of_all}")), "{frame}");
     // Esc while searching clears the query and keeps the help open.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(press(KeyCode::Esc), t0);
@@ -239,4 +240,22 @@ fn labels_wrap_at_spaces() {
     assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
     assert_eq!(wrap_at("ab cd", 2), [(0, "ab"), (3, "cd")]);
     assert_eq!(wrap("", 5), Vec::<&str>::new());
+}
+
+#[test]
+fn help_scrolls_half_a_page() {
+    let t0 = Instant::now();
+    let mut app = app_with_help(t0);
+    render(&mut app, t0, 40, 12);
+    let page = app.areas.overlay.expect("help area").height as usize - 2;
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    app.key(ctrl('d'), t0);
+    assert_eq!(help(&app).scroll.get(), page / 2);
+    app.key(ctrl('u'), t0);
+    assert_eq!(help(&app).scroll.get(), 0);
+    // While a search is typed, Ctrl-U clears it instead.
+    app.key(press(KeyCode::Char('/')), t0);
+    typed(&mut app, "zzz", t0);
+    app.key(ctrl('u'), t0);
+    assert_eq!(help(&app).search.text(), "");
 }

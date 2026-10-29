@@ -1,14 +1,18 @@
 use std::collections::HashSet;
 
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use super::*;
 use crate::tests::press;
 
-const ALL: [Action; 42] = [
+const ALL: [Action; 50] = [
     Action::Quit,
     Action::Up,
     Action::Down,
     Action::PageUp,
     Action::PageDown,
+    Action::HalfPageUp,
+    Action::HalfPageDown,
     Action::First,
     Action::Last,
     Action::Open,
@@ -33,6 +37,10 @@ const ALL: [Action; 42] = [
     Action::Close,
     Action::ToggleMark,
     Action::ClearMarks,
+    Action::RangeMark,
+    Action::MarkPattern,
+    Action::CopyPath,
+    Action::OpenPath,
     Action::Filter,
     Action::Types,
     Action::Details,
@@ -43,6 +51,8 @@ const ALL: [Action; 42] = [
     Action::ViewTreemap,
     Action::ViewCleanup,
     Action::ViewDupes,
+    Action::ViewLargest,
+    Action::DupesKeep,
     Action::TreemapDeeper,
     Action::TreemapShallower,
     Action::TreemapColor,
@@ -66,7 +76,9 @@ fn every_action_has_one_registry_row() {
     let groups: HashSet<_> = ACTIONS.iter().map(|r| format!("{:?}", r.group)).collect();
     assert_eq!(groups.len(), 6, "every group has an action");
     let keyless: Vec<_> = ACTIONS.iter().filter(|r| r.keys.is_empty()).collect();
-    assert!(matches!(keyless[..], [r] if r.action == Action::ClearMarks));
+    assert!(
+        matches!(keyless[..], [a, b] if a.action == Action::ClearMarks && b.action == Action::MarkPattern)
+    );
 }
 
 #[test]
@@ -147,7 +159,30 @@ fn existing_keys_map_to_the_same_actions() {
     ] {
         assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
     }
-    for code in [c('z'), c('5'), KeyCode::F(2), KeyCode::Insert] {
+    for code in [c('z'), c('6'), KeyCode::F(2), KeyCode::Insert] {
         assert_eq!(action_for(&press(code)), None, "{code:?}");
     }
+}
+
+#[test]
+fn navigation_and_mark_keys() {
+    let c = KeyCode::Char;
+    for (code, want) in [
+        (c('y'), Action::CopyPath),
+        (c('o'), Action::OpenPath),
+        (c('v'), Action::RangeMark),
+        (c('5'), Action::ViewLargest),
+    ] {
+        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
+    }
+    // Ctrl-D and Ctrl-U move half a page; without Ctrl the keys stay what they were.
+    let ctrl = |ch| KeyEvent::new(c(ch), KeyModifiers::CONTROL);
+    assert_eq!(action_for(&ctrl('d')), Some(Action::HalfPageDown));
+    assert_eq!(action_for(&ctrl('u')), Some(Action::HalfPageUp));
+    assert_eq!(action_for(&press(c('d'))), Some(Action::Trash));
+    assert_eq!(action_for(&press(c('u'))), Some(Action::ToggleReferenced));
+    assert_eq!(half_page(&ctrl('d'), 20), Some(10));
+    assert_eq!(half_page(&ctrl('u'), 20), Some(-10));
+    assert_eq!(half_page(&ctrl('d'), 1), Some(1), "at least a row");
+    assert_eq!(half_page(&press(c('d')), 20), None);
 }

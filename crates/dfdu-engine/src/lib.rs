@@ -40,7 +40,7 @@ pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
 pub use notes::{ErrorItem, ErrorList, errors, errors_below, problem, subvol_label};
 pub use recent::{Event, RECENT, Recent};
-pub use recommend::recommends;
+pub use recommend::{Verdict, recommends, verdict};
 pub use remote::{Connected, DEAD, RemoteIo, RemoteRules, agent, wire};
 pub use runtime::{Engine, EngineOptions, WaitIdle, workers_for};
 pub use sizes::{SizeMode, human};

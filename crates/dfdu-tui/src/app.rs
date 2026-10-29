@@ -22,7 +22,7 @@ use crate::features::{debug, details, treemap};
 use crate::input::mouse;
 use crate::model::extras::Extras;
 use crate::model::snapshot::{EntryData, Snapshot, Target};
-use crate::overlay::{confirm, error_list, help, palette, type_filter};
+use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::motion::Motion;
 use crate::state::order::{Order, SortSpec};
 use crate::state::{filter, marks};
@@ -41,6 +41,13 @@ pub enum Effect {
     ShowErrors,
     /// Read the duplicate candidates and start comparing them (`dupes::begin`).
     FindDupes,
+    /// Put the text on the clipboard through the terminal (`selected_path::copy`).
+    Copy(String),
+    /// Show the path in the file manager, without waiting for it (`selected_path::open`).
+    Open {
+        path: PathBuf,
+        is_dir: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +63,8 @@ pub enum Overlay {
     Palette(palette::Palette),
     /// The file type picker.
     Types(type_filter::TypePicker),
+    /// The glob that marks the names it matches.
+    MarkPattern(mark_pattern::Prompt),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -112,6 +121,8 @@ pub struct App {
     /// Largest size among `rows`, for the bars.
     pub rows_largest: u64,
     pub scroll: usize,
+    /// Rows the last frame had room for; zero before the first frame, when no rows are on screen
+    /// to keep sorted ([`App::refresh`]).
     pub list_height: usize,
     pub overlay: Overlay,
     pub status: Option<String>,
@@ -131,6 +142,7 @@ pub struct App {
     pub treemap: treemap::Treemap,
     pub cleanup: crate::features::cleanup::Cleanup,
     pub dupes: crate::features::dupes::Dupes,
+    pub largest: crate::features::largest::Largest,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
@@ -220,7 +232,7 @@ impl App {
             new_largest: 0,
             rows_largest: 0,
             scroll: 0,
-            list_height: 1,
+            list_height: 0,
             overlay: Overlay::None,
             status: None,
             estimates: 0,
@@ -237,6 +249,7 @@ impl App {
             treemap: treemap::Treemap::default(),
             cleanup: crate::features::cleanup::Cleanup::default(),
             dupes: crate::features::dupes::Dupes::default(),
+            largest: crate::features::largest::Largest::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
@@ -294,6 +307,7 @@ impl App {
             || treemap::stale(self)
             || crate::features::cleanup::stale(self)
             || crate::features::dupes::stale(self)
+            || crate::features::largest::stale(self)
     }
 
     /// Asks for an exact sort before the next frame.
@@ -443,12 +457,18 @@ impl App {
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
             Overlay::Types(_) => return type_filter::key(self, k),
+            Overlay::MarkPattern(_) => return mark_pattern::key(self, &k),
         }
         if filter::editing(self) {
             return filter::key(self, k, now);
         }
         if details::focused(self)
             && let Some(fx) = details::key(self, &k)
+        {
+            return fx;
+        }
+        if crate::features::largest::active(self)
+            && let Some(fx) = crate::features::largest::key(self, &k)
         {
             return fx;
         }

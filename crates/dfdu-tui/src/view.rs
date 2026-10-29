@@ -18,7 +18,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Overlay};
 use crate::features::{debug, details, treemap};
-use crate::overlay::{confirm, error_list, help, palette, type_filter};
+use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::{filter, motion};
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
@@ -63,6 +63,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     // row is left below it.
     let list_view = !crate::features::dupes::active(app)
         && !crate::features::cleanup::active(app)
+        && !crate::features::largest::active(app)
         && !(app.treemap.on && treemap::fits(area));
     let (list, pane) = details::split(app, body, list_view);
     let names = u16::from(list_view && list.height >= 2);
@@ -80,9 +81,12 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let frame =
         u64::try_from(now.duration_since(app.started).as_millis() / 100).unwrap_or(u64::MAX);
 
-    header::draw(f, app, header, now, frame);
+    // The header names the treemap's colouring and depth while it is shown.
     app.treemap.shown = app.treemap.on && treemap::fits(area);
-    if crate::features::dupes::active(app) {
+    header::draw(f, app, header, now, frame);
+    if crate::features::largest::active(app) {
+        crate::features::largest::draw(f, app, list);
+    } else if crate::features::dupes::active(app) {
         crate::features::dupes::draw(f, app, list);
     } else if crate::features::cleanup::active(app) {
         crate::features::cleanup::draw(f, app, list);
@@ -111,6 +115,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
         Overlay::Types(_) => Some(type_filter::draw(f, app, area)),
+        Overlay::MarkPattern(_) => Some(mark_pattern::draw(f, app, area)),
     };
     motion::post_process(app, f.buffer_mut(), now);
 }

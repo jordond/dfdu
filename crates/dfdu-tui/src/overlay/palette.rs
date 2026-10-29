@@ -157,7 +157,9 @@ fn run_entry(app: &mut App, run: Run, now: Instant) -> Vec<Effect> {
         Run::Action(a) => keys::run(app, a, now),
         Run::Theme(name) => {
             if let Some(theme) = Theme::named(&name, app.color_level, app.background) {
+                let bars = app.theme.bars;
                 app.theme = theme;
+                app.theme.bars = bars;
             }
             Vec::new()
         }
@@ -400,7 +402,7 @@ mod tests {
         let style = style_at(&buf, "Library/");
         assert_eq!(style.fg, light.dir.fg);
         assert_eq!(style.bg, light.cursor.bg);
-        assert_eq!(style_at(&buf, "sort: size").fg, light.fg_dim.fg);
+        assert_eq!(style_at(&buf, "· disk").fg, light.fg_dim.fg);
         assert_ne!(light.fg_dim.fg, dark.fg_dim.fg);
     }
 

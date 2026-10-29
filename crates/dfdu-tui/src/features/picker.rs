@@ -142,7 +142,7 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
             let frac = ratio(s.used, s.total.max(1));
             if bw > 0 {
                 spans.push(Span::raw("  "));
-                spans.push(Span::styled(bar(frac, bw), t.bar_fill));
+                spans.push(Span::styled(bar(frac, bw, t.bars), t.bar_fill));
             }
             spans.push(Span::raw(format!("  {:>3.0}%", frac * 100.0)));
         }

@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/features/details/tests.rs
 expression: out
 ---
  dfdu  /r                                                                                                 done in 00:00
- 13 items · 80.6 KiB · 2 errors                                                                sort: size ↓  disk usage
+ 13 items · 80.6 KiB · 2 errors                                                              sort size ↓  ·  disk usage
         size                 share  ↔ name                                      ╭ proj/ ───────────────────────────────╮
  !  78.6 KiB  ████████████   97.6%  ↔ proj/  partly read: could not be read     │ /r/proj                              │
      2.0 KiB  ▎               2.4%    notes.txt                                 │ directory · incomplete               │

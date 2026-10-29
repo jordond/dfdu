@@ -1,13 +1,14 @@
 //! What the features read from the engine model besides the directory snapshot: the marks, the
 //! details of the selected entry, the debug counters, the treemap's lower levels, the cleanup
-//! matches and the nodes of the duplicate files. Read with every snapshot, and on its own
+//! matches, the nodes of the duplicate files and the largest files below. Read with every
+//! snapshot, and on its own
 //! (without copying the directory again) when a feature needs it sooner.
 
 use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::features::{cleanup, debug, details, treemap};
+use crate::features::{cleanup, debug, details, largest, treemap};
 use crate::state::marks;
 
 #[derive(Clone, Debug, Default)]
@@ -19,10 +20,13 @@ pub struct Extras {
     pub cleanup: cleanup::Info,
     /// The node of each file of the duplicates found, by path; `None` once a file is gone.
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
+    /// A new walk for the largest files below, when one was due.
+    pub largest: Option<largest::Info>,
 }
 
-/// Runs under the read lock; costs no walk of the directory or the tree. `counters` are the
-/// engine's own, read under the same lock ([`debug::Counters::of`]).
+/// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
+/// files below while that view is open, at most a tenth of the time ([`largest::read`]).
+/// `counters` are the engine's own, read under the same lock ([`debug::Counters::of`]).
 pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Extras {
     Extras {
         marked: marks::read(m, app),
@@ -31,6 +35,7 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
         treemap: treemap::read(m, app),
         cleanup: cleanup::read(m, app),
         dupes: crate::features::dupes::read(m, app),
+        largest: largest::read(m, app),
     }
 }
 
@@ -41,6 +46,7 @@ pub fn apply(app: &mut App, extras: Extras) {
     marks::apply(app);
     details::apply(app);
     cleanup::apply(app);
+    largest::apply(app);
 }
 
 /// What the run loop reads from the model before a frame.

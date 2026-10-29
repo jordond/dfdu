@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use dfdu_engine::{Command, Model, recommends};
+use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
 use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef, Totals, now_secs};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -209,19 +209,17 @@ fn marked_status(n: usize, size: u64) -> String {
     )
 }
 
-/// Whether `it` is marked by default.
-fn recommended(app: &App, it: &Item, now: i64) -> bool {
-    let Some(rules) = &app.snap.rules else {
-        return false;
-    };
-    recommends(
+/// Whether `it` is marked by default, and why; `None` without rules.
+fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
+    let rules = app.snap.rules.as_ref()?;
+    Some(verdict(
         rules.rule(it.class.rule),
         it.class,
         it.size,
         it.mtime,
         it.scanning,
         now,
-    )
+    ))
 }
 
 /// Marks every recommended item; returns how many were newly marked, and their size.
@@ -232,7 +230,8 @@ fn mark_recommended(app: &mut App) -> (usize, u64) {
         .cleanup
         .items
         .iter()
-        .filter(|it| recommended(app, it, now) && !is_marked(app, it))
+        .filter(|it| recommended(app, it, now).is_some_and(Verdict::recommended))
+        .filter(|it| !is_marked(app, it))
         .cloned()
         .collect();
     for it in &picks {
@@ -361,6 +360,10 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let c = &mut app.cleanup;
+    if let Some(n) = crate::app::keys::half_page(k, 10) {
+        c.cursor = c.cursor.saturating_add_signed(n).min(last);
+        return Some(Vec::new());
+    }
     match k.code {
         KeyCode::Up | KeyCode::Char('k') => c.cursor = c.cursor.saturating_sub(1),
         KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1).min(last),

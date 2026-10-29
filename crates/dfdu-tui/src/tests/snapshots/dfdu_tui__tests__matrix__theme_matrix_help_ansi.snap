@@ -4,8 +4,8 @@ expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
 L0 0-5 bold | 7-14 bold
- 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
-L1 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan | 98-99 fg=darkgray
+ 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
+L1 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan
   ┃ Navigate                                        Act                                          ┃
 L2 0-1 fg=darkgray | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan | 98-99 fg=darkgray
  ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃
@@ -16,36 +16,36 @@ L4 0-1 fg=darkgray | 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
 L5 2-2 fg=cyan | 4-7 bold | 97-97 fg=cyan
   ┃ PgDn             page down                      x      skip directories that are not         ┃
 L6 2-2 fg=cyan | 4-7 bold | 52-52 bold | 97-97 fg=cyan
- !┃ g Home           first entry                           responding                            ┃
+ !┃ Ctrl-U           half a page up                        responding                            ┃
 L7 0-1 fg=red | 2-2 fg=cyan | 4-9 bold | 97-97 fg=cyan
- ~┃ G End            last entry                     Space  mark or unmark, then move down        ┃
-L8 0-1 fg=yellow | 2-2 fg=cyan | 4-8 bold | 52-56 bold | 97-97 fg=cyan
-  ┃ → l Enter        open directory                 :      clear all marks (in the palette)      ┃
-L9 2-2 fg=cyan | 4-12 bold | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃ ← h Backspace <  parent directory               d      move to Trash                         ┃
-L10 2-2 fg=cyan | 4-18 bold | 52-52 bold | 97-97 fg=cyan
-  ┃                                                 D      delete permanently (type delete)      ┃
-L11 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
-  ┃ Sort                                            U      put back what was last moved to the   ┃
-L12 2-2 fg=cyan | 3-7 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ s  sort by size (again: reverse)                       Trash or staged                       ┃
-L13 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
-  ┃ n  sort by name (again: reverse)                                                             ┃
-L14 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
-  ┃ C  sort by items (again: reverse)               Panels                                       ┃
-L15 2-2 fg=cyan | 4-4 bold | 51-57 bold | 97-97 fg=cyan
-  ┃ M  sort by modification time (again:            /         filter this directory              ┃
-L16 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
-  ┃    reverse)                                     t         show only files of some types      ┃
-L17 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
-  ┃ S  re-sort now                                            (video, audio, .iso...)            ┃
+ ~┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
+L8 0-1 fg=yellow | 2-2 fg=cyan | 4-9 bold | 52-56 bold | 97-97 fg=cyan
+  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
+L9 2-2 fg=cyan | 4-9 bold | 52-52 fg=darkgray | 97-97 fg=cyan
+  ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
+L10 2-2 fg=cyan | 4-8 bold | 52-52 bold | 97-97 fg=cyan
+  ┃ → l Enter        open directory                        passed (v or Esc ends)                ┃
+L11 2-2 fg=cyan | 4-12 bold | 97-97 fg=cyan
+  ┃ ← h Backspace <  parent directory               :      mark by pattern: names in this        ┃
+L12 2-2 fg=cyan | 4-18 bold | 52-52 fg=darkgray | 97-97 fg=cyan
+  ┃                                                        directory matching a glob (in the     ┃
+L13 2-2 fg=cyan | 97-97 fg=cyan
+  ┃ Sort                                                   palette)                              ┃
+L14 2-2 fg=cyan | 3-7 bold | 97-97 fg=cyan
+  ┃ s  sort by size (again: reverse)                y      copy the selected path (through the   ┃
+L15 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
+  ┃ n  sort by name (again: reverse)                       terminal, OSC 52)                     ┃
+L16 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
+  ┃ C  sort by items (again: reverse)               o      open in the file manager (a file: its ┃
+L17 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
+  ┃ M  sort by modification time (again:                   folder)                               ┃
 L18 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
-  ┃                                                 i         details of the selected entry      ┃
+  ┃    reverse)                                     d      move to Trash                         ┃
 L19 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
-  ┃ Display                                         Tab       move focus between the list and    ┃
-L20 2-2 fg=cyan | 3-10 bold | 52-54 bold | 97-97 fg=cyan
- 1┃ 1  list view                                              the details                        ┃
-L21 0-1 fg=yellow | 2-2 fg=cyan | 4-4 bold | 97-97 fg=cyan
+  ┃ S  re-sort now                                  D      delete permanently (type delete)      ┃
+L20 2-2 fg=cyan | 4-4 bold | 52-52 bold | 97-97 fg=cyan
+ 1┃                                                 U      put back what was last moved to the   ┃
+L21 0-1 fg=yellow | 2-2 fg=cyan | 52-52 bold | 97-97 fg=cyan
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=darkgray | 2-88 fg=cyan | 89-96 fg=darkgray | 97-97 fg=cyan
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

@@ -239,45 +239,97 @@ fn recommended_items() {
         ..base.clone()
     };
     let gib = 1 << 30;
+    let v = |it: Item| recommended(&app, &it, now).expect("rules");
     // Safe above its minimum (50 MiB), quiet for a week.
-    assert!(recommended(
-        &app,
-        &it("generic.cachedir-tag", Safety::Safe, gib, 8, 0),
-        now
-    ));
-    assert!(!recommended(
-        &app,
-        &it("generic.cachedir-tag", Safety::Safe, 1 << 20, 8, 0),
-        now
-    ));
-    assert!(!recommended(
-        &app,
-        &it("generic.cachedir-tag", Safety::Safe, gib, 2, 0),
-        now
-    ));
+    assert_eq!(
+        v(it("generic.cachedir-tag", Safety::Safe, gib, 8, 0)),
+        Verdict::Safe
+    );
+    assert_eq!(
+        v(it("generic.cachedir-tag", Safety::Safe, 1 << 20, 8, 0)),
+        Verdict::Below(50 << 20)
+    );
+    assert_eq!(
+        v(it("generic.cachedir-tag", Safety::Safe, gib, 2, 0)),
+        Verdict::Newer(7)
+    );
     // Regenerable only when stale (the Rust rule: 14 days).
-    assert!(recommended(
-        &app,
-        &it("rust.target", Safety::Regenerable, gib, 15, 0),
-        now
-    ));
-    assert!(!recommended(
-        &app,
-        &it("rust.target", Safety::Regenerable, gib, 10, 0),
-        now
-    ));
+    assert_eq!(
+        v(it("rust.target", Safety::Regenerable, gib, 15, 0)),
+        Verdict::Stale(14)
+    );
+    assert_eq!(
+        v(it("rust.target", Safety::Regenerable, gib, 10, 0)),
+        Verdict::Newer(14)
+    );
     // Never review, nothing in use or tracked by git.
-    assert!(!recommended(
-        &app,
-        &it("rust.target", Safety::Review, gib, 99, 0),
-        now
-    ));
+    assert_eq!(
+        v(it("rust.target", Safety::Review, gib, 99, 0)),
+        Verdict::Level(Safety::Review)
+    );
     let in_use = Class::IN_USE;
-    assert!(!recommended(
-        &app,
-        &it("rust.target", Safety::Regenerable, gib, 99, in_use),
-        now
-    ));
+    assert_eq!(
+        v(it("rust.target", Safety::Regenerable, gib, 99, in_use)),
+        Verdict::InUse
+    );
+    assert!(Verdict::Safe.recommended() && Verdict::Stale(14).recommended());
+    assert!(!Verdict::Newer(7).recommended());
+}
+
+/// Each item row says why it is or is not recommended, and the space under the rows explains
+/// the selected item's rule instead of repeating the keys.
+#[test]
+fn rows_say_why_and_the_rule_is_explained_below() {
+    let fx = with_recommended();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    for row in rows(&app) {
+        if let Row::Group { cat, safety } = row {
+            app.cleanup.open.insert((cat, safety));
+        }
+    }
+    let frame = render(&mut app, t0, 100, 24);
+    assert!(!frame.contains("Enter opens a group"), "{frame}");
+    let row = |frame: &str, path: &str| {
+        frame
+            .lines()
+            .find(|l| l.contains(path))
+            .unwrap_or_else(|| panic!("{path}: {frame}"))
+            .trim_end()
+            .to_owned()
+    };
+    assert!(
+        row(&frame, "/r/old-cache").ends_with("recommended"),
+        "{frame}"
+    );
+    // `m0` and `big` are below their rules' minimum sizes.
+    assert!(
+        row(&frame, "/r/mid/m0").ends_with("below 50.0 MiB"),
+        "{frame}"
+    );
+    assert!(
+        row(&frame, "/r/big").ends_with("below 100.0 MiB"),
+        "{frame}"
+    );
+    insta::assert_snapshot!("cleanup_notes_100x24", frame);
+
+    // On an item, its rule and the reason in full, one line under the last row.
+    let items = app.extras.cleanup.items.clone();
+    let at = items
+        .iter()
+        .position(|it| it.path.ends_with("old-cache"))
+        .unwrap();
+    app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
+    let frame = render(&mut app, t0, 100, 24);
+    let rules = app.snap.rules.clone().unwrap();
+    let name = &rules.rule(items[at].class.rule).name;
+    let lines: Vec<&str> = frame.lines().collect();
+    let last = lines.iter().rposition(|l| l.contains("/r/")).unwrap();
+    assert!(lines[last + 2].contains(name.as_str()), "{frame}");
+    assert!(frame.contains("Recommended: safe to delete."), "{frame}");
 }
 
 #[test]
@@ -433,4 +485,25 @@ fn marking_a_container_marks_its_rest() {
     app.cleanup.cursor -= 1;
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(app.marks.is_empty());
+}
+
+#[test]
+fn half_pages_move_the_cursor() {
+    let fx = classified();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    let ctrl = |c| {
+        KeyEvent::new(
+            KeyCode::Char(c),
+            ratatui::crossterm::event::KeyModifiers::CONTROL,
+        )
+    };
+    let last = rows(&app).len() - 1;
+    app.key(ctrl('d'), t0);
+    assert_eq!(app.cleanup.cursor, last.min(5));
+    app.key(ctrl('u'), t0);
+    assert_eq!(app.cleanup.cursor, 0);
 }

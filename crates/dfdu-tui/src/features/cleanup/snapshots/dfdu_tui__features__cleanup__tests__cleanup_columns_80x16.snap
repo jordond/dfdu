@@ -3,18 +3,18 @@ source: crates/dfdu-tui/src/features/cleanup/tests.rs
 expression: frame
 ---
  dfdu  /r                                                         done in 00:00
- 12 items · 95.7 KiB                                   sort: size ↓  disk usage
+ 12 items · 95.7 KiB                                              size ↓ · disk
  reclaimable  safe 0 B   regenerable 117.2 KiB   review 58.6 KiB   manual 0 B
  ▾ Project dependencies  regenerable  58.6 KiB  1 item
-      58.6 KiB       6     3 d  /r/web/node_modules
+      58.6 KiB       6     3 d  /r/web/node_modules  newer than 30 d
  ▾ Project build output  regenerable  58.6 KiB  1 item
-      58.6 KiB       6     3 d  /r/target
+      58.6 KiB       6     3 d  /r/target  newer than 14 d
  ▾ Project dependencies  review       58.6 KiB  1 item
-      58.6 KiB       6     3 d  /r/clients/northwind-traders/…ntend/node_modules
+      58.6 KiB       6     3 d  /r/clients/northwind-t…d/node_modules  in review
 
- Enter opens a group · Space marks · a marks the recommended · f filters by
-safety
-
-
+ Node.js dependencies (node_modules)  regenerable
+ Installed packages for a JavaScript project. Reinstall with npm ci, pnpm
+install, yarn or bun install.
+ Lost: Installed packages; reinstalling needs network access unless the package
 
  ↑↓ move  Enter open  Space mark  d trash marked  1 list  ? help  q quit

@@ -113,11 +113,25 @@ fn offered_now(app: &App) -> Vec<Hint> {
             quit,
         ];
     }
+    if crate::features::largest::active(app) {
+        return vec![
+            hint(arrows, "move", 3),
+            hint("Enter", "go to", 2),
+            hint(first_key(Action::ToggleMark), "mark", 1),
+            hint(first_key(Action::CopyPath), "copy path", 5),
+            hint(first_key(Action::OpenPath), "open", 6),
+            hint(first_key(Action::Trash), "trash marked", 0),
+            hint(first_key(Action::ViewList), "list", 3),
+            help,
+            quit,
+        ];
+    }
     if crate::features::dupes::active(app) {
         return vec![
             hint(arrows.clone(), "move", 3),
             hint(first_key(Action::ToggleMark), "mark", 1),
             hint("a", "all copies", 2),
+            hint(first_key(Action::DupesKeep), "keep rule", 6),
             hint("Enter", "go to", 4),
             hint("r", "compare again", 5),
             hint(first_key(Action::Trash), "trash marked", 0),
@@ -208,6 +222,9 @@ fn overlay_hints(overlay: &Overlay, arrows: &str) -> Option<Vec<Hint>> {
                 hint("Enter", "done", 0),
                 hint("Esc", "close", 0),
             ]
+        }
+        Overlay::MarkPattern(_) => {
+            vec![hint("Enter", "mark", 0), hint("Esc", "cancel", 0)]
         }
     })
 }

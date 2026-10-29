@@ -125,6 +125,11 @@ impl Filter {
         self.active
     }
 
+    /// The query in force, for the header while the filter is kept.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
     /// Whether entry `index` (`e`) passes the filter; a lookup into what [`Filter::prepare`]
     /// computed.
     pub fn matches(&self, index: usize, _e: &EntryData) -> bool {
@@ -148,7 +153,8 @@ pub fn editing(app: &App) -> bool {
 }
 
 /// A key while editing: typing filters at once, `Enter` keeps the filter and gives the keys
-/// back to the list, `Esc` clears it, `↑`/`↓` move the cursor in the list.
+/// back to the list (and opens the only entry left, when that is a directory, as nnn does),
+/// `Esc` clears it, `↑`/`↓` move the cursor in the list.
 pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
     match k.code {
         KeyCode::Up => app.move_by(-1),
@@ -159,6 +165,12 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
                 app.filter.editing = false;
                 if app.filter.input.text().trim().is_empty() {
                     clear(app);
+                } else if let [only] = app.rows[..]
+                    && app.snap.entries[only].is_dir
+                    && !app.snap.entries[only].pseudo
+                {
+                    app.select(0);
+                    return crate::app::keys::run(app, crate::app::keys::Action::Open, now);
                 }
             }
             Edit::Cancel => {

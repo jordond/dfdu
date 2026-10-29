@@ -3,8 +3,7 @@ source: crates/dfdu-tui/src/features/treemap/tests.rs
 expression: "render(&mut app, t0, 100, 30)"
 ---
  dfdu  /r                                                                             done in 00:00
- 12 items · 95.7 KiB                                                       sort: size ↓  disk usage
- colour: top folder   p colour  depth 2 (+ -)
+ 12 items · 95.7 KiB                                           size ↓ · disk · top folder · depth 2
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌─────────────────────────────────────┐
 ┃ big/  58.6 KiB  61%                                       ┃│ mid/  24.4 KiB  25%                 │
 ┃┌─────────────────────────────────────┐┌──────────────────┐┃│┌────────────────┐┌─────────────────┐│
@@ -27,8 +26,9 @@ expression: "render(&mut app, t0, 100, 30)"
 ┃│                                     ││                  │┃│                         ││          │
 ┃│                                     ││                  │┃│                         ││          │
 ┃│                                     ││                  │┃│                         ││          │
+┃│                                     ││                  │┃│                         ││          │
 ┃└─────────────────────────────────────┘└──────────────────┘┃│                         ││          │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└─────────────────────────┘└──────────┘
- ▶ big/  58.6 KiB  61.2%  ·  6 items
+ ▶ big/  58.6 KiB  61.2%  ·  6 items                                                            1/4
 
  ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  p colour  d trash  1 list  ? help  q quit

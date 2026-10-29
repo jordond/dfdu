@@ -4,8 +4,8 @@ expression: styled(&buf)
 ---
  dfdu  /r                                                      ⠋ scanning 00:00
 L0 0-5 bold | 7-8 bold
- 8 items · 250.9 GiB                                   sort: size ↓  disk usage
-L1 55-79 fg=darkgray
+ 8 items · 250.9 GiB                                              size ↓ · disk
+L1 72-74 fg=darkgray
         size                     share  name
 L2 0-79 fg=darkgray
    112.0 GiB  ████████████████   44.6%  Library/

@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/features/treemap/tests.rs
 expression: frame
 ---
  dfdu  /r                                                                                                 done in 00:00
- 12 items · 95.7 KiB                                                                           sort: size ↓  disk usage
+ 12 items · 95.7 KiB                                                                         sort size ↓  ·  disk usage
         size                 share         name                                 ╭ big/ ────────────────────────────────╮
     58.6 KiB  ████████████   61.2%  build  big/                                 │ /r/big                               │
     24.4 KiB  █████          25.5%         mid/                                 │ directory · complete                 │

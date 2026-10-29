@@ -5,14 +5,20 @@
 use std::time::Instant;
 
 use dfdu_engine::{Command, Mode, SizeMode};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Effect, Overlay};
-use crate::features::{debug, details, treemap};
-use crate::model::snapshot::Mark;
-use crate::overlay::{confirm, help, palette, type_filter};
-use crate::state::order::{SortKey, SortSpec};
+use crate::features::{debug, details, largest, selected_path, treemap};
+use crate::overlay::{confirm, help, mark_pattern, palette, type_filter};
+use crate::state::order::SortKey;
 use crate::state::{filter, marks};
+
+mod act;
+mod lookup;
+
+use act::{enter_mount, sort_by, toggle_size};
+#[cfg(test)]
+use lookup::parse;
+pub use lookup::{action_for, first_key, half_page, offered};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -21,6 +27,8 @@ pub enum Action {
     Down,
     PageUp,
     PageDown,
+    HalfPageUp,
+    HalfPageDown,
     First,
     Last,
     Open,
@@ -45,6 +53,10 @@ pub enum Action {
     Close,
     ToggleMark,
     ClearMarks,
+    RangeMark,
+    MarkPattern,
+    CopyPath,
+    OpenPath,
     Filter,
     Types,
     Details,
@@ -55,6 +67,8 @@ pub enum Action {
     ViewTreemap,
     ViewCleanup,
     ViewDupes,
+    ViewLargest,
+    DupesKeep,
     TreemapDeeper,
     TreemapShallower,
     TreemapColor,
@@ -64,6 +78,21 @@ impl Action {
     /// Deletes, or puts back what was deleted: left out of a read-only browser.
     pub fn deletes(self) -> bool {
         matches!(self, Action::Trash | Action::DeletePermanent | Action::Undo)
+    }
+
+    /// Moves the cursor of the list: a range mark ([`marks::range`]) marks the rows it passes.
+    pub fn moves(self) -> bool {
+        matches!(
+            self,
+            Action::Up
+                | Action::Down
+                | Action::PageUp
+                | Action::PageDown
+                | Action::HalfPageUp
+                | Action::HalfPageDown
+                | Action::First
+                | Action::Last
+        )
     }
 }
 
@@ -104,6 +133,18 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(Action::Down, "↓ j", "move down", Group::Navigate),
     row(Action::PageUp, "PgUp", "page up", Group::Navigate),
     row(Action::PageDown, "PgDn", "page down", Group::Navigate),
+    row(
+        Action::HalfPageUp,
+        "Ctrl-U",
+        "half a page up",
+        Group::Navigate,
+    ),
+    row(
+        Action::HalfPageDown,
+        "Ctrl-D",
+        "half a page down",
+        Group::Navigate,
+    ),
     row(Action::First, "g Home", "first entry", Group::Navigate),
     row(Action::Last, "G End", "last entry", Group::Navigate),
     row(Action::Open, "→ l Enter", "open directory", Group::Navigate),
@@ -150,6 +191,18 @@ pub const ACTIONS: &[ActionInfo] = &[
         Action::ViewDupes,
         "4",
         "duplicate files (compares the scanned files)",
+        Group::Display,
+    ),
+    row(
+        Action::ViewLargest,
+        "5",
+        "largest files anywhere below this directory",
+        Group::Display,
+    ),
+    row(
+        Action::DupesKeep,
+        "K",
+        "duplicates: change which copy is kept",
         Group::Display,
     ),
     row(
@@ -219,6 +272,30 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Act,
     ),
     row(Action::ClearMarks, "", "clear all marks", Group::Act),
+    row(
+        Action::RangeMark,
+        "v",
+        "mark a range: moving marks every row passed (v or Esc ends)",
+        Group::Act,
+    ),
+    row(
+        Action::MarkPattern,
+        "",
+        "mark by pattern: names in this directory matching a glob",
+        Group::Act,
+    ),
+    row(
+        Action::CopyPath,
+        "y",
+        "copy the selected path (through the terminal, OSC 52)",
+        Group::Act,
+    ),
+    row(
+        Action::OpenPath,
+        "o",
+        "open in the file manager (a file: its folder)",
+        Group::Act,
+    ),
     row(Action::Trash, "d", "move to Trash", Group::Act),
     row(
         Action::DeletePermanent,
@@ -274,78 +351,6 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(Action::Quit, "q Ctrl-C", "quit", Group::Global),
 ];
 
-/// One key of [`ActionInfo::keys`]: the key code and whether it needs Ctrl.
-fn parse(key: &str) -> Option<(KeyCode, bool)> {
-    let mut chars = key.chars();
-    if let (Some(c), None) = (chars.next(), chars.next()) {
-        return Some(match c {
-            '↑' => (KeyCode::Up, false),
-            '↓' => (KeyCode::Down, false),
-            '←' => (KeyCode::Left, false),
-            '→' => (KeyCode::Right, false),
-            c => (KeyCode::Char(c), false),
-        });
-    }
-    let code = match key {
-        "PgUp" => KeyCode::PageUp,
-        "PgDn" => KeyCode::PageDown,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        "Enter" => KeyCode::Enter,
-        "Backspace" => KeyCode::Backspace,
-        "Esc" => KeyCode::Esc,
-        "Tab" => KeyCode::Tab,
-        "Space" => KeyCode::Char(' '),
-        _ => {
-            if let Some(n) = key.strip_prefix('F').and_then(|n| n.parse().ok()) {
-                return Some((KeyCode::F(n), false));
-            }
-            let mut c = key.strip_prefix("Ctrl-")?.chars();
-            return match (c.next(), c.next()) {
-                (Some(c), None) => Some((KeyCode::Char(c.to_ascii_lowercase()), true)),
-                _ => None,
-            };
-        }
-    };
-    Some((code, false))
-}
-
-/// The actions of [`ACTIONS`] the browser offers: all of them, less those that delete when it is
-/// `read_only`.
-pub fn offered(read_only: bool) -> impl Iterator<Item = &'static ActionInfo> {
-    ACTIONS
-        .iter()
-        .filter(move |info| !(read_only && info.action.deletes()))
-}
-
-/// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
-pub fn first_key(a: Action) -> &'static str {
-    ACTIONS
-        .iter()
-        .find(|info| info.action == a)
-        .and_then(|info| info.keys.split_whitespace().next())
-        .unwrap_or("")
-}
-
-/// The action bound to `k`. A `Ctrl-` binding needs Ctrl; any other binding matches its key
-/// whatever the modifiers.
-pub fn action_for(k: &KeyEvent) -> Option<Action> {
-    let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-    let bound = |want_ctrl: bool| {
-        ACTIONS.iter().find_map(|info| {
-            info.keys
-                .split_whitespace()
-                .filter_map(parse)
-                .any(|(code, needs_ctrl)| code == k.code && needs_ctrl == want_ctrl)
-                .then_some(info.action)
-        })
-    };
-    if ctrl && let Some(a) = bound(true) {
-        return Some(a);
-    }
-    bound(false)
-}
-
 /// Carries out `a` on the list (no overlay open) and returns the effects for the run loop. In a
 /// read-only browser an action that deletes only says so.
 pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
@@ -355,12 +360,21 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         return fx;
     }
     let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
+    let before = app.selected_index();
+    if matches!(
+        a,
+        Action::ViewList | Action::ViewTreemap | Action::ViewCleanup | Action::ViewDupes
+    ) {
+        largest::show(app, false);
+    }
     match a {
         Action::Quit => app.quit = true,
         Action::Up => app.move_by(-1),
         Action::Down => app.move_by(1),
         Action::PageUp => app.move_by(-page),
         Action::PageDown => app.move_by(page),
+        Action::HalfPageUp => app.move_by(-(page / 2).max(1)),
+        Action::HalfPageDown => app.move_by((page / 2).max(1)),
         Action::First => app.move_to(0),
         Action::Last => app.move_to(app.rows.len().saturating_sub(1)),
         Action::Open => {
@@ -418,12 +432,16 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
         Action::Close => {
-            if !filter::clear(app) && !type_filter::clear(app) {
+            if !marks::range::end(app) && !filter::clear(app) && !type_filter::clear(app) {
                 app.overlay = Overlay::None;
             }
         }
         Action::ToggleMark => marks::toggle(app),
         Action::ClearMarks => marks::clear(app),
+        Action::RangeMark => marks::range::toggle(app),
+        Action::MarkPattern => mark_pattern::open(app),
+        Action::CopyPath => fx.extend(selected_path::copy(app)),
+        Action::OpenPath => fx.extend(selected_path::open(app)),
         Action::Filter => filter::open(app),
         Action::Types => type_filter::open(app),
         Action::Details => details::toggle(app),
@@ -445,50 +463,16 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
             fx.extend(crate::features::cleanup::show(app, true));
         }
         Action::ViewDupes => fx.extend(crate::features::dupes::show(app, true)),
+        Action::ViewLargest => largest::show(app, true),
+        Action::DupesKeep => crate::features::dupes::cycle_keep(app),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
         Action::TreemapColor => treemap::cycle_color(app),
     }
-    fx
-}
-
-/// A sort key: the key's default direction, or the other direction if it is already in use.
-fn sort_by(app: &mut App, key: SortKey) {
-    app.sort = if app.sort.key == key {
-        SortSpec {
-            key,
-            desc: !app.sort.desc,
-        }
-    } else {
-        SortSpec::for_key(key)
-    };
-    app.request_sort();
-}
-
-/// Switches to `mode`, or back to disk usage if `mode` is shown already.
-/// Asks the engine to scan into the selected mount the scan stayed out of.
-fn enter_mount(app: &mut App) -> Option<Effect> {
-    match app.selected_entry() {
-        Some(e) if matches!(e.mark, Mark::OtherFs | Mark::Network) => {
-            let name = String::from_utf8_lossy(&e.name).into_owned();
-            let node = e.node;
-            app.status = Some(format!("scanning {name}/ on its own filesystem…"));
-            Some(Effect::Send(Command::Enter { node }))
-        }
-        _ => {
-            app.status = Some("m scans a mount the scan stayed out of; select one first".into());
-            None
-        }
+    if a.moves() {
+        marks::range::follow(app, before);
     }
-}
-
-fn toggle_size(app: &mut App, mode: SizeMode) {
-    app.size_mode = if app.size_mode == mode {
-        SizeMode::Disk
-    } else {
-        mode
-    };
-    app.request_sort();
+    fx
 }
 
 #[cfg(test)]

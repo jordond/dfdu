@@ -3,7 +3,7 @@ source: crates/dfdu-tui/src/features/debug.rs
 expression: out
 ---
  dfdu                                                                              ⠋ scanning 00:00
- 0 items · 0 B                                                             sort: size ↓  disk usage
+ 0 items · 0 B                                                                        size ↓ · disk
         size                     share   items  name╭ Debug ───────────────────────────────────────╮
   (empty)                                           │ sent 1.2M  received 1.2M  pending 310        │
                                                     │ chunks 12.0k  closes 9.8k  entries 1.9M      │

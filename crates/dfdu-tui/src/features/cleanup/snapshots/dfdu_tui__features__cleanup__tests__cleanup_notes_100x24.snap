@@ -1,0 +1,28 @@
+---
+source: crates/dfdu-tui/src/features/cleanup/tests.rs
+expression: frame
+---
+ dfdu  /r                                                                             done in 00:00
+ 13 items · 1.0 GiB                                                                   size ↓ · disk
+ reclaimable  safe 1.0 GiB   regenerable 58.6 KiB   review 0 B   manual 0 B
+ ▾ OS and user caches    safe          1.0 GiB  2 items, 1 marked
+  ●    1.0 GiB       1  20755 d  /r/old-cache  recommended
+      11.7 KiB       1  20755 d  /r/mid/m0  below 50.0 MiB
+ ▾ Project build output  regenerable  58.6 KiB  1 item
+      58.6 KiB       6  20755 d  /r/big  below 100.0 MiB
+
+ Tagged cache directory  safe
+ The directory holds a valid CACHEDIR.TAG (bford.info/cachedir), which marks its whole subtree as
+cache.
+ Lost: Cached data; the owning program recreates it.
+
+
+
+
+
+
+
+
+
+ marked 1 recommended item (1.0 GiB) · Space unmarks                           ● 1 marked (1.0 GiB)
+ ↑↓ move  Enter open  Space mark  a recommended  n command  d trash marked  1 list  ? help  q quit

@@ -28,6 +28,10 @@ dfdu detects how many colours your terminal supports. To override it, pass `--co
 
 If `NO_COLOR` is set, dfdu uses no colours (the `mono` theme) unless you pass `--color`.
 
+### Bars
+
+Size bars use eighth-block characters (`█▌`). If your terminal or font has no block characters, pass `--bars ascii`: bars are drawn with `#`, and treemap tiles are framed with `=`, `|` and `+`. A theme file can set the same with `bars = "ascii"`; `--bars` overrides it. Every built-in theme, `mono` included, uses `unicode`.
+
 ## Writing a theme
 
 A theme is a TOML file in the `dfdu/themes` folder of your configuration directory:
@@ -48,6 +52,7 @@ A theme starts from one of the built-in themes and changes only the colours you 
 ```toml
 name = "nord"            # shown in the command palette; defaults to the file name
 base = "dark"            # built-in theme to start from; defaults to dark
+bars = "unicode"         # or "ascii"; defaults to unicode
 
 [tokens]
 fg             = "#d8dee9"

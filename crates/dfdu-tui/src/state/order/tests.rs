@@ -260,3 +260,70 @@ fn integer_keys_match_the_plain_comparison() {
         }
     }
 }
+
+#[test]
+fn sort_top_sorts_the_first_rows_and_keeps_the_rest_in_place() {
+    let mut es = vec![
+        test_entry(0, "a", 500),
+        test_entry(1, "b", 400),
+        test_entry(2, "c", 300),
+        test_entry(3, "d", 200),
+    ];
+    let mut o = Order::default();
+    o.sort_exact(&es, all, SortSpec::default());
+    // d grows past everything and two entries arrive, one large and one small.
+    es[3].size = 2000;
+    es.push(test_entry(4, "x", 1000));
+    es.push(test_entry(5, "y", 1));
+    o.sort_top(&es, all, SortSpec::default(), 2);
+    // The first two rows are the two largest; the others keep their order after them, and the
+    // small new entry waits for a sort.
+    assert_eq!(names(&o, &es), ["d", "x", "a", "b", "c"]);
+    assert_eq!(o.new_entries(), [5]);
+    // c passes d by less than 2%: as in an automatic sort, d stays first.
+    es[2].size = 2005;
+    assert_eq!(bucket(es[2].size), bucket(es[3].size));
+    o.sort_top(&es, all, SortSpec::default(), 2);
+    assert_eq!(names(&o, &es), ["d", "c", "x", "a", "b"]);
+}
+
+/// The first rows of [`Order::sort_top`] are those of an automatic sort, for every key, with
+/// names that share long prefixes and equal sizes; the other rows and new entries keep their
+/// order.
+#[test]
+fn sort_top_matches_the_automatic_sort() {
+    let es = ties(60);
+    let n = es.len();
+    // Rows in a scrambled order, a few new entries, and some not seen yet.
+    let rows: Vec<usize> = (0..n).filter(|i| i % 5 != 0).rev().collect();
+    let new: Vec<usize> = (0..n).filter(|i| i % 10 == 0).collect();
+    let listed = |o: &Order| -> Vec<usize> { o.rows.iter().chain(&o.new).copied().collect() };
+    for key in [SortKey::Size, SortKey::Name, SortKey::Items, SortKey::Mtime] {
+        for desc in [false, true] {
+            let spec = SortSpec { key, desc };
+            for height in [0, 1, 2, 7, 20, n, n + 5] {
+                let order = || Order {
+                    rows: rows.clone(),
+                    new: new.clone(),
+                    base: Base::None,
+                };
+                let mut auto = order();
+                auto.sync(&es, all, spec);
+                let before = listed(&auto);
+                auto.sort_auto(&es, all, spec);
+                let mut top = order();
+                top.sort_top(&es, all, spec, height);
+                let h = height.min(n);
+                let what = format!("{spec:?} height {height}");
+                assert_eq!(top.rows[..h], auto.rows[..h], "{what}");
+                let picked = &top.rows[..h];
+                let rest: Vec<usize> = before
+                    .iter()
+                    .copied()
+                    .filter(|i| !picked.contains(i))
+                    .collect();
+                assert_eq!(listed(&top)[h..], rest[..], "{what}");
+            }
+        }
+    }
+}

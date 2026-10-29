@@ -3,7 +3,8 @@
 //! The order is rebuilt only when asked: an exact sort on entering a directory, on a sort key
 //! or on `S`, and an automatic sort after the user has been idle. Between sorts, rows keep
 //! their positions, entries that disappeared are dropped, and entries that appeared are
-//! collected as "new" and shown after the sorted rows.
+//! collected as "new" and shown after the sorted rows. While the cursor is at the top, the
+//! first screen of rows is kept sorted with each snapshot ([`Order::sort_top`]).
 
 use std::cmp::Ordering;
 
@@ -254,19 +255,75 @@ impl Order {
             }
         }
     }
+
+    /// Updates the order as [`Order::sync`] does, then sorts its first `height` rows: they become
+    /// the `height` rows an automatic sort would put first, in its order, picked from the rows
+    /// and the new entries. The other rows keep their order after them, and the other new
+    /// entries stay new.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "positions are rows of one directory, fewer than 2^32"
+    )]
+    pub fn sort_top(
+        &mut self,
+        entries: &[EntryData],
+        visible: impl Fn(usize, &EntryData) -> bool,
+        spec: SortSpec,
+        height: usize,
+    ) {
+        self.sync(entries, visible, spec);
+        if height == 0 {
+            return;
+        }
+        let mut prev = vec![u32::MAX; entries.len()];
+        for (pos, &i) in self.rows.iter().chain(self.new.iter()).enumerate() {
+            prev[i] = pos as u32;
+        }
+        let candidates = self.rows.iter().chain(self.new.iter()).copied();
+        let top = ranked(entries, candidates, spec, &prev, height);
+        // `prev` is done with: mark the rows that went to the top.
+        for &i in &top {
+            prev[i] = u32::MAX;
+        }
+        let rest: Vec<usize> = self
+            .rows
+            .iter()
+            .copied()
+            .filter(|&i| prev[i] != u32::MAX)
+            .collect();
+        self.new.retain(|&i| prev[i] != u32::MAX);
+        self.rows = top;
+        self.rows.extend(rest);
+    }
 }
 
 /// The entries `visible` passes, sorted by `spec`. `prev[i]`: the position of entry `i` before
 /// an automatic sort, used as a tie-break (missing: after all others); empty for an exact sort.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "keys hold entry indices in u32 to stay small; a directory has fewer than 2^32 entries"
-)]
 fn sorted(
     entries: &[EntryData],
     visible: impl Fn(usize, &EntryData) -> bool,
     spec: SortSpec,
     prev: &[u32],
+) -> Vec<usize> {
+    let shown = entries
+        .iter()
+        .enumerate()
+        .filter(|&(i, e)| visible(i, e))
+        .map(|(i, _)| i);
+    ranked(entries, shown, spec, prev, usize::MAX)
+}
+
+/// The first `limit` of the entries `indices`, in the order [`sorted`] gives them.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "keys hold entry indices in u32 to stay small; a directory has fewer than 2^32 entries"
+)]
+fn ranked(
+    entries: &[EntryData],
+    indices: impl Iterator<Item = usize>,
+    spec: SortSpec,
+    prev: &[u32],
+    limit: usize,
 ) -> Vec<usize> {
     let quantise = !prev.is_empty();
     let value = |e: &EntryData| -> i64 {
@@ -292,18 +349,17 @@ fn sorted(
         };
         if spec.desc { !k } else { k }
     };
-    let mut keys: Vec<Key> = entries
-        .iter()
-        .enumerate()
-        .filter(|&(i, e)| visible(i, e))
-        .map(|(i, e)| Key {
-            first: first(e),
-            prev: prev.get(i).copied().unwrap_or(u32::MAX),
-            prefix: name_prefix(&e.name),
-            index: i as u32,
+    let mut keys: Vec<Key> = indices
+        .map(|i| {
+            let e = &entries[i];
+            Key {
+                first: first(e),
+                prev: prev.get(i).copied().unwrap_or(u32::MAX),
+                prefix: name_prefix(&e.name),
+                index: i as u32,
+            }
         })
         .collect();
-    keys.sort_unstable();
     let name = |k: &Key| &entries[k.index as usize].name[..];
     let exact = |a: &Key, b: &Key| {
         let by_name = || {
@@ -329,6 +385,26 @@ fn sorted(
         SortKey::Name => a.first == b.first,
         _ => (a.first, a.prev, a.prefix) == (b.first, b.prev, b.prefix),
     };
+    if keys.len() > limit {
+        if limit == 0 {
+            return Vec::new();
+        }
+        // Only the first `limit` are wanted: split the keys at the last of them, and keep with
+        // the first part the keys that the integer key cannot tell from it, since the full
+        // comparison below may put them first.
+        keys.select_nth_unstable(limit - 1);
+        let (head, tail) = keys.split_at_mut(limit);
+        let edge = &head[limit - 1];
+        let mut n = 0;
+        for j in 0..tail.len() {
+            if undecided(edge, &tail[j]) {
+                tail.swap(n, j);
+                n += 1;
+            }
+        }
+        keys.truncate(limit + n);
+    }
+    keys.sort_unstable();
     let mut i = 0;
     while i < keys.len() {
         let mut j = i + 1;
@@ -340,6 +416,7 @@ fn sorted(
         }
         i = j;
     }
+    keys.truncate(limit);
     keys.into_iter().map(|k| k.index as usize).collect()
 }
 

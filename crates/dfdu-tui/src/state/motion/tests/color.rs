@@ -140,7 +140,7 @@ fn flash_colors_only_at_truecolor() {
         let later = render_buffer(&mut app, t1 + FLASH, W, H);
         let reversed =
             |buf: &Buffer, row| style_at(buf, row).add_modifier.contains(Modifier::REVERSED);
-        let (during, after) = (style_at(&buf, "a  ↓1"), style_at(&later, "a  ↓1"));
+        let (during, after) = (style_at(&buf, "300 B"), style_at(&later, "300 B"));
         if truecolor {
             assert!(
                 matches!(during.bg, Some(Color::Rgb(..))),
@@ -148,10 +148,10 @@ fn flash_colors_only_at_truecolor() {
             );
             assert_ne!(during.bg, after.bg, "{name}");
         } else {
-            assert_ne!(reversed(&buf, "a  ↓1"), reversed(&later, "a  ↓1"), "{name}");
+            assert_ne!(reversed(&buf, "300 B"), reversed(&later, "300 B"), "{name}");
             // The selected row keeps its highlight through the flash.
-            assert_eq!(reversed(&buf, "c  ↑2"), highlight, "{name}");
-            assert_eq!(reversed(&later, "c  ↑2"), highlight, "{name}");
+            assert_eq!(reversed(&buf, "1000 B"), highlight, "{name}");
+            assert_eq!(reversed(&later, "1000 B"), highlight, "{name}");
         }
     }
 }

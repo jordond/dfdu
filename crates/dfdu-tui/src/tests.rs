@@ -14,6 +14,7 @@ pub(crate) mod caches;
 mod columns;
 mod frames;
 mod matrix;
+mod navigation;
 mod read_only;
 mod soak;
 
