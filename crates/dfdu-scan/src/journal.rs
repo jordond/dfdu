@@ -2,11 +2,43 @@
 //! the USN journal on Windows, btrfs generations on Linux as root),
 //! so a resume rescans only those (the engine's `Command::Resume`).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use crate::sync::Mutex;
 
 /// How long the `FSEvents` daemon may take to replay its history.
 #[cfg(target_os = "macos")]
 const REPLAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Where macOS mounts the Data volume, which the firmlinks of the system volume join.
+#[cfg(any(target_os = "macos", test))]
+const DATA_VOLUME: &str = "/System/Volumes/Data";
+
+/// Directories a resume keeps from the tree it loaded, by device and inode
+/// ([`JobOptions::keep`](crate::JobOptions::keep)): the journal says their entries did not
+/// change, so a scan that meets one does not read it but reports it skipped as
+/// [`SkipReason::Kept`](crate::SkipReason::Kept), at most once, and the applier puts the
+/// loaded subtree in its place.
+pub struct Keep(Mutex<HashSet<(u64, u64)>>);
+
+impl Keep {
+    #[must_use]
+    pub fn new(dirs: impl IntoIterator<Item = (u64, u64)>) -> Keep {
+        Keep(Mutex::new(dirs.into_iter().collect()))
+    }
+
+    /// Whether directory `(dev, ino)` is kept; true for the first scan of it to ask only.
+    pub fn take(&self, dev: u64, ino: u64) -> bool {
+        self.0.lock().remove(&(dev, ino))
+    }
+}
+
+impl std::fmt::Debug for Keep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keep")
+    }
+}
 
 /// A position in a volume's change journal (`FSEvents` on macOS, the USN journal on Windows,
 /// a btrfs subvolume's generation on Linux), and when it was read.
@@ -48,10 +80,22 @@ pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
         if c.full {
             return None;
         }
+        // Events name what is in the Data volume by its firmlinked paths (`/Users/me`), the
+        // stream watching either form: both sides are compared in the Data volume's form,
+        // which is where a tree of `/` has them.
+        let links = std::fs::read_to_string("/usr/share/firmlinks")
+            .map(|t| firmlinks(&t))
+            .unwrap_or_default();
+        let real = through_firmlinks(&root, &links);
         Some(
             c.dirs
                 .iter()
-                .filter_map(|d| d.strip_prefix(&root).ok().map(Path::to_path_buf))
+                .filter_map(|d| {
+                    through_firmlinks(d, &links)
+                        .strip_prefix(&real)
+                        .ok()
+                        .map(Path::to_path_buf)
+                })
                 .collect(),
         )
     }
@@ -70,6 +114,36 @@ pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
         let _ = (root, volume, event_id);
         None
     }
+}
+
+/// The firmlinks of `/usr/share/firmlinks` (macOS 10.15): each directory of the system volume
+/// and the directory of the Data volume it joins.
+#[cfg(any(target_os = "macos", test))]
+fn firmlinks(text: &str) -> Vec<(PathBuf, PathBuf)> {
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(on_root, _)| on_root.starts_with('/'))
+        .map(|(on_root, data)| (PathBuf::from(on_root), Path::new(DATA_VOLUME).join(data)))
+        .collect()
+}
+
+/// `path` with the longest firmlink it starts with replaced by the Data volume directory the
+/// firmlink joins; as it is when it starts with none.
+#[cfg(any(target_os = "macos", test))]
+fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
+    links
+        .iter()
+        .filter(|(on_root, _)| path.starts_with(on_root))
+        .max_by_key(|(on_root, _)| on_root.components().count())
+        .and_then(|(on_root, data)| {
+            let rest = path.strip_prefix(on_root).ok()?;
+            Some(if rest.as_os_str().is_empty() {
+                data.clone()
+            } else {
+                data.join(rest)
+            })
+        })
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
@@ -109,6 +183,54 @@ fn position(path: &Path) -> Option<([u8; 16], u64)> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod firmlink_tests {
+    use super::*;
+
+    /// Paths through a firmlink become the Data volume's, by the longest firmlink; others stay.
+    #[test]
+    fn firmlinked_paths_are_named_in_the_data_volume() {
+        let links = firmlinks(
+            "/Users\tUsers\n/System/Library/Caches\tSystem/Library/Caches\nbad line\n/private\tprivate\n",
+        );
+        assert_eq!(links.len(), 3);
+        let data = |p: &str| through_firmlinks(Path::new(p), &links);
+        assert_eq!(
+            data("/Users/me/x"),
+            Path::new("/System/Volumes/Data/Users/me/x")
+        );
+        assert_eq!(data("/Users"), Path::new("/System/Volumes/Data/Users"));
+        assert_eq!(
+            data("/System/Library/Caches/c"),
+            Path::new("/System/Volumes/Data/System/Library/Caches/c")
+        );
+        assert_eq!(data("/System/Library/Fonts"), Path::new("/System/Library/Fonts"));
+        assert_eq!(data("/Usersx"), Path::new("/Usersx"));
+        assert_eq!(data("/"), Path::new("/"));
+        // A root above the Data volume, at it, and below a firmlink see the same change.
+        let change = data("/Users/me/x");
+        assert_eq!(
+            change.strip_prefix(data("/")).unwrap(),
+            Path::new("System/Volumes/Data/Users/me/x")
+        );
+        assert_eq!(
+            change.strip_prefix(data("/System/Volumes/Data/Users")).unwrap(),
+            Path::new("me/x")
+        );
+        assert_eq!(change.strip_prefix(data("/Users/me")).unwrap(), Path::new("x"));
+    }
+
+    /// A kept directory is handed out once.
+    #[test]
+    fn a_kept_directory_is_taken_once() {
+        let k = Keep::new([(1, 2), (1, 3)]);
+        assert!(k.take(1, 2));
+        assert!(!k.take(1, 2));
+        assert!(!k.take(2, 2));
+        assert!(k.take(1, 3));
     }
 }
 

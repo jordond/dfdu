@@ -66,6 +66,31 @@ fn subdirectories_of_the_same_mount_are_read_when_they_can_be() {
     );
 }
 
+// resume-keep
+/// A directory a resume keeps is not read, the first time it is met; a mount root never is.
+#[test]
+fn kept_directories_are_not_read() {
+    let sh = shared();
+    let t = task(DirId(1), PathBuf::new(), 1, 1);
+    let keep = crate::journal::Keep::new([(1, 5), (2, 6)]);
+    let j = job(
+        JobOptions {
+            keep: Some(Arc::new(keep)),
+            ..JobOptions::default()
+        },
+        None,
+    );
+    let m = dir_meta(1, 1, 5);
+    let kept = Some(SkipReason::Kept);
+    assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (false, kept));
+    assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (false, None));
+    let other = Some(SkipReason::OtherFilesystem);
+    assert_eq!(
+        subdir_skip(&sh, &t, &j, &dir_meta(2, 2, 6), true),
+        (true, other)
+    );
+}
+
 #[test]
 fn mounts_are_read_as_the_job_options_say() {
     let sh = shared();

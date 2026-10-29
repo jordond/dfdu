@@ -332,6 +332,42 @@ impl Tree {
         self.free_work.push(FreeWork::Node(old.0));
     }
 
+    // resume-graft
+    /// Moves the subtree at `kept` into the place of the directory `placeholder`, under the
+    /// placeholder's name, and detaches the placeholder: a resume keeps a loaded directory
+    /// where its rescan found it again. The ancestors on both sides keep their totals.
+    ///
+    /// # Panics
+    ///
+    /// `kept` or `placeholder` is a root, or `placeholder` is not a child of its parent.
+    pub fn graft(&mut self, placeholder: Ix, kept: Ix) {
+        let from = self.nodes[kept.0 as usize].parent;
+        let to = self.nodes[placeholder.0 as usize].parent;
+        assert!(from != NONE && to != NONE, "neither is a root");
+        let (total, old_total) = (self.total(kept), self.total(placeholder));
+        self.remove_child(Ix(from), kept.0);
+        self.propagate_sub(Ix(from), &total);
+        let d = self.nodes[to as usize].dir as usize;
+        let found = self
+            .kids
+            .replace(&mut self.dirs[d].kids, placeholder.0, kept.0);
+        assert!(found, "child");
+        let names = (
+            self.nodes[kept.0 as usize].name,
+            self.nodes[placeholder.0 as usize].name,
+        );
+        let k = &mut self.nodes[kept.0 as usize];
+        k.parent = to;
+        k.name = names.1;
+        self.propagate_sub(Ix(to), &old_total);
+        self.propagate_add(Ix(to), &total);
+        let n = &mut self.nodes[placeholder.0 as usize];
+        n.name = names.0;
+        n.parent = NONE;
+        n.flags.set(NodeFlags::DETACHED, true);
+        self.free_work.push(FreeWork::Node(placeholder.0));
+    }
+
     fn remove_child(&mut self, parent: Ix, child: u32) {
         let d = self.nodes[parent.0 as usize].dir as usize;
         self.kids.remove(&mut self.dirs[d].kids, child);

@@ -86,6 +86,33 @@ fn replace_swaps_totals() {
     t.check(&[]).unwrap();
 }
 
+// resume-graft
+#[test]
+fn a_graft_moves_the_kept_subtree_into_the_placeholder() {
+    let mut t = Tree::new();
+    let root = t.new_root(b"/r", &dir_meta(), true);
+    let old = add_dir(&mut t, root, "a");
+    let kept = add_dir(&mut t, old, "k");
+    add_file(&mut t, kept, "f", 100);
+    let shadow = t.new_root(b"a", &dir_meta(), false);
+    let placeholder = add_dir(&mut t, shadow, "renamed");
+    add_file(&mut t, shadow, "new", 30);
+    let kept_ref = t.node_ref(kept);
+    t.graft(placeholder, kept);
+    t.check(&[shadow]).unwrap();
+    assert_eq!(t.total(old).apparent, 10);
+    assert_eq!(t.total(shadow).apparent, 10 + 10 + 100 + 30);
+    assert_eq!(t.name(kept), b"renamed");
+    assert_eq!(t.parent(kept), Some(shadow));
+    assert_eq!(t.resolve(kept_ref), Some(kept));
+    t.replace(old, shadow);
+    assert_eq!(t.total(root).apparent, 10 + 10 + 10 + 100 + 30);
+    t.check(&[]).unwrap();
+    while !t.free_step(1, |_| {}) {}
+    assert!(t.resolve_visible(kept_ref).is_some());
+    t.check(&[]).unwrap();
+}
+
 #[test]
 fn replacing_a_visible_root_takes_its_place() {
     let mut t = Tree::new();

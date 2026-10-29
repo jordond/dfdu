@@ -7,7 +7,7 @@ use dfdu_scan::{Backend, DirId, JobId, JobOptions};
 use dfdu_tree::{DirState, ErrKind, HostPath, Ix, NodeRef, Pages, Tree};
 
 use super::work::Work;
-use super::{Applier, Job, JobKind, JobPhase, Model};
+use super::{Applier, Job, JobKind, JobPhase, Kept, Model};
 use crate::links::Scope;
 
 #[cfg(test)]
@@ -23,6 +23,7 @@ pub(super) struct JobStart {
     pub scope: Scope,
     pub path: HostPath,
     pub opts: JobOptions,
+    pub kept: Option<Box<Kept>>,
 }
 
 impl<B: Backend> Applier<B> {
@@ -43,6 +44,7 @@ impl<B: Backend> Applier<B> {
             scope,
             path,
             opts,
+            kept,
         } = start;
         let rec = m.tree.dir_mut(root).expect("job root is a directory");
         rec.job = JobId(id);
@@ -60,6 +62,7 @@ impl<B: Backend> Applier<B> {
             submitted_seq: 0,
             phase: JobPhase::Running,
             measures: false,
+            kept,
         };
         job.set_live(DirId::ROOT, m.tree.node_ref(root));
         job.submitted_seq = self.scanner_start_job(JobId(id), &path, opts);
@@ -212,6 +215,7 @@ impl<B: Backend> Applier<B> {
         };
         j.map = Pages::default();
         j.held_close.clear();
+        let kept = j.kept.take();
         let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
         self.scanner_end_job(job);
         for d in stalled {
@@ -224,11 +228,15 @@ impl<B: Backend> Applier<B> {
             let shadow = m.tree.resolve(root);
             match (cancelled, shadow, m.tree.resolve_visible(target)) {
                 (false, Some(s), Some(t)) => {
+                    let again = kept.map(|k| Self::graft_kept(m, &k, t));
                     m.tree.replace(t, s);
                     self.start_measure(m, root);
                     let keys = self.links.keys_in(scope);
                     self.work.push_back(Work::Free);
                     self.work.push_back(Work::Merge { keys, from: scope });
+                    for r in again.into_iter().flatten() {
+                        self.rescan(m, r, None, false);
+                    }
                 }
                 (_, Some(s), _) => {
                     m.tree.detach(s);
