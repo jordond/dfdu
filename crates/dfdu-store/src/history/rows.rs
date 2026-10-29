@@ -28,7 +28,12 @@ pub fn rows_to(tree: &Tree, root: Ix, depth: usize, size: u64, max: usize) -> Si
             continue;
         }
         picked.push((ix, s));
-        stack.extend(tree.children(ix).map(|c| (c, d + 1)));
+        // Only directories: a folder of 10M files stacked 160 MiB of entries to skip.
+        stack.extend(
+            tree.children(ix)
+                .filter(|&c| tree.dir(c).is_some())
+                .map(|c| (c, d + 1)),
+        );
     }
     // Matches deeper than the walk went, and matched files.
     for (ix, _) in tree.classes() {
