@@ -11,7 +11,7 @@ Scan time of dfdu against the fastest of the other tools on each test. Lower is 
 | APFS (Mac) | 1M entries              | 2.70 s | dua, 3.47 s        | 1.3× faster |
 | ext4       | 1M entries              | 269 ms | gdu, 333 ms        | 1.2× faster |
 | ext4       | 10M entries             | 1.74 s | gdu, 3.51 s        | 2.0× faster |
-| ext4       | 10M files in one folder | 2.01 s | ncdu, 9.15 s       | 4.6× faster |
+| ext4       | 10M files in one folder | 1.91 s | ncdu, 9.15 s       | 4.8× faster |
 | ZFS        | 1M entries              | 252 ms | gdu, 257 ms        | the same    |
 | ZFS        | 10M entries             | 24.0 s | dua, 23.8 s        | the same    |
 | ZFS        | 10M files in one folder | 23.7 s | pdu, 24.0 s        | the same    |
@@ -20,7 +20,7 @@ On ZFS at 10M entries every parallel tool finishes within a few seconds of the o
 
 ### Memory
 
-dfdu keeps the whole tree in memory so you can browse it, sort it and delete from it while and after it scans. That costs about 120 MiB for 1M entries and 850 MiB for 10M, or roughly 90 bytes per entry on large trees.
+dfdu keeps the whole tree in memory so you can browse it, sort it and delete from it while and after it scans. That costs about 100-140 MiB for 1M entries and 850 MiB for 10M (690 MiB when they are all files in one folder), or roughly 85 bytes per entry on large trees.
 
 Tools that only print a total (`du`, `dua aggregate`, pdu with `--max-depth 1`, `ncdu -o`) keep no tree and stay in single-digit megabytes. Among tools that do keep one, Dust used 5.2 GiB on the 10M tree and gdu 1.9 GiB on the 10M-file folder.
 
@@ -58,7 +58,7 @@ Each table is sorted from fastest to slowest. Time is the mean ± standard devia
 
 | Tool     | Time              | vs dfdu  | Peak memory | CPU (user + sys) |
 | -------- | ----------------- | -------- | ----------- | ---------------- |
-| **dfdu** | **2.70 ± 0.08 s** | **1.0×** | 121-123 MiB | 0.51 + 7.98 s    |
+| **dfdu** | **2.70 ± 0.08 s** | **1.0×** | 96-99 MiB   | 0.51 + 7.98 s    |
 | dua      | 3.47 ± 0.38 s     | 1.3×     | 12-15 MiB   | 0.51 + 10.29 s   |
 | dust     | 3.87 ± 0.08 s     | 1.4×     | 574-602 MiB | 1.13 + 28.84 s   |
 | pdu -t   | 3.88 ± 0.33 s     | 1.4×     | 11-12 MiB   | 0.78 + 29.34 s   |
@@ -108,15 +108,15 @@ Page cache dropped, then 2 warm-up runs and 5 runs per tool.
 
 | Tool        | Time              | vs dfdu  | Peak memory | CPU (user + sys) |
 | ----------- | ----------------- | -------- | ----------- | ---------------- |
-| **dfdu**    | **2.01 ± 0.10 s** | **1.0×** | 843-844 MiB | 2.03 + 10.82 s   |
-| ncdu        | 9.15 ± 0.02 s     | 4.6×     | 116 MiB     | 1.92 + 7.22 s    |
-| pdu -t      | 9.63 ± 0.06 s     | 4.8×     | 406-407 MiB | 30.42 + 51.60 s  |
-| pdu         | 9.71 ± 0.03 s     | 4.8×     | 407 MiB     | 30.65 + 52.14 s  |
-| du (uutils) | 11.6 ± 0.0 s      | 5.8×     | 1.3 GiB     | 3.56 + 8.00 s    |
-| GNU du      | 12.0 ± 0.1 s      | 6.0×     | 31 MiB      | 3.71 + 8.27 s    |
-| dua         | 14.8 ± 0.0 s      | 7.4×     | 4 MiB       | 34.87 + 22.15 s  |
-| gdu         | 21.1 ± 0.1 s      | 10.5×    | 1.9 GiB     | 17.48 + 10.80 s  |
-| dust        | 21.1 ± 0.1 s      | 10.5×    | 2.4 GiB     | 62.30 + 106.30 s |
+| **dfdu**    | **1.91 ± 0.04 s** | **1.0×** | 693 MiB     | 1.99 + 10.66 s   |
+| ncdu        | 9.15 ± 0.02 s     | 4.8×     | 116 MiB     | 1.92 + 7.22 s    |
+| pdu -t      | 9.63 ± 0.06 s     | 5.0×     | 406-407 MiB | 30.42 + 51.60 s  |
+| pdu         | 9.71 ± 0.03 s     | 5.1×     | 407 MiB     | 30.65 + 52.14 s  |
+| du (uutils) | 11.6 ± 0.0 s      | 6.1×     | 1.3 GiB     | 3.56 + 8.00 s    |
+| GNU du      | 12.0 ± 0.1 s      | 6.3×     | 31 MiB      | 3.71 + 8.27 s    |
+| dua         | 14.8 ± 0.0 s      | 7.7×     | 4 MiB       | 34.87 + 22.15 s  |
+| gdu         | 21.1 ± 0.1 s      | 11.0×    | 1.9 GiB     | 17.48 + 10.80 s  |
+| dust        | 21.1 ± 0.1 s      | 11.0×    | 2.4 GiB     | 62.30 + 106.30 s |
 
 Page cache dropped, then 2 warm-up runs and 3 runs per tool.
 
