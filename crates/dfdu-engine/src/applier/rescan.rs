@@ -158,7 +158,8 @@ impl<B: Backend> Applier<B> {
 
     /// Rescans `node` with the options of the job that scanned it, or `given`. With `enter`,
     /// `node` is a mount that was not entered, and is scanned in place: a job's root is read
-    /// whatever filesystem it is on. Every rescan enters the mounts entered so far.
+    /// whatever filesystem it is on. Every rescan enters the mounts entered so far. A rescan of
+    /// a directory whose parent is still being listed starts when that listing closes.
     pub(super) fn rescan(
         &mut self,
         m: &mut Model,
@@ -213,6 +214,14 @@ impl<B: Backend> Applier<B> {
             );
             return;
         }
+        // Its class is decided against its siblings, all of them once its parent's listing
+        // closes: until then it waits, and the scan that is reading it carries on.
+        if given.is_none() && self.parent_listing_open(&m.tree, ix) {
+            if !self.rescans_after_listing.contains(&(node, enter)) {
+                self.rescans_after_listing.push((node, enter));
+            }
+            return;
+        }
         if !self.supersede_rescans(m, ix) {
             return;
         }
@@ -265,6 +274,37 @@ impl<B: Backend> Applier<B> {
             opts,
         };
         self.start(m, id, start);
+    }
+
+    /// Whether `ix`'s parent is still being listed by a running job, so that its listing
+    /// does not have all of `ix`'s siblings yet. Not under a cut, whose listings never close.
+    fn parent_listing_open(&self, tree: &Tree, ix: Ix) -> bool {
+        tree.parent(ix).is_some_and(|p| {
+            tree.dir(p).is_some_and(|d| {
+                !d.listing_closed
+                    && self
+                        .jobs
+                        .get(&d.job.0)
+                        .is_some_and(|j| j.phase == JobPhase::Running)
+            }) && !Self::under_cut(tree, p)
+        })
+    }
+
+    /// Starts the waiting rescans whose parent's listing has closed since, or whose parent's
+    /// job ended without closing it.
+    pub(super) fn retry_rescans_after_listing(&mut self, m: &mut Model) {
+        if self.rescans_after_listing.is_empty() {
+            return;
+        }
+        for (r, enter) in std::mem::take(&mut self.rescans_after_listing) {
+            match m.tree.resolve_visible(r) {
+                None => {}
+                Some(ix) if self.parent_listing_open(&m.tree, ix) => {
+                    self.rescans_after_listing.push((r, enter));
+                }
+                Some(_) => self.rescan(m, r, None, enter),
+            }
+        }
     }
 
     /// Whether a rescan of `ix` may start: not while a rescan of it or of a parent waits to

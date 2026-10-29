@@ -209,6 +209,10 @@ pub struct Applier<B: Backend> {
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
+    /// Rescans waiting for their parent's listing to close, and whether each enters a mount:
+    /// a directory's class can depend on its siblings, which a listing still being read does
+    /// not have yet.
+    rescans_after_listing: Vec<(NodeRef, bool)>,
     /// Refuse every delete request and native command (dry runs aside).
     pub read_only: bool,
     /// The tree was loaded from a file: refuse everything that would touch the filesystem.
@@ -285,6 +289,7 @@ impl<B: Backend> Applier<B> {
             rescan_paths: Vec::new(),
             next_plan: 1,
             deferred_rescans: Vec::new(),
+            rescans_after_listing: Vec::new(),
             read_only: false,
             imported: false,
             measure: true,

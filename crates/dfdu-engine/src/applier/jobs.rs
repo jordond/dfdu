@@ -145,7 +145,7 @@ impl<B: Backend> Applier<B> {
         self.scanner_abandon(job, dir);
     }
 
-    fn under_cut(tree: &Tree, ix: Ix) -> bool {
+    pub(super) fn under_cut(tree: &Tree, ix: Ix) -> bool {
         let mut cur = Some(ix);
         while let Some(c) = cur {
             if tree.dir(c).is_some_and(|d| d.cut) {
@@ -242,6 +242,8 @@ impl<B: Backend> Applier<B> {
         // per-directory totals never depend on scan order.
         self.work.push_back(Work::FinalPassVisible);
         self.queue_checks(m);
+        // Its listings that never closed are not waited for any more.
+        self.retry_rescans_after_listing(m);
         // Keep finished jobs out of the status list once nothing refers to them.
         if self.jobs.len() > 64 {
             let done: Vec<u32> = self

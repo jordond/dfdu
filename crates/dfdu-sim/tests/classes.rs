@@ -262,3 +262,62 @@ fn classifier_answer_for_a_freed_and_reused_slot() {
         sim.applier.checks = false;
     });
 }
+
+/// The root holds `w`, twelve entries in four blocks: `node_modules` in block 0, its siblings
+/// `package.json` and `yarn.lock` in block 1.
+fn node_project_in_blocks() -> Spec {
+    let mut b = SpecBuilder::new();
+    let w = b.dir(dfdu_sim::ROOT, "w");
+    let n = b.dir(w, "node_modules");
+    b.file(n, "y", 10);
+    b.files(w, "a", 2);
+    for name in ["package.json", "yarn.lock"] {
+        b.file(w, name, 10);
+    }
+    b.files(w, "b", 7);
+    b.build()
+}
+
+/// A rescan of a directory whose parent's listing has not read all its siblings yet: block 0
+/// of `w` is applied, block 1 with `package.json` is not. The rescan waits for `w`'s listing
+/// to close, so that `node_modules` is classified against all its siblings.
+#[test]
+fn rescan_waits_for_the_parents_listing() {
+    for_seeds(node_project_in_blocks, cfg_rules(), |sim| {
+        let w = list_w(sim);
+        step_until(sim, 1, |s| runs(s, 1, w, 1));
+        step_until(sim, 1, |s| idle(s, 1));
+        sim.flush_worker(1);
+        sim.apply_all().unwrap();
+        let wx = find(sim, "w");
+        assert!(!sim.model.tree.dir(wx).unwrap().listing_closed);
+        assert!(
+            sim.model
+                .tree
+                .children(wx)
+                .all(|c| sim.model.tree.name(c) != b"package.json")
+        );
+        let rescans = |s: &Sim| {
+            s.model
+                .status
+                .jobs
+                .iter()
+                .filter(|j| j.kind == dfdu_engine::JobKind::Rescan)
+                .count()
+        };
+        rescan(sim, "w/node_modules");
+        assert_eq!(rescans(sim), 0, "started before w's listing closed");
+        // Worker 2 stats block 1, the last part of `w`.
+        step_until(sim, 2, |s| runs(s, 2, w, 2));
+        step_until(sim, 2, |s| idle(s, 2));
+        sim.flush_worker(2);
+        sim.apply_all().unwrap();
+        assert!(sim.model.tree.dir(wx).unwrap().listing_closed);
+        assert_eq!(rescans(sim), 1, "not started when w's listing closed");
+        finish_jobs(sim);
+        assert_eq!(
+            rule_of(sim, "w/node_modules"),
+            Some(("node.node_modules".into(), Safety::Regenerable))
+        );
+    });
+}

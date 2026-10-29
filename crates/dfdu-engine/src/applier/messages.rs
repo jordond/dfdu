@@ -315,6 +315,7 @@ impl<B: Backend> Applier<B> {
         }
         self.measure_listing(m, job, ix);
         self.dec_pending(m, job, ix);
+        self.retry_rescans_after_listing(m);
     }
 
     /// Decrements `ix`'s pending count and cascades completion upward.
