@@ -1,6 +1,8 @@
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
-use dfdu_tree::{Ix, Kind, Meta};
+use dfdu_tree::{Ix, Kind, Meta, Tree};
 
 use super::*;
 use crate::ncdu::tests::dump;
