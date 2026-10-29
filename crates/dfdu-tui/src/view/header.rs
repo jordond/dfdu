@@ -1,6 +1,10 @@
-//! The two header lines: breadcrumbs from the scan root to the current directory and the scan
-//! state, then totals and the modes that change the numbers: the sort, the size shown, and what
-//! differs from the defaults.
+//! The two header lines. The first is the tab bar: the five views by number and name, the one
+//! shown highlighted, with what Cleanup and Duplicates hold, and the scan state on the right.
+//! The second is the scope line: what the view covers (the breadcrumbs from the scan root to
+//! the current directory, or the whole scan for Cleanup and Duplicates), then the totals and the
+//! modes that change the numbers: the sort, the size shown, and what differs from the defaults.
+//! A view's own state (the map's colouring and depth, the duplicates' keep rule) is drawn in the
+//! view, so the header means the same in every view.
 
 use std::path::Path;
 use std::time::Instant;
@@ -10,17 +14,20 @@ use dfdu_store::history;
 use dfdu_tree::{Host, HostPath};
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
 use super::{cells, mmss, spread};
 use crate::app::App;
-use crate::input::mouse::Crumb;
+use crate::app::keys::first_key;
+use crate::app::views::{self, View};
+use crate::input::mouse::{Crumb, Tab};
 use crate::model::growth;
-use crate::model::outside::rel_text;
+use crate::model::outside::{rel_text, tilde};
 use crate::state::filter;
 use crate::state::order::SortKey;
-use crate::theme::{Theme, count, human, spinner, truncate_middle};
+use crate::theme::{Bars, Theme, count, human, spinner, truncate_middle};
 
 /// Between two breadcrumbs.
 const SEPARATOR: &str = " › ";
@@ -215,8 +222,8 @@ fn sort_flag(app: &App) -> Flag {
 }
 
 /// The modes after the sort, in the order they give way when the line is short (the last
-/// first): in tree mode that the share is of the parent and what folds, the size shown, the
-/// treemap's colouring and depth while it is shown, then only what differs from the defaults:
+/// first): in tree mode that the share is of the parent and what folds, the size shown, then
+/// only what differs from the defaults:
 /// hidden files hidden, the filter kept, the type filter, and the day of the last recorded scan
 /// the changes are from.
 fn flags(app: &App) -> Vec<Flag> {
@@ -232,12 +239,6 @@ fn flags(app: &App) -> Vec<Flag> {
         SizeMode::Apparent => Flag::new("apparent size", "apparent"),
         SizeMode::Referenced => Flag::new("disk usage like du", "du-like"),
     });
-    if app.treemap.shown {
-        let colour = app.treemap.color.label();
-        out.push(Flag::new(format!("colour by {colour}"), colour));
-        let depth = format!("depth {}", app.treemap.depth);
-        out.push(Flag::new(depth.clone(), depth));
-    }
     if app.hide_hidden {
         out.push(Flag::new("hiding hidden files", "hidden"));
     }
@@ -296,31 +297,87 @@ fn mode_forms(app: &App) -> Vec<Vec<Span<'static>>> {
     forms
 }
 
-/// Draws the header in `area` and records where each breadcrumb went, for the mouse.
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
+/// Between two tabs, and between the title and the tabs; `|` with [`Bars::Ascii`].
+fn tab_separator(bars: Bars) -> &'static str {
+    match bars {
+        Bars::Unicode => "│",
+        Bars::Ascii => "|",
+    }
+}
+/// The tab bar names every view from this many columns; below, only the one shown.
+const TABS_NAMED_FROM: u16 = 80;
+/// Between the totals and the modes on the second line.
+const SCOPE_GAP: &str = "   ";
+/// Before the scan root on the scope line of the views that cover the whole scan.
+const WHOLE_SCAN: &str = "whole scan: ";
+/// The fewest cells of the scan root the whole-scan scope keeps before the modes give way.
+const WHOLE_SCAN_ROOT_MIN: usize = 8;
+
+/// One form of the tab bar: its spans after the title, and the column offset and width of each
+/// tab in them.
+struct Tabs {
+    spans: Vec<Span<'static>>,
+    hits: Vec<(usize, usize, View)>,
+}
+
+/// The tab of the view shown: the focus colour as its background, bold. Reverse video carries
+/// it without colour too.
+fn active_tab(t: &Theme) -> Style {
+    t.border_focus
+        .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+}
+
+/// The tab bar after the title. `named`: every view by key and name, separated by `│`, with
+/// what the view holds after the name when `badges`. Otherwise the keys alone and the view
+/// shown named in brackets: `1 2 [3 Cleanup] 4 5`.
+fn tabs(app: &App, named: bool, badges: bool) -> Tabs {
+    let t = &app.theme;
+    let shown = views::current(app);
+    let (mut spans, mut hits, mut x) = (Vec::new(), Vec::new(), 0);
+    for (i, view) in View::ALL.into_iter().enumerate() {
+        let key = first_key(view.action());
+        let active = view == shown;
+        let text = if named {
+            let badge = (badges.then(|| views::badge(app, view)).flatten())
+                .map(|b| format!(" {b}"))
+                .unwrap_or_default();
+            format!(" {key} {}{badge} ", view.name())
+        } else if active {
+            format!("[{key} {}]", view.name())
+        } else {
+            key.to_owned()
+        };
+        let sep = match (named, i) {
+            (true, _) => tab_separator(t.bars).to_owned(),
+            (false, 0) => format!("{} ", tab_separator(t.bars)),
+            (false, _) => " ".to_owned(),
+        };
+        x += Span::raw(&sep).width();
+        spans.push(Span::styled(sep, t.fg_dim));
+        let w = Span::raw(&text).width();
+        hits.push((x, w, view));
+        spans.push(Span::styled(
+            text,
+            if active { active_tab(t) } else { t.fg_dim },
+        ));
+        x += w;
+    }
+    Tabs { spans, hits }
+}
+
+fn width(spans: &[Span]) -> usize {
+    spans.iter().map(Span::width).sum()
+}
+
+/// The totals after the scope on the second line: items and size of the scan, then errors,
+/// the type filter and what is still being measured.
+fn totals(app: &App) -> Vec<Span<'static>> {
     let t = &app.theme;
     let s = &app.snap;
-    let mut left = vec![Span::styled(" dfdu ", t.title), Span::raw(" ")];
-    let start: usize = left.iter().map(Span::width).sum();
-    let segs = segments(&s.dir_path, &s.root_path, app.home.as_deref());
-    // One cell stays free between the breadcrumbs and the scan state. The state takes its
-    // longest form that leaves the current directory's name whole.
-    let room = |right: &[Span]| {
-        let end: usize = right.iter().map(Span::width).sum();
-        usize::from(area.width).saturating_sub(start + end + 1)
-    };
-    let mut forms = scan_states(app, now, frame);
-    let fits = forms.iter().position(|r| room(r) >= least_width(&segs));
-    let right = forms.swap_remove(fits.unwrap_or(forms.len() - 1));
-    let crumb_room = room(&right);
-    let (crumbs, hits) = breadcrumbs(&segs, crumb_room, t);
-    left.extend(crumbs);
-    let line1 = spread(left, right, area.width);
-
     let root = s.root_total;
     let size = app.size_mode.of(&root);
     let mut info = vec![
-        Span::styled(format!(" {} items · ", count(root.items)), t.fg_dim),
+        Span::styled(format!("{} items · ", count(root.items)), t.fg_dim),
         Span::styled(human(size), t.header),
     ];
     if root.errors > 0 {
@@ -378,20 +435,110 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
             t.fg_dim,
         ));
     }
-    // The modes take their longest form that leaves a cell free after the totals, or give way.
-    let used: usize = info.iter().map(Span::width).sum();
-    let right2 = mode_forms(app)
+    info
+}
+
+/// Draws the header in `area` and records where each tab and breadcrumb went, for the mouse.
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
+    let t = &app.theme;
+    let s = &app.snap;
+    let w = usize::from(area.width);
+
+    // The tab bar takes its fullest form that fits beside a form of the scan state, which
+    // shortens first; one cell stays free between them. The bare time, which no longer says
+    // whether the scan is done, comes only after every form of the tab bar.
+    let mut left = vec![Span::styled(" dfdu ", t.title)];
+    let start = width(&left);
+    let mut bars = Vec::new();
+    if area.width >= TABS_NAMED_FROM {
+        bars.extend([tabs(app, true, true), tabs(app, true, false)]);
+    }
+    bars.push(tabs(app, false, false));
+    let states = scan_states(app, now, frame);
+    let fits = |bar: &Tabs, state: &[Span]| start + width(&bar.spans) + 1 + width(state) <= w;
+    let (worded, bare) = states.split_at(states.len() - 1);
+    let (bar, state) = [worded, bare]
+        .into_iter()
+        .find_map(|tier| {
+            (bars.iter()).find_map(|b| tier.iter().find(|st| fits(b, st)).map(|st| (b, st)))
+        })
+        .unwrap_or((&bars[bars.len() - 1], &bare[0]));
+    left.extend(bar.spans.iter().cloned());
+    let line1 = spread(left, state.clone(), area.width);
+    let tab_hits: Vec<Tab> = (bar.hits.iter())
+        .filter(|&&(x, tw, _)| area.height > 0 && start + x + tw <= w)
+        .map(|&(x, tw, view)| Tab {
+            area: Rect::new(area.x + cells(start + x), area.y, cells(tw), 1),
+            view,
+        })
+        .collect();
+
+    // The scope keeps the current directory's name whole (or a few cells of the scan root):
+    // the modes give way first, in their longest form that leaves it room.
+    let lead = 1;
+    let whole_scan = views::current(app).whole_scan();
+    // Before the first snapshot the root is not known: the directory opened is.
+    let root_path = if s.root_path.is_empty() {
+        &s.dir_path
+    } else {
+        &s.root_path
+    };
+    let root = tilde(root_path, app.home.as_deref());
+    let segs = segments(&s.dir_path, &s.root_path, app.home.as_deref());
+    let least = if whole_scan {
+        Span::raw(WHOLE_SCAN).width() + Span::raw(&root).width().min(WHOLE_SCAN_ROOT_MIN)
+    } else {
+        least_width(&segs)
+    };
+    // Then the scope shortens, as the sort is never left out while the line has room for the
+    // totals and it.
+    let info = totals(app);
+    let room = |right: &[Span]| w.saturating_sub(lead + width(right) + 1);
+    let rights: Vec<Vec<Span>> = mode_forms(app)
         .into_iter()
         .skip(usize::from(area.width < WIDE_FROM))
-        .find(|r| used + 1 + r.iter().map(Span::width).sum::<usize>() <= usize::from(area.width))
-        .unwrap_or_default();
-    let line2 = spread(info, right2, area.width);
+        .map(|modes| {
+            let mut right = info.clone();
+            right.push(Span::raw(SCOPE_GAP));
+            right.extend(modes);
+            right
+        })
+        .collect();
+    let right2 = (rights.iter())
+        .find(|right| room(right) >= least)
+        .or_else(|| rights.last().filter(|r| lead + width(r) < w))
+        .cloned()
+        .unwrap_or_else(|| {
+            let mut right = info.clone();
+            right.push(Span::raw(" "));
+            right
+        });
+    let scope_room = room(&right2);
+    let mut scope = vec![Span::raw(" ")];
+    let mut crumb_hits = Vec::new();
+    if whole_scan {
+        // Without room for a few cells of the root, only that it is the whole scan.
+        let rest = scope_room.saturating_sub(Span::raw(WHOLE_SCAN).width());
+        if !root.is_empty() && rest >= Span::raw(&root).width().min(WHOLE_SCAN_ROOT_MIN) {
+            scope.push(Span::styled(WHOLE_SCAN, t.fg_dim));
+            scope.push(Span::styled(truncate_middle(&root, rest), t.title));
+        } else {
+            let short = truncate_middle(WHOLE_SCAN.trim_end_matches([':', ' ']), scope_room);
+            scope.push(Span::styled(short, t.fg_dim));
+        }
+    } else {
+        let (crumbs, hits) = breadcrumbs(&segs, scope_room, t);
+        scope.extend(crumbs);
+        crumb_hits = hits;
+    }
+    let line2 = spread(scope, right2, area.width);
     f.render_widget(Paragraph::new(vec![line1, line2]), area);
-    app.mouse.crumbs = hits
+    app.mouse.tabs = tab_hits;
+    app.mouse.crumbs = crumb_hits
         .into_iter()
-        .filter(|&(x, w, _)| area.height > 0 && start + x + w <= area.width as usize)
-        .map(|(x, w, i)| Crumb {
-            area: Rect::new(area.x + cells(start + x), area.y, cells(w), 1),
+        .filter(|&(x, cw, _)| area.height > 1 && lead + x + cw <= w)
+        .map(|(x, cw, i)| Crumb {
+            area: Rect::new(area.x + cells(lead + x), area.y + 1, cells(cw), 1),
             child: segs[i + 1].dir.clone(),
         })
         .collect();

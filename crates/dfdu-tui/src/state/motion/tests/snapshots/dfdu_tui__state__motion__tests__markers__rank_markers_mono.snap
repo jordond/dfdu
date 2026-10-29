@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/state/motion/tests/markers.rs
 expression: frame
 ---
- dfdu  /r                                                      ⠴ scanning 00:04
- 0 items · 0 B                                                    size ↓ · disk
+ dfdu │ [1 Files] 2 3 4 5                                      ⠴ scanning 00:04
+ /r                                               0 items · 0 B   size ↓ · disk
         size                     share  name
       1000 B  ████████████████   41.7%  e  ↑4
        500 B  ████████           20.8%  a

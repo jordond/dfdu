@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/state/marks/tests.rs
 expression: out
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
- 3.0k items · 241.6 GiB                                                               size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+ /home/jo                                                    3.0k items · 241.6 GiB   size ↓ · disk
         size                     share   items  name
 ●⠋ 112.0 GiB  ████████████████   46.4%    1.0k  Library/
     78.0 GiB  ███████████▏       32.3%    1.0k  dev/

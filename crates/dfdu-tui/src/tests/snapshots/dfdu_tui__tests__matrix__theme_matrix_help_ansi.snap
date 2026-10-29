@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 bold | 7-14 bold | 83-98 fg=cyan
- 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
-L1 0-1 fg=darkgray | 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+L0 0-5 bold | 6-6 fg=darkgray | 7-15 fg=cyan bold reversed | 16-62 fg=darkgray | 83-98 fg=cyan
+ /┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
+L1 1-1 bold | 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan
   ┃ Navigate                                        Act                                          ┃
 L2 0-1 fg=darkgray | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan | 98-99 fg=darkgray
  ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃

@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/largest/tests.rs
 expression: frame
 ---
- dfdu  /r                                                                             done in 00:00
- 8 items · 20.5 KiB                                                                   size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                        done in 00:00
+ /r                                                              8 items · 20.5 KiB   size ↓ · disk
  the largest 4 of 4 files below /r · 1/4
         size                             share  path
      8.8 KiB  ████████████████████████   42.9%  .cache/huge
@@ -11,4 +11,4 @@ expression: frame
      3.9 KiB  ██████████▋                19.0%  top.txt
      2.9 KiB  ████████                   14.3%  a/deep/x.bin
 
- ↑↓ move  Enter go to  Space mark  y copy path  o open  d trash marked  1 list  ? help  q quit
+ ↑↓ move  Enter go to  Space mark  y copy path  o open  d trash marked  ? help  q quit  [ ] views

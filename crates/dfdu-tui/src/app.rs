@@ -2,12 +2,14 @@
 //! loop to carry out: [`App::key`] passes a key to the open overlay, the filter input or the
 //! focused details pane, and otherwise looks it up in the action registry ([`keys`]).
 //! [`App::refresh`] folds a new [`Snapshot`] into the state and applies the row-stability rules.
+//! [`views`] switches between the five views.
 //! Each feature keeps its state in its own field and module (`marks`, `filter`, `details`,
 //! `debug`, `motion`, `mouse`); what they read from the engine model arrives in
 //! [`App::extras`].
 
 pub mod keys;
 mod refresh;
+pub mod views;
 
 use std::cell::Cell;
 use std::collections::HashMap;

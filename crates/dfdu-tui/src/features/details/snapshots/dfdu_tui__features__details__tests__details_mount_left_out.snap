@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/details/tests.rs
 expression: out
 ---
- dfdu  /r                                                                                                 done in 00:00
- 3 items · 8.0 KiB                                                                           sort size ↓  ·  disk usage
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+ /r                                                                      3 items · 8.0 KiB   sort size ↓  ·  disk usage
         size                     share  name                                    ╭ data/ ───────────────────────────────╮
  >   8.0 KiB  ████████████████  100.0%  data/  other filesystem (zfs, 1.3 TiB u…│ /r/data                              │
  >   8.0 KiB  ████████████████  100.0%  nas/  network filesystem (nfs4): m scan…│ directory                            │
@@ -15,4 +15,4 @@ expression: out
                                                                                 │ 8.0 KiB apparent · 8.0 KiB like du   │
                                                                                 ╰────────────────────────────── ↓ more ╯
  ▸ data/  8.0 KiB · 2 items                                                                                         1/2
- ↑↓ move  → open  ← up  m scan it  s n C M sort  Space mark  / filter  i details  ? help  q quit
+ ↑↓ move  → open  ← up  m scan it  s n C M sort  Space mark  / filter  : commands  ? help  q quit

@@ -1,0 +1,49 @@
+---
+source: crates/dfdu-tui/src/view/header/tests.rs
+expression: out
+---
+Files:
+120| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+120| /r › mid                                                              12 items · 95.7 KiB   sort size ↓  ·  disk usage
+ 80| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ 80| /r › mid                                   12 items · 95.7 KiB   size ↓ · disk
+ 64| dfdu │ [1 Files] 2 3 4 5                         done in 00:00
+ 64| /r › mid                   12 items · 95.7 KiB   size ↓ · disk
+ 48| dfdu │ [1 Files] 2 3 4 5         done in 00:00
+ 48| /r › mid   12 items · 95.7 KiB   size ↓ · disk
+Map:
+120| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+120| /r › mid                                                              12 items · 95.7 KiB   sort size ↓  ·  disk usage
+ 80| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ 80| /r › mid                                   12 items · 95.7 KiB   size ↓ · disk
+ 64| dfdu │ 1 [2 Map] 3 4 5                           done in 00:00
+ 64| /r › mid                   12 items · 95.7 KiB   size ↓ · disk
+ 48| dfdu │ 1 [2 Map] 3 4 5           done in 00:00
+ 48| /r › mid   12 items · 95.7 KiB   size ↓ · disk
+Cleanup:
+120| dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                                      done in 00:00
+120| whole scan: /r                                                        12 items · 95.7 KiB   sort size ↓  ·  disk usage
+ 80| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ 80| whole scan: /r                             12 items · 95.7 KiB   size ↓ · disk
+ 64| dfdu │ 1 2 [3 Cleanup] 4 5                       done in 00:00
+ 64| whole scan: /r             12 items · 95.7 KiB   size ↓ · disk
+ 48| dfdu │ 1 2 [3 Cleanup] 4 5       done in 00:00
+ 48| whole scan   12 items · 95.7 KiB   size ↓ · +1
+Duplicates:
+120| dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                                      done in 00:00
+120| whole scan: /r                                                        12 items · 95.7 KiB   sort size ↓  ·  disk usage
+ 80| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ 80| whole scan: /r                             12 items · 95.7 KiB   size ↓ · disk
+ 64| dfdu │ 1 2 3 [4 Duplicates] 5                    done in 00:00
+ 64| whole scan: /r             12 items · 95.7 KiB   size ↓ · disk
+ 48| dfdu │ 1 2 3 [4 Duplicates] 5    done in 00:00
+ 48| whole scan   12 items · 95.7 KiB   size ↓ · +1
+Largest:
+120| dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                                      done in 00:00
+120| /r › mid                                                              12 items · 95.7 KiB   sort size ↓  ·  disk usage
+ 80| dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ 80| /r › mid                                   12 items · 95.7 KiB   size ↓ · disk
+ 64| dfdu │ 1 2 3 4 [5 Largest]                       done in 00:00
+ 64| /r › mid                   12 items · 95.7 KiB   size ↓ · disk
+ 48| dfdu │ 1 2 3 4 [5 Largest]       done in 00:00
+ 48| /r › mid   12 items · 95.7 KiB   size ↓ · disk

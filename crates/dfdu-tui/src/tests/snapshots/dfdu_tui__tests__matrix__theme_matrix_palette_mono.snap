@@ -2,36 +2,36 @@
 source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 bold | 7-14 bold
- 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
-L1 0-13 dim | 14-22 bold | 23-25 dim | 26-32 bold | 92-94 dim
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+L0 0-5 bold | 6-6 dim | 7-15 bold reversed | 16-62 dim
+ /home/jo                                          1.9M items · 241.6 GiB · 1 error   size ↓ · disk
+L1 1-8 bold | 51-63 dim | 64-72 bold | 73-75 dim | 76-82 bold | 92-94 dim
         size                     share   items  name
 L2 0-99 dim
- ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
-L3 0-47 reversed | 48-55 bold reversed | 56-99 reversed
- ⠙  78.0 GiB┌ Commands 14/59 ──────────────────────────────────────────────────────────┐
-L4 0-11 dim
-    51.0 GiB│ : sort▌                                                                  │
-L5 13-14 bold | 20-20 bold
-   625.0 MiB│ sort by size (again: reverse)                                    sort  s │
-L6 13-13 reversed | 14-17 underlined reversed | 18-78 reversed | 79-82 dim reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
- !       0 B│ sort by name (again: reverse)                                    sort  n │
+ ⠋ 112.0 GiB┌ Commands 15/61 ──────────────────────────────────────────────────────────┐
+L3 0-11 reversed | 88-99 reversed
+ ⠙  78.0 GiB│ : sort▌                                                                  │
+L4 0-11 dim | 13-14 bold | 20-20 bold
+    51.0 GiB│ sort by size (again: reverse)                                    sort  s │
+L5 13-13 reversed | 14-17 underlined reversed | 18-78 reversed | 79-82 dim reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
+   625.0 MiB│ sort by name (again: reverse)                                    sort  n │
+L6 14-17 underlined | 79-82 dim | 85-85 bold
+ !       0 B│ sort by items (again: reverse)                                   sort  C │
 L7 0-1 bold | 2-11 dim | 14-17 underlined | 79-82 dim | 85-85 bold
- ~       0 B│ sort by items (again: reverse)                                   sort  C │
+ ~       0 B│ sort by modification time (again: reverse)                       sort  M │
 L8 0-1 bold | 2-11 dim | 14-17 underlined | 79-82 dim | 85-85 bold
-            │ sort by modification time (again: reverse)                       sort  M │
-L9 14-17 underlined | 79-82 dim | 85-85 bold
             │ re-sort now                                                      sort  S │
-L10 17-20 underlined | 79-82 dim | 85-85 bold
+L9 17-20 underlined | 79-82 dim | 85-85 bold
             │ skip directories that are not responding                          act  x │
-L11 14-14 underlined | 25-26 underlined | 31-31 underlined | 80-82 dim | 85-85 bold
+L10 14-14 underlined | 25-26 underlined | 31-31 underlined | 80-82 dim | 85-85 bold
             │ put back what was last moved to the Trash or staged               act  U │
-L12 53-53 underlined | 56-57 underlined | 60-60 underlined | 80-82 dim | 85-85 bold
-            │ close the overlay, or clear the filter                       global  Esc │
-L13 17-17 underlined | 33-34 underlined | 42-42 underlined | 75-80 dim | 83-85 bold
-            │ duplicate files (compares the scanned files)                  display  4 │
-L14 28-28 underlined | 32-32 underlined | 36-36 underlined | 40-40 underlined | 76-82 dim | 85-85 bold
+L11 53-53 underlined | 56-57 underlined | 60-60 underlined | 80-82 dim | 85-85 bold
+            │ close the overlay, clear the filter, or go back to Files     global  Esc │
+L12 17-17 underlined | 51-52 underlined | 62-62 underlined | 75-80 dim | 83-85 bold
+            │ Map view: this directory as a treemap                         display  2 │
+L13 27-27 underlined | 35-36 underlined | 44-44 underlined | 76-82 dim | 85-85 bold
+            │ Files view: the entries of this directory                     display  1 │
+L14 36-36 underlined | 38-38 underlined | 48-48 underlined | 51-51 underlined | 76-82 dim | 85-85 bold
             │ mark by pattern: names in this directory matching a glob             act │
 L15 43-43 underlined | 51-52 underlined | 57-57 underlined | 83-85 dim
             │ invert the marks in this directory, as * does in the marks pane      act │
@@ -40,8 +40,8 @@ L16 37-37 underlined | 45-46 underlined | 63-63 underlined | 83-85 dim
 L17 28-28 underlined | 38-38 underlined | 50-50 underlined | 59-59 underlined | 80-82 dim | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
 L18 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
-            │ largest files anywhere below this directory                   display  5 │
-L19 26-26 underlined | 40-40 underlined | 50-50 underlined | 53-53 underlined | 76-82 dim | 85-85 bold
+            │ Largest view: the largest files below this directory          display  5 │
+L19 44-44 underlined | 49-49 underlined | 59-59 underlined | 62-62 underlined | 76-82 dim | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 bold

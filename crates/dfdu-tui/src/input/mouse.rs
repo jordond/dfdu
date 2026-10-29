@@ -2,8 +2,8 @@
 //!
 //! A click selects a list row (or treemap tile) and a second click on it within [`DOUBLE_CLICK`]
 //! opens it; in tree mode a click on a row's `▸`/`▾` expands or collapses it. A click
-//! on the "new entries" row sorts, one on a breadcrumb goes to its directory, and one outside an
-//! open overlay closes it. The delete dialog ignores the mouse, so a stray click never confirms
+//! on the "new entries" row sorts, one on a tab switches to its view, one on a breadcrumb goes
+//! to its directory, and one outside an open overlay closes it. The delete dialog ignores the mouse, so a stray click never confirms
 //! or cancels a delete. The wheel moves the selection, or scrolls the details pane. Over the
 //! debug panel, which hides the rows below it, clicks and the wheel do nothing. Pointer movement
 //! changes nothing and is not input: it draws no frame and does not hold off the automatic
@@ -30,6 +30,8 @@ pub struct Mouse {
     last_click: Option<(Instant, NodeRef)>,
     /// The breadcrumbs the last frame drew, except the current directory's.
     pub crumbs: Vec<Crumb>,
+    /// The tabs of the views the last frame drew.
+    pub tabs: Vec<Tab>,
     /// The column the list's name cells start at in the last frame: in tree mode a click on
     /// the `▸`/`▾` after a row's guide expands or collapses it.
     pub name_x: u16,
@@ -41,6 +43,13 @@ pub struct Mouse {
 pub struct Crumb {
     pub area: Rect,
     pub child: dfdu_tree::HostPath,
+}
+
+/// A view's tab on screen. A click switches to the view.
+#[derive(Clone, Debug)]
+pub struct Tab {
+    pub area: Rect,
+    pub view: crate::app::views::View,
 }
 
 /// Handles a mouse event; `None` when it changed nothing, so no frame is drawn.
@@ -96,6 +105,12 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     }
     if over_debug(app, at) {
         return None;
+    }
+    if let Some(tab) = app.mouse.tabs.iter().find(|t| t.area.contains(at)) {
+        let view = tab.view;
+        app.status = None;
+        app.mouse.last_click = None;
+        return Some(crate::app::views::switch(app, view));
     }
     if let Some(c) = app.mouse.crumbs.iter().find(|c| c.area.contains(at)) {
         let (child, root) = (c.child.clone(), app.snap.root_path.clone());
@@ -424,18 +439,41 @@ mod tests {
         let t0 = Instant::now();
         let mut app = below_root(t0);
         let crumbs: Vec<_> = app.mouse.crumbs.iter().map(|c| c.area).collect();
-        // " dfdu  /r › a › b": `/r` at columns 7-8, `a` at 12.
-        assert_eq!(crumbs, [Rect::new(7, 0, 2, 1), Rect::new(12, 0, 1, 1)]);
+        // The scope line " /r › a › b": `/r` at columns 1-2, `a` at 6.
+        assert_eq!(crumbs, [Rect::new(1, 1, 2, 1), Rect::new(6, 1, 1, 1)]);
         // The current directory and the separators are not targets.
-        assert!(event(&mut app, left(16, 0), t0).is_none());
-        assert!(event(&mut app, left(10, 0), t0).is_none());
-        event(&mut app, left(12, 0), t0).expect("redraw");
+        assert!(event(&mut app, left(10, 1), t0).is_none());
+        assert!(event(&mut app, left(4, 1), t0).is_none());
+        event(&mut app, left(6, 1), t0).expect("redraw");
         assert_eq!(app.target.path, HostPath::from("/r").join(b"a"));
         assert_eq!(app.selected.as_ref().expect("selection").name, b"b");
 
         let mut app = below_root(t0);
-        event(&mut app, left(8, 0), t0).expect("redraw");
+        event(&mut app, left(2, 1), t0).expect("redraw");
         assert_eq!(app.target.path, HostPath::from("/r"));
         assert_eq!(app.selected.as_ref().expect("selection").name, b"a");
+    }
+
+    #[test]
+    fn click_on_a_tab_switches_to_its_view() {
+        use crate::app::views::{View, current};
+        let t0 = Instant::now();
+        let mut app = browser(t0);
+        let tab = |app: &App, view| {
+            let t = app.mouse.tabs.iter().find(|t| t.view == view);
+            t.expect("the tab is drawn").area
+        };
+        assert_eq!(app.mouse.tabs.len(), 5);
+        let largest = tab(&app, View::Largest);
+        assert_eq!(largest.y, 0);
+        event(&mut app, left(largest.right() - 1, 0), t0).expect("redraw");
+        assert_eq!(current(&app), View::Largest);
+        render(&mut app, t0, 80, 12);
+        let files = tab(&app, View::Files);
+        event(&mut app, left(files.x, 0), t0).expect("redraw");
+        assert_eq!(current(&app), View::Files);
+        // The title and the scan state are not targets.
+        assert!(event(&mut app, left(2, 0), t0).is_none());
+        assert!(event(&mut app, left(79, 0), t0).is_none());
     }
 }

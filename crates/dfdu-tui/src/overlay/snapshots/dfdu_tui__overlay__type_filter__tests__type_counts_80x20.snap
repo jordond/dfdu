@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/overlay/type_filter.rs
 expression: out
 ---
- dfdu  /r                                                         done in 00:00
- 1.5k items · 1.7 KiB                                             size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ /r                                        1.5k items · 1.7 KiB   size ↓ · disk
         size                     share  name
  ⠋   1.5┌ File types ──────────────────────────────────────────────────┐
  ⠹     1│ type or extension: ▌                                         │

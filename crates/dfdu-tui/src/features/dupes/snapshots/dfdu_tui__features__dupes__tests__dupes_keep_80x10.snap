@@ -1,9 +1,10 @@
 ---
 source: crates/dfdu-tui/src/features/dupes/tests.rs
+assertion_line: 218
 expression: out
 ---
- dfdu                                                          ⠋ scanning 00:00
- 0 items · 0 B                                                    size ↓ · disk
+ dfdu │ 1 2 3 [4 Duplicates] 5                                 ⠋ scanning 00:00
+ whole scan                                       0 items · 0 B   size ↓ · disk
  1 group of identical files of 1.0 MiB or more · up to 2.0 MiB t…  keep: oldest
  3 copies of 1.0 MiB · 2.0 MiB to free
    ● b/new.bin                                              2025-10-09 08:53 UTC
@@ -11,4 +12,4 @@ expression: out
    ● c.bin                                                  2024-10-27 03:33 UTC
 
  marked 2 copies (the oldest file of each group is kept)   ● 2 marked (2.0 MiB)
- ↑↓ move  Space mark  a all copies  d trash marked  1 list  ? help  q quit
+ ↑↓ move  Space mark  a all copies  d trash marked  ? help  q quit  [ ] views

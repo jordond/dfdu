@@ -27,8 +27,8 @@ pub fn toggle(app: &mut App) {
         return;
     }
     if !list_shown(app) {
-        let list = first_key(Action::ViewList);
-        app.status = Some(format!("a range is marked in the list ({list})"));
+        let list = first_key(Action::ViewFiles);
+        app.status = Some(format!("a range is marked in Files ({list})"));
         return;
     }
     let Some(sel) = app.selected_index() else {

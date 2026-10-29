@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/debug.rs
 expression: out
 ---
- dfdu                                                                              ⠋ scanning 00:00
- 0 items · 0 B                                                                        size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
+                                                                      0 items · 0 B   size ↓ · disk
         size                     share   items  name╭ Debug ───────────────────────────────────────╮
   (empty)                                           │ sent 1.2M  received 1.2M  pending 310        │
                                                     │ chunks 12.0k  closes 9.8k  entries 1.9M      │
@@ -21,4 +21,4 @@ expression: out
                                                     ╰──────────────────────────────────────────────╯
 
 
- ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ? help  q quit  [ ] views

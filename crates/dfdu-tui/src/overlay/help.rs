@@ -33,11 +33,36 @@ const NOTES: [&str; 4] = [
     "In the delete dialog, p switches between the Trash and deleting permanently, s to staging: \
      renamed aside at once, deleted after a minute. U puts back what was last moved to the Trash \
      or staged.",
-    "In the treemap, arrows and hjkl move between tiles, Enter zooms in, and Backspace or < \
+    "In the Map view, arrows and hjkl move between tiles, Enter zooms in, and Backspace or < \
      zooms out. Tiles keep their place until the rows re-sort.",
     "Mouse: click selects, double-click opens, the wheel scrolls. Hold Shift to select text in \
      the terminal while the mouse is on (--no-mouse turns it off).",
 ];
+
+/// The first note: the views by key and name, how to step between them and what each covers.
+fn views_note() -> String {
+    use crate::app::views::View;
+    let names: Vec<String> = (View::ALL.iter())
+        .map(|v| format!("{} {}", first_key(v.action()), v.name()))
+        .collect();
+    let (prev, next) = (first_key(Action::PrevView), first_key(Action::NextView));
+    let scope = |whole: bool| {
+        let named: Vec<&str> = (View::ALL.iter())
+            .filter(|v| v.whole_scan() == whole)
+            .map(|v| v.name())
+            .collect();
+        named.join(", ")
+    };
+    format!(
+        "Views: {}; {prev} and {next} step through them and {} goes back to {}. {} show the \
+         current directory; {} the whole scan.",
+        names.join(", "),
+        first_key(Action::Close),
+        View::Files.name(),
+        scope(false),
+        scope(true),
+    )
+}
 
 /// After the label of an action without a key.
 const PALETTE_ONLY: &str = "(in the palette)";
@@ -184,10 +209,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         body.push(Line::styled(" nothing matches", t.fg_dim));
     }
     if h.search.is_empty() {
-        for note in NOTES {
+        for note in std::iter::once(views_note()).chain(NOTES.map(String::from)) {
             body.push(Line::raw(""));
             body.extend(
-                wrap(note, inner.saturating_sub(2))
+                wrap(&note, inner.saturating_sub(2))
                     .into_iter()
                     .map(|part| Line::styled(format!(" {part}"), t.fg_dim)),
             );

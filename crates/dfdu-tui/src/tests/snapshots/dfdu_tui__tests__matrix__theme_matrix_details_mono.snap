@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
- dfdu  /r                                                                             done in 00:00
-L0 0-5 bold | 7-8 bold
- 3 items · 1.4 KiB                                                                    size ↓ · disk
-L1 0-10 dim | 11-17 bold | 92-94 dim
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                        done in 00:00
+L0 0-5 bold | 6-6 dim | 7-15 bold reversed | 16-62 dim
+ /r                                                               3 items · 1.4 KiB   size ↓ · disk
+L1 1-2 bold | 66-75 dim | 76-82 bold | 92-94 dim
         size           share  name                          ┏ a ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 L2 0-59 dim | 60-99 bold
        600 B  ██████   42.9%  (shared between entries)      ┃ /r/a                                 ┃

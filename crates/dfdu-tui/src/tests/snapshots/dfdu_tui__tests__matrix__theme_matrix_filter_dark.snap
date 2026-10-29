@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold | 83-98 fg=#88c0d0
- 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
-L1 0-13 fg=#8b94a7 | 14-22 fg=#eceff4 bold | 23-25 fg=#8b94a7 | 26-32 fg=#ff8f8f | 92-94 fg=#8b94a7
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+L0 0-5 fg=#eceff4 bold | 6-6 fg=#8b94a7 | 7-15 fg=#88c0d0 bold reversed | 16-62 fg=#8b94a7 | 83-98 fg=#88c0d0
+ /home/jo                                          1.9M items · 241.6 GiB · 1 error   size ↓ · disk
+L1 1-8 fg=#eceff4 bold | 51-63 fg=#8b94a7 | 64-72 fg=#eceff4 bold | 73-75 fg=#8b94a7 | 76-82 fg=#ff8f8f | 92-94 fg=#8b94a7
         size                     share   items  name
 L2 0-99 fg=#8b94a7
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/

@@ -98,6 +98,15 @@ fn offered_now(app: &App) -> Vec<Hint> {
     let arrows = format!("{}{}", first_key(Action::Up), first_key(Action::Down));
     let help = hint(first_key(Action::Help), "help", 0);
     let quit = hint(first_key(Action::Quit), "quit", 1);
+    let views = hint(
+        format!(
+            "{} {}",
+            first_key(Action::PrevView),
+            first_key(Action::NextView)
+        ),
+        "views",
+        3,
+    );
     if let Some(hints) = overlay_hints(&app.overlay, &arrows) {
         return hints;
     }
@@ -138,9 +147,9 @@ fn offered_now(app: &App) -> Vec<Hint> {
             hint(first_key(Action::CopyPath), "copy path", 5),
             hint(first_key(Action::OpenPath), "open", 6),
             hint(first_key(Action::Trash), "trash marked", 0),
-            hint(first_key(Action::ViewList), "list", 3),
             help,
             quit,
+            views,
         ];
     }
     if crate::features::dupes::active(app) {
@@ -152,9 +161,9 @@ fn offered_now(app: &App) -> Vec<Hint> {
             hint("Enter", "go to", 4),
             hint("r", "compare again", 5),
             hint(first_key(Action::Trash), "trash marked", 0),
-            hint(first_key(Action::ViewList), "list", 3),
-            help.clone(),
-            quit.clone(),
+            help,
+            quit,
+            views,
         ];
     }
     if crate::features::cleanup::active(app) {
@@ -166,13 +175,13 @@ fn offered_now(app: &App) -> Vec<Hint> {
             hint("f", "filter", 5),
             hint("n", "command", 4),
             hint(first_key(Action::Trash), "trash marked", 0),
-            hint(first_key(Action::ViewList), "list", 3),
             help,
             quit,
+            views,
         ];
     }
     if crate::features::treemap::active(app) {
-        let mut hints = vec![
+        return vec![
             hint("←↑↓→", "move", 2),
             hint("Enter", "zoom in", 3),
             hint("Backspace", "zoom out", 4),
@@ -180,11 +189,10 @@ fn offered_now(app: &App) -> Vec<Hint> {
             hint(first_key(Action::TreemapColor), "colour", 7),
             hint(first_key(Action::ToggleMark), "mark", 6),
             hint(first_key(Action::Trash), "trash", 5),
-            hint(first_key(Action::ViewList), "list", 3),
+            help,
+            quit,
+            views,
         ];
-        hints.push(help);
-        hints.push(quit);
-        return hints;
     }
     if let Some(tree) = app.tree_shown() {
         let fold = crate::state::tree::act::fold_label(tree.fold_ratio).unwrap_or("no fold");
@@ -198,9 +206,10 @@ fn offered_now(app: &App) -> Vec<Hint> {
             hint(first_key(Action::ToggleTree), "list", 3),
             help,
             Hint { drop: 6, ..quit },
+            Hint { drop: 7, ..views },
         ];
     }
-    list_hints(app, arrows, help, quit)
+    list_hints(app, arrows, help, quit, views)
 }
 
 /// The hints of a filter or search being typed, where the arrows do `arrows_do`.
@@ -261,7 +270,7 @@ fn overlay_hints(overlay: &Overlay, arrows: &str) -> Option<Vec<Hint>> {
 }
 
 /// The hints of the list, with what marks, a running scan and errors add.
-fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint) -> Vec<Hint> {
+fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint, views: Hint) -> Vec<Hint> {
     let sort = [
         Action::SortSize,
         Action::SortName,
@@ -294,13 +303,14 @@ fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint) -> Vec<Hint> {
         hints.push(hint(first_key(Action::ToggleMark), "mark", 6));
     }
     hints.push(hint(first_key(Action::Filter), "filter", 5));
-    hints.push(hint(first_key(Action::Details), "details", 9));
+    hints.push(hint(first_key(Action::Details), "details", 10));
     hints.push(hint(first_key(Action::Palette), "commands", 9));
     if app.snap.root_total.errors > 0 {
         hints.push(hint(first_key(Action::Errors), "errors", 4));
     }
     hints.push(help);
     hints.push(quit);
+    hints.push(Hint { drop: 9, ..views });
     hints
 }
 

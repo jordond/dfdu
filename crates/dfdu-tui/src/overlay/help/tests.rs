@@ -84,7 +84,7 @@ fn help_is_one_column_when_narrow() {
     let frame = render(&mut app, t0, 60, 30);
     insta::assert_snapshot!("help_60x30", frame);
     // Taller, so the wrapped row checked below is not the last one shown.
-    let frame = render(&mut app, t0, 60, 40);
+    let frame = render(&mut app, t0, 60, 50);
     let rows = inside(&frame);
     for r in &rows {
         let headings = GROUPS.iter().filter(|(_, h)| r.contains(h)).count();

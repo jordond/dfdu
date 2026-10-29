@@ -342,8 +342,10 @@ mod tests {
 
     /// The text inside the panel's border, a line per row.
     fn panel_lines(frame: &str) -> Vec<String> {
+        // Below the tab bar, whose separators are the same glyph.
         frame
             .lines()
+            .skip(1)
             .filter_map(|l| l.split_once('│')?.1.rsplit_once('│'))
             .map(|(inside, _)| inside.trim().to_string())
             .collect()

@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/details/tests.rs
 expression: out
 ---
- dfdu  /r                                                         done in 00:00
- 13 items · 80.6 KiB · 2 errors                                   size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ /r                              13 items · 80.6 KiB · 2 errors   size ↓ · disk
         size                 share  ↔ name
  !  78.6 KiB  ████████████   97.6%  ↔ proj/  partly read: could not be read
      2.0 KiB  ▎               2.4%    notes.txt

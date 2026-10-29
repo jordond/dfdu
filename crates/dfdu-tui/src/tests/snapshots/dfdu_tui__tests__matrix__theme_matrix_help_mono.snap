@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 bold | 7-14 bold
- 1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
-L1 0-1 dim | 2-86 bold | 87-96 bold dim | 97-97 bold
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+L0 0-5 bold | 6-6 dim | 7-15 bold reversed | 16-62 dim
+ /┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
+L1 1-86 bold | 87-96 bold dim | 97-97 bold
   ┃ Navigate                                        Act                                          ┃
 L2 0-1 dim | 2-11 bold | 51-54 bold | 97-97 bold | 98-99 dim
  ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃

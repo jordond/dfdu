@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::*;
 use crate::tests::press;
 
-const ALL: [Action; 55] = [
+const ALL: [Action; 57] = [
     Action::Quit,
     Action::Up,
     Action::Down,
@@ -52,11 +52,13 @@ const ALL: [Action; 55] = [
     Action::FocusDetails,
     Action::Palette,
     Action::Debug,
-    Action::ViewList,
-    Action::ViewTreemap,
+    Action::ViewFiles,
+    Action::ViewMap,
     Action::ViewCleanup,
     Action::ViewDupes,
     Action::ViewLargest,
+    Action::PrevView,
+    Action::NextView,
     Action::DupesKeep,
     Action::TreemapDeeper,
     Action::TreemapShallower,
@@ -156,8 +158,8 @@ fn existing_keys_map_to_the_same_actions() {
         (KeyCode::F(12), Action::Debug),
         (KeyCode::F(1), Action::Help),
         (c('<'), Action::Parent),
-        (c('1'), Action::ViewList),
-        (c('2'), Action::ViewTreemap),
+        (c('1'), Action::ViewFiles),
+        (c('2'), Action::ViewMap),
         (c('3'), Action::ViewCleanup),
         (c('4'), Action::ViewDupes),
         (c('t'), Action::Types),

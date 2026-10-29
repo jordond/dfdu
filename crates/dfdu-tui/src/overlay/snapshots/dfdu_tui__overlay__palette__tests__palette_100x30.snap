@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/overlay/palette.rs
 expression: frame
 ---
- dfdu  /r                                                                          ⠋ scanning 00:00
- 3 items · 3┌ Commands 59/59 ──────────────────────────────────────────────────────────┐ze ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
+ /r         ┌ Commands 61/61 ──────────────────────────────────────────────────────────┐ze ↓ · disk
         size│ : ▌                                                                      │
      3.0 GiB│ skip directories that are not responding                          act  x │
    625.0 MiB│ mark or unmark, then move down                                act  Space │
@@ -23,7 +23,7 @@ expression: frame
             │ list what could not be read, and go to it                      panels  ! │
             │ keys                                                        panels  ? F1 │
             │ debug overlay                                                panels  F12 │
-            │ close the overlay, or clear the filter                       global  Esc │
+            │ close the overlay, clear the filter, or go back to Files     global  Esc │
             │ quit                                                    global  q Ctrl-C │
             │ Theme: dark                                                      setting │
             │ Theme: light                                                     setting │

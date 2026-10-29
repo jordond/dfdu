@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/features/treemap/tests.rs
 expression: "styled(&render_buffer(&mut app, t0, 90, 24))"
 ---
- dfdu  /r                                                                   done in 00:00
-L0 0-5 bold | 7-8 bold | 76-88 fg=green
- 12 items · 95.7 KiB                                 size ↓ · disk · top folder · depth 3
-L1 0-11 fg=darkgray | 12-19 bold | 59-61 fg=darkgray | 66-68 fg=darkgray | 79-81 fg=darkgray
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest              done in 00:00
+L0 0-5 bold | 6-16 fg=darkgray | 17-23 fg=cyan bold reversed | 24-62 fg=darkgray | 76-88 fg=green
+ /r                                                   12 items · 95.7 KiB   size ↓ · disk
+L1 1-2 bold | 54-64 fg=darkgray | 65-72 bold | 82-84 fg=darkgray
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌─────────────────────────────────┐
 L2 0-54 fg=cyan bold | 55-89 fg=blue
 ┃ big/  58.6 KiB  61%                                 ┃│ mid/  24.4 KiB  25%             │
@@ -48,5 +48,5 @@ L20 0-54 fg=cyan bold | 55-78 fg=magenta | 79-89 fg=green
 L21 85-89 fg=darkgray
  treemap depth 3
 L22 0-15 fg=darkgray
- ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  d trash  1 list  ? help  q quit
-L23 1-4 bold | 5-9 fg=darkgray | 12-16 bold | 17-24 fg=darkgray | 27-35 bold | 36-44 fg=darkgray | 47-49 bold | 50-55 fg=darkgray | 58-58 bold | 59-64 fg=darkgray | 67-67 bold | 68-72 fg=darkgray | 75-75 bold | 76-80 fg=darkgray | 83-83 bold | 84-88 fg=darkgray
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  d trash  ? help  q quit  [ ] views
+L23 1-4 bold | 5-9 fg=darkgray | 12-16 bold | 17-24 fg=darkgray | 27-35 bold | 36-44 fg=darkgray | 47-47 bold | 48-53 fg=darkgray | 56-56 bold | 57-61 fg=darkgray | 64-64 bold | 65-69 fg=darkgray | 72-74 bold | 75-80 fg=darkgray

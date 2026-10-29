@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/overlay/help/tests.rs
 expression: frame
 ---
- dfdu  /r                                                                          ⠋ scanning 00:00
- 3┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
+ /┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
   ┃ Navigate                                        Act                                          ┃
   ┃ ↑ k              move up                        r      rescan the selected directory         ┃
   ┃ ↓ j              move down                      m      scan into the selected mount (another ┃
@@ -29,6 +29,6 @@ expression: frame
   ┃ S  re-sort now                                  U      put back what was last moved to the   ┃
   ┃                                                        Trash or staged                       ┃
   ┃ Display                                                                                      ┃
-  ┃ 1  list view                                    Panels                                       ┃
+  ┃ 1  Files view: the entries of this directory    Panels                                       ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

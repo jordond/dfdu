@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/treemap/tests.rs
 expression: "render(&mut app, t0, 80, 24)"
 ---
- dfdu  /r                                                         done in 00:00
- 631 items · 18.4 MiB                      size ↓ · disk · top folder · depth 2
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ /r                                        631 items · 18.4 MiB   size ↓ · disk
 ┏━━━━━━━━━┓┌─────────┐┌────────┐┌──────────┐┌───────┐┌───────┐┌───────┐┌───────┐
 ┃ dir-0/  ┃│ dir-3/  ││ dir-6/ ││ dir-9/   ││ dir-1…││ dir-1…││ dir-1…││ dir-1…│
 ┃┌──────┐ ┃│┌──────┐ ││┌──────┐││+19 small ││┌─────┐││┌─────┐││┌─────┐││┌─────┐│
@@ -25,4 +25,4 @@ expression: "render(&mut app, t0, 80, 24)"
 └─────────┘└─────────┘└────────┘└──────────┘└────────┘└──────┘└──────┘└────────┘
  ▶ dir-0/  911.1 KiB  4.8%  ·  22 items                                    1/30
 
- ←↑↓→ move  Enter zoom in  Backspace zoom out  d trash  1 list  ? help  q quit
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  ? help  q quit  [ ] views

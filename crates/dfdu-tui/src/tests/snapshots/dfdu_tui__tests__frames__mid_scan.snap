@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/tests/frames.rs
 expression: "text(&mid_scan(Theme::no_color()))"
 ---
- dfdu  /home/jo                                                                    ⠋ scanning 00:14
- 1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:14
+ /home/jo                                          1.9M items · 241.6 GiB · 1 error   size ↓ · disk
         size                     share   items  name
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
  ⠙  78.0 GiB  ███████████▏       32.3%    1.1M  dev/

@@ -109,6 +109,21 @@ fn found(app: &App) -> Option<&Found> {
     app.dupes.run.as_ref()?.result.get()
 }
 
+/// For the view's tab: `None` before a comparison was started, `Some(None)` while one runs,
+/// and then the number of groups. While the view is open only groups with two files left
+/// count; closed, the files are not looked up and every group found counts.
+pub fn groups(app: &App) -> Option<Option<usize>> {
+    let run = app.dupes.run.as_ref()?;
+    let Some(f) = run.result.get() else {
+        return Some(None);
+    };
+    if app.extras.dupes.is_empty() {
+        return Some(Some(f.groups.len()));
+    }
+    let live = |g: &Group| g.files.iter().filter(|c| live(app, c).is_some()).count() >= 2;
+    Some(Some(f.groups.iter().filter(|g| live(g)).count()))
+}
+
 /// Switches the view on or off. On, it starts a comparison unless one ran already.
 pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     app.dupes.on = on;

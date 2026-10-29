@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/tests/columns.rs
 expression: "render(&mut dev(t0), t0, 120, 32)"
 ---
- dfdu  ~/dev                                                                                              done in 00:00
- 4.5M items · 163.3 GiB                                               sort size ↓  ·  disk usage  ·  Δ since 2026-10-18
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+ ~/dev                                       4.5M items · 163.3 GiB   sort size ↓  ·  disk usage  ·  Δ since 2026-10-18
         size                             share   items     Δ 10-18  ↔ name
     40.7 GiB  ████████████████████████   24.9%    1.5M    +3.4 GiB    dfdu/                                            ┃
     16.6 GiB  █████████▊                 10.2%  227.4k              ↔ brewd/                                           ┃
@@ -33,4 +33,4 @@ expression: "render(&mut dev(t0), t0, 120, 32)"
    360.0 MiB  ▎                           0.2%     100                project-25/                                      │
    350.0 MiB  ▎                           0.2%     100                project-26/                                      │
  ▸ experiment/  16.3 GiB · 108.2k items · ↔ 196.5 MiB also used outside the scan · +2.1 GiB since 2026-10-18       3/61
- ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ? help  q quit  [ ] views

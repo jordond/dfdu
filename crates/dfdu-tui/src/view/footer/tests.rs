@@ -29,8 +29,8 @@ fn hints_change_with_context() {
     let mut list = app(false, 0, t0);
     assert_eq!(
         shown(&list, 120),
-        " ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  \
-         ? help  q quit"
+        " ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ? help  \
+         q quit  [ ] views"
     );
     let scanning = app(true, 0, t0);
     assert!(shown(&scanning, 200).contains("  S re-sort  "));

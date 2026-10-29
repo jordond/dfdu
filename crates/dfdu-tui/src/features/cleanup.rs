@@ -48,6 +48,8 @@ pub struct Cleanup {
     commands: u64,
     /// The extras were read since the view was switched on.
     fresh: bool,
+    /// What the last read found to reclaim, for the view's tab; `None` before the first.
+    reclaimable: Option<u64>,
 }
 
 /// One match, as the last read found it.
@@ -107,6 +109,12 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
         return vec![Effect::Send(Command::NativeSizes)];
     }
     Vec::new()
+}
+
+/// What the matches that can be marked would free, as the last read while the view was open
+/// found; `None` before that.
+pub fn reclaimable(app: &App) -> Option<u64> {
+    app.cleanup.reclaimable
 }
 
 /// The view needs a read: it was just switched on.
@@ -184,6 +192,14 @@ pub fn read(m: &Model, app: &App) -> Info {
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
+    if app.cleanup.on {
+        let items = &app.extras.cleanup.items;
+        let markable = items.iter().filter(|it| markable(it));
+        let total = markable
+            .map(|it| it.size.saturating_sub(it.shared_out))
+            .sum();
+        app.cleanup.reclaimable = Some(total);
+    }
     let premark = std::mem::take(&mut app.cleanup.premark);
     if !app.cleanup.on || !premark || app.extras.cleanup.items.is_empty() {
         return;

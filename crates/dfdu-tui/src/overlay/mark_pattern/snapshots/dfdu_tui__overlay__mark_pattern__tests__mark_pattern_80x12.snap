@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/overlay/mark_pattern/tests.rs
 expression: frame
 ---
- dfdu  /r                                                      ⠋ scanning 00:00
- 5 items · 6.3 KiB                                                size ↓ · disk
+ dfdu │ [1 Files] 2 3 4 5                                      ⠋ scanning 00:00
+ /r                                           5 items · 6.3 KiB   size ↓ · disk
         size                     share  name
      2.9 KiB  ████████████████   46.2%  build.log
      2.0 K┌ Mark by pattern ─────────────────────────────────────────┐

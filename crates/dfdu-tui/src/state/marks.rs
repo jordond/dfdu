@@ -416,8 +416,8 @@ pub fn invert(app: &mut App) {
         return;
     }
     if treemap::active(app) || cleanup::active(app) || dupes::active(app) || largest::active(app) {
-        let list = crate::app::keys::first_key(crate::app::keys::Action::ViewList);
-        app.status = Some(format!("marks are inverted in the list ({list})"));
+        let list = crate::app::keys::first_key(crate::app::keys::Action::ViewFiles);
+        app.status = Some(format!("marks are inverted in Files ({list})"));
         return;
     }
     let folders = !crate::overlay::type_filter::active(app);

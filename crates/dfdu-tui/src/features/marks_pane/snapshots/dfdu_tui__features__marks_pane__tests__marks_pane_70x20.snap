@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/marks_pane/tests.rs
 expression: out
 ---
- dfdu  … › dev › projects › website-redesign-2026       done in 00:00
- 5 items · 6.7 GiB                                      size ↓ · disk
+ dfdu │ [1 Files] 2 3 4 5                               done in 00:00
+ … › website-redesign-2026          5 items · 6.7 GiB   size ↓ · disk
         size                 share  name
 ●    3.5 GiB  ████████████   52.2%  target/
 ●    2.0 GiB  ██████▉        29.9%  screen-recording-of-…h-meeting.mkv

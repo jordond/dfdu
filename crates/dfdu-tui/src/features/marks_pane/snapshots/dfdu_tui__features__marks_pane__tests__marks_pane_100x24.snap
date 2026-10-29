@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/marks_pane/tests.rs
 expression: out
 ---
- dfdu  /home/jo › dev › projects › website-redesign-2026                              done in 00:00
- 5 items · 6.7 GiB                                                                    size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                        done in 00:00
+ /home/jo › dev › projects › website-redesign-2026                5 items · 6.7 GiB   size ↓ · disk
         size           share  name                          ┏ Marks ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ●    3.5 GiB  ██████   52.2%  target/                       ┃● 3 marked, 6.7 GiB                   ┃
 ●    2.0 GiB  ███▍     29.9%  screen-recording-o…meeting.mkv┃would free about 6.0 GiB              ┃

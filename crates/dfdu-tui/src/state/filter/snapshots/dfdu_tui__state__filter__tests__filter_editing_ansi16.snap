@@ -2,10 +2,10 @@
 source: crates/dfdu-tui/src/state/filter/tests.rs
 expression: styled(&buf)
 ---
- dfdu  /r                                                      ⠋ scanning 00:00
-L0 0-5 bold | 7-8 bold | 63-78 fg=cyan
- 8 items · 250.9 GiB                                              size ↓ · disk
-L1 0-10 fg=darkgray | 11-19 bold | 72-74 fg=darkgray
+ dfdu │ [1 Files] 2 3 4 5                                      ⠋ scanning 00:00
+L0 0-5 bold | 6-7 fg=darkgray | 8-16 fg=cyan bold reversed | 17-24 fg=darkgray | 63-78 fg=cyan
+ /r                                         8 items · 250.9 GiB   size ↓ · disk
+L1 1-2 bold | 44-53 fg=darkgray | 54-62 bold | 72-74 fg=darkgray
         size                     share  name
 L2 0-79 fg=darkgray
    112.0 GiB  ████████████████   44.6%  Library/

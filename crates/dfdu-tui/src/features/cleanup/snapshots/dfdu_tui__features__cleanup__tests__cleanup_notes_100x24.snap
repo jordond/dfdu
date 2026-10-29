@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/cleanup/tests.rs
 expression: frame
 ---
- dfdu  /r                                                                             done in 00:00
- 13 items · 1.0 GiB                                                                   size ↓ · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup 1.0G │ 4 Duplicates │ 5 Largest                   done in 00:00
+ whole scan: /r                                                  13 items · 1.0 GiB   size ↓ · disk
  reclaimable  safe 1.0 GiB   regenerable 58.6 KiB   review 0 B   manual 0 B
  ▾ OS and user caches    safe          1.0 GiB  2 items, 1 marked
   ●    1.0 GiB       1  20755 d  /r/old-cache  recommended
@@ -25,4 +25,4 @@ cache.
 
 
  marked 1 recommended item (1.0 GiB) · Space unmarks                           ● 1 marked (1.0 GiB)
- ↑↓ move  Enter open  Space mark  a recommended  n command  d trash marked  1 list  ? help  q quit
+ ↑↓ move  Enter open  Space mark  a recommended  f filter  d trash marked  ? help  q quit  [ ] views

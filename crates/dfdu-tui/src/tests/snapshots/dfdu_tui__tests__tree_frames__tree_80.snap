@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/tests/tree_frames.rs
 expression: "render(&mut dev(t0), t0, 80, 24)"
 ---
- dfdu  ~/dev                                                      done in 00:00
- 101 items · 145.0 GiB             tree · size ↓ · of parent · fold < 1% · disk
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ ~/dev     101 items · 145.0 GiB   tree · size ↓ · of parent · fold < 1% · disk
         size                 share         name
     40.7 GiB  ████████████   28.0%         ▾ dfdu/                             ┃
     20.8 GiB  ██████▏░░░░░   51.1%         ├─▾ .claude/                        ┃

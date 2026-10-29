@@ -6,8 +6,9 @@ use std::time::Instant;
 
 use dfdu_engine::{Command, Mode, SizeMode};
 
+use super::views::{self, View};
 use super::{App, Effect, Overlay};
-use crate::features::{debug, details, largest, selected_path, treemap};
+use crate::features::{debug, details, selected_path, treemap};
 use crate::overlay::{confirm, help, mark_pattern, palette, type_filter};
 use crate::state::order::SortKey;
 use crate::state::{filter, marks, tree};
@@ -68,11 +69,13 @@ pub enum Action {
     FocusDetails,
     Palette,
     Debug,
-    ViewList,
-    ViewTreemap,
+    ViewFiles,
+    ViewMap,
     ViewCleanup,
     ViewDupes,
     ViewLargest,
+    PrevView,
+    NextView,
     DupesKeep,
     TreemapDeeper,
     TreemapShallower,
@@ -195,26 +198,38 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Sort,
     ),
     row(Action::Resort, "S", "re-sort now", Group::Sort),
-    row(Action::ViewList, "1", "list view", Group::Display),
-    row(Action::ViewTreemap, "2", "treemap view", Group::Display),
+    row(
+        Action::ViewFiles,
+        "1",
+        "Files view: the entries of this directory",
+        Group::Display,
+    ),
+    row(
+        Action::ViewMap,
+        "2",
+        "Map view: this directory as a treemap",
+        Group::Display,
+    ),
     row(
         Action::ViewCleanup,
         "3",
-        "cleanup view: what the rules found, by safety",
+        "Cleanup view: what the rules found in the whole scan",
         Group::Display,
     ),
     row(
         Action::ViewDupes,
         "4",
-        "duplicate files (compares the scanned files)",
+        "Duplicates view: identical files in the whole scan",
         Group::Display,
     ),
     row(
         Action::ViewLargest,
         "5",
-        "largest files anywhere below this directory",
+        "Largest view: the largest files below this directory",
         Group::Display,
     ),
+    row(Action::PrevView, "[", "previous view", Group::Display),
+    row(Action::NextView, "]", "next view", Group::Display),
     row(
         Action::DupesKeep,
         "K",
@@ -224,19 +239,19 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(
         Action::TreemapDeeper,
         "+",
-        "treemap: one level deeper",
+        "map: one level deeper",
         Group::Display,
     ),
     row(
         Action::TreemapShallower,
         "-",
-        "treemap: one level less",
+        "map: one level less",
         Group::Display,
     ),
     row(
         Action::TreemapColor,
         "p",
-        "treemap: colour by top folder or age",
+        "map: colour by category, age or top folder",
         Group::Display,
     ),
     row(
@@ -385,7 +400,7 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(
         Action::Close,
         "Esc",
-        "close the overlay, or clear the filter",
+        "close the overlay, clear the filter, or go back to Files",
         Group::Global,
     ),
     row(Action::Quit, "q Ctrl-C", "quit", Group::Global),
@@ -401,12 +416,6 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
     }
     let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
     let before = app.selected_index();
-    if matches!(
-        a,
-        Action::ViewList | Action::ViewTreemap | Action::ViewCleanup | Action::ViewDupes
-    ) {
-        largest::show(app, false);
-    }
     match a {
         Action::Quit => app.quit = true,
         Action::Up => app.move_by(-1),
@@ -480,6 +489,9 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Close => {
             if !marks::range::end(app) && !filter::clear(app) && !type_filter::clear(app) {
                 app.overlay = Overlay::None;
+                if views::current(app) != View::Files {
+                    fx.extend(views::switch(app, View::Files));
+                }
             }
         }
         Action::ToggleMark => marks::toggle(app),
@@ -495,23 +507,13 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::FocusDetails => fx.extend(details::focus(app)),
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
-        Action::ViewList => {
-            crate::features::dupes::show(app, false);
-            crate::features::cleanup::show(app, false);
-            treemap::show(app, false);
-        }
-        Action::ViewTreemap => {
-            crate::features::dupes::show(app, false);
-            crate::features::cleanup::show(app, false);
-            tree::act::treemap_dir(app);
-            treemap::show(app, true);
-        }
-        Action::ViewCleanup => {
-            crate::features::dupes::show(app, false);
-            fx.extend(crate::features::cleanup::show(app, true));
-        }
-        Action::ViewDupes => fx.extend(crate::features::dupes::show(app, true)),
-        Action::ViewLargest => largest::show(app, true),
+        Action::ViewFiles => fx.extend(views::switch(app, View::Files)),
+        Action::ViewMap => fx.extend(views::switch(app, View::Map)),
+        Action::ViewCleanup => fx.extend(views::switch(app, View::Cleanup)),
+        Action::ViewDupes => fx.extend(views::switch(app, View::Duplicates)),
+        Action::ViewLargest => fx.extend(views::switch(app, View::Largest)),
+        Action::PrevView => fx.extend(views::step(app, -1)),
+        Action::NextView => fx.extend(views::step(app, 1)),
         Action::DupesKeep => crate::features::dupes::cycle_keep(app),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),

@@ -2,8 +2,8 @@
 source: crates/dfdu-tui/src/features/details/tests.rs
 expression: out
 ---
- dfdu  /r                                                                                                 done in 00:00
- 13 items · 80.6 KiB · 2 errors                                                              sort size ↓  ·  disk usage
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+ /r                                                         13 items · 80.6 KiB · 2 errors   sort size ↓  ·  disk usage
         size                 share  ↔ name                                      ╭ proj/ ───────────────────────────────╮
  !  78.6 KiB  ████████████   97.6%  ↔ proj/  partly read: could not be read     │ /r/proj                              │
      2.0 KiB  ▎               2.4%    notes.txt                                 │ directory · incomplete               │
@@ -21,4 +21,4 @@ expression: out
                                                                                 │ ▏            1000 B  d.txt           │
                                                                                 ╰────────────────────────────── ↓ more ╯
  ▸ proj/  78.6 KiB · 11 items · ↔ 5.9 KiB also used outside the scan                                                1/2
- ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  ! errors  ? help  q quit
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ! errors  ? help  q quit
