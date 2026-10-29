@@ -205,7 +205,10 @@ fn report_json_validates_and_fail_above_sets_the_exit_code() {
     let it = &items[0];
     assert_eq!(it["rule"], "node.node_modules");
     assert_eq!(it["safety"], "regenerable");
-    assert_eq!(it["path"], root.join("web/node_modules").to_str().unwrap());
+    assert_eq!(
+        it["path"],
+        root.join("web").join("node_modules").to_str().unwrap()
+    );
     // Just written: not recommended (nothing changed in the last 7 days is).
     assert_eq!(it["recommended"], false);
     let size = it["disk"].as_u64().unwrap();

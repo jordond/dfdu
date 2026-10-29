@@ -179,7 +179,7 @@ fn clean_deletes_what_is_recommended() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|i| i["path"].as_str().unwrap().contains("/new/"))
+            .find(|i| Path::new(i["path"].as_str().unwrap()).starts_with(root.join("new")))
             .unwrap();
         assert!(
             new["reason"].as_str().unwrap().contains("not recommended"),

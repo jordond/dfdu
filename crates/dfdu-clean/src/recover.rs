@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use dfdu_tree::Kind;
@@ -121,7 +121,10 @@ pub fn scan(dir: &Path) -> io::Result<Recovery> {
 
 impl Recovery {
     fn read_session(&mut self, path: PathBuf, file: File) -> io::Result<()> {
-        let text = fs::read_to_string(&path)?;
+        // Through the locked handle: Windows locks are mandatory, so a read through another
+        // handle (`fs::read_to_string(&path)`) fails while the lock is held.
+        let mut text = String::new();
+        (&file).read_to_string(&mut text)?;
         let lines: Vec<&str> = text.lines().collect();
         let mut damaged = false;
         // By (plan, path).

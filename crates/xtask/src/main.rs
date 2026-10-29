@@ -516,13 +516,18 @@ fn demo() -> anyhow::Result<()> {
     run(Command::new("vhs").arg("scripts/vhs/browse.tape"))
 }
 
-/// A `KEY: value` from ci.yml's `env:` blocks.
+/// A `KEY: value` from the `env:` blocks of ci.yml or, for the fuzzing toolchain, fuzz.yml.
 fn ci_value(key: &str) -> anyhow::Result<String> {
-    let yml = fs::read_to_string(".github/workflows/ci.yml")?;
-    yml.lines()
-        .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix(':'))
-        .map(|v| v.trim().trim_matches('"').to_owned())
-        .with_context(|| format!("no {key} in ci.yml"))
+    for file in ["ci.yml", "fuzz.yml"] {
+        let yml = fs::read_to_string(format!(".github/workflows/{file}"))?;
+        let value = yml
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix(':'));
+        if let Some(v) = value {
+            return Ok(v.trim().trim_matches('"').to_owned());
+        }
+    }
+    bail!("no {key} in ci.yml or fuzz.yml")
 }
 
 /// The first `key = "value"` in a TOML file.

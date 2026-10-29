@@ -134,7 +134,12 @@ fn native_commands_go_as_their_rule() {
         })
         .map(|i| RuleIx(u16::try_from(i).unwrap()))
         .unwrap();
-    let path = std::path::Path::new("/srv/\u{e9}t\u{e9}");
+    // The agent decodes the command, so the path is absolute by the agent's (this host's) rules.
+    let path = std::path::Path::new(if cfg!(windows) {
+        "C:\\srv\\\u{e9}t\u{e9}"
+    } else {
+        "/srv/\u{e9}t\u{e9}"
+    });
     for (variant, dry_run) in [(None, false), (None, true), (Some(0), false)] {
         let want = crate::applier::native_req(&set, docker, variant, path, dry_run, 5)
             .expect("the rule has the command");

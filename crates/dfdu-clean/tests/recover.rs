@@ -114,19 +114,9 @@ fn killed_during_a_staged_delete() {
         .unwrap();
     let ops = state.join("ops");
     let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let journal = fs::read_dir(&ops).into_iter().flatten().flatten().next();
-        let text = journal.and_then(|j| fs::read_to_string(j.path()).ok());
-        if text.is_some_and(|t| t.contains("\"commit-intent\"")) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the child never started its commit"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    // The hook deletes one entry and then waits; give it the moment that takes.
+    // The hook deletes one entry and then waits. The child's journal is not read here: it is
+    // locked, and on Windows that keeps other handles from reading it. Its commit intent is
+    // written before the first entry goes, and recovery's verdict below shows it was.
     let staged = loop {
         let s = staged_dir(&state);
         if s.len() == 1 && fs::read_dir(&s[0]).unwrap().count() == 4 {
@@ -134,7 +124,7 @@ fn killed_during_a_staged_delete() {
         }
         assert!(
             Instant::now() < deadline,
-            "the commit did not start deleting"
+            "the child never started deleting its staged item"
         );
         std::thread::sleep(Duration::from_millis(5));
     };

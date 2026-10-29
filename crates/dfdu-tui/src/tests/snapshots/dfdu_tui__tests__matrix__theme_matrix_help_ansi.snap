@@ -3,9 +3,9 @@ source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 bold | 7-14 bold
+L0 0-5 bold | 7-14 bold | 83-98 fg=cyan
  1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓k
-L1 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan
+L1 0-1 fg=darkgray | 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan
   ┃ Navigate                                        Act                                          ┃
 L2 0-1 fg=darkgray | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan | 98-99 fg=darkgray
  ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃

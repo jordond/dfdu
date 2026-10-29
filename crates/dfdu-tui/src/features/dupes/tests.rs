@@ -7,7 +7,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::*;
 use crate::model::snapshot;
-use crate::tests::{press, render};
+use crate::tests::{press, render, render_buffer};
 use crate::theme::Theme;
 
 #[test]
@@ -149,15 +149,20 @@ fn rows_show_the_path_below_the_shared_directory_and_align_the_dates() {
             ],
         ],
     );
+    // `render` shows `\` as `/`, so the frame is the same on every platform.
     let out = render(&mut app, t0, 80, 12);
-    // The shared directory is joined with the platform's separator.
-    let sep = std::path::MAIN_SEPARATOR;
-    if sep == '/' {
-        insta::assert_snapshot!("dupes_80x12", out);
-    }
+    insta::assert_snapshot!("dupes_80x12", out);
     let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines[3].contains("· in photos/2026/trip-to-the-coast/"),
+        "{out}"
+    );
+    // The shared directory is joined with the platform's separator, as the cells hold it.
+    let buf = render_buffer(&mut app, t0, 80, 12);
+    let header: String = (0..80).map(|x| buf[(x, 3)].symbol()).collect();
+    let sep = std::path::MAIN_SEPARATOR;
     let shared = format!("· in photos{sep}2026{sep}trip-to-the-coast{sep}");
-    assert!(lines[3].contains(&shared), "{out}");
+    assert!(header.contains(&shared), "{header}");
     let files: Vec<&str> = lines
         .iter()
         .copied()
