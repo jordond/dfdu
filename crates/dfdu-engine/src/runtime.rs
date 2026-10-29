@@ -340,7 +340,6 @@ impl<B: Backend> Engine<B> {
     /// Reads the model from another thread: the function returned runs the one it is given
     /// under the read lock, as [`Engine::read`] does. Do no I/O there, and keep it short: the
     /// applier and the browser wait for the lock.
-    #[must_use]
     pub fn reader(&self) -> impl Fn(&mut dyn FnMut(&Model)) + Send + Sync + 'static {
         let model = self.model.clone();
         move |f| f(&model.read())

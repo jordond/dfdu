@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_dfdu_global_optspecs
-    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= type= no-history theme= color= bars= no-mouse debug-stats h/help V/version
+    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= type= no-history no-cache theme= color= bars= no-mouse debug-stats h/help V/version
 end
 
 function __fish_dfdu_needs_command
@@ -39,6 +39,7 @@ complete -c dfdu -n "__fish_dfdu_needs_command" -l no-rules -d 'Do not classify 
 complete -c dfdu -n "__fish_dfdu_needs_command" -l disks -d 'Choose a disk to browse from the mounted filesystems'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l read-only -d 'Never delete anything: the browser leaves out its delete keys and runs cleanup commands only as dry runs'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l no-history -d 'Do not record the scan in the history, nor show what grew since the last one'
+complete -c dfdu -n "__fish_dfdu_needs_command" -l no-cache -d 'Scan PATH afresh: do not open its cached scan, nor save this one (`DFDU_CACHE=0` turns the cache off for good). Without it, the browser opens the last complete scan of PATH at once, if one is cached, and brings it up to date in the background; scans that take 3 s or more are cached for 14 days (`dfdu cache list`)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l no-mouse -d 'Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l debug-stats -d 'Start with the debug panel open, and print its numbers when the browser exits'
 complete -c dfdu -n "__fish_dfdu_needs_command" -s h -l help -d 'Print help (see more with \'--help\')'
@@ -53,6 +54,7 @@ complete -c dfdu -n "__fish_dfdu_needs_command" -a "dupes" -d 'Scan a directory 
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
+complete -c dfdu -n "__fish_dfdu_needs_command" -a "cache" -d 'List or clear the scans the browser cached, which it opens at once next time'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "man" -d 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "completions" -d 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
 complete -c dfdu -n "__fish_dfdu_needs_command" -a "agent" -d 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu\'s wire format. Not for use by hand'
@@ -164,21 +166,33 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l restore -d 'Put th
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l dismiss -d 'Close these interrupted items: nothing is done on disk' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l journals -d 'The journal directory (the default is dfdu\'s state directory)' -r -F
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -f -a "list" -d 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -f -a "clear" -d 'Remove every cached scan'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcommand_from clear" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcommand_from help" -f -a "list" -d 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcommand_from help" -f -a "clear" -d 'Remove every cached scan'
+complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand man" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand completions" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand agent" -l threads -d 'Worker threads' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand agent" -s h -l help -d 'Print help'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "scan" -d 'Scan a directory and print a summary'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "disks" -d 'List the mounted filesystems with their size and free space'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "report" -d 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "clean" -d 'Delete what `report` recommends (dry run unless --yes)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "diff" -d 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "history" -d 'List the recorded scans'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "dupes" -d 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "man" -d 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "completions" -d 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "agent" -d 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu\'s wire format. Not for use by hand'
-complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover man completions agent help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "scan" -d 'Scan a directory and print a summary'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "disks" -d 'List the mounted filesystems with their size and free space'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "report" -d 'Scan a directory and list what the cleanup rules found in it: caches, build output, dependencies, with how safe each is to delete'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "clean" -d 'Delete what `report` recommends (dry run unless --yes)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "diff" -d 'What grew: a directory now against its last recorded scan (or one from --since ago), or two saved scans'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "history" -d 'List the recorded scans'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "dupes" -d 'Scan a directory and list the files with identical contents (size, then partial hash, then SHA-256), the most space to free first'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "export" -d 'Scan a directory and write it in ncdu\'s JSON format'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "import" -d 'Read a scan in ncdu\'s JSON format and print a summary (`dfdu -f FILE` browses it)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "recover" -d 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "cache" -d 'List or clear the scans the browser cached, which it opens at once next time'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "man" -d 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "completions" -d 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "agent" -d 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu\'s wire format. Not for use by hand'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and __fish_seen_subcommand_from cache" -f -a "list" -d 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+complete -c dfdu -n "__fish_dfdu_using_subcommand help; and __fish_seen_subcommand_from cache" -f -a "clear" -d 'Remove every cached scan'

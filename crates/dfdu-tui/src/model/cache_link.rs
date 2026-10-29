@@ -105,6 +105,8 @@ pub(crate) struct Cacher {
     changed: Option<(u64, Instant)>,
     /// Scans quicker than this are not saved ([`MIN_SCAN_MS`]).
     min_scan_ms: u64,
+    /// Where a directory's change journal stands ([`dfdu_engine::journal_position`]).
+    position: fn(&std::path::Path) -> Option<JournalPosition>,
 }
 
 impl Cacher {
@@ -118,6 +120,7 @@ impl Cacher {
             saved: None,
             changed: None,
             min_scan_ms: MIN_SCAN_MS,
+            position: dfdu_engine::journal_position,
         }
     }
 
@@ -167,6 +170,7 @@ impl Cacher {
         if link.slot.cached(now) {
             let slot = link.slot.clone();
             let root = link.slot.key.root().to_path_buf();
+            let journal_position = self.position;
             let spawned = thread::Builder::new()
                 .name("dfdu-cache".into())
                 .spawn(move || {
@@ -174,9 +178,7 @@ impl Cacher {
                     slot.sweep(now);
                     // Before the resume asks the journal what changed: what changes from here
                     // on is asked about again next time.
-                    let position = hit
-                        .as_ref()
-                        .and_then(|_| dfdu_engine::journal_position(&root));
+                    let position = hit.as_ref().and_then(|_| journal_position(&root));
                     Ok(hit.map(|hit| Prepared { hit, position }))
                 });
             if let Ok(t) = spawned {
@@ -196,7 +198,7 @@ impl Cacher {
     /// Scans the directory.
     fn scan<B: dfdu_scan::Backend>(&mut self, link: &CacheLink, engine: &Engine<B>) {
         // Taken before the scan, so that what changes during it is replayed on resume.
-        let journal = dfdu_engine::journal_position(link.slot.key.root());
+        let journal = (self.position)(link.slot.key.root());
         self.run = Some(Run::new(None, journal));
         engine.send(Command::Scan {
             path: link.path.clone().into(),

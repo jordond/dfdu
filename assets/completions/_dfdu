@@ -32,6 +32,7 @@ _dfdu() {
 '()--disks[Choose a disk to browse from the mounted filesystems]' \
 '--read-only[Never delete anything\: the browser leaves out its delete keys and runs cleanup commands only as dry runs]' \
 '--no-history[Do not record the scan in the history, nor show what grew since the last one]' \
+'--no-cache[Scan PATH afresh\: do not open its cached scan, nor save this one (\`DFDU_CACHE=0\` turns the cache off for good). Without it, the browser opens the last complete scan of PATH at once, if one is cached, and brings it up to date in the background; scans that take 3 s or more are cached for 14 days (\`dfdu cache list\`)]' \
 '--no-mouse[Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down]' \
 '--debug-stats[Start with the debug panel open, and print its numbers when the browser exits]' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -210,6 +211,64 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(cache)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_dfdu__subcmd__cache_commands" \
+"*::: :->cache" \
+&& ret=0
+
+    case $state in
+    (cache)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:dfdu-cache-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(clear)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_dfdu__subcmd__cache__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:dfdu-cache-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(clear)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (man)
 _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
@@ -283,6 +342,30 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(cache)
+_arguments "${_arguments_options[@]}" : \
+":: :_dfdu__subcmd__help__subcmd__cache_commands" \
+"*::: :->cache" \
+&& ret=0
+
+    case $state in
+    (cache)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:dfdu-help-cache-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(clear)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (man)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -321,6 +404,7 @@ _dfdu_commands() {
 'export:Scan a directory and write it in ncdu'\''s JSON format' \
 'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
 'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
+'cache:List or clear the scans the browser cached, which it opens at once next time' \
 'man:Write man pages (dfdu.1 and one per command) into DIR, for packagers' \
 'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
 'agent:Scan for a dfdu on another host (\`--remote\`)\: reads requests on stdin and writes what it finds to stdout in dfdu'\''s wire format. Not for use by hand' \
@@ -332,6 +416,49 @@ _dfdu_commands() {
 _dfdu__subcmd__agent_commands() {
     local commands; commands=()
     _describe -t commands 'dfdu agent commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache_commands] )) ||
+_dfdu__subcmd__cache_commands() {
+    local commands; commands=(
+'list:List the cached scans, newest first\: when each was written, its size, its entries and its directory, and where the cache is' \
+'clear:Remove every cached scan' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'dfdu cache commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__clear_commands] )) ||
+_dfdu__subcmd__cache__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu cache clear commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__help_commands] )) ||
+_dfdu__subcmd__cache__subcmd__help_commands() {
+    local commands; commands=(
+'list:List the cached scans, newest first\: when each was written, its size, its entries and its directory, and where the cache is' \
+'clear:Remove every cached scan' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'dfdu cache help commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__help__subcmd__clear_commands] )) ||
+_dfdu__subcmd__cache__subcmd__help__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu cache help clear commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__help__subcmd__help_commands] )) ||
+_dfdu__subcmd__cache__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu cache help help commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__help__subcmd__list_commands] )) ||
+_dfdu__subcmd__cache__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu cache help list commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__cache__subcmd__list_commands] )) ||
+_dfdu__subcmd__cache__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu cache list commands' commands "$@"
 }
 (( $+functions[_dfdu__subcmd__clean_commands] )) ||
 _dfdu__subcmd__clean_commands() {
@@ -376,6 +503,7 @@ _dfdu__subcmd__help_commands() {
 'export:Scan a directory and write it in ncdu'\''s JSON format' \
 'import:Read a scan in ncdu'\''s JSON format and print a summary (\`dfdu -f FILE\` browses it)' \
 'recover:List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them' \
+'cache:List or clear the scans the browser cached, which it opens at once next time' \
 'man:Write man pages (dfdu.1 and one per command) into DIR, for packagers' \
 'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
 'agent:Scan for a dfdu on another host (\`--remote\`)\: reads requests on stdin and writes what it finds to stdout in dfdu'\''s wire format. Not for use by hand' \
@@ -387,6 +515,24 @@ _dfdu__subcmd__help_commands() {
 _dfdu__subcmd__help__subcmd__agent_commands() {
     local commands; commands=()
     _describe -t commands 'dfdu help agent commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__cache_commands] )) ||
+_dfdu__subcmd__help__subcmd__cache_commands() {
+    local commands; commands=(
+'list:List the cached scans, newest first\: when each was written, its size, its entries and its directory, and where the cache is' \
+'clear:Remove every cached scan' \
+    )
+    _describe -t commands 'dfdu help cache commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__cache__subcmd__clear_commands] )) ||
+_dfdu__subcmd__help__subcmd__cache__subcmd__clear_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help cache clear commands' commands "$@"
+}
+(( $+functions[_dfdu__subcmd__help__subcmd__cache__subcmd__list_commands] )) ||
+_dfdu__subcmd__help__subcmd__cache__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'dfdu help cache list commands' commands "$@"
 }
 (( $+functions[_dfdu__subcmd__help__subcmd__clean_commands] )) ||
 _dfdu__subcmd__help__subcmd__clean_commands() {

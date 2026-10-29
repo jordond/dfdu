@@ -24,6 +24,15 @@ fn link(tmp: &Path) -> CacheLink {
     }
 }
 
+/// A cacher for `link` that saves scans of any length and asks no change journal (its answers
+/// take a while, and a full rescan is what is tested here).
+fn cacher(link: &CacheLink) -> Cacher {
+    let mut c = Cacher::new(Some(link.clone()));
+    c.min_scan_ms = 0;
+    c.position = |_| None;
+    c
+}
+
 fn engine() -> Engine<PortableBackend> {
     Engine::start(
         PortableBackend::default(),
@@ -72,8 +81,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     let link = link(tmp.path());
     let e = engine();
     let mut app = App::new(Theme::no_color(), Instant::now());
-    let mut c = Cacher::new(Some(link.clone()));
-    c.min_scan_ms = 0;
+    let mut c = cacher(&link);
     assert!(c.poll(&mut app, &e), "the scan is sent at once");
     assert_eq!(app.cached, None, "nothing was cached");
     poll_until(&mut c, &mut app, &e, |c, _| {
@@ -87,8 +95,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
 
     let e = engine();
     let mut app = App::new(Theme::no_color(), Instant::now());
-    let mut c = Cacher::new(Some(link.clone()));
-    c.min_scan_ms = 0;
+    let mut c = cacher(&link);
     c.poll(&mut app, &e);
     assert_eq!(app.cached, Some(Cached::Loading));
     poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
@@ -110,7 +117,7 @@ fn a_damaged_cache_is_reported_and_scanned_instead() {
     fs::write(&link.slot.path, b"DFDUSNAP\x04\0\0\0cut").unwrap();
     let e = engine();
     let mut app = App::new(Theme::no_color(), Instant::now());
-    let mut c = Cacher::new(Some(link.clone()));
+    let mut c = cacher(&link);
     c.poll(&mut app, &e);
     poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
     let status = app.status.clone().expect("a notice");
@@ -134,7 +141,7 @@ fn quick_or_read_only_scans_are_not_saved() {
         };
         let e = engine();
         let mut app = App::new(Theme::no_color(), Instant::now());
-        let mut c = Cacher::new(Some(link.clone()));
+        let mut c = cacher(&link);
         c.min_scan_ms = min;
         poll_until(&mut c, &mut app, &e, |c, _| {
             c.run.as_ref().is_some_and(|r| r.saved_as.is_some())

@@ -42,6 +42,8 @@ Entries that could not be read are marked `!` with the reason (permission denied
 
 Like `ncdu -x`, a scan stays on the filesystem of the directory it starts in (`-x` is accepted and is the default); mounts below it are listed but not entered. `--cross-mounts` enters other local filesystems. Network filesystems (NFS, SMB, sshfs and other FUSE network mounts) are entered only with `--network`, and kernel filesystems (`/proc`, `/sys`, `/dev`, cgroups) never are. Mounts are classified from the mount table, so a hung network mount is not touched when it is skipped. A directory named on the command line is always scanned, whatever filesystem it is on.
 
+The browser caches complete scans that took 3 s or more, so the next `dfdu PATH` opens the last scan at once and brings it up to date in the background; the header says `cached 3 h ago, refreshing` until it is. On macOS, Windows and btrfs (as root) the change journal tells which directories changed, and only those are read again; elsewhere everything is rescanned behind the cached view. A cached scan is used for 14 days, and rescanned in full when its last full scan is more than 7 days old; the cache keeps at most 1 GiB. It holds a full file listing, so the cache directory (`~/Library/Caches/dfdu/scans` on macOS, `~/.cache/dfdu/scans` on Linux, `%LOCALAPPDATA%\dfdu\scans` on Windows, `DFDU_CACHE_DIR` to move it) and its files are readable only by you, and a cache another user wrote (as `sudo dfdu` may) is never read. `--no-cache` scans afresh, `DFDU_CACHE=0` turns the cache off, and `dfdu cache list` and `dfdu cache clear` show and remove it. The headless commands (`scan`, `export`, `report`, `clean`) neither read nor write it.
+
 ## Cleanup, scripts and history
 
 ```sh

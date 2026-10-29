@@ -4,7 +4,7 @@
 .SH NAME
 dfdu \- Disk usage browser for the terminal
 .SH SYNOPSIS
-\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-remote\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-bars\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
+\fBdfdu\fR [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-disks\fR] [\fB\-\-resume\-from\fR] [\fB\-f\fR|\fB\-\-file\fR] [\fB\-\-read\-only\fR] [\fB\-\-remote\fR] [\fB\-\-type\fR] [\fB\-\-no\-history\fR] [\fB\-\-no\-cache\fR] [\fB\-\-theme\fR] [\fB\-\-color\fR] [\fB\-\-bars\fR] [\fB\-\-no\-mouse\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Disk usage browser for the terminal
 .SH OPTIONS
@@ -44,6 +44,9 @@ Show only files of these types or extensions, comma\-separated: `video,audio,.is
 .TP
 \fB\-\-no\-history\fR
 Do not record the scan in the history, nor show what grew since the last one
+.TP
+\fB\-\-no\-cache\fR
+Scan PATH afresh: do not open its cached scan, nor save this one (`DFDU_CACHE=0` turns the cache off for good). Without it, the browser opens the last complete scan of PATH at once, if one is cached, and brings it up to date in the background; scans that take 3 s or more are cached for 14 days (`dfdu cache list`)
 .TP
 \fB\-\-theme\fR \fI<THEME>\fR [default: auto]
 Colour theme: auto, dark, light, ansi (the terminal\*(Aqs own 16 colours), mono, high\-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown
@@ -96,6 +99,9 @@ Read a scan in ncdu\*(Aqs JSON format and print a summary (`dfdu \-f FILE` brows
 .TP
 dfdu\-recover(1)
 List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them
+.TP
+dfdu\-cache(1)
+List or clear the scans the browser cached, which it opens at once next time
 .TP
 dfdu\-completions(1)
 Print a shell completion script (bash, zsh, fish, elvish, powershell)
