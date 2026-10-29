@@ -846,6 +846,7 @@ dependencies = [
  "dfdu-tree",
  "dunce",
  "rusqlite",
+ "rustix",
  "ruzstd",
  "tempfile",
 ]

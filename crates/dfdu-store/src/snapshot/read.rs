@@ -8,7 +8,7 @@ use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
 use super::{
     CLOSE, DIR, DIR_FLAGS, ENTRY, FRAME_MAX, Header, Loaded, MAGIC, OPT_JOURNAL, VERSION,
-    VERSION_1, VERSION_2,
+    VERSION_1, VERSION_2, VERSION_3,
 };
 use crate::ImportError;
 use crate::ncdu::Limits;
@@ -181,7 +181,7 @@ pub fn is_snapshot(bytes: &[u8]) -> bool {
 /// or cut short, or it exceeds `limits`.
 pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
     let (mut rec, version) = open_records(r)?;
-    let (root_path, header) = read_header(&mut rec, version, limits)?;
+    let (root_path, header) = read_header_records(&mut rec, version, limits)?;
 
     let mut tree = Tree::new();
     let mut devs: Vec<u64> = vec![];
@@ -283,6 +283,17 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
     })
 }
 
+/// Reads only the start of a snapshot: the root's path (raw bytes) and the header. Nothing past
+/// the first frame is read or checked.
+///
+/// # Errors
+///
+/// When `r` fails, or its start is not that of a snapshot of a format this version reads.
+pub fn read_header(r: impl Read, limits: &Limits) -> Result<(Vec<u8>, Header), ImportError> {
+    let (mut rec, version) = open_records(r)?;
+    read_header_records(&mut rec, version, limits)
+}
+
 /// The records of a snapshot read from `R`.
 type Records<R> = Rec<BufReader<FrameReader<BufReader<R>>>>;
 
@@ -295,7 +306,7 @@ fn open_records<R: Read>(r: R) -> Result<(Records<R>, u32), ImportError> {
         return Err(bad("not a dfdu snapshot"));
     }
     let version = le_u32(&head, 8);
-    if !matches!(version, VERSION | VERSION_1 | VERSION_2) {
+    if !matches!(version, VERSION | VERSION_1 | VERSION_2 | VERSION_3) {
         return Err(bad(format!(
             "snapshot format {version}; this dfdu reads {VERSION}"
         )));
@@ -328,7 +339,7 @@ fn check_end<R: Read>(
 }
 
 /// The scan's header records ([`put_header`](super::write)): the root path and the header.
-fn read_header(
+fn read_header_records(
     rec: &mut Rec<impl BufRead>,
     version: u32,
     limits: &Limits,
@@ -345,10 +356,15 @@ fn read_header(
         Some(JournalPosition {
             volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
             event_id: rec.u()?,
-            time: if version == VERSION { rec.u()? } else { 0 },
+            time: if version >= VERSION_3 { rec.u()? } else { 0 },
         })
     } else {
         None
+    };
+    let (last_full_scan, scan_ms) = if version >= VERSION {
+        (rec.u()?, rec.u()?)
+    } else {
+        (0, 0)
     };
     let header = Header {
         tool_version,
@@ -356,6 +372,8 @@ fn read_header(
         cross_mounts: opts & 1 != 0,
         network: opts & 2 != 0,
         journal,
+        last_full_scan,
+        scan_ms,
     };
     Ok((root_path, header))
 }

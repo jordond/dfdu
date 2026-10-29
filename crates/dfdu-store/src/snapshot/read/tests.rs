@@ -1,5 +1,7 @@
 use super::super::tests::{bytes, header, sample};
-use super::super::write::{write, write_as};
+use super::super::VERSION_3;
+use super::super::write::write_as;
+use crate::ncdu::tests::dump;
 use super::*;
 
 fn rec(b: &[u8]) -> Rec<&[u8]> {
@@ -29,28 +31,55 @@ fn damage_is_refused() {
     assert!(read(&more[..], &Limits::default()).is_err());
 }
 
-/// Version 1 files (no journal position) and version 2 files (no time) still read.
+/// Version 1 files (no journal position), version 2 files (no time) and version 3 files (no
+/// last full scan) still read, with the same tree.
 #[test]
-fn version_1_reads() {
+fn older_versions_read() {
     let (t, r) = sample();
-    let mut out = vec![];
-    let h = Header {
-        journal: None,
+    let old = Header {
+        last_full_scan: 0,
+        scan_ms: 0,
         ..header()
     };
-    write(&t, r, &mut out, &h).unwrap();
+    let mut out = vec![];
+    let v1 = Header {
+        journal: None,
+        ..old.clone()
+    };
+    write_as(&t, r, &mut out, &v1, VERSION_3).unwrap();
     out[8..12].copy_from_slice(&1u32.to_le_bytes());
     let l = read(&out[..], &Limits::default()).unwrap();
-    assert_eq!(l.header, h);
+    assert_eq!(l.header, v1);
+    assert_eq!(dump(&t, r), dump(&l.tree, l.root));
     let l = read(&bytes(&t, r)[..], &Limits::default()).unwrap();
     assert_eq!(l.header, header());
     // Version 2: a journal position without its time.
-    let mut v2 = header();
+    let mut v2 = old.clone();
     v2.journal.as_mut().unwrap().time = 0;
     let mut out = vec![];
     write_as(&t, r, &mut out, &v2, VERSION_2).unwrap();
     let l = read(&out[..], &Limits::default()).unwrap();
     assert_eq!(l.header, v2);
+    // Version 3: no last full scan, which is then taken to be when it was written.
+    let mut out = vec![];
+    write_as(&t, r, &mut out, &header(), VERSION_3).unwrap();
+    assert_eq!(out[8..12], 3u32.to_le_bytes());
+    let l = read(&out[..], &Limits::default()).unwrap();
+    assert_eq!(l.header, old);
+    assert_eq!(l.header.full_scan_at(), old.written);
+    assert_eq!(header().full_scan_at(), header().last_full_scan);
+    assert_eq!(dump(&t, r), dump(&l.tree, l.root));
+}
+
+/// The header alone reads from the start of a file, even one cut short after it.
+#[test]
+fn the_header_reads_alone() {
+    let (t, r) = sample();
+    let out = bytes(&t, r);
+    let (root, h) = read_header(&out[..], &Limits::default()).unwrap();
+    assert_eq!(root, t.path_buf(r).as_os_str().as_encoded_bytes());
+    assert_eq!(h, header());
+    assert!(read_header(&out[..12], &Limits::default()).is_err());
 }
 
 /// A format version this build does not know is refused, and so is a file without the magic.

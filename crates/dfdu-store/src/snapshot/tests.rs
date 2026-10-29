@@ -19,6 +19,8 @@ pub(super) fn header() -> Header {
             event_id: 123_456_789,
             time: 1_792_999_000,
         }),
+        last_full_scan: 1_792_998_000,
+        scan_ms: 63_000,
     }
 }
 

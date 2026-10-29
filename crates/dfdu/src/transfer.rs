@@ -180,17 +180,34 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     } else {
         None
     };
-    match resumed {
-        Some(l) => engine.resume(l.tree, l.header.journal, job.clone()),
-        None => engine.send(Command::Scan {
-            path: root,
-            opts: job.clone(),
-        }),
-    }
+    let started = (std::time::Instant::now(), dfdu_tree::now_secs().max(0).cast_unsigned());
+    // A resume from the journal keeps the last full scan's time; anything else is one.
+    let full_scan = match resumed {
+        Some(l) => {
+            let kept = l
+                .header
+                .journal
+                .is_some()
+                .then(|| (l.header.full_scan_at(), l.header.scan_ms));
+            engine.resume(l.tree, l.header.journal, job.clone());
+            kept
+        }
+        None => {
+            engine.send(Command::Scan {
+                path: root,
+                opts: job.clone(),
+            });
+            None
+        }
+    };
     let engine = match launch::wait_scan(engine) {
         Ok(e) => e,
         Err(code) => return code,
     };
+    let (last_full_scan, scan_ms) = full_scan.unwrap_or_else(|| {
+        let ms = u64::try_from(started.0.elapsed().as_millis()).unwrap_or(u64::MAX);
+        (started.1, ms)
+    });
     let meta = ncdu_meta();
     let to_stdout = args.output == Path::new("-");
     let result = engine.read(|m| {
@@ -207,6 +224,8 @@ pub fn export(args: &ExportArgs) -> ExitCode {
                 cross_mounts: job.cross_mounts,
                 network: job.network,
                 journal,
+                last_full_scan,
+                scan_ms,
             });
             write_export(w, &m.tree, root, header.as_ref(), args.compress, &meta)
         };
@@ -292,6 +311,8 @@ mod tests {
             cross_mounts: false,
             network: false,
             journal: None,
+            last_full_scan: 0,
+            scan_ms: 0,
         };
         let write = |header, compress| {
             let mut out = Vec::new();

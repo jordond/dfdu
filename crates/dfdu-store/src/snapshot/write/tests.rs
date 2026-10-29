@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::super::VERSION_2;
+use super::super::{VERSION_2, VERSION_3};
 use super::super::tests::{header, sample};
 use super::*;
 
@@ -59,41 +59,59 @@ fn the_footer_counts_and_checks_what_was_written() {
 
 #[test]
 fn an_empty_frame_is_not_written() {
-    let mut fw = FrameWriter {
-        w: vec![],
-        raw: vec![],
-        frames: 0,
-        crcs: vec![],
-    };
-    fw.frame().unwrap();
-    assert_eq!((fw.w.len(), fw.frames), (0, 0));
-    fw.raw.extend_from_slice(b"records");
-    fw.maybe_frame().unwrap();
-    assert_eq!(
-        fw.frames, 0,
-        "below a frame's worth, nothing is written yet"
-    );
-    fw.frame().unwrap();
-    assert_eq!(fw.frames, 1);
-    assert_eq!(fw.raw, Vec::<u8>::new());
-    assert_eq!(fw.w[4..8], 7u32.to_le_bytes(), "the raw length");
+    let mut frames = Frames::default();
+    let mut w = vec![];
+    frames.frame(&mut w, &mut vec![]).unwrap();
+    assert_eq!((w.len(), frames.frames), (0, 0));
+    let mut raw = b"records".to_vec();
+    frames.frame(&mut w, &mut raw).unwrap();
+    assert_eq!(frames.frames, 1);
+    assert_eq!(raw, Vec::<u8>::new());
+    assert_eq!(w[4..8], 7u32.to_le_bytes(), "the raw length");
 }
 
-/// Format 2 leaves out the journal position's time; without a position neither has more.
+/// Written a few entries at a time, flushed between the steps, a snapshot is the same bytes as
+/// written at once; below a frame's worth a flush writes no frame.
 #[test]
-fn the_header_drops_the_journal_time_in_format_2() {
+fn a_snapshot_written_in_steps_is_the_same() {
+    let (t, r) = sample();
+    let mut whole = vec![];
+    write(&t, r, &mut whole, &header()).unwrap();
+    let mut w = Writer::new(&t, r, &header());
+    let mut out = vec![];
+    let mut steps = 0;
+    while !w.step(&t, 3) {
+        w.flush(&mut out).unwrap();
+        assert_eq!(out.len(), 12, "only the magic and version");
+        steps += 1;
+    }
+    assert_eq!(steps, 3);
+    assert_eq!(w.entries(), 10);
+    assert_eq!(w.finish(&mut out).unwrap(), 10);
+    assert_eq!(out, whole);
+    let early = Writer::new(&t, r, &header());
+    assert!(early.finish(&mut vec![]).is_err());
+}
+
+/// Format 2 leaves out the journal position's time, format 3 the last full scan; without a
+/// position formats 2 and 3 have nothing more.
+#[test]
+fn the_header_drops_newer_fields_in_older_formats() {
     let h = header();
-    let (mut v3, mut v2) = (vec![], vec![]);
-    put_header(&mut v3, Path::new("/r"), &h, VERSION);
+    let (mut v4, mut v3, mut v2) = (vec![], vec![], vec![]);
+    put_header(&mut v4, Path::new("/r"), &h, VERSION);
+    put_header(&mut v3, Path::new("/r"), &h, VERSION_3);
     put_header(&mut v2, Path::new("/r"), &h, VERSION_2);
     let time = u(h.journal.unwrap().time);
     assert_eq!(v3, [&v2[..], &time[..]].concat());
+    let full = [u(h.last_full_scan), u(h.scan_ms)].concat();
+    assert_eq!(v4, [&v3[..], &full[..]].concat());
     let none = Header {
         journal: None,
         ..header()
     };
     let (mut a, mut b) = (vec![], vec![]);
-    put_header(&mut a, Path::new("/r"), &none, VERSION);
+    put_header(&mut a, Path::new("/r"), &none, VERSION_3);
     put_header(&mut b, Path::new("/r"), &none, VERSION_2);
     assert_eq!(a, b);
     assert!(a.len() < v2.len());

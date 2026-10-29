@@ -1,6 +1,7 @@
 //! Persistence: ncdu JSON import and export, native
 //! snapshots, scan history, zstd streams and atomic file writes.
 
+pub mod cache;
 pub mod history;
 mod json;
 pub mod ncdu;
@@ -161,6 +162,28 @@ pub fn write_atomic<T>(
     path: &std::path::Path,
     f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
 ) -> io::Result<T> {
+    replace_file(path, true, f)
+}
+
+/// [`write_atomic`] without the syncs, for a file whose loss costs nothing but time (the scan
+/// cache): a crash can leave the old file, the new one or none, never part of the new one
+/// under its name.
+///
+/// # Errors
+///
+/// As [`write_atomic`].
+pub fn write_replacing<T>(
+    path: &std::path::Path,
+    f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
+) -> io::Result<T> {
+    replace_file(path, false, f)
+}
+
+fn replace_file<T>(
+    path: &std::path::Path,
+    sync: bool,
+    f: impl FnOnce(&mut std::fs::File) -> io::Result<T>,
+) -> io::Result<T> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => std::path::Path::new("."),
@@ -176,7 +199,12 @@ pub fn write_atomic<T>(
     let mut file = std::fs::File::create(&tmp)?;
     // Held until the file is closed, by this process or by its death.
     let _ = file.try_lock();
-    let r = f(&mut file).and_then(|v| file.sync_all().map(|()| v));
+    let r = f(&mut file).and_then(|v| {
+        if sync {
+            file.sync_all()?;
+        }
+        Ok(v)
+    });
     let v = match r {
         Ok(v) => v,
         Err(e) => {
@@ -191,7 +219,9 @@ pub fn write_atomic<T>(
     }
     // Windows cannot open a directory to sync it; the rename is durable there once done.
     #[cfg(unix)]
-    std::fs::File::open(dir)?.sync_all()?;
+    if sync {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
     Ok(v)
 }
 
