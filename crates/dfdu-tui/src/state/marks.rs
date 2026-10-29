@@ -158,8 +158,13 @@ pub fn toggle(app: &mut App) {
 }
 
 /// Marks `item` or unmarks it (found by its node or path), as the cleanup view does for whole
-/// groups.
+/// groups. A read-only browser marks nothing this way, as nothing marked could be deleted: the
+/// status line says so instead.
 pub fn set(app: &mut App, item: Item, on: bool) {
+    if on && app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
     let marks = &mut app.marks;
     let at = marks
         .items

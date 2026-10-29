@@ -435,7 +435,7 @@ fn non_utf8_names_match_as_displayed() {
     app.key(press(KeyCode::Esc), t0);
     filter_by(&mut app, "/\u{fffd}t", t0);
     assert_eq!(row_names(&app), ["caf\u{fffd}.txt"]);
-    let buf = render_buffer(&mut app, t0, 60, 6);
+    let buf = render_buffer(&mut app, t0, 60, 7);
     assert_cue(&buf, "\u{fffd}", |s| {
         s.add_modifier.contains(Modifier::UNDERLINED)
     });

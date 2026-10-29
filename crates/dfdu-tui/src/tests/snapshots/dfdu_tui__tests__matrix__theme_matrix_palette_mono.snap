@@ -6,19 +6,19 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 bold | 7-14 bold
  1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
 L1 26-32 bold | 75-99 dim
- ⠋ 112.0 GiB  ████████████████████████   46.4%  812.0k  Library/
-L2 0-11 dim reversed | 12-45 reversed | 46-53 dim reversed | 54-63 bold reversed
- ⠙  78.0 GiB  ████████████████▊          32.3%    1.1M  dev/
-L3 0-11 dim | 46-53 dim | 54-59 bold
-    51.0 GiB  ██████████▉                21.1%     214  .android/
-L4 46-53 dim | 54-64 bold
-   625.0 MiB┌ Commands 11/45 ──────────────────────────────────────────────────────────┐
- !       0 B│ : sort▌                                                                  │
-L6 0-1 bold | 2-11 dim | 13-14 bold | 20-20 bold
- ~       0 B│ sort by size (again: reverse)                                    sort  s │
+        size                     share   items  name
+L2 0-99 dim
+ ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
+L3 0-47 reversed | 48-55 bold reversed | 56-99 reversed
+ ⠙  78.0 GiB  ███████████▏       32.3%    1.1M  dev/
+L4 0-11 dim | 40-45 dim | 48-51 bold
+    51.0 GiB┌ Commands 11/46 ──────────────────────────────────────────────────────────┐
+   625.0 MiB│ : sort▌                                                                  │
+L6 13-14 bold | 20-20 bold
+ !       0 B│ sort by size (again: reverse)                                    sort  s │
 L7 0-1 bold | 2-11 dim | 13-13 reversed | 14-17 underlined reversed | 18-78 reversed | 79-82 dim reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
-            │ sort by name (again: reverse)                                    sort  n │
-L8 14-17 underlined | 79-82 dim | 85-85 bold
+ ~       0 B│ sort by name (again: reverse)                                    sort  n │
+L8 0-1 bold | 2-11 dim | 14-17 underlined | 79-82 dim | 85-85 bold
             │ sort by items (again: reverse)                                   sort  C │
 L9 14-17 underlined | 79-82 dim | 85-85 bold
             │ sort by modification time (again: reverse)                       sort  M │

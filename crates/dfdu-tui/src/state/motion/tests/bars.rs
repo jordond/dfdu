@@ -86,7 +86,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
         .map(|i| test_entry(i, &format!("entry{i:03}"), 1000 + u64::from(i) * 10))
         .collect();
     app.refresh(snap_with_alloc(es.clone(), 1), t0);
-    render_buffer(&mut app, t0, 120, 64);
+    render_buffer(&mut app, t0, 120, 65);
     assert_eq!(app.list_height, 60);
     // Reversed sizes: every row moves and flashes, and every bar eases.
     for (i, e) in es.iter_mut().enumerate() {
@@ -94,7 +94,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
     }
     let t1 = t0 + Duration::from_secs(3);
     app.refresh(snap_with_alloc(es, 2), t1);
-    let mut buf = render_buffer(&mut app, t1, 120, 64);
+    let mut buf = render_buffer(&mut app, t1, 120, 65);
     assert_eq!(app.motion.markers.len(), 60);
     let visible: Vec<usize> = app.rows[app.scroll..app.scroll + 60].to_vec();
     let mut costs = Vec::new();

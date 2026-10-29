@@ -5,8 +5,8 @@ expression: frame
  dfdu  /r                                                                             done in 00:00
  12 items · 95.7 KiB                                                       sort: size ↓  disk usage
  reclaimable  safe 11.7 KiB   regenerable 58.6 KiB   review 0 B   manual 0 B
- ▸ OS and user caches       safe          11.7 KiB  1 item
- ▸ Project build output     regenerable   58.6 KiB  1 item
+ ▸ OS and user caches    safe         11.7 KiB  1 item
+ ▸ Project build output  regenerable  58.6 KiB  1 item
 
 
 

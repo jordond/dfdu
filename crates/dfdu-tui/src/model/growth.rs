@@ -34,23 +34,56 @@ pub fn since(app: &App, path: &Path, size: u64, mark: Mark) -> Option<(i128, u64
 
 /// "+12.4 GiB since 2026-10-18".
 pub fn describe(delta: i128, at: i64) -> String {
+    format!("{} since {}", short(delta), history::day(at))
+}
+
+/// "+12.4 GiB".
+fn short(delta: i128) -> String {
     let sign = if delta < 0 { "-" } else { "+" };
     let abs = u64::try_from(delta.unsigned_abs()).unwrap_or(u64::MAX);
-    format!(
-        "{sign}{} since {}",
-        crate::theme::human(abs),
-        history::day(at)
-    )
+    format!("{sign}{}", crate::theme::human(abs))
+}
+
+/// A noticeable change of a list row's size since the last recorded scan.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RowNote {
+    pub delta: i128,
+    /// When the last recorded scan finished.
+    pub at: i64,
+}
+
+impl RowNote {
+    pub fn grew(self) -> bool {
+        self.delta > 0
+    }
+
+    /// "+3.4 GiB", for the column of changes.
+    pub fn short(self) -> String {
+        short(self.delta)
+    }
+
+    /// "+3.4 GiB since 2026-10-18", for the selection line.
+    pub fn long(self) -> String {
+        describe(self.delta, self.at)
+    }
 }
 
 /// The note for a list row: changes of at least 1 MiB and 1% of the size.
-pub fn row_note(app: &App, path: &Path, size: u64, mark: Mark) -> Option<(String, bool)> {
-    let (d, then, at) = since(app, path, size, mark)?;
-    let abs = d.unsigned_abs();
+pub fn row_note(app: &App, path: &Path, size: u64, mark: Mark) -> Option<RowNote> {
+    let (delta, then, at) = since(app, path, size, mark)?;
+    let abs = delta.unsigned_abs();
     if abs < u128::from(NOTICEABLE) || abs * 100 < u128::from(then.max(size)) {
         return None;
     }
-    Some((describe(d, at), d > 0))
+    Some(RowNote { delta, at })
+}
+
+/// The header of the column of changes, with the day of the last recorded scan: "Δ 10-18".
+pub fn column_title(app: &App) -> String {
+    match app.growth.as_ref().map(|g| history::day(g.at)) {
+        Some(day) => format!("Δ {}", day.get(5..).unwrap_or(&day)),
+        None => "Δ".into(),
+    }
 }
 
 #[cfg(test)]

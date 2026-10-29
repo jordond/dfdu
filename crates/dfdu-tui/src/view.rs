@@ -3,9 +3,11 @@
 //! or the treemap, and the footer (modules here, the treemap in its own), the details pane, the debug panel and the open overlay (each in its
 //! feature's module), and last lets motion effects work on the finished buffer.
 
+pub mod columns;
 mod footer;
 mod header;
 mod list;
+mod selection;
 
 use std::time::Instant;
 
@@ -57,7 +59,15 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Constraint::Length(1),
     ])
     .areas(area);
-    let (list, pane) = details::split(app, body);
+    // The list view has its selection line, and a row naming its columns above the rows if a
+    // row is left below it.
+    let list_view = !crate::features::dupes::active(app)
+        && !crate::features::cleanup::active(app)
+        && !(app.treemap.on && treemap::fits(area));
+    let (list, pane) = details::split(app, body, list_view);
+    let names = u16::from(list_view && list.height >= 2);
+    let [column_names, list] =
+        Layout::vertical([Constraint::Length(names), Constraint::Min(0)]).areas(list);
     app.areas = Areas {
         header,
         list,
@@ -79,7 +89,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     } else if app.treemap.shown {
         treemap::draw(f, app, list, now);
     } else {
-        list::draw(f, app, list, now, frame);
+        list::draw(f, app, column_names, list, now, frame);
     }
     if stalled_line > 0 {
         footer::stalled(f, app, prompt);
@@ -87,7 +97,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     if let Some(line) = filter_line {
         f.render_widget(Paragraph::new(line), filter_row);
     }
-    footer::status(f, app, status);
+    footer::status(f, app, status, list_view);
     footer::hints(f, app, footer);
 
     if let Some(pane) = pane {

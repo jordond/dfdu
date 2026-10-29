@@ -1,0 +1,25 @@
+---
+source: crates/dfdu-tui/src/overlay/type_filter.rs
+assertion_line: 430
+expression: out
+---
+ dfdu  /r                                                         done in 00:00
+ 1.5k items · 1.7 KiB                                  sort: size ↓  disk usage
+        size                     share  name
+ ⠋   1.5┌ File types ──────────────────────────────────────────────────┐
+ ⠹     1│ type or extension: ▌                                         │
+ ⠸      │ [x] all files                            1.7 KiB  1.5k files │
+        │ [ ] data                                 1.5 KiB  1.5k files │
+        │ [ ] video                                  130 B     2 files │
+        │ [ ] audio                                   50 B      1 file │
+        │ [ ] document                                10 B      1 file │
+        │ [ ] other                                    5 B      1 file │
+        │ [ ] .log         data                    1.5 KiB  1.5k files │
+        │ [ ] .mp4         video                     100 B      1 file │
+        │ [ ] .flac        audio                      50 B      1 file │
+        │ [ ] .mkv         video                      30 B      1 file │
+        │ [ ] .txt         document                   10 B      1 file │
+        └──────────────────────────────────────────────────────────────┘
+
+
+ ↑↓ move  Space toggle  Enter done  Esc close

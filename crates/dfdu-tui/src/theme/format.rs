@@ -1,4 +1,6 @@
-//! Text for numbers: compact counts, bars, the spinner.
+//! Text for numbers and names: compact counts, bars, the spinner, names shortened to fit.
+
+use unicode_width::UnicodeWidthChar;
 
 /// `part` as a fraction of `whole`, for bars and percentages.
 #[must_use]
@@ -67,6 +69,47 @@ pub fn spinner(frame: u64) -> char {
     FRAMES[usize::try_from(frame % FRAMES.len() as u64).unwrap_or_default()]
 }
 
+/// `s` shortened to at most `width` terminal cells by cutting out its middle and putting `…` in
+/// its place. The end keeps about 40% of the room, so a file's extension stays visible:
+/// `screen-recording-2026-10…hrough-final.mov`. A string that fits is returned unchanged.
+#[must_use]
+pub fn truncate_middle(s: &str, width: usize) -> String {
+    let w = |c: char| c.width().unwrap_or(0);
+    if s.chars().map(w).sum::<usize>() <= width {
+        return s.to_owned();
+    }
+    let Some(room) = width.checked_sub(1) else {
+        return String::new();
+    };
+    let tail_room = room * 2 / 5;
+    let mut tail = Vec::new();
+    let mut used = 0;
+    for c in s.chars().rev() {
+        if used + w(c) > tail_room {
+            break;
+        }
+        used += w(c);
+        tail.push(c);
+    }
+    // A combining mark cut off from its base would land on the `…`.
+    while tail.last().is_some_and(|&c| w(c) == 0) {
+        tail.pop();
+    }
+    let head_room = room - used;
+    let mut head = String::with_capacity(s.len());
+    used = 0;
+    for c in s.chars() {
+        if used + w(c) > head_room {
+            break;
+        }
+        used += w(c);
+        head.push(c);
+    }
+    head.push('…');
+    head.extend(tail.iter().rev());
+    head
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +138,45 @@ mod tests {
         assert!((percent(1, 8) - 12.5).abs() < f64::EPSILON);
         assert_eq!(spinner(0), spinner(10));
         assert_ne!(spinner(0), spinner(1));
+    }
+
+    #[test]
+    fn middle_truncation_keeps_the_end() {
+        let w = |s: &str| s.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+        assert_eq!(truncate_middle("short.txt", 20), "short.txt");
+        assert_eq!(truncate_middle("short.txt", 9), "short.txt");
+        let long = "screen-recording-2026-10-28-walkthrough-final.mov";
+        let cut = truncate_middle(long, 41);
+        assert_eq!(cut, "screen-recording-2026-10…hrough-final.mov");
+        for width in 0..long.len() {
+            let cut = truncate_middle(long, width);
+            assert!(w(&cut) <= width, "{width}: {cut}");
+        }
+        assert_eq!(truncate_middle(long, 1), "…");
+        assert_eq!(truncate_middle(long, 0), "");
+        assert!(truncate_middle(long, 20).ends_with(".mov"));
+    }
+
+    #[test]
+    fn middle_truncation_counts_cells_not_chars() {
+        // Each of these takes two cells.
+        let wide = "日本語のファイル名がとても長い.txt";
+        let cut = truncate_middle(wide, 16);
+        assert!(
+            cut.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>() <= 16,
+            "{cut}"
+        );
+        assert!(cut.ends_with(".txt"), "{cut}");
+        assert!(cut.contains('…'), "{cut}");
+        // A combining mark never starts the kept end.
+        let marks = "aaaaaaaaaae\u{301}e\u{301}e\u{301}";
+        for width in 1..12 {
+            let cut = truncate_middle(marks, width);
+            let after = cut.split('…').nth(1).unwrap_or_default();
+            assert!(
+                after.chars().next().is_none_or(|c| c.width() != Some(0)),
+                "{width}: {cut:?}"
+            );
+        }
     }
 }

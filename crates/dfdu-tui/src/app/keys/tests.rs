@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use super::*;
 use crate::tests::press;
 
-const ALL: [Action; 41] = [
+const ALL: [Action; 42] = [
     Action::Quit,
     Action::Up,
     Action::Down,
@@ -21,6 +21,7 @@ const ALL: [Action; 41] = [
     Action::ToggleApparent,
     Action::ToggleReferenced,
     Action::ToggleHidden,
+    Action::Columns,
     Action::Rescan,
     Action::EnterMount,
     Action::SkipStalled,
@@ -104,6 +105,7 @@ fn existing_keys_map_to_the_same_actions() {
         (c('a'), Action::ToggleApparent),
         (c('u'), Action::ToggleReferenced),
         (c('e'), Action::ToggleHidden),
+        (c('c'), Action::Columns),
         (c('r'), Action::Rescan),
         (c('m'), Action::EnterMount),
         (c('x'), Action::SkipStalled),

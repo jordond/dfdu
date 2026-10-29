@@ -6,20 +6,20 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 bold | 7-14 bold
  1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
 L1 2-2 fg=cyan | 3-8 fg=cyan bold | 9-86 fg=cyan | 87-96 fg=darkgray | 97-97 fg=cyan | 98-99 fg=darkgray
- ⠋┃ Navigate                                        Act                                          ┃
-L2 0-1 fg=darkgray reversed | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan
- ⠙┃ ↑ k              move up                        r      rescan the selected directory         ┃
-L3 0-1 fg=darkgray | 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
-  ┃ ↓ j              move down                      m      scan into the selected mount (another ┃
-L4 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
+  ┃ Navigate                                        Act                                          ┃
+L2 0-1 fg=darkgray | 2-2 fg=cyan | 3-11 bold | 51-54 bold | 97-97 fg=cyan | 98-99 fg=darkgray
+ ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃
+L3 0-1 reversed | 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan | 98-99 reversed
+ ⠙┃ ↓ j              move down                      m      scan into the selected mount (another ┃
+L4 0-1 fg=darkgray | 2-2 fg=cyan | 4-6 bold | 52-52 bold | 97-97 fg=cyan
   ┃ PgUp             page up                               filesystem)                           ┃
 L5 2-2 fg=cyan | 4-7 bold | 97-97 fg=cyan
- !┃ PgDn             page down                      x      skip directories that are not         ┃
-L6 0-1 fg=red | 2-2 fg=cyan | 4-7 bold | 52-52 bold | 97-97 fg=cyan
- ~┃ g Home           first entry                           responding                            ┃
-L7 0-1 fg=yellow | 2-2 fg=cyan | 4-9 bold | 97-97 fg=cyan
-  ┃ G End            last entry                     Space  mark or unmark, then move down        ┃
-L8 2-2 fg=cyan | 4-8 bold | 52-56 bold | 97-97 fg=cyan
+  ┃ PgDn             page down                      x      skip directories that are not         ┃
+L6 2-2 fg=cyan | 4-7 bold | 52-52 bold | 97-97 fg=cyan
+ !┃ g Home           first entry                           responding                            ┃
+L7 0-1 fg=red | 2-2 fg=cyan | 4-9 bold | 97-97 fg=cyan
+ ~┃ G End            last entry                     Space  mark or unmark, then move down        ┃
+L8 0-1 fg=yellow | 2-2 fg=cyan | 4-8 bold | 52-56 bold | 97-97 fg=cyan
   ┃ → l Enter        open directory                 :      clear all marks (in the palette)      ┃
 L9 2-2 fg=cyan | 4-12 bold | 52-52 fg=darkgray | 97-97 fg=cyan
   ┃ ← h Backspace <  parent directory               d      move to Trash                         ┃

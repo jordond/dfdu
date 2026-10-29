@@ -1,0 +1,5 @@
+---
+source: crates/dfdu-tui/src/view/header.rs
+expression: "done_at_root(root, 50)"
+---
+ dfdu  /Volumes/Backup Drive…verables/final 00:00

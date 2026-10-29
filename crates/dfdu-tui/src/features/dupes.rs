@@ -9,23 +9,22 @@
 //! which free nothing, are listed but `a` leaves them alone.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
 use dfdu_engine::Model;
 use dfdu_tree::{Kind, NodeRef};
-use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
-use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
-use crate::theme::{count, human};
+
+mod draw;
+
+pub use draw::draw;
 
 /// Files smaller than this are not compared: the size `dfdu dupes` starts from.
 pub fn min_size() -> u64 {
@@ -253,6 +252,9 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             return Some(start(app));
         }
+        KeyCode::Char('a') if app.read_only => {
+            app.status = Some(crate::app::keys::READ_ONLY.into());
+        }
         KeyCode::Char('a') => {
             let n = mark_all(app);
             app.status = Some(match n {
@@ -298,125 +300,6 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         _ => return None,
     }
     Some(Vec::new())
-}
-
-/// `path` relative to `root`, or whole when it is not below it.
-fn shown(path: &Path, root: &Path) -> String {
-    match path.strip_prefix(root) {
-        Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
-        _ => path.display().to_string(),
-    }
-}
-
-fn progress_line(p: &Progress) -> String {
-    let get = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
-    let what = match get(&p.round) {
-        0 | 1 => "comparing the starts and ends of files",
-        _ => "comparing the contents of files",
-    };
-    format!(
-        " {what}: {} of {} files, {} of {}",
-        count(get(&p.files)),
-        count(get(&p.round_files)),
-        human(get(&p.bytes)),
-        human(get(&p.round_bytes)),
-    )
-}
-
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let t = app.theme.clone();
-    let height = area.height as usize;
-    app.list_height = height.saturating_sub(1);
-    let Some(run) = app.dupes.run.clone() else {
-        let msg = " duplicates: not compared yet (r compares the files of the scan)";
-        f.render_widget(Paragraph::new(Line::styled(msg, t.fg_dim)), area);
-        return;
-    };
-    let Some(found) = run.result.get() else {
-        f.render_widget(
-            Paragraph::new(Line::styled(progress_line(&run.progress), t.fg_dim)),
-            area,
-        );
-        return;
-    };
-    let rows = rows(app);
-    let wasted: u64 = rows
-        .iter()
-        .filter_map(|r| match r {
-            Row::Group(g) => Some(found.groups[*g].wasted()),
-            Row::File(..) => None,
-        })
-        .sum();
-    let groups = rows.iter().filter(|r| matches!(r, Row::Group(_))).count();
-    let mut summary = format!(
-        " {} of identical files of {} or more · up to {} to free · {} files compared",
-        match groups {
-            1 => "1 group".to_string(),
-            n => format!("{} groups", count(n as u64)),
-        },
-        human(min_size()),
-        human(wasted),
-        count(found.compared)
-    );
-    if found.skipped > 0 {
-        summary.push_str(" · ");
-        summary.push_str(&count(found.skipped));
-        summary.push_str(" skipped");
-    }
-    let mut lines = vec![Line::styled(summary, t.fg_dim)];
-    if rows.is_empty() {
-        lines.push(Line::raw(" no duplicates"));
-    }
-    let fit = height.saturating_sub(1).max(1);
-    let d = &mut app.dupes;
-    d.cursor = d.cursor.min(rows.len().saturating_sub(1));
-    d.scroll = d
-        .scroll
-        .min(d.cursor)
-        .max((d.cursor + 1).saturating_sub(fit));
-    let (cursor, scroll) = (d.cursor, d.scroll);
-    let width = area.width as usize;
-    for (i, row) in rows.iter().enumerate().skip(scroll).take(fit) {
-        let mut line = match *row {
-            Row::Group(group) => {
-                let gr = &found.groups[group];
-                let n = gr.files.iter().filter(|c| live(app, c).is_some()).count();
-                let free = if gr.all_clones() {
-                    "clones: deleting copies frees nothing".to_string()
-                } else {
-                    format!("{} to free", human(gr.wasted()))
-                };
-                Line::from(vec![
-                    Span::styled(format!(" {n} copies of {}", human(gr.size)), t.title),
-                    Span::styled(format!(" · {free}"), t.fg_dim),
-                ])
-            }
-            Row::File(group, file) => {
-                let c = &found.groups[group].files[file];
-                let marked = live(app, c).is_some_and(|n| app.marks.contains(n));
-                let mark = if marked { "●" } else { " " };
-                let date = dfdu_store::history::date_time(c.mtime);
-                let path = shown(&c.path, &run.root);
-                let room = width.saturating_sub(16);
-                let path: String = if path.chars().count() > room {
-                    let skip = path.chars().count() - room.saturating_sub(1);
-                    format!("…{}", path.chars().skip(skip).collect::<String>())
-                } else {
-                    path
-                };
-                Line::from(vec![
-                    Span::styled(format!("   {mark} "), t.key),
-                    Span::raw(path),
-                    Span::styled(format!("  {date}"), t.fg_dim),
-                ])
-            }
-        };
-        if i == cursor {
-            line = line.style(t.cursor);
-        }
-        lines.push(line);
-    }
-    f.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]

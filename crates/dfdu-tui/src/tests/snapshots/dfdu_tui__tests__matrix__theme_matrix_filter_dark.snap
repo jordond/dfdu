@@ -6,11 +6,12 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold
  1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
 L1 26-32 fg=#ff8f8f | 75-99 fg=#8b94a7
- ⠋ 112.0 GiB  ████████████████████████   46.4%  812.0k  Library/
-L2 0-11 fg=#8b94a7 bg=#4c566a bold | 12-13 fg=#eceff4 bg=#4c566a bold | 14-37 fg=#88c0d0 bg=#4c566a bold | 38-45 fg=#eceff4 bg=#4c566a bold | 46-53 fg=#8b94a7 bg=#4c566a bold | 54-55 fg=#8fbcf0 bg=#4c566a bold | 56-57 fg=#f0c674 bg=#4c566a bold underlined | 58-63 fg=#8fbcf0 bg=#4c566a bold
-   625.0 MiB  ▏                           0.3%       1  notes.sqlite
-L3 14-37 fg=#88c0d0 | 46-53 fg=#8b94a7 | 64-65 fg=#f0c674 underlined
-
+        size                     share   items  name
+L2 0-99 fg=#8b94a7
+ ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
+L3 0-11 fg=#d8dee9 bg=#4c566a bold | 12-13 fg=#eceff4 bg=#4c566a bold | 14-29 fg=#88c0d0 bg=#4c566a bold | 30-39 fg=#eceff4 bg=#4c566a bold | 40-45 fg=#d8dee9 bg=#4c566a bold | 46-47 fg=#eceff4 bg=#4c566a bold | 48-49 fg=#f0c674 bg=#4c566a bold underlined | 50-55 fg=#8fbcf0 bg=#4c566a bold | 56-99 fg=#eceff4 bg=#4c566a bold
+   625.0 MiB  ▏                   0.3%       1  notes.sqlite
+L4 14-29 fg=#88c0d0 | 40-45 fg=#8b94a7 | 56-57 fg=#f0c674 underlined
 
 
 
@@ -30,7 +31,7 @@ L3 14-37 fg=#88c0d0 | 46-53 fg=#8b94a7 | 64-65 fg=#f0c674 underlined
 L20 0-58 fg=#ebcb8b
  / li▌   2 of 6
 L21 0-1 fg=#88c0d0 bold | 5-5 fg=#88c0d0 bold | 6-14 fg=#8b94a7
-
-L22 0-0 fg=#8b94a7
+ ▸ Library/  112.0 GiB · 812.0k items                                                           1/2
+L22 0-2 fg=#88c0d0 bold | 3-10 fg=#8fbcf0 bold | 22-36 fg=#8b94a7 | 96-99 fg=#8b94a7
  Enter keep  Esc clear  ↑↓ move
 L23 1-5 fg=#88c0d0 bold | 6-10 fg=#8b94a7 | 13-15 fg=#88c0d0 bold | 16-21 fg=#8b94a7 | 24-25 fg=#88c0d0 bold | 26-30 fg=#8b94a7

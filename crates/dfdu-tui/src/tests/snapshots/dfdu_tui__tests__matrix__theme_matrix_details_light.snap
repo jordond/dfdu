@@ -6,14 +6,14 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 fg=#1f2329 bold | 7-8 fg=#1f2329 bold
  3 items · 1.4 KiB                                                         sort: size ↓  disk usage
 L1 75-99 fg=#6c7180
-       600 B  ████████   42.9%       0  (shared between entr┏ a ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-L2 14-21 fg=#3d6fa8 | 30-37 fg=#6c7180 | 60-60 fg=#2a6f97 | 61-63 fg=#1f2329 bold | 64-99 fg=#2a6f97
-       400 B  █████▍     28.6%       1  a                   ┃ /r/a                                 ┃
-L3 0-13 fg=#1f2329 bg=#d5dce8 bold | 14-21 fg=#3d6fa8 bg=#d5dce8 bold | 22-29 fg=#1f2329 bg=#d5dce8 bold | 30-37 fg=#6c7180 bg=#d5dce8 bold | 38-40 fg=#1f2329 bg=#d5dce8 bold | 60-60 fg=#2a6f97 | 61-65 fg=#6c7180 | 99-99 fg=#2a6f97
-       400 B  █████▍     28.6%       1  b                   ┃ file                                 ┃
-L4 14-21 fg=#3d6fa8 | 30-37 fg=#6c7180 | 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
-                                                            ┃ 400 B on disk                        ┃
-L5 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
+        size           share  name                          ┏ a ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+L2 0-59 fg=#6c7180 | 60-60 fg=#2a6f97 | 61-63 fg=#1f2329 bold | 64-99 fg=#2a6f97
+       600 B  ██████   42.9%  (shared between entries)      ┃ /r/a                                 ┃
+L3 14-19 fg=#3d6fa8 | 60-60 fg=#2a6f97 | 61-65 fg=#6c7180 | 99-99 fg=#2a6f97
+       400 B  ████     28.6%  a                             ┃ file                                 ┃
+L4 0-13 fg=#1f2329 bg=#d5dce8 bold | 14-19 fg=#3d6fa8 bg=#d5dce8 bold | 20-59 fg=#1f2329 bg=#d5dce8 bold | 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
+       400 B  ████     28.6%  b                             ┃ 400 B on disk                        ┃
+L5 14-19 fg=#3d6fa8 | 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
                                                             ┃ 1000 B apparent · 1000 B like du     ┃
 L6 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
                                                             ┃ modified 1970-01-01 00:00 UTC        ┃
@@ -46,7 +46,7 @@ L19 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
 L20 60-60 fg=#2a6f97 | 99-99 fg=#2a6f97
                                                             ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 L21 60-99 fg=#2a6f97
-
-L22 0-0 fg=#6c7180
+ ▸ a  400 B                                                                                     2/3
+L22 0-2 fg=#1b6b8c bold | 96-99 fg=#6c7180
  Tab back  ↑↓ scroll  i close  ? help  q quit
 L23 1-3 fg=#1b6b8c bold | 4-8 fg=#6c7180 | 11-12 fg=#1b6b8c bold | 13-19 fg=#6c7180 | 22-22 fg=#1b6b8c bold | 23-28 fg=#6c7180 | 31-31 fg=#1b6b8c bold | 32-36 fg=#6c7180 | 39-39 fg=#1b6b8c bold | 40-44 fg=#6c7180

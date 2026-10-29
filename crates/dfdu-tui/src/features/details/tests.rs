@@ -234,7 +234,7 @@ fn details_pane_is_a_bottom_sheet_when_narrow() {
     insta::assert_snapshot!("details_bottom_mono", out);
     let pane = app.areas.details.expect("pane");
     assert_eq!((pane.width, pane.height), (80, SHEET_HEIGHT));
-    assert_eq!(app.areas.list.height, 20 - SHEET_HEIGHT);
+    assert_eq!(app.areas.list.height, 19 - SHEET_HEIGHT);
 }
 
 #[test]
@@ -245,17 +245,28 @@ fn details_pane_hidden_when_too_small() {
     let out = render(&mut app, t0, 60, 12);
     assert!(app.areas.details.is_none());
     assert!(!out.contains("╭ proj/"), "{out}");
-    assert!(out.contains(TOO_SMALL), "{out}");
+    // The selection line sums up the selected row instead; at this width it has no room for
+    // the items.
+    let e = app.selected_entry().unwrap();
+    let proj = format!("▸ proj/  {}", human(e.size));
+    assert!(out.contains(&proj), "{out}");
+    // It follows the selection, moved by the wheel as by a key.
+    app.move_by(1);
+    let e = app.selected_entry().unwrap();
+    let notes = format!("▸ notes.txt  {}", human(e.size));
+    let out = render(&mut app, t0, 60, 12);
+    assert!(out.contains(&notes) && !out.contains(&proj), "{out}");
     // Tab cannot focus a pane that is not shown, and the wheel scrolls the list instead.
     app.key(press(KeyCode::Tab), t0);
     assert!(!focused(&app));
     assert!(!scroll(&mut app, 1));
+    // The pane fits again; the selection line stays, as it does with the pane closed.
     let out = render(&mut app, t0, 120, 20);
-    assert!(out.contains("╭ proj/") && !out.contains(TOO_SMALL), "{out}");
+    assert!(out.contains("╭ ") && app.status.is_none(), "{out}");
 }
 
 #[test]
-fn too_small_does_not_replace_another_message() {
+fn the_summary_does_not_replace_another_message() {
     let m = model();
     let mut app = app_on(&m);
     let t0 = app.started;
@@ -263,11 +274,15 @@ fn too_small_does_not_replace_another_message() {
     let out = render(&mut app, t0, 60, 12);
     assert!(app.areas.details.is_none());
     assert!(
-        out.contains("deleted 3 entries") && !out.contains(TOO_SMALL),
+        out.contains("deleted 3 entries") && !out.contains("▸ proj/"),
         "{out}"
     );
     app.status = None;
-    assert!(render(&mut app, t0, 60, 12).contains(TOO_SMALL));
+    assert!(render(&mut app, t0, 60, 12).contains("▸ proj/"));
+    // A pane that fits again leaves another message alone.
+    app.status = Some("deleted 3 entries".into());
+    let out = render(&mut app, t0, 120, 20);
+    assert!(out.contains("deleted 3 entries"), "{out}");
 }
 
 #[test]

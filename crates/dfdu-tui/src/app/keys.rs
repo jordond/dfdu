@@ -33,6 +33,7 @@ pub enum Action {
     ToggleApparent,
     ToggleReferenced,
     ToggleHidden,
+    Columns,
     Rescan,
     EnterMount,
     SkipStalled,
@@ -185,6 +186,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Action::ToggleHidden,
         "e",
         "hide or show hidden files",
+        Group::Display,
+    ),
+    row(
+        Action::Columns,
+        "c",
+        "list columns: items, then items and modified, then neither",
         Group::Display,
     ),
     row(
@@ -372,6 +379,10 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::ToggleHidden => {
             app.hide_hidden = !app.hide_hidden;
             app.request_sort();
+        }
+        Action::Columns => {
+            app.columns = app.columns.next();
+            app.status = Some(app.columns.describe().into());
         }
         Action::Rescan => {
             let node = match app.selected_entry() {

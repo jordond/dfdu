@@ -6,19 +6,20 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 bold | 7-14 bold
  1.9M items · 241.6 GiB · 1 error                                          sort: size ↓  disk usage
 L1 26-32 bold | 75-99 dim
-●⠋ 112.0 GiB  ████████████████████████   46.4%  812.0k  Library/
-L2 0-0 bold dim | 1-11 dim | 46-53 dim | 54-63 bold
- ⠙  78.0 GiB  ████████████████▊          32.3%    1.1M  dev/
-L3 0-11 dim | 46-53 dim | 54-59 bold
-●   51.0 GiB  ██████████▉                21.1%     214  .android/
-L4 0-0 bold | 46-53 dim | 54-64 bold
-   625.0 MiB  ▏                           0.3%       1  notes.sqlite
-L5 0-45 reversed | 46-53 dim reversed | 54-67 reversed
- !       0 B                              0.0%       1  locked/  permission denied
-L6 0-1 bold | 2-11 dim | 46-53 dim | 54-81 bold
- ~       0 B     ┌ Delete ─────────────────────────────────────────────────────────┐
+        size                     share   items  name
+L2 0-99 dim
+●⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
+L3 0-0 bold dim | 1-11 dim | 40-45 dim | 48-55 bold
+ ⠙  78.0 GiB  ███████████▏       32.3%    1.1M  dev/
+L4 0-11 dim | 40-45 dim | 48-51 bold
+●   51.0 GiB  ███████▎           21.1%     214  .android/
+L5 0-0 bold | 40-45 dim | 48-56 bold
+   625.0 MiB  ▏                   0.3%       1  notes.sqlite
+L6 0-99 reversed
+ !       0 B     ┌ Delete ─────────────────────────────────────────────────────────┐
 L7 0-1 bold | 2-11 dim
-                 │ Move 2 entries to the Trash?                                    │
+ ~       0 B     │ Move 2 entries to the Trash?                                    │
+L8 0-1 bold | 2-11 dim
                  │  112.0 GiB  Library/  still scanning: at least this             │
 L9 39-69 dim
                  │   51.0 GiB  .android/                                           │

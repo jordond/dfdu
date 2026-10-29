@@ -1,0 +1,20 @@
+---
+source: crates/dfdu-tui/src/features/cleanup/tests.rs
+expression: frame
+---
+ dfdu  /r                                                         done in 00:00
+ 12 items · 95.7 KiB                                   sort: size ↓  disk usage
+ reclaimable  safe 0 B   regenerable 117.2 KiB   review 58.6 KiB   manual 0 B
+ ▾ Project dependencies  regenerable  58.6 KiB  1 item
+      58.6 KiB       6     3 d  /r/web/node_modules
+ ▾ Project build output  regenerable  58.6 KiB  1 item
+      58.6 KiB       6     3 d  /r/target
+ ▾ Project dependencies  review       58.6 KiB  1 item
+      58.6 KiB       6     3 d  /r/clients/northwind-traders/…ntend/node_modules
+
+ Enter opens a group · Space marks · a marks the recommended · f filters by
+safety
+
+
+
+ ↑↓ move  Enter open  Space mark  d trash marked  1 list  ? help  q quit

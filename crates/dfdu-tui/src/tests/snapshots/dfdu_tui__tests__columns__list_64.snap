@@ -1,0 +1,24 @@
+---
+source: crates/dfdu-tui/src/tests/columns.rs
+expression: "render(&mut dev(t0), t0, 64, 20)"
+---
+ dfdu  ~/dev                                      done in 00:00
+ 4.5M items · 163.3 GiB                sort: size ↓  disk usage
+        size           share  ↔ name
+    40.7 GiB  ██████   24.9%    dfdu/                          ┃
+    16.6 GiB  ██▌      10.2%  ↔ brewd/                         ┃
+    16.3 GiB  ██▍      10.0%  ↔ experiment/                    ┃
+    12.8 GiB  █▉        7.8%  ↔ foodchapters/                  ┃
+    10.9 GiB  █▋        6.7%    MaterialKolor/                 │
+     7.3 GiB  █▏        4.5%  ↔ filmstrip/                     │
+     7.1 GiB  █         4.3%    screen-recording-2…gh-final.mov│
+     7.0 GiB  █         4.3%  ↔ whalesay/                      │
+     6.5 GiB  █         4.0%  ↔ SIGO/                          │
+     6.4 GiB  █         3.9%  ↔ toebeans/                      │
+     4.7 GiB  ▊         2.9%  ↔ jolt/                          │
+     3.7 GiB  ▌         2.3%    compass/                       │
+     3.5 GiB  ▌         2.1%  ↔ bookdb/                        │
+     3.3 GiB  ▌         2.0%    connectivity/                  │
+     3.1 GiB  ▌         1.9%    kmpalette/                     │
+ ▸ experiment/  16.3 GiB · ↔ 196.5 MiB also used outside … 3/61
+ ↑↓ move  → open  ← up  Space mark  / filter  ? help  q quit

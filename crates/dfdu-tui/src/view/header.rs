@@ -13,7 +13,7 @@ use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::input::mouse::Crumb;
 use crate::state::order::SortKey;
-use crate::theme::{Theme, count, human, spinner};
+use crate::theme::{Theme, count, human, spinner, truncate_middle};
 
 /// Between two breadcrumbs.
 const SEPARATOR: &str = " › ";
@@ -57,9 +57,21 @@ fn segments(dir: &Path, root: &Path, home: Option<&Path>) -> Vec<Segment> {
     out
 }
 
+/// The fewest cells [`breadcrumbs`] needs to show the last of `segs` whole: the last one, and
+/// `… › ` before it when there are others.
+fn least_width(segs: &[Segment]) -> usize {
+    let last = Span::raw(&segs[segs.len() - 1].text).width();
+    if segs.len() > 1 {
+        Span::raw(COLLAPSED).width() + Span::raw(SEPARATOR).width() + last
+    } else {
+        last
+    }
+}
+
 /// Lays out `segs` in at most `width` cells, putting `…` in place of leading breadcrumbs until
-/// the rest fits; the last one is always shown. Returns the spans, and the column offset, width
-/// and index in `segs` of each breadcrumb shown before the last.
+/// the rest fits; the last one is always shown, shortened in the middle when it does not fit by
+/// itself (a long scan root). Returns the spans, and the column offset, width and index in
+/// `segs` of each breadcrumb shown before the last.
 fn breadcrumbs(
     segs: &[Segment],
     width: usize,
@@ -87,7 +99,8 @@ fn breadcrumbs(
     }
     for (i, seg) in segs.iter().enumerate().skip(skip) {
         if i == last {
-            spans.push(Span::styled(seg.text.clone(), t.title));
+            let room = width.saturating_sub(x);
+            spans.push(Span::styled(truncate_middle(&seg.text, room), t.title));
         } else {
             spans.push(Span::styled(seg.text.clone(), t.fg_dim));
             spans.push(Span::styled(SEPARATOR, t.fg_dim));
@@ -98,25 +111,38 @@ fn breadcrumbs(
     (spans, hits)
 }
 
-/// The right of the first line: whether the browser is read-only, and the scan's state.
-fn scan_state(app: &App, now: Instant, frame: u64) -> Vec<Span<'static>> {
-    let state = match app.done_at {
+/// The right of the first line: whether the browser is read-only, and the scan's state. Longest
+/// first, then the shorter forms for narrow terminals: `read-only · done in 00:16`,
+/// `read-only · done 00:16`, `done 00:16`, `00:16`. While scanning, each keeps the spinner.
+fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
+    let (long, short, bare) = match app.done_at {
         Some(done) if !app.snap.busy => {
-            format!("done in {}", mmss(done.duration_since(app.started)))
+            let time = mmss(done.duration_since(app.started));
+            (format!("done in {time}"), format!("done {time}"), time)
         }
-        _ => format!(
-            "{} scanning {}",
-            spinner(frame),
-            mmss(now.duration_since(app.started))
-        ),
+        _ => {
+            let (spin, time) = (spinner(frame), mmss(now.duration_since(app.started)));
+            let scanning = format!("{spin} scanning {time}");
+            (scanning.clone(), scanning, format!("{spin} {time}"))
+        }
     };
-    let mut spans = Vec::new();
+    let state = |text: &str| vec![Span::raw(text.to_owned()), Span::raw(" ")];
+    let read_only = |text: &str| {
+        let mut spans = vec![
+            Span::styled("read-only", app.theme.status_warn),
+            Span::raw(" · "),
+        ];
+        spans.extend(state(text));
+        spans
+    };
+    let mut forms = Vec::new();
     if app.read_only {
-        spans.push(Span::styled("read-only", app.theme.status_warn));
-        spans.push(Span::raw(" · "));
+        forms.extend([read_only(&long), read_only(&short)]);
+    } else {
+        forms.push(state(&long));
     }
-    spans.extend([Span::raw(state), Span::raw(" ")]);
-    spans
+    forms.extend([state(&short), state(&bare)]);
+    forms
 }
 
 /// Draws the header in `area` and records where each breadcrumb went, for the mouse.
@@ -124,12 +150,18 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     let t = &app.theme;
     let s = &app.snap;
     let mut left = vec![Span::styled(" dfdu ", t.title), Span::raw(" ")];
-    let right = scan_state(app, now, frame);
     let start: usize = left.iter().map(Span::width).sum();
-    let end: usize = right.iter().map(Span::width).sum();
-    // One cell stays free between the breadcrumbs and the scan state.
-    let crumb_room = usize::from(area.width).saturating_sub(start + end + 1);
     let segs = segments(&s.dir_path, &s.root_path, app.home.as_deref());
+    // One cell stays free between the breadcrumbs and the scan state. The state takes its
+    // longest form that leaves the current directory's name whole.
+    let room = |right: &[Span]| {
+        let end: usize = right.iter().map(Span::width).sum();
+        usize::from(area.width).saturating_sub(start + end + 1)
+    };
+    let mut forms = scan_states(app, now, frame);
+    let fits = forms.iter().position(|r| room(r) >= least_width(&segs));
+    let right = forms.swap_remove(fits.unwrap_or(forms.len() - 1));
+    let crumb_room = room(&right);
     let (crumbs, hits) = breadcrumbs(&segs, crumb_room, t);
     left.extend(crumbs);
     let line1 = spread(left, right, area.width);
@@ -302,6 +334,58 @@ mod tests {
             first.starts_with(" dfdu  /srv/data › projects › rust › dfdu › src › ui "),
             "{first}"
         );
+    }
+
+    /// The first line of a read-only browser at the scan root `root`, done scanning, drawn
+    /// `width` columns wide.
+    fn done_at_root(root: &str, width: u16) -> String {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.read_only = true;
+        let snap = Snapshot {
+            dir_path: root.into(),
+            root_path: root.into(),
+            busy: false,
+            ..snap_without_totals(Vec::new(), 1)
+        };
+        app.refresh(snap, t0);
+        first_line(&render_buffer(&mut app, t0, width, 8))
+    }
+
+    #[test]
+    fn the_scan_state_shortens_before_the_path_does() {
+        let root = "/Volumes/Backup Drive/archive/client-deliverables";
+        let at = |width| done_at_root(root, width);
+        assert!(
+            at(100).ends_with(" read-only · done in 00:00"),
+            "{}",
+            at(100)
+        );
+        assert!(at(80).ends_with(" read-only · done 00:00"), "{}", at(80));
+        let first = at(70);
+        assert!(
+            first.contains(root) && first.ends_with(" done 00:00"),
+            "{first}"
+        );
+        assert!(!first.contains("read-only"), "{first}");
+        // Then the scan root itself gives way, in the middle.
+        let first = at(50);
+        assert!(!first.contains(root) && first.contains('…'), "{first}");
+        assert!(first.ends_with("deliverables 00:00"), "{first}");
+        // The last cell, a space, is trimmed.
+        assert_eq!(Span::raw(&first).width(), 49, "{first}");
+    }
+
+    #[test]
+    fn a_long_scan_root_is_shortened_in_the_middle() {
+        let root = "/Volumes/Backup Drive/archive/projects/2026/client-deliverables/final";
+        insta::assert_snapshot!("long_root_70", done_at_root(root, 70));
+        insta::assert_snapshot!("long_root_50", done_at_root(root, 50));
+        // Below the root, the current directory keeps its name and the root collapses first.
+        let (_, buf) = browser(&format!("{root}/renders"), root, Theme::no_color(), 50);
+        let first = first_line(&buf);
+        assert!(first.starts_with(" dfdu  … › renders "), "{first}");
+        assert!(first.contains("scanning 00:00"), "{first}");
     }
 
     #[test]

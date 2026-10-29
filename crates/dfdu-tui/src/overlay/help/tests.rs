@@ -184,7 +184,7 @@ fn help_search_filters_rows() {
     typed(&mut app, "F12", t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("debug overlay"), "{frame}");
-    assert!(frame.contains("1 of 41"), "{frame}");
+    assert!(frame.contains("1 of 42"), "{frame}");
     typed(&mut app, " zzz", t0);
     let frame = render(&mut app, t0, 100, 30);
     assert!(frame.contains("nothing matches"), "{frame}");
@@ -194,7 +194,7 @@ fn help_search_filters_rows() {
     app.key(press(KeyCode::Enter), t0);
     assert!(!help(&app).searching);
     let frame = render(&mut app, t0, 100, 30);
-    assert!(frame.contains(" / F12   1 of 41"), "{frame}");
+    assert!(frame.contains(" / F12   1 of 42"), "{frame}");
     // Esc while searching clears the query and keeps the help open.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(press(KeyCode::Esc), t0);

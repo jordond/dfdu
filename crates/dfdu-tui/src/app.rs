@@ -100,6 +100,8 @@ pub struct App {
     pub order: Order,
     pub sort: SortSpec,
     pub size_mode: SizeMode,
+    /// The optional columns of the list (`c`).
+    pub columns: crate::view::columns::Columns,
     pub hide_hidden: bool,
     pub selected: Option<Selection>,
     /// Indices into `snap.entries`, in display order.
@@ -210,6 +212,7 @@ impl App {
             order: Order::default(),
             sort: SortSpec::default(),
             size_mode: SizeMode::Disk,
+            columns: crate::view::columns::Columns::default(),
             hide_hidden: false,
             selected: None,
             rows: Vec::new(),

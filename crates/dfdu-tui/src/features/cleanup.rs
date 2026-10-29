@@ -2,9 +2,10 @@
 //! and safety, with the reclaimable total of each level. A group opens to its items (size,
 //! entries, age, path); the selected item's explanation and what deleting it loses are shown
 //! below. Marks are the list's: `d` and `D` delete what is marked through the same dialog.
-//! The first time the view has items it marks the recommended ones: `safe` items above their
-//! rule's minimum size, `regenerable` ones only when stale, never `review` or worse, and
-//! nothing changed in the last 7 days or in use. `n` opens an item's native command: its dry
+//! The first time the user opens the view and it has items, it marks the recommended ones:
+//! `safe` items above their rule's minimum size, `regenerable` ones only when stale, never
+//! `review` or worse, and nothing changed in the last 7 days or in use. A read-only browser
+//! marks nothing, as nothing marked could be deleted. `n` opens an item's native command: its dry
 //! run first, then `y` runs it; `v` picks a further-reaching form, which `y` must confirm
 //! twice.
 
@@ -19,6 +20,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
+use crate::theme::human;
 
 mod draw;
 mod pane;
@@ -38,8 +40,11 @@ pub struct Cleanup {
     open: HashSet<(u16, Safety)>,
     /// Only items this safe or safer; `None` shows all.
     filter: Option<Safety>,
-    /// The recommended items were marked (once, when the view first had items).
+    /// The recommended items were marked (once, when the view was first opened with items).
     preselected: bool,
+    /// The view was just opened: the next read marks the recommended items if it finds any
+    /// matches, and they were never marked before.
+    premark: bool,
     pane: Option<pane::Pane>,
     commands: u64,
     /// The extras were read since the view was switched on.
@@ -88,7 +93,7 @@ pub fn active(app: &App) -> bool {
 }
 
 /// Switches the view on or off. On, it asks the rules' native size commands for their
-/// numbers.
+/// numbers, and the first time also marks the recommended items ([`apply`]).
 pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     if on && app.snap.rules.is_none() {
         app.status = Some("no rules: the cleanup view needs classification".into());
@@ -97,6 +102,7 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     let was = app.cleanup.on;
     app.cleanup.on = on;
     app.cleanup.fresh = false;
+    app.cleanup.premark = on && !app.cleanup.preselected && !app.read_only;
     if on && !was {
         crate::features::treemap::show(app, false);
         return vec![Effect::Send(Command::NativeSizes)];
@@ -175,21 +181,32 @@ pub fn read(m: &Model, app: &App) -> Info {
     }
 }
 
-/// Takes in a read: marks the recommended items the first time there are any.
+/// Takes in a read. The first read after the user opened the view ([`show`]) marks the
+/// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
-    if !app.cleanup.on || app.cleanup.preselected || app.extras.cleanup.items.is_empty() {
+    let premark = std::mem::take(&mut app.cleanup.premark);
+    if !app.cleanup.on || !premark || app.extras.cleanup.items.is_empty() {
         return;
     }
     app.cleanup.preselected = true;
-    let n = mark_recommended(app);
+    let (n, size) = mark_recommended(app);
     if n > 0 {
-        app.status = Some(format!("marked {n} recommended item{}", plural(n)));
+        app.status = Some(marked_status(n, size));
     }
 }
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// The status line after `n` recommended items of `size` in all were marked.
+fn marked_status(n: usize, size: u64) -> String {
+    format!(
+        "marked {n} recommended item{} ({}) · Space unmarks",
+        plural(n),
+        human(size)
+    )
 }
 
 /// Whether `it` is marked by default.
@@ -207,8 +224,8 @@ fn recommended(app: &App, it: &Item, now: i64) -> bool {
     )
 }
 
-/// Marks every recommended item; returns how many were newly marked.
-fn mark_recommended(app: &mut App) -> usize {
+/// Marks every recommended item; returns how many were newly marked, and their size.
+fn mark_recommended(app: &mut App) -> (usize, u64) {
     let now = now_secs();
     let picks: Vec<Item> = app
         .extras
@@ -221,7 +238,17 @@ fn mark_recommended(app: &mut App) -> usize {
     for it in &picks {
         set_marked(app, it, true);
     }
-    picks.len()
+    let size = picks.iter().map(marked_size).sum();
+    (picks.len(), size)
+}
+
+/// What marking `it` marks: itself, or its rest.
+fn marked_size(it: &Item) -> u64 {
+    if it.rest.is_empty() {
+        it.size
+    } else {
+        it.rest.iter().map(|r| r.size).sum()
+    }
 }
 
 /// Whether `it` is marked: itself, or all of its rest.
@@ -377,12 +404,15 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             });
             app.status = Some(format!("cleanup: showing {label}"));
         }
+        KeyCode::Char('a') if app.read_only => {
+            app.status = Some(crate::app::keys::READ_ONLY.into());
+        }
         KeyCode::Char('a') => {
-            let n = mark_recommended(app);
+            let (n, size) = mark_recommended(app);
             app.status = Some(if n == 0 {
                 "every recommended item is marked already".into()
             } else {
-                format!("marked {n} recommended item{}", plural(n))
+                marked_status(n, size)
             });
         }
         KeyCode::Char('n') => return Some(pane::open_pane(app)),

@@ -28,7 +28,9 @@ pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Delete progress, else the last status message or engine notice; what is marked on the right.
-pub fn status(f: &mut Frame, app: &App, area: Rect) {
+/// Without any of those, the list view shows the selection line there, unless an overlay is
+/// open over it.
+pub fn status(f: &mut Frame, app: &App, area: Rect, list_view: bool) {
     let msg = match app.snap.deleting {
         Some((done, total)) => format!("deleting {done}/{total}…"),
         None if app.snap.undoing => "putting back…".into(),
@@ -38,6 +40,14 @@ pub fn status(f: &mut Frame, app: &App, area: Rect) {
             .or_else(|| app.snap.notice.clone())
             .unwrap_or_default(),
     };
+    if msg.is_empty()
+        && list_view
+        && matches!(app.overlay, Overlay::None)
+        && let Some(line) = super::selection::line(app, area.width)
+    {
+        f.render_widget(Paragraph::new(line), area);
+        return;
+    }
     let line = match marks::summary(app) {
         Some(marked) => spread(
             vec![Span::raw(format!(" {msg}"))],

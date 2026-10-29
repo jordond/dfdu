@@ -153,8 +153,9 @@ mod tests {
     use crate::theme::Theme;
     use dfdu_engine::ErrorList;
 
-    /// The list's first row is on this screen line, below the two header lines.
-    const TOP: u16 = 2;
+    /// The list's first row is on this screen line, below the two header lines and the column
+    /// names.
+    const TOP: u16 = 3;
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {

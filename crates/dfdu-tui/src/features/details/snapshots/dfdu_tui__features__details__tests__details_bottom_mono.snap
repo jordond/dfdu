@@ -4,9 +4,9 @@ expression: out
 ---
  dfdu  /r                                                         done in 00:00
  13 items · 80.6 KiB · 2 errors                        sort: size ↓  disk usage
- !  78.6 KiB  ████████████████   97.6%      11  proj/  partly read: could not be
-     2.0 KiB  ▍                   2.4%       1  notes.txt
-
+        size                 share  ↔ name
+ !  78.6 KiB  ████████████   97.6%  ↔ proj/  partly read: could not be read
+     2.0 KiB  ▎               2.4%    notes.txt
 
 
 
@@ -24,5 +24,5 @@ expression: out
 │ 1 error below                                                                │
 │ largest by disk usage                                                        │
 ╰────────────────────────────────────────────────────────────────────── ↓ more ╯
-
+ ▸ proj/  78.6 KiB · 11 items · ↔ 5.9 KiB also used outside the scan        1/2
  ↑↓ move  → open  ← up  Space mark  / filter  ! errors  ? help  q quit

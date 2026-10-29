@@ -4,8 +4,8 @@ expression: out
 ---
  dfdu                                                                              ⠋ scanning 00:00
  0 items · 0 B                                                             sort: size ↓  disk usage
-  (empty)                                           ╭ Debug ───────────────────────────────────────╮
-                                                    │ sent 1.2M  received 1.2M  pending 310        │
+        size                     share   items  name╭ Debug ───────────────────────────────────────╮
+  (empty)                                           │ sent 1.2M  received 1.2M  pending 310        │
                                                     │ chunks 12.0k  closes 9.8k  entries 1.9M      │
                                                     │ discarded job 7  cut 3  late 2               │
                                                     │ corrupt 0  lost 0  duplicate 0               │

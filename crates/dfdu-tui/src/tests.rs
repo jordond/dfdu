@@ -11,6 +11,7 @@ mod blocked;
 #[cfg(target_os = "linux")]
 mod btrfs;
 pub(crate) mod caches;
+mod columns;
 mod frames;
 mod matrix;
 mod read_only;

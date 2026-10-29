@@ -49,6 +49,136 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     assert!(!active(&app));
 }
 
+/// [`classified`] with `/r/old-cache`, a file of 1 GiB unchanged for years under a safe rule:
+/// the one recommended item.
+fn with_recommended() -> crate::features::treemap::tests::Fixture {
+    let mut fx = classified();
+    let t = &mut fx.m.tree;
+    let root = t.roots().next().unwrap();
+    let meta = crate::tests::meta(Kind::File, 1 << 30, 900);
+    let f = t.add_file(root, b"old-cache", &meta, false, None);
+    let own = t.own(f);
+    t.propagate_add(root, &own);
+    let rules = fx.m.rules.as_ref().unwrap();
+    let class = Class {
+        rule: rules.index("generic.cachedir-tag").unwrap(),
+        safety: Safety::Safe,
+        degraded: None,
+        flags: 0,
+    };
+    fx.m.tree.set_class(f, Some(class));
+    fx
+}
+
+#[test]
+fn recommended_items_are_marked_only_when_the_view_opens() {
+    let fx = with_recommended();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    // On without the user opening the view: the read takes the matches in, and marks nothing.
+    app.cleanup.on = true;
+    sync(&mut app, &fx.m, t0);
+    assert_eq!(app.extras.cleanup.items.len(), 3);
+    assert!(app.marks.is_empty());
+    app.key(press(KeyCode::Char('1')), t0);
+
+    // Opening it marks the recommended item, and says so.
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    let marked: Vec<_> = app.marks.items().iter().map(|i| &i.target.path).collect();
+    assert_eq!(marked, [&std::path::PathBuf::from("/r/old-cache")]);
+    assert_eq!(
+        app.status.as_deref(),
+        Some("marked 1 recommended item (1.0 GiB) · Space unmarks")
+    );
+    // Unmarked, it stays so: through later reads, and when the view opens again.
+    marks::clear(&mut app);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('1')), t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    assert!(app.marks.is_empty());
+}
+
+#[test]
+fn a_read_only_browser_never_marks() {
+    let fx = with_recommended();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    app.read_only = true;
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    assert!(app.marks.is_empty());
+    // `a` and Space say why instead.
+    app.key(press(KeyCode::Char('a')), t0);
+    assert!(app.marks.is_empty());
+    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
+    app.status = None;
+    app.key(press(KeyCode::Char(' ')), t0);
+    assert!(app.marks.is_empty());
+    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
+}
+
+/// The group rows' columns are as wide as the categories shown, a category found at two safety
+/// levels shows each level, and a long path is shortened in the middle.
+#[test]
+fn group_columns_fit_the_categories_shown() {
+    let fx = classified();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    let rules = app.snap.rules.clone().unwrap();
+    let base = app.extras.cleanup.items[0].clone();
+    // Three and a half days old, so the age shown stays the same during the test.
+    let mtime = now_secs() - 3 * 86_400 - 43_200;
+    let it = |id: &str, safety: Safety, path: &str| Item {
+        class: Class {
+            rule: rules.index(id).unwrap(),
+            safety,
+            ..base.class
+        },
+        path: path.into(),
+        mtime,
+        ..base.clone()
+    };
+    let long = "/r/clients/northwind-traders/website-redesign-2026/frontend/node_modules";
+    app.extras.cleanup.items = vec![
+        it(
+            "node.node_modules",
+            Safety::Regenerable,
+            "/r/web/node_modules",
+        ),
+        it("node.node_modules", Safety::Review, long),
+        it("rust.target", Safety::Regenerable, "/r/target"),
+    ];
+    for row in rows(&app) {
+        if let Row::Group { cat, safety } = row {
+            app.cleanup.open.insert((cat, safety));
+        }
+    }
+    let frame = render(&mut app, t0, 80, 16);
+    insta::assert_snapshot!("cleanup_columns_80x16", frame);
+    let deps: Vec<&str> = (frame.lines())
+        .filter(|l| l.contains("Project dependencies"))
+        .collect();
+    assert_eq!(deps.len(), 2, "{frame}");
+    assert!(
+        deps[0].contains("regenerable") && deps[1].contains("review"),
+        "{frame}"
+    );
+    let at = |l: &str| l.find("KiB").unwrap();
+    assert_eq!(at(deps[0]), at(deps[1]), "{frame}");
+    assert!(
+        !frame.contains(long) && frame.contains("node_modules"),
+        "{frame}"
+    );
+    assert!(frame.lines().all(|l| l.chars().count() <= 80), "{frame}");
+}
+
 /// The details pane describes the item selected in the cleanup view, not the list's entry.
 #[test]
 fn details_follow_the_cleanup_selection() {

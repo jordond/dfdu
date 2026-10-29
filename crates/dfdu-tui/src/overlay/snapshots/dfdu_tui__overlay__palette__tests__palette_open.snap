@@ -4,11 +4,11 @@ expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00
  3 items · 3.6 GiB                                                         sort: size ↓  disk usage
-     3.0 GiB  ████████████████████████   83.1%       1  Library/
-   625.0 MiB  ████▉                      16.9%       1  notes.sqlite
+        size                     share   items  name
+     3.0 GiB  ████████████████   83.1%       1  Library/
+   625.0 MiB  ███▎               16.9%       1  notes.sqlite
 
-
-            ┌ Commands 45/45 ──────────────────────────────────────────────────────────┐
+            ┌ Commands 46/46 ──────────────────────────────────────────────────────────┐
             │ : ▌                                                                      │
             │ move up                                                    navigate  ↑ k │
             │ move down                                                  navigate  ↓ j │
@@ -33,6 +33,7 @@ expression: frame
             │ toggle apparent size / disk usage                             display  a │
             │ toggle disk usage like du (shared data once per file)         display  u │
             │ hide or show hidden files                                     display  e │
+            │ list columns: items, then items and modified, then neither    display  c │
             │ rescan the selected directory                                     act  r │
             │ scan into the selected mount (another filesystem)                 act  m │
             │ skip directories that are not responding                          act  x │
@@ -56,7 +57,6 @@ expression: frame
             │ Theme: mono                                                      setting │
             │ Theme: high-contrast                                             setting │
             └──────────────────────────────────────────────────────────────────────────┘
-
 
 
 

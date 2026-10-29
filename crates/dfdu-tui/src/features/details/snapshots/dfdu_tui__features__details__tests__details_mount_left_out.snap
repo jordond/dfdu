@@ -4,9 +4,9 @@ expression: out
 ---
  dfdu  /r                                                                                                 done in 00:00
  3 items · 8.0 KiB                                                                             sort: size ↓  disk usage
- >   8.0 KiB  ████████████████  100.0%       2  data/  other filesystem (zfs, 1.╭ data/ ───────────────────────────────╮
- >   8.0 KiB  ████████████████  100.0%       2  nas/  network filesystem (nfs4):│ /r/data                              │
-                                                                                │ directory                            │
+        size                     share  name                                    ╭ data/ ───────────────────────────────╮
+ >   8.0 KiB  ████████████████  100.0%  data/  other filesystem (zfs, 1.3 TiB u…│ /r/data                              │
+ >   8.0 KiB  ████████████████  100.0%  nas/  network filesystem (nfs4): m scan…│ directory                            │
                                                                                 │ not scanned: other filesystem        │
                                                                                 │ zfs · 1.3 TiB used of 3.0 TiB, not   │
                                                                                 │ counted here                         │
@@ -14,5 +14,5 @@ expression: out
                                                                                 │ 8.0 KiB on disk · 2 items            │
                                                                                 │ 8.0 KiB apparent · 8.0 KiB like du   │
                                                                                 ╰────────────────────────────── ↓ more ╯
-
+ ▸ data/  8.0 KiB · 2 items                                                                                         1/2
  ↑↓ move  → open  ← up  m scan it  s n C M sort  Space mark  / filter  i details  ? help  q quit

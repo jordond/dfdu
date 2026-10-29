@@ -11,7 +11,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use super::{Item, Row, group_items, is_marked, markable, pane, plural, rows};
 use crate::app::App;
 use crate::model::outside::tilde;
-use crate::theme::{count, human};
+use crate::theme::{count, human, truncate_middle};
 use crate::view::cells;
 
 /// Draws the view in `area`.
@@ -43,10 +43,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         ));
     }
     let now = now_secs();
+    let columns = Columns::of(&rows);
     for (i, row) in rows.iter().enumerate().skip(scroll).take(list_h) {
         let mut spans = match *row {
-            Row::Group { cat, safety } => group_line(app, cat, safety),
-            Row::Item(i) => item_line(app, &app.extras.cleanup.items[i], now),
+            Row::Group { cat, safety } => group_line(app, cat, safety, columns),
+            Row::Item(i) => item_line(app, &app.extras.cleanup.items[i], now, area.width),
         };
         if i == cursor {
             for s in &mut spans {
@@ -101,8 +102,34 @@ fn summary_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
+/// The widths of the group rows' text columns: as wide as the longest category and safety level
+/// among the groups, so that every group's size lines up.
+#[derive(Copy, Clone, Debug)]
+struct Columns {
+    category: usize,
+    safety: usize,
+}
+
+impl Columns {
+    fn of(rows: &[Row]) -> Self {
+        let mut c = Columns {
+            category: 0,
+            safety: 0,
+        };
+        for row in rows {
+            if let Row::Group { cat, safety } = *row {
+                let name = dfdu_rules::CATEGORIES[cat as usize].name;
+                c.category = c.category.max(Span::raw(name).width());
+                c.safety = c.safety.max(Span::raw(safety.as_str()).width());
+            }
+        }
+        c
+    }
+}
+
 /// The row of the group of category `cat` at `safety`: its size, items and how many are marked.
-fn group_line(app: &App, cat: u16, safety: Safety) -> Vec<Span<'static>> {
+/// The safety level tells apart the groups of a category found at two levels.
+fn group_line(app: &App, cat: u16, safety: Safety, w: Columns) -> Vec<Span<'static>> {
     let t = &app.theme;
     let items = &app.extras.cleanup.items;
     let ix = group_items(app, cat, safety);
@@ -113,10 +140,10 @@ fn group_line(app: &App, cat: u16, safety: Safety) -> Vec<Span<'static>> {
     vec![
         Span::raw(if open { " ▾ " } else { " ▸ " }),
         Span::styled(
-            format!("{:<24}", category.name),
+            format!("{:<width$}", category.name, width = w.category),
             t.cat[category.color as usize],
         ),
-        Span::raw(format!(" {:<12}", safety.as_str())),
+        Span::raw(format!("  {:<width$}", safety.as_str(), width = w.safety)),
         Span::raw(format!("{:>10}", human(size))),
         Span::styled(
             format!(
@@ -134,8 +161,9 @@ fn group_line(app: &App, cat: u16, safety: Safety) -> Vec<Span<'static>> {
     ]
 }
 
-/// The row of `it`: its mark, size, items, age in days at `now`, path and warnings.
-fn item_line(app: &App, it: &Item, now: i64) -> Vec<Span<'static>> {
+/// The row of `it`, `width` cells wide: its mark, size, items, age in days at `now`, path and
+/// warnings. The path is shortened in the middle to the room the rest leaves.
+fn item_line(app: &App, it: &Item, now: i64, width: u16) -> Vec<Span<'static>> {
     let t = &app.theme;
     let mark = if is_marked(app, it) {
         Span::styled("  ● ", t.mark)
@@ -149,18 +177,22 @@ fn item_line(app: &App, it: &Item, now: i64) -> Vec<Span<'static>> {
         mark,
         Span::raw(format!("{:>10}", human(it.size))),
         Span::styled(format!("  {:>6}", count(it.items)), t.fg_dim),
-        Span::styled(format!("  {age:>4} d"), t.fg_dim),
-        Span::raw(format!("  {}", tilde(&it.path, app.home.as_deref()))),
+        Span::styled(format!("  {age:>4} d  "), t.fg_dim),
     ];
-    for (flag, what) in [
+    let warnings: Vec<Span<'static>> = [
         (Class::IN_USE, "in use"),
         (Class::VCS_TRACKED, "git-tracked"),
         (Class::VCS_UNKNOWN, "git unknown"),
-    ] {
-        if it.class.has(flag) {
-            v.push(Span::styled(format!("  {what}"), t.status_warn));
-        }
-    }
+    ]
+    .into_iter()
+    .filter(|&(flag, _)| it.class.has(flag))
+    .map(|(_, what)| Span::styled(format!("  {what}"), t.status_warn))
+    .collect();
+    let used: usize = v.iter().chain(&warnings).map(Span::width).sum();
+    let path = tilde(&it.path, app.home.as_deref());
+    let room = usize::from(width).saturating_sub(used);
+    v.push(Span::raw(truncate_middle(&path, room)));
+    v.extend(warnings);
     v
 }
 

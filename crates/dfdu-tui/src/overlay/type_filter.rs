@@ -21,7 +21,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Effect, Overlay};
 use crate::input::line::{Edit, LineInput};
-use crate::theme::human;
+use crate::theme::{count, human};
 
 /// Why a directory cannot be marked or deleted while the filter is on.
 pub const NO_FOLDERS: &str = "folders cannot be marked or deleted while the type filter is on: their sizes count only some files (Esc shows all)";
@@ -228,7 +228,29 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     } else if rows.is_empty() {
         lines.push(Line::styled(" nothing matches", t.fg_dim));
     }
-    for (i, (row, tot)) in rows.iter().enumerate().skip(top).take(fit) {
+    // The size and file count of each row, right-aligned to the widest of each.
+    let numbers: Vec<(String, String)> = rows
+        .iter()
+        .map(|(_, tot)| {
+            let files = match tot.items {
+                1 => "1 file".to_string(),
+                n => format!("{} files", count(n)),
+            };
+            (human(app.size_mode.of(tot)), files)
+        })
+        .collect();
+    let size_w = numbers
+        .iter()
+        .map(|n| n.0.chars().count())
+        .max()
+        .unwrap_or(0);
+    let files_w = numbers
+        .iter()
+        .map(|n| n.1.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (i, ((row, _), (size, files))) in rows.iter().zip(&numbers).enumerate().skip(top).take(fit)
+    {
         let mark = if chosen(&app.types, *row) {
             "[x]"
         } else {
@@ -239,12 +261,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             Row::Type(ty) => (ty.name().to_string(), String::new()),
             Row::Ext(e) => (format!(".{e}"), e.file_type().name().to_string()),
         };
-        let files = match tot.items {
-            1 => "1 file".to_string(),
-            n => format!("{n} files"),
-        };
         let left = format!(" {mark} {label:<12} {kind:<10}");
-        let right = format!("{:>10}  {files:>11} ", human(app.size_mode.of(tot)));
+        let right = format!("{size:>size_w$}  {files:>files_w$} ");
         let pad = inner.saturating_sub(left.chars().count() + right.chars().count());
         let mut line = Line::from(vec![
             Span::raw(left),
@@ -386,5 +404,36 @@ mod tests {
         assert!(app.types.is_empty());
         read(&mut app, &m, t0);
         assert_eq!(app.snap.entries.len(), 4);
+    }
+
+    /// Counts read as everywhere else (`1.5k files`), and the size and count columns are as
+    /// wide as their widest value, right-aligned.
+    #[test]
+    fn counts_are_compact_and_line_up() {
+        let mut m = model();
+        let t = &mut m.tree;
+        let root = t.roots().next().unwrap();
+        let logs = t.add_dir(root, b"logs", &crate::tests::meta(Kind::Dir, 0, 100));
+        for i in 0..1500 {
+            let meta = crate::tests::meta(Kind::File, 1, 200 + i);
+            let f = t.add_file(logs, format!("{i}.log").as_bytes(), &meta, false, None);
+            let own = t.own(f);
+            t.propagate_add(logs, &own);
+        }
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.target = Target::root();
+        read(&mut app, &m, t0);
+        app.key(press(KeyCode::Char('t')), t0);
+        read(&mut app, &m, t0);
+        let out = render(&mut app, t0, 80, 20);
+        insta::assert_snapshot!("type_counts_80x20", out);
+        assert!(out.contains("1.5k files"), "{out}");
+        assert!(!out.contains("1500"), "{out}");
+        let ends: std::collections::HashSet<usize> = (out.lines())
+            .filter(|l| l.contains(" file"))
+            .map(|l| l.trim_end_matches(['│', ' ']).chars().count())
+            .collect();
+        assert_eq!(ends.len(), 1, "{out}");
     }
 }

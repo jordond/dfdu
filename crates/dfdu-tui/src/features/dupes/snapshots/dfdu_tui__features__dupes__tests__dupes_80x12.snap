@@ -1,0 +1,16 @@
+---
+source: crates/dfdu-tui/src/features/dupes/tests.rs
+expression: out
+---
+ dfdu                                                          ⠋ scanning 00:00
+ 0 items · 0 B                                         sort: size ↓  disk usage
+ 2 groups of identical files of 1.0 MiB or more · up to 2.0 MiB to free · 4 file
+ 2 copies of 1.0 MiB · 1.0 MiB to free · in photos/2026/trip-to-the-coast/
+     IMG_0001.jpg                                           2025-10-09 08:53 UTC
+     edited/exports for the family al…1 (final, small).jpg  2025-10-20 22:40 UTC
+ 2 copies of 1.0 MiB · 1.0 MiB to free
+     a.bin                                                  2023-11-14 22:13 UTC
+     backup/a.bin                                           2023-11-14 22:13 UTC
+
+
+ ↑↓ move  Space mark  a all copies  d trash marked  1 list  ? help  q quit

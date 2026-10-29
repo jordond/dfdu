@@ -82,12 +82,12 @@ pub fn draw(f: &mut Frame, app: &App, body: Rect) -> Option<Rect> {
     if !app.debug.open || screen.width < MIN_AREA.0 || screen.height < MIN_AREA.1 {
         return None;
     }
-    // The list starts where `body` does: this keeps the panel left of a details pane on the
-    // right and above a sheet below the list.
+    // The list (below its column names) ends where it does in `body`: this keeps the panel
+    // left of a details pane on the right and above a sheet below the list.
     let list = app.areas.list;
     let area = Rect {
         width: list.width.min(body.width),
-        height: list.height.min(body.height),
+        height: list.bottom().saturating_sub(body.y).min(body.height),
         ..body
     };
     let lines = lines(

@@ -4,11 +4,11 @@ expression: frame
 ---
  dfdu  /r                                                                                                 done in 00:00
  12 items · 95.7 KiB                                                                           sort: size ↓  disk usage
-    58.6 KiB  ████████████████   61.2%       6  build       big/                ╭ big/ ────────────────────────────────╮
-    24.4 KiB  ██████▋            25.5%       5              mid/                │ /r/big                               │
-     8.8 KiB  ██▍                 9.2%       1              small               │ directory · complete                 │
-     3.9 KiB  █▏                  4.1%       1              .hid                │ 58.6 KiB on disk · 6 items           │
-                                                                                │ 58.6 KiB apparent · 58.6 KiB like du │
+        size                 share         name                                 ╭ big/ ────────────────────────────────╮
+    58.6 KiB  ████████████   61.2%  build  big/                                 │ /r/big                               │
+    24.4 KiB  █████          25.5%         mid/                                 │ directory · complete                 │
+     8.8 KiB  █▊              9.2%         small                                │ 58.6 KiB on disk · 6 items           │
+     3.9 KiB  ▊               4.1%         .hid                                 │ 58.6 KiB apparent · 58.6 KiB like du │
                                                                                 │ Project build output · regenerable   │
                                                                                 │ Rust build output (target/)          │
                                                                                 │ Build output of a Cargo project.     │
@@ -24,5 +24,5 @@ expression: frame
                                                                                 │                                      │
                                                                                 │                                      │
                                                                                 ╰──────────────────────────────────────╯
-
+ ▸ big/  58.6 KiB · 6 items · build                                                                                 1/4
  ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit

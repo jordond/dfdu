@@ -215,7 +215,7 @@ fn effects_skip(open: impl Fn(&mut App, Instant), cover: impl Fn(&App) -> Option
                 }
             }
             // Left of it the rows flash.
-            let y = cover.top() + 1;
+            let y = cover.top().max(list.top()) + 1;
             assert_ne!(plain[(0, y)].bg, fx[(0, y)].bg);
         }
     }

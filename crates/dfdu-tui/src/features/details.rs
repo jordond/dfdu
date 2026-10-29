@@ -16,6 +16,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::{App, Effect};
 use crate::model::snapshot::Mark;
+use crate::theme::{count, human};
 use crate::view::cells;
 
 use text::lines;
@@ -30,7 +31,6 @@ const RIGHT_WIDTH: u16 = 40;
 const SHEET_HEIGHT: u16 = 10;
 /// ...if the list keeps this many rows.
 const LIST_MIN: u16 = 6;
-const TOO_SMALL: &str = "terminal too small for details";
 /// Children listed as the largest.
 const LARGEST: usize = 5;
 /// Directories with more children than this get no list of the largest: finding them reads
@@ -46,6 +46,9 @@ pub struct Details {
     scroll: usize,
     /// What `app.extras.details` was read for.
     read_for: ReadFor,
+    /// The summary [`split`] put in the status line in place of a pane that does not fit, to
+    /// replace as the selection moves.
+    summary: Option<String>,
 }
 
 /// What the details were last read for.
@@ -248,9 +251,35 @@ pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
     true
 }
 
+/// The selected row in one line, for the status line when the pane does not fit: its name,
+/// size and, for a directory, its items.
+fn summary(app: &App) -> Option<String> {
+    let (name, is_dir, size, items) = if crate::features::cleanup::active(app) {
+        let it = crate::features::cleanup::selected_item(app)?;
+        let name = it.path.file_name().unwrap_or(it.path.as_os_str());
+        let is_dir = it.kind == Kind::Dir;
+        (
+            name.to_string_lossy().into_owned(),
+            is_dir,
+            it.size,
+            it.items,
+        )
+    } else {
+        let e = app.selected_entry()?;
+        let name = String::from_utf8_lossy(&e.name).into_owned();
+        (name, e.is_dir, e.size, e.items)
+    };
+    Some(if is_dir {
+        format!("▸ {name}/  {} · {} items", human(size), count(items))
+    } else {
+        format!("▸ {name}  {}", human(size))
+    })
+}
+
 /// Splits the area below the header into the list and the pane, if the pane is open and fits.
-/// When it does not fit, the status line says so, unless it has another message to show.
-pub fn split(app: &mut App, area: Rect) -> (Rect, Option<Rect>) {
+/// When it does not fit, the list view's selection line already sums up the selected row; the
+/// other views show a summary in the status line instead, unless it has another message to show.
+pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>) {
     if !app.details.open {
         return (area, None);
     }
@@ -262,14 +291,20 @@ pub fn split(app: &mut App, area: Rect) -> (Rect, Option<Rect>) {
     } else {
         None
     };
+    let ours = app.status.is_none() || app.status == app.details.summary;
     if let Some([list, pane]) = parts {
-        if app.status.as_deref() == Some(TOO_SMALL) {
+        if ours {
             app.status = None;
         }
+        app.details.summary = None;
         (list, Some(pane))
     } else {
         app.details.focused = false;
-        app.status.get_or_insert_with(|| TOO_SMALL.into());
+        let line = if list_view { None } else { summary(app) };
+        if ours {
+            app.status.clone_from(&line);
+        }
+        app.details.summary = line;
         (area, None)
     }
 }

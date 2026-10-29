@@ -6,20 +6,20 @@ expression: "styled(&frame(state, theme(name, level)))"
 L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold
  1┏ Keys ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ / search ┓e
 L1 2-2 fg=#88c0d0 | 3-8 fg=#eceff4 bold | 9-86 fg=#88c0d0 | 87-96 fg=#8b94a7 | 97-97 fg=#88c0d0 | 98-99 fg=#8b94a7
- ⠋┃ Navigate                                        Act                                          ┃
-L2 0-1 fg=#8b94a7 bg=#4c566a bold | 2-2 fg=#88c0d0 | 3-11 fg=#eceff4 bold | 51-54 fg=#eceff4 bold | 97-97 fg=#88c0d0
- ⠙┃ ↑ k              move up                        r      rescan the selected directory         ┃
-L3 0-1 fg=#8b94a7 | 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ ↓ j              move down                      m      scan into the selected mount (another ┃
-L4 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ Navigate                                        Act                                          ┃
+L2 0-1 fg=#8b94a7 | 2-2 fg=#88c0d0 | 3-11 fg=#eceff4 bold | 51-54 fg=#eceff4 bold | 97-97 fg=#88c0d0 | 98-99 fg=#8b94a7
+ ⠋┃ ↑ k              move up                        r      rescan the selected directory         ┃
+L3 0-1 fg=#d8dee9 bg=#4c566a bold | 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0 | 98-99 fg=#eceff4 bg=#4c566a bold
+ ⠙┃ ↓ j              move down                      m      scan into the selected mount (another ┃
+L4 0-1 fg=#8b94a7 | 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ PgUp             page up                               filesystem)                           ┃
 L5 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- !┃ PgDn             page down                      x      skip directories that are not         ┃
-L6 0-1 fg=#ff8f8f | 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
- ~┃ g Home           first entry                           responding                            ┃
-L7 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ G End            last entry                     Space  mark or unmark, then move down        ┃
-L8 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ PgDn             page down                      x      skip directories that are not         ┃
+L6 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+ !┃ g Home           first entry                           responding                            ┃
+L7 0-1 fg=#ff8f8f | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+ ~┃ G End            last entry                     Space  mark or unmark, then move down        ┃
+L8 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ → l Enter        open directory                 :      clear all marks (in the palette)      ┃
 L9 2-2 fg=#88c0d0 | 4-12 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
   ┃ ← h Backspace <  parent directory               d      move to Trash                         ┃
