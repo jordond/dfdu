@@ -13,6 +13,7 @@ A disk usage browser for the terminal. Browse, sort and delete while the scan is
 - **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](docs/benchmarks.md).
 - **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](docs/rules.md) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
+- **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
 - **History.** Every scan is recorded, so you can ask what grew since last week.
 - **Remote.** Browse and delete on another machine over ssh.
 - **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
@@ -74,6 +75,8 @@ Keys follow ncdu. Press `?` in the app for the full list.
 Unreadable entries are marked `!` with the reason. Press `!` to list them all.
 
 Like `ncdu -x`, a scan stays on one filesystem. Add `--cross-mounts` for other local filesystems and `--network` for network mounts.
+
+Scans that took 3 s or more are cached, so the next `dfdu PATH` opens at once and refreshes in the background (`cached 3 h ago, refreshing` in the header). On macOS, Windows and btrfs only the changed directories are read again. A cache is used for 14 days and the cache keeps at most 1 GiB, readable only by you. `--no-cache` scans afresh, `DFDU_CACHE=0` turns it off, `dfdu cache list` and `dfdu cache clear` manage it.
 
 ## Command line
 

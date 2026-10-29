@@ -4,44 +4,40 @@ use std::io::{self, Write};
 
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, NodeFlags, Tree};
 
-use super::{CLOSE, DIR, DIR_FLAGS, ENTRY, FRAME_RAW, Header, MAGIC, OPT_JOURNAL, VERSION};
+use super::{
+    CLOSE, DIR, DIR_FLAGS, ENTRY, FRAME_RAW, Header, MAGIC, OPT_JOURNAL, VERSION, VERSION_3,
+};
 
-struct FrameWriter<W: Write> {
-    w: W,
-    raw: Vec<u8>,
+/// The frames written so far: their count and CRCs, for the footer.
+#[derive(Default)]
+struct Frames {
     frames: u64,
     crcs: Vec<u8>,
 }
 
-impl<W: Write> FrameWriter<W> {
-    fn frame(&mut self) -> io::Result<()> {
-        if self.raw.is_empty() {
+impl Frames {
+    /// Writes `raw` to `w` as one frame and empties it; nothing when it is empty.
+    fn frame(&mut self, w: &mut impl Write, raw: &mut Vec<u8>) -> io::Result<()> {
+        if raw.is_empty() {
             return Ok(());
         }
         let z = ruzstd::encoding::compress_to_vec(
-            &self.raw[..],
+            &raw[..],
             ruzstd::encoding::CompressionLevel::Fastest,
         );
         let crc = crc32c::crc32c(&z);
         let too_big = |_| io::Error::new(io::ErrorKind::InvalidInput, "a frame over 4 GiB");
         let zlen = u32::try_from(z.len()).map_err(too_big)?;
-        let rawlen = u32::try_from(self.raw.len()).map_err(too_big)?;
+        let rawlen = u32::try_from(raw.len()).map_err(too_big)?;
         let mut h = [0u8; 12];
         h[..4].copy_from_slice(&zlen.to_le_bytes());
         h[4..8].copy_from_slice(&rawlen.to_le_bytes());
         h[8..].copy_from_slice(&crc.to_le_bytes());
-        self.w.write_all(&h)?;
-        self.w.write_all(&z)?;
+        w.write_all(&h)?;
+        w.write_all(&z)?;
         self.crcs.extend_from_slice(&crc.to_le_bytes());
         self.frames += 1;
-        self.raw.clear();
-        Ok(())
-    }
-
-    fn maybe_frame(&mut self) -> io::Result<()> {
-        if self.raw.len() >= FRAME_RAW {
-            self.frame()?;
-        }
+        raw.clear();
         Ok(())
     }
 }
@@ -103,7 +99,7 @@ pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Resul
     write_as(tree, root, w, header, VERSION)
 }
 
-/// [`write`] in format `version` (2 or 3; tests write older formats with it).
+/// [`write`] in format `version` (2 to 4; tests write older formats with it).
 pub(super) fn write_as(
     tree: &Tree,
     root: Ix,
@@ -111,88 +107,181 @@ pub(super) fn write_as(
     header: &Header,
     version: u32,
 ) -> io::Result<u64> {
-    let mut fw = FrameWriter {
-        w: io::BufWriter::with_capacity(1 << 16, w),
-        raw: Vec::with_capacity(FRAME_RAW + 4096),
-        frames: 0,
-        crcs: vec![],
-    };
-    fw.w.write_all(MAGIC)?;
-    fw.w.write_all(&version.to_le_bytes())?;
-    let path = tree.path_buf(root);
-    put_header(&mut fw.raw, &path, header, version);
-    let mut devs: Vec<u64> = vec![];
-    let mut entries = 0u64;
-    let mut stack: Vec<(Vec<Ix>, usize)> = vec![];
-    let mut next = Some(root);
-    loop {
-        if let Some(ix) = next.take() {
-            entries += 1;
-            let r = &mut fw.raw;
-            let is_dir = tree.dir(ix).is_some();
-            r.push(if is_dir { DIR } else { ENTRY });
-            put_bytes(r, if ix == root { b"" } else { tree.name(ix) });
-            let flags = tree.flags(ix);
-            if !is_dir {
-                r.push(match tree.kind(ix) {
-                    Kind::File => 0,
-                    Kind::Dir => 1,
-                    Kind::Symlink => 2,
-                    Kind::Other => 3,
-                });
-                r.push(u8::from(flags.has(NodeFlags::HARDLINK)));
-            }
-            let (apparent, alloc) = tree.raw_size(ix);
-            put_u(r, apparent);
-            put_u(r, alloc);
-            put_i(r, tree.mtime(ix));
-            let (dev, ino) = tree.dev_ino(ix);
-            if let Some(i) = devs.iter().position(|&d| d == dev) {
-                put_u(r, i as u64);
-            } else {
-                put_u(r, devs.len() as u64);
-                put_u(r, dev);
-                devs.push(dev);
-            }
-            put_u(r, ino);
-            let (code, os) = err_code(tree.error(ix));
-            r.push(code);
-            if code == 5 {
-                put_i(r, os);
-            }
-            if let Some(d) = tree.dir(ix) {
-                let kept = DIR_FLAGS
-                    .iter()
-                    .filter(|&&f| flags.has(f))
-                    .fold(0, |a, &f| a | f);
-                put_u(r, u64::from(kept));
-                r.push(state_code(d.state));
-                stack.push((tree.children(ix).collect(), 0));
-            }
-            fw.maybe_frame()?;
-        }
-        let Some((kids, i)) = stack.last_mut() else {
-            break;
-        };
-        if let Some(&c) = kids.get(*i) {
-            *i += 1;
-            next = Some(c);
-        } else {
-            stack.pop();
-            fw.raw.push(CLOSE);
+    let mut w = io::BufWriter::with_capacity(1 << 16, w);
+    let mut s = Writer::new_as(tree, root, header, version);
+    while !s.step(tree, usize::MAX) {
+        s.flush(&mut w)?;
+    }
+    s.finish(&mut w)
+}
+
+/// A snapshot written a part at a time, for a tree that others change between the parts: the
+/// caller holds the tree still (a read lock) for each [`Writer::step`], which only adds records
+/// in memory, and writes them out with [`Writer::flush`] after letting go of it. The tree must
+/// not change between steps (its [`Tree::version`] stays the same); if it does, start again.
+pub struct Writer {
+    version: u32,
+    /// The magic and version are written.
+    started: bool,
+    raw: Vec<u8>,
+    frames: Frames,
+    root: Ix,
+    devs: Vec<u64>,
+    entries: u64,
+    stack: Vec<(Vec<Ix>, usize)>,
+    next: Option<Ix>,
+    done: bool,
+}
+
+impl Writer {
+    /// A snapshot of the tree below `root` (a visible root, whose name is its path) in the
+    /// current format, with `header`.
+    #[must_use]
+    pub fn new(tree: &Tree, root: Ix, header: &Header) -> Writer {
+        Writer::new_as(tree, root, header, VERSION)
+    }
+
+    fn new_as(tree: &Tree, root: Ix, header: &Header, version: u32) -> Writer {
+        let mut raw = Vec::with_capacity(FRAME_RAW + 4096);
+        put_header(&mut raw, &tree.path_buf(root), header, version);
+        Writer {
+            version,
+            started: false,
+            raw,
+            frames: Frames::default(),
+            root,
+            devs: vec![],
+            entries: 0,
+            stack: vec![],
+            next: Some(root),
+            done: false,
         }
     }
-    fw.frame()?;
-    fw.w.write_all(&[0; 12])?;
-    let mut foot = Vec::with_capacity(24);
-    foot.extend_from_slice(&entries.to_le_bytes());
-    foot.extend_from_slice(&fw.frames.to_le_bytes());
-    foot.extend_from_slice(&crc32c::crc32c(&fw.crcs).to_le_bytes());
-    let fcrc = crc32c::crc32c(&foot);
-    foot.extend_from_slice(&fcrc.to_le_bytes());
-    fw.w.write_all(&foot)?;
-    fw.w.flush()?;
-    Ok(entries)
+
+    /// Entries added so far.
+    #[must_use]
+    pub fn entries(&self) -> u64 {
+        self.entries
+    }
+
+    /// Adds the records of up to `max` more entries of `tree`, stopping early once a frame's
+    /// worth waits to be written. True once every entry has been added.
+    pub fn step(&mut self, tree: &Tree, max: usize) -> bool {
+        let mut added = 0usize;
+        while !self.done {
+            if let Some(ix) = self.next.take() {
+                self.entry(tree, ix);
+                added += 1;
+                if self.raw.len() >= FRAME_RAW || added >= max {
+                    return false;
+                }
+            }
+            let Some((kids, i)) = self.stack.last_mut() else {
+                self.done = true;
+                break;
+            };
+            if let Some(&c) = kids.get(*i) {
+                *i += 1;
+                self.next = Some(c);
+            } else {
+                self.stack.pop();
+                self.raw.push(CLOSE);
+            }
+        }
+        true
+    }
+
+    /// The record of entry `ix`; a directory's children are taken to visit next.
+    fn entry(&mut self, tree: &Tree, ix: Ix) {
+        self.entries += 1;
+        let r = &mut self.raw;
+        let is_dir = tree.dir(ix).is_some();
+        r.push(if is_dir { DIR } else { ENTRY });
+        put_bytes(r, if ix == self.root { b"" } else { tree.name(ix) });
+        let flags = tree.flags(ix);
+        if !is_dir {
+            r.push(match tree.kind(ix) {
+                Kind::File => 0,
+                Kind::Dir => 1,
+                Kind::Symlink => 2,
+                Kind::Other => 3,
+            });
+            r.push(u8::from(flags.has(NodeFlags::HARDLINK)));
+        }
+        let (apparent, alloc) = tree.raw_size(ix);
+        put_u(r, apparent);
+        put_u(r, alloc);
+        put_i(r, tree.mtime(ix));
+        let (dev, ino) = tree.dev_ino(ix);
+        if let Some(i) = self.devs.iter().position(|&d| d == dev) {
+            put_u(r, i as u64);
+        } else {
+            put_u(r, self.devs.len() as u64);
+            put_u(r, dev);
+            self.devs.push(dev);
+        }
+        put_u(r, ino);
+        let (code, os) = err_code(tree.error(ix));
+        r.push(code);
+        if code == 5 {
+            put_i(r, os);
+        }
+        if let Some(d) = tree.dir(ix) {
+            let kept = DIR_FLAGS
+                .iter()
+                .filter(|&&f| flags.has(f))
+                .fold(0, |a, &f| a | f);
+            put_u(r, u64::from(kept));
+            r.push(state_code(d.state));
+            self.stack.push((tree.children(ix).collect(), 0));
+        }
+    }
+
+    fn start(&mut self, w: &mut impl Write) -> io::Result<()> {
+        if !self.started {
+            w.write_all(MAGIC)?;
+            w.write_all(&self.version.to_le_bytes())?;
+            self.started = true;
+        }
+        Ok(())
+    }
+
+    /// Writes the records added so far to `w` when they fill a frame.
+    ///
+    /// # Errors
+    ///
+    /// When writing to `w` fails.
+    pub fn flush(&mut self, w: &mut impl Write) -> io::Result<()> {
+        self.start(w)?;
+        if self.raw.len() >= FRAME_RAW {
+            self.frames.frame(w, &mut self.raw)?;
+        }
+        Ok(())
+    }
+
+    /// Writes the rest to `w`, once [`Writer::step`] added every entry: the last frame, the
+    /// end marker and the footer. Returns the entries written.
+    ///
+    /// # Errors
+    ///
+    /// When writing to `w` fails, or entries are left to add.
+    pub fn finish(mut self, w: &mut impl Write) -> io::Result<u64> {
+        if !self.done {
+            return Err(io::Error::other("the snapshot was finished early"));
+        }
+        self.start(w)?;
+        self.frames.frame(w, &mut self.raw)?;
+        w.write_all(&[0; 12])?;
+        let mut foot = Vec::with_capacity(24);
+        foot.extend_from_slice(&self.entries.to_le_bytes());
+        foot.extend_from_slice(&self.frames.frames.to_le_bytes());
+        foot.extend_from_slice(&crc32c::crc32c(&self.frames.crcs).to_le_bytes());
+        let fcrc = crc32c::crc32c(&foot);
+        foot.extend_from_slice(&fcrc.to_le_bytes());
+        w.write_all(&foot)?;
+        w.flush()?;
+        Ok(self.entries)
+    }
 }
 
 /// The scan's header records: root path, tool version, time, options and journal position.
@@ -213,9 +302,13 @@ fn put_header(r: &mut Vec<u8>, path: &std::path::Path, header: &Header, version:
     if let Some(j) = &header.journal {
         put_bytes(r, &j.volume);
         put_u(r, j.event_id);
-        if version == VERSION {
+        if version >= VERSION_3 {
             put_u(r, j.time);
         }
+    }
+    if version >= VERSION {
+        put_u(r, header.last_full_scan);
+        put_u(r, header.scan_ms);
     }
 }
 

@@ -21,6 +21,7 @@ use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::app::views;
 use crate::input::mouse::{Crumb, Tab};
+use crate::model::cache_link::{Cached, ago};
 use crate::model::growth;
 use crate::model::outside::{rel_text, tilde};
 use crate::state::filter;
@@ -131,10 +132,31 @@ fn breadcrumbs(
 
 /// The right of the first line: whether the browser is read-only, and the scan's state. Longest
 /// first, then the shorter forms for narrow terminals: `read-only · done in 00:16`,
-/// `read-only · done 00:16`, `done 00:16`, `00:16`. While scanning, each keeps the spinner.
+/// `read-only · done 00:16`, `done 00:16`, `00:16`. While scanning, each keeps the spinner. A
+/// cached scan says so until it is up to date: `cached 3 h ago, refreshing 00:02`.
 fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
-    let ((long, short, bare), style) = match app.done_at {
-        Some(done) if !app.snap.busy => {
+    let ((long, short, bare), style) = match (app.cached, app.done_at) {
+        (Some(cached), _) => {
+            let (spin, time) = (spinner(frame), mmss(now.duration_since(app.started)));
+            let (long, short) = match cached {
+                Cached::Loading => (
+                    format!("{spin} loading the cached scan {time}"),
+                    format!("{spin} loading cache"),
+                ),
+                Cached::Refreshing { written } => {
+                    let age = ago(written, dfdu_tree::now_secs().max(0).cast_unsigned());
+                    (
+                        format!("{spin} cached {age} ago, refreshing {time}"),
+                        format!("{spin} cached {age} ago"),
+                    )
+                }
+            };
+            (
+                (long, short, format!("{spin} {time}")),
+                app.theme.scan_active,
+            )
+        }
+        (None, Some(done)) if !app.snap.busy => {
             let time = mmss(done.duration_since(app.started));
             (
                 (format!("done in {time}"), format!("done {time}"), time),

@@ -1,7 +1,9 @@
-//! Where dfdu keeps its files: the configuration directory (rule files, themes) and the state
-//! directory (deletion journals, staging, crash reports, scan history). XDG directories on
-//! Linux and macOS, Known Folders on Windows (which has no state directory, so the data
-//! directory is used there). Every path is `None` without a home directory.
+//! Where dfdu keeps its files: the configuration directory (rule files, themes), the state
+//! directory (deletion journals, staging, crash reports, scan history) and the cache directory
+//! (the scan cache). XDG directories on Linux and macOS, Known Folders on Windows (which has no
+//! state directory, so the data directory is used there); the cache is in the platform's own
+//! cache directory (`~/Library/Caches` on macOS). Every path is `None` without a home
+//! directory.
 
 use std::path::PathBuf;
 
@@ -10,6 +12,9 @@ use etcetera::BaseStrategy;
 /// The environment variable that replaces the state directory (used as given, without a
 /// `dfdu` folder of its own).
 pub const STATE_DIR_VAR: &str = "DFDU_STATE_DIR";
+
+/// The environment variable that replaces the scan cache directory (used as given).
+pub const CACHE_DIR_VAR: &str = "DFDU_CACHE_DIR";
 
 /// `dfdu` in the configuration directory (the roaming `AppData` folder on Windows).
 #[must_use]
@@ -41,6 +46,18 @@ pub fn state_dir() -> Option<PathBuf> {
     Some(base.join("dfdu"))
 }
 
+/// The scan cache: `$DFDU_CACHE_DIR`, else `dfdu/scans` in the platform cache directory
+/// (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, the local
+/// `AppData` folder on Windows).
+#[must_use]
+pub fn cache_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os(CACHE_DIR_VAR) {
+        return Some(PathBuf::from(d));
+    }
+    let dirs = etcetera::base_strategy::choose_native_strategy().ok()?;
+    Some(dirs.cache_dir().join("dfdu").join("scans"))
+}
+
 /// The deletion journals: `ops` in [`state_dir`].
 #[must_use]
 pub fn journal_dir() -> Option<PathBuf> {
@@ -69,5 +86,15 @@ mod tests {
         assert_eq!(journal_dir(), Some(state.join("ops")));
         assert_eq!(crash_dir(), Some(state.join("crash")));
         assert_eq!(history_path(), Some(state.join("history.sqlite3")));
+    }
+
+    #[test]
+    fn the_cache_is_apart_from_the_state() {
+        if std::env::var_os(CACHE_DIR_VAR).is_some() {
+            return;
+        }
+        let Some(cache) = cache_dir() else { return };
+        assert!(cache.ends_with("dfdu/scans"), "{}", cache.display());
+        assert_ne!(Some(cache.as_path()), state_dir().as_deref());
     }
 }

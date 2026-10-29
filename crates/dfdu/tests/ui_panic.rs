@@ -81,6 +81,7 @@ impl Browser {
         cmd.args(["--theme", "ansi"])
             .arg(tree)
             .env("DFDU_STATE_DIR", state)
+            .env("DFDU_CACHE_DIR", state.join("cache"))
             .env("TERM", "xterm-256color")
             .env("RUST_BACKTRACE", "0")
             .stdin(Stdio::from(slave.try_clone().unwrap()))

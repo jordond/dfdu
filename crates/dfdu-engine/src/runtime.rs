@@ -337,6 +337,14 @@ impl<B: Backend> Engine<B> {
         f(&self.model.read())
     }
 
+    /// Reads the model from another thread: the function returned runs the one it is given
+    /// under the read lock, as [`Engine::read`] does. Do no I/O there, and keep it short: the
+    /// applier and the browser wait for the lock.
+    pub fn reader(&self) -> impl Fn(&mut dyn FnMut(&Model)) + Send + Sync + 'static {
+        let model = self.model.clone();
+        move |f| f(&model.read())
+    }
+
     /// Replaces the tree with one read from a file, before anything is scanned, to bring it up
     /// to date with [`Command::Resume`]. A tree that is only browsed is started with
     /// [`Engine::start_imported`] instead.
@@ -350,19 +358,35 @@ impl<B: Backend> Engine<B> {
     /// `opts` ([`Command::Resume`]): only the directories changed since `journal` when the
     /// volume's change journal can tell, otherwise all of it. A tree without a root is only
     /// loaded.
+    ///
+    /// The journal is asked on a thread of its own (it can take a second or more), so this
+    /// returns once the tree is loaded; [`Engine::wait_idle`] waits for the resume as for any
+    /// command sent.
     pub fn resume(&self, tree: Tree, journal: Option<JournalPosition>, opts: JobOptions) {
         let Some(root) = tree.roots().next() else {
             self.load(tree);
             return;
         };
         let node = tree.node_ref(root);
-        let changed = journal.and_then(|j| changed_since(&tree.path_buf(root), j));
+        let path = tree.path_buf(root);
         self.load(tree);
-        self.send(Command::Resume {
-            node,
-            opts,
-            changed,
-        });
+        let Some(at) = journal else {
+            self.send(Command::Resume {
+                node,
+                opts,
+                changed: None,
+            });
+            return;
+        };
+        // Counted as sent now, so that waiting for idle waits for it.
+        self.commands_sent.fetch_add(1, SeqCst);
+        let (tx, p, o) = (self.cmd_tx.clone(), path.clone(), opts.clone());
+        let spawned = thread::Builder::new()
+            .name("dfdu-journal".into())
+            .spawn(move || resume_since(&tx, node, o, &p, at));
+        if spawned.is_err() {
+            resume_since(&self.cmd_tx, node, opts, &path, at);
+        }
     }
 
     /// Receives a message whenever the model changed.
@@ -445,6 +469,23 @@ impl<B: Backend> Engine<B> {
             }
         }
     }
+}
+
+/// Asks the change journal what changed below `path` since `at`, and sends the resume of the
+/// loaded root `node` with what it said.
+fn resume_since(
+    tx: &Sender<Command>,
+    node: dfdu_tree::NodeRef,
+    opts: JobOptions,
+    path: &std::path::Path,
+    at: JournalPosition,
+) {
+    let changed = changed_since(path, at);
+    let _ = tx.send(Command::Resume {
+        node,
+        opts,
+        changed,
+    });
 }
 
 /// Where an engine's tree comes from, for [`Engine::start_inner`].

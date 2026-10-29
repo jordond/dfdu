@@ -18,10 +18,12 @@ pub fn bin() -> Command {
     c
 }
 
-/// The `dfdu` binary with its state (history, journals) in `state`.
+/// The `dfdu` binary with its state (history, journals) in `state`, and its scan cache below
+/// it.
 pub fn bin_in(state: &Path) -> Command {
     let mut c = bin();
     c.env("DFDU_STATE_DIR", state);
+    c.env("DFDU_CACHE_DIR", state.join("cache"));
     c
 }
 

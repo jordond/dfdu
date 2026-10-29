@@ -11,8 +11,9 @@
 //! - A header of zeros ends the frames, then the footer: entries and frames (`u64` each), the
 //!   CRC32C of the frame CRCs, and the CRC32C of those 20 bytes.
 //!
-//! The record stream starts with the scan's header (root path, tool version, time, options)
-//! and holds the tree depth first: a directory opens with its fields, its entries follow, and
+//! The record stream starts with the scan's header (root path, tool version, time, options,
+//! the change journal position, and in format 4 when the last full scan started and how long it
+//! took) and holds the tree depth first: a directory opens with its fields, its entries follow, and
 //! a close record ends it. Numbers are LEB128 varints, signed ones zigzagged. Devices go into
 //! a table as they first appear and are referred to by index after.
 //!
@@ -25,15 +26,17 @@ use dfdu_tree::{Ix, NodeFlags, Tree};
 mod read;
 mod write;
 
-pub use read::{is_snapshot, read};
-pub use write::write;
+pub use read::{is_snapshot, read, read_header};
+pub use write::{Writer, write};
 
 pub const MAGIC: &[u8; 8] = b"DFDUSNAP";
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 /// Version 1, the same without the change journal position.
 const VERSION_1: u32 = 1;
 /// Version 2, the same without the time of the journal position.
 const VERSION_2: u32 = 2;
+/// Version 3, the same without the last full scan's time and duration.
+const VERSION_3: u32 = 3;
 /// Raw bytes per frame.
 pub const FRAME_RAW: usize = 1 << 20;
 /// Largest frame a reader accepts, raw or compressed.
@@ -62,6 +65,25 @@ pub struct Header {
     /// Where the change journal of the root's volume stood when the scan started, so a resume
     /// can rescan only what changed since. Its `time` is 0 in formats 1 and 2.
     pub journal: Option<JournalPosition>,
+    /// Seconds since the Unix epoch when the last scan of the whole tree started: the tree may
+    /// have been brought up to date from the change journal since, which can miss changes. 0
+    /// when not known (formats 1 to 3).
+    pub last_full_scan: u64,
+    /// How long that full scan took, in milliseconds; 0 when not known (formats 1 to 3).
+    pub scan_ms: u64,
+}
+
+impl Header {
+    /// When the last full scan started: [`Header::last_full_scan`], or when the snapshot was
+    /// written for formats that do not say.
+    #[must_use]
+    pub fn full_scan_at(&self) -> u64 {
+        if self.last_full_scan == 0 {
+            self.written
+        } else {
+            self.last_full_scan
+        }
+    }
 }
 
 const OPT_JOURNAL: u64 = 4;

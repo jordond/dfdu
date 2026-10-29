@@ -17,8 +17,11 @@ dfdu-scan.workspace = true
 ruzstd.workspace = true
 crc32c.workspace = true
 rusqlite.workspace = true
+dunce.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 dfdu-engine.workspace = true
-dunce.workspace = true

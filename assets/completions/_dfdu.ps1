@@ -38,6 +38,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--disks', '--disks', [CompletionResultType]::ParameterName, 'Choose a disk to browse from the mounted filesystems')
             [CompletionResult]::new('--read-only', '--read-only', [CompletionResultType]::ParameterName, 'Never delete anything: the browser leaves out its delete keys and runs cleanup commands only as dry runs')
             [CompletionResult]::new('--no-history', '--no-history', [CompletionResultType]::ParameterName, 'Do not record the scan in the history, nor show what grew since the last one')
+            [CompletionResult]::new('--no-cache', '--no-cache', [CompletionResultType]::ParameterName, 'Scan PATH afresh: do not open its cached scan, nor save this one (`DFDU_CACHE=0` turns the cache off for good). Without it, the browser opens the last complete scan of PATH at once, if one is cached, and brings it up to date in the background; scans that take 3 s or more are cached for 14 days (`dfdu cache list`)')
             [CompletionResult]::new('--no-mouse', '--no-mouse', [CompletionResultType]::ParameterName, 'Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down')
             [CompletionResult]::new('--debug-stats', '--debug-stats', [CompletionResultType]::ParameterName, 'Start with the debug panel open, and print its numbers when the browser exits')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
@@ -54,6 +55,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
             [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
+            [CompletionResult]::new('cache', 'cache', [CompletionResultType]::ParameterValue, 'List or clear the scans the browser cached, which it opens at once next time')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
             [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
@@ -204,6 +206,39 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'dfdu;cache' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is')
+            [CompletionResult]::new('clear', 'clear', [CompletionResultType]::ParameterValue, 'Remove every cached scan')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'dfdu;cache;list' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;cache;clear' {
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'dfdu;cache;help' {
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is')
+            [CompletionResult]::new('clear', 'clear', [CompletionResultType]::ParameterValue, 'Remove every cached scan')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'dfdu;cache;help;list' {
+            break
+        }
+        'dfdu;cache;help;clear' {
+            break
+        }
+        'dfdu;cache;help;help' {
+            break
+        }
         'dfdu;man' {
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
@@ -231,6 +266,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('export', 'export', [CompletionResultType]::ParameterValue, 'Scan a directory and write it in ncdu''s JSON format')
             [CompletionResult]::new('import', 'import', [CompletionResultType]::ParameterValue, 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)')
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
+            [CompletionResult]::new('cache', 'cache', [CompletionResultType]::ParameterValue, 'List or clear the scans the browser cached, which it opens at once next time')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
             [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
@@ -265,6 +301,17 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             break
         }
         'dfdu;help;recover' {
+            break
+        }
+        'dfdu;help;cache' {
+            [CompletionResult]::new('list', 'list', [CompletionResultType]::ParameterValue, 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is')
+            [CompletionResult]::new('clear', 'clear', [CompletionResultType]::ParameterValue, 'Remove every cached scan')
+            break
+        }
+        'dfdu;help;cache;list' {
+            break
+        }
+        'dfdu;help;cache;clear' {
             break
         }
         'dfdu;help;man' {

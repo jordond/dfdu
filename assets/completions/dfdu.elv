@@ -35,6 +35,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --disks 'Choose a disk to browse from the mounted filesystems'
             cand --read-only 'Never delete anything: the browser leaves out its delete keys and runs cleanup commands only as dry runs'
             cand --no-history 'Do not record the scan in the history, nor show what grew since the last one'
+            cand --no-cache 'Scan PATH afresh: do not open its cached scan, nor save this one (`DFDU_CACHE=0` turns the cache off for good). Without it, the browser opens the last complete scan of PATH at once, if one is cached, and brings it up to date in the background; scans that take 3 s or more are cached for 14 days (`dfdu cache list`)'
             cand --no-mouse 'Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down'
             cand --debug-stats 'Start with the debug panel open, and print its numbers when the browser exits'
             cand -h 'Print help (see more with ''--help'')'
@@ -51,6 +52,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand export 'Scan a directory and write it in ncdu''s JSON format'
             cand import 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)'
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
+            cand cache 'List or clear the scans the browser cached, which it opens at once next time'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
             cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
@@ -190,6 +192,32 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'dfdu;cache'= {
+            cand -h 'Print help'
+            cand --help 'Print help'
+            cand list 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+            cand clear 'Remove every cached scan'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'dfdu;cache;list'= {
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'dfdu;cache;clear'= {
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'dfdu;cache;help'= {
+            cand list 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+            cand clear 'Remove every cached scan'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'dfdu;cache;help;list'= {
+        }
+        &'dfdu;cache;help;clear'= {
+        }
+        &'dfdu;cache;help;help'= {
+        }
         &'dfdu;man'= {
             cand -h 'Print help'
             cand --help 'Print help'
@@ -214,6 +242,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand export 'Scan a directory and write it in ncdu''s JSON format'
             cand import 'Read a scan in ncdu''s JSON format and print a summary (`dfdu -f FILE` browses it)'
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
+            cand cache 'List or clear the scans the browser cached, which it opens at once next time'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
             cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
@@ -238,6 +267,14 @@ set edit:completion:arg-completer[dfdu] = {|@words|
         &'dfdu;help;import'= {
         }
         &'dfdu;help;recover'= {
+        }
+        &'dfdu;help;cache'= {
+            cand list 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'
+            cand clear 'Remove every cached scan'
+        }
+        &'dfdu;help;cache;list'= {
+        }
+        &'dfdu;help;cache;clear'= {
         }
         &'dfdu;help;man'= {
         }
