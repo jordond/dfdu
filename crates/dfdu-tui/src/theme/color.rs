@@ -149,6 +149,29 @@ pub fn rgb_to_16(c: Rgb) -> Color {
     }
 }
 
+/// The value of a resolved colour, as xterm shows the named and indexed ones by default;
+/// `None` for `Reset`.
+pub fn color_rgb(c: Color) -> Option<Rgb> {
+    match c {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Indexed(i) => Some(ansi256_rgb(i)),
+        Color::Reset => None,
+        named => ANSI16
+            .iter()
+            .find(|(n, _)| *n == named)
+            .map(|&(_, rgb)| rgb),
+    }
+}
+
+/// `c` as a colour of `level`: itself in 24-bit, the nearest of the 256 otherwise (fewer
+/// colours have no shades to give).
+pub fn rgb_color(c: Rgb, level: ColorLevel) -> Color {
+    match level {
+        ColorLevel::TrueColor => Color::Rgb(c.0, c.1, c.2),
+        _ => Color::Indexed(rgb_to_256(c)),
+    }
+}
+
 /// The named colour for indexes 0 to 15; the nearest named colour for the others.
 pub fn ansi256_to_16(i: u8) -> Color {
     match i {

@@ -5,6 +5,7 @@ use dfdu_tree::{DirState, HostPath, Ix, Kind};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 
+use super::place::{Tile, build};
 use super::*;
 use crate::model::extras;
 use crate::model::snapshot::{self, EntryData, test_entry};
@@ -115,10 +116,12 @@ fn read_finds_the_levels_below_the_largest_directories() {
     let kids = &below[&big.node];
     let names: Vec<&[u8]> = kids.items.iter().map(|k| &k.name[..]).collect();
     assert_eq!(names, [&b"a"[..], b"b"]);
-    // Depth 2 reads one level below the top only.
+    // Depths 1 and 2 read one level below the top only.
     assert!(kids.items[0].kids.is_none());
 
-    app.key(press(KeyCode::Char('+')), t0);
+    for _ in 0..2 {
+        app.key(press(KeyCode::Char('+')), t0);
+    }
     assert!(app.extras_stale());
     sync(&mut app, &fx.m, t0);
     let big = app
@@ -203,7 +206,9 @@ fn draws_three_levels_in_color() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     app.theme = Theme::ansi16();
-    app.key(press(KeyCode::Char('+')), t0);
+    for _ in 0..2 {
+        app.key(press(KeyCode::Char('+')), t0);
+    }
     sync(&mut app, &fx.m, t0);
     insta::assert_snapshot!(
         "treemap_depth3_ansi16",
@@ -300,7 +305,7 @@ fn many_small_entries_merge_into_one_tile() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     let frame = render(&mut app, t0, 100, 30);
-    assert!(frame.contains("+300 small"), "{frame}");
+    assert!(frame.contains("300 more · 293.0 KiB"), "{frame}");
 }
 
 #[test]
@@ -460,7 +465,7 @@ fn ten_thousand_rows_lay_out_quickly() {
     let mut best = Duration::MAX;
     for _ in 0..5 {
         let t = Instant::now();
-        let l = build(&app, area);
+        let l = build(&app, area, false);
         best = best.min(t.elapsed());
         assert!(l.tiles.iter().any(|t| t.small > 0));
     }
@@ -513,13 +518,71 @@ fn category_color_hatches_cleanup_candidates() {
     let fx = classified();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    for _ in 0..2 {
-        app.key(press(KeyCode::Char('p')), t0);
-    }
+    // Category is the default, and the legend names the categories on screen.
     let frame = render(&mut app, t0, 100, 30);
-    assert!(frame.contains("colour: category"), "{frame}");
+    assert!(frame.contains("colour: category  ■ build"), "{frame}");
     assert!(frame.contains("╱ cleanup candidate"), "{frame}");
     insta::assert_snapshot!("treemap_category_100x30", frame);
+    // `p` steps through age and top folder, and back.
+    for want in ["age", "top folder", "category"] {
+        app.key(press(KeyCode::Char('p')), t0);
+        let frame = render(&mut app, t0, 100, 30);
+        assert!(frame.contains(&format!("colour: {want}")), "{frame}");
+    }
+}
+
+/// In colour, tiles are fills without frames: only the selected tile has an edge, its header
+/// row in the focus colour, and every other tile's header is a shade of its own fill.
+#[test]
+fn colour_fills_tiles_and_outlines_only_the_selection() {
+    let fx = classified();
+    let t0 = Instant::now();
+    let mut app = treemap_app(&fx.m, t0);
+    app.theme = Theme::named("dark", crate::theme::ColorLevel::TrueColor, None).expect("dark");
+    let buf = render_buffer(&mut app, t0, 80, 18);
+    let l = app.treemap.layout.as_ref().expect("layout");
+    let mut edge = 0;
+    for p in l.area.positions() {
+        let s = buf[p].symbol();
+        assert!(
+            !["┌", "─", "│", "┐", "└", "┘"].contains(&s),
+            "a frame at {p:?}"
+        );
+        edge += usize::from(["┃", "━", "┗", "┛"].contains(&s));
+    }
+    assert!(edge > 0, "the selection has an edge");
+    let big = l.tiles[l.tops[0]].rect;
+    assert_eq!(Some(buf[(big.x, big.y)].bg), app.theme.border_focus.fg);
+    let other = l.tiles[l.tops[1]].rect;
+    let (head, body) = (buf[(other.x, other.y)].bg, buf[(other.x, other.y + 1)].bg);
+    assert!(matches!(head, ratatui::style::Color::Rgb(..)), "{head:?}");
+    assert_ne!(head, body, "the header is a darker shade");
+    insta::assert_snapshot!("treemap_truecolor_80x18", styled(&buf));
+}
+
+/// At depth 1 only the selected tile shows what is in it, and moving the selection moves that.
+#[test]
+fn depth_one_peeks_into_the_selected_tile() {
+    let fx = tree();
+    let t0 = Instant::now();
+    let mut app = treemap_app(&fx.m, t0);
+    assert_eq!(app.treemap.depth, 1);
+    let frame = render(&mut app, t0, 100, 30);
+    assert_eq!(selected(&app), "big");
+    assert!(frame.contains(" a/") && !frame.contains(" m0"), "{frame}");
+    let mid = app
+        .rows
+        .iter()
+        .position(|&i| &*app.snap.entries[i].name == b"mid");
+    app.move_to(mid.expect("mid is a row"));
+    assert_eq!(selected(&app), "mid");
+    let frame = render(&mut app, t0, 100, 30);
+    assert!(!frame.contains(" a/") && frame.contains(" m0"), "{frame}");
+    // Depth 2 shows them in every tile.
+    app.key(press(KeyCode::Char('+')), t0);
+    sync(&mut app, &fx.m, t0);
+    let frame = render(&mut app, t0, 100, 30);
+    assert!(frame.contains(" a/") && frame.contains(" m0"), "{frame}");
 }
 
 #[test]
@@ -582,8 +645,9 @@ fn switching_views_keeps_the_selection() {
     assert_eq!(selected(&app), moved);
 }
 
-/// Tiles too narrow for their label show a "+N small" tile's count alone, or no text below
-/// three cells, and slivers at the edges are left blank.
+/// Names that do not fit are left out rather than cut to a stub (`dir-1…`), the merged tiles
+/// say how many entries they hold only when that fits whole, and slivers at the edges are left
+/// blank.
 #[test]
 fn narrow_tiles_show_short_labels_or_none() {
     let (mut fx, root) = Fixture::new();
@@ -596,11 +660,12 @@ fn narrow_tiles_show_short_labels_or_none() {
     }
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
+    app.key(press(KeyCode::Char('+')), t0);
+    sync(&mut app, &fx.m, t0);
     for (w, h) in [(80, 24), (100, 30)] {
         let buf = render_buffer(&mut app, t0, w, h);
         let frame = render(&mut app, t0, w, h);
-        assert!(frame.contains("+19"), "{frame}");
-        for cut in ["+19 s…", "+19 sm…", "+19 sma…", "+19 …"] {
+        for cut in ["dir-1…", "dir-…", "19 m…", "19 mo…", "19 more…", "19 …"] {
             assert!(!frame.contains(cut), "{w}x{h} has {cut:?}:\n{frame}");
         }
         let l = app.treemap.layout.as_ref().expect("layout");

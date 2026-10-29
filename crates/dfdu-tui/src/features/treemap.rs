@@ -1,16 +1,23 @@
-//! The treemap view (`2`): the current directory as nested squarified tiles.
+//! The Map view (`2`): the current directory as squarified tiles.
 //!
 //! The tiles at the top level are the directory's rows, so the selection, marks, delete, details
-//! and filter are the list's. Below them the view shows up to [`MAX_DEPTH`] levels, read from the
-//! engine model ([`read`]) for the largest directories only. The layout is recomputed when the
-//! list re-sorts (`App::sort_gen`), when the area or the depth changes, and otherwise kept, so
-//! tiles do not jump while sizes stream in; the labels of top-level tiles show live sizes.
+//! and filter are the list's. At depth 1 (the default) only the selected tile shows what is in
+//! it: what `Enter` opens. `+` shows up to [`MAX_DEPTH`] levels in every tile. The levels below
+//! the top are read from the engine model ([`read`]) for the largest directories only, one
+//! level even at depth 1, for the selected tile and for the colour of a directory without a
+//! match of its own (the category most of it is in). The layout is recomputed when the list
+//! re-sorts (`App::sort_gen`), when the area or the depth changes, and otherwise kept, so tiles
+//! do not jump while sizes stream in; the labels of top-level tiles show live sizes.
 //!
-//! Tiles too small to label are merged into one "+N small" tile per parent. Below 60x15 cells
+//! Tiles too small to stay on their own are merged into one tile per parent. Below 60x15 cells
 //! the list is drawn instead.
 
 mod draw;
+mod fill;
+mod glyph;
 pub mod layout;
+mod paint;
+mod place;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,8 +32,7 @@ use ratatui::layout::{Position, Rect};
 use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Name, Tag, class_below, tag_of};
-use crate::theme::{count, ratio};
-use layout::{Area, cells, squarify};
+use place::Layout;
 
 pub use draw::draw;
 
@@ -45,17 +51,17 @@ const READ_BUDGET: usize = 250_000;
 /// A second click on the same tile within this long zooms into it.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-/// What the tile colours show.
+/// What the tile colours show; `p` steps through them in this order.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum ColorBy {
-    /// Each top-level tile and everything inside it in its own colour.
+    /// The category of the rule each tile matched, or of the match it is in; a directory
+    /// without one takes the category most of it is in.
     #[default]
-    Folder,
+    Category,
     /// How long ago each tile was modified.
     Age,
-    /// The category of the rule each tile matched, or of the match it is in; cleanup
-    /// candidates hatched.
-    Category,
+    /// Each top-level tile and everything inside it in its own colour.
+    Folder,
 }
 
 impl ColorBy {
@@ -85,7 +91,7 @@ impl Default for Treemap {
     fn default() -> Self {
         Treemap {
             on: false,
-            depth: 2,
+            depth: 1,
             color: ColorBy::default(),
             shown: false,
             layout: None,
@@ -164,7 +170,8 @@ pub fn read(m: &Model, app: &App) -> Info {
         return app.extras.treemap.clone();
     }
     let mut below = HashMap::new();
-    let levels = app.treemap.depth.saturating_sub(1);
+    // One level even at depth 1: what the selected tile shows, and what colours the others.
+    let levels = app.treemap.depth.max(2) - 1;
     let info = |below| Info {
         key: Some(key),
         below: Arc::new(below),
@@ -274,187 +281,6 @@ fn read_kids(
     })
 }
 
-/// One tile of the layout.
-#[derive(Clone, Debug)]
-struct Tile {
-    rect: Rect,
-    /// 0 for the directory's own rows.
-    level: u8,
-    /// Index into `Layout::tops` of the top-level tile this one is in.
-    top: usize,
-    /// For top-level tiles: the row's entry, with its index into the snapshot when laid out.
-    entry: Option<(NodeRef, usize)>,
-    name: String,
-    is_dir: bool,
-    size: u64,
-    /// Size of the directory the tile is in, for its share.
-    parent: u64,
-    mtime: i64,
-    tag: Option<Tag>,
-    /// "+N small": the number of entries merged into it.
-    small: u64,
-    /// Drawn with its children inside: a frame and a label line.
-    framed: bool,
-}
-
-#[derive(Clone, Debug)]
-struct Layout {
-    key: Key,
-    /// What the levels below the top were read for when this was laid out.
-    below: Option<Key>,
-    area: Rect,
-    tiles: Vec<Tile>,
-    /// Tile index of each top-level tile, in layout order.
-    tops: Vec<usize>,
-}
-
-/// What a tile is laid out from.
-struct Item<'a> {
-    entry: Option<(NodeRef, usize)>,
-    name: String,
-    is_dir: bool,
-    size: u64,
-    mtime: i64,
-    tag: Option<Tag>,
-    small: u64,
-    kids: Option<&'a Kids>,
-}
-
-/// Collects the tiles of a layout.
-struct Placer {
-    tiles: Vec<Tile>,
-    tops: Vec<usize>,
-    depth: u8,
-}
-
-impl Placer {
-    /// Turns the largest of `items` into tiles of `area`, merging those too small to label.
-    /// `rest` is the merged count and size the caller already has; `top` is the top-level tile
-    /// they are in, `None` at the top level.
-    fn place(
-        &mut self,
-        mut items: Vec<Item>,
-        rest: (u64, u64),
-        area: Rect,
-        level: u8,
-        top: Option<usize>,
-    ) {
-        let cells_total = f64::from(area.width) * f64::from(area.height);
-        let total: u64 = items.iter().map(|i| i.size).sum::<u64>() + rest.1;
-        if total == 0 || area.is_empty() {
-            return;
-        }
-        items.sort_by_key(|i| std::cmp::Reverse(i.size));
-        let fits = |s: u64| ratio(s, total) * cells_total >= MIN_CELLS;
-        let keep = items
-            .iter()
-            .take(MAX_TILES)
-            .take_while(|i| fits(i.size))
-            .count()
-            // Always one tile of its own, so the largest entry can be selected.
-            .max(1.min(items.len()));
-        let merged = items.split_off(keep);
-        let (mut rest_n, mut rest_size) = rest;
-        rest_n += merged.iter().map(|i| i.small.max(1)).sum::<u64>();
-        rest_size += merged.iter().map(|i| i.size).sum::<u64>();
-        if rest_size > 0 {
-            items.push(Item {
-                entry: None,
-                name: format!("+{} small", count(rest_n)),
-                is_dir: false,
-                size: rest_size,
-                mtime: 0,
-                tag: None,
-                small: rest_n,
-                kids: None,
-            });
-            items.sort_by_key(|i| std::cmp::Reverse(i.size));
-        }
-        let sizes: Vec<u64> = items.iter().map(|i| i.size).collect();
-        for (item, a) in items.into_iter().zip(squarify(&sizes, Area::of(area))) {
-            let tile = cells(a);
-            if tile.is_empty() {
-                continue;
-            }
-            let top = top.unwrap_or_else(|| {
-                if item.entry.is_some() {
-                    self.tops.push(self.tiles.len());
-                }
-                self.tops.len().saturating_sub(1)
-            });
-            let nested = item
-                .kids
-                .filter(|k| level + 1 < self.depth && !k.items.is_empty())
-                .filter(|_| tile.width >= 8 && tile.height >= 5);
-            self.tiles.push(Tile {
-                rect: tile,
-                level,
-                top,
-                entry: item.entry,
-                name: item.name,
-                is_dir: item.is_dir,
-                size: item.size,
-                parent: total,
-                mtime: item.mtime,
-                tag: item.tag,
-                small: item.small,
-                framed: nested.is_some(),
-            });
-            if let Some(kids) = nested {
-                // Inside the frame, below the label line.
-                let inner = Rect::new(tile.x + 1, tile.y + 2, tile.width - 2, tile.height - 3);
-                let items = kids.items.iter().map(|k| Item {
-                    entry: None,
-                    name: String::from_utf8_lossy(&k.name).into_owned(),
-                    is_dir: k.is_dir,
-                    size: k.size,
-                    mtime: k.mtime,
-                    tag: k.tag,
-                    small: 0,
-                    kids: k.kids.as_ref(),
-                });
-                self.place(items.collect(), kids.rest, inner, level + 1, Some(top));
-            }
-        }
-    }
-}
-
-fn build(app: &App, area: Rect) -> Layout {
-    let key = key_of(app);
-    let entries = &app.snap.entries;
-    let below = &app.extras.treemap.below;
-    let items = app
-        .rows
-        .iter()
-        .map(|&i| {
-            let e = &entries[i];
-            Item {
-                entry: Some((e.node, i)),
-                name: String::from_utf8_lossy(&e.name).into_owned(),
-                is_dir: e.is_dir,
-                size: e.size,
-                mtime: e.mtime,
-                tag: e.tag,
-                small: 0,
-                kids: below.get(&e.node),
-            }
-        })
-        .collect();
-    let mut p = Placer {
-        tiles: Vec::new(),
-        tops: Vec::new(),
-        depth: app.treemap.depth,
-    };
-    p.place(items, (0, 0), area, 0, None);
-    Layout {
-        key,
-        below: app.extras.treemap.key,
-        area,
-        tiles: p.tiles,
-        tops: p.tops,
-    }
-}
-
 /// True when keys and the mouse act on the treemap: it is on and was drawn last frame.
 pub fn active(app: &App) -> bool {
     app.treemap.on && app.treemap.shown
@@ -473,17 +299,27 @@ pub fn deeper(app: &mut App, by: i8) {
         .depth
         .saturating_add_signed(by)
         .clamp(MIN_DEPTH, MAX_DEPTH);
-    app.status = Some(format!("treemap depth {}", t.depth));
+    app.status = Some(format!("map depth {}", t.depth));
 }
 
+/// The colouring drawn: by category needs the rules, and without them is by top folder.
+pub fn color_shown(app: &App) -> ColorBy {
+    match app.treemap.color {
+        ColorBy::Category if app.snap.rules.is_none() => ColorBy::Folder,
+        c => c,
+    }
+}
+
+/// `p`: the next colouring, category, age, then top folder (category only with rules).
 pub fn cycle_color(app: &mut App) {
-    let t = &mut app.treemap;
-    t.color = match t.color {
+    let next = match color_shown(app) {
+        ColorBy::Category => ColorBy::Age,
+        ColorBy::Age => ColorBy::Folder,
+        ColorBy::Folder if app.snap.rules.is_some() => ColorBy::Category,
         ColorBy::Folder => ColorBy::Age,
-        ColorBy::Age if app.snap.rules.is_some() => ColorBy::Category,
-        ColorBy::Age | ColorBy::Category => ColorBy::Folder,
     };
-    app.status = Some(format!("treemap colour: {}", t.color.label()));
+    app.treemap.color = next;
+    app.status = Some(format!("map colour: {}", next.label()));
 }
 
 /// The top-level tile of the selection, as the last frame laid it out.
