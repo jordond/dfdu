@@ -336,6 +336,9 @@ impl Listing {
         };
         let set: OnceCell<HashSet<&[u8]>> = OnceCell::new();
         let in_block = |n: &[u8]| set.get_or_init(|| all().map(name).collect()).contains(n);
+        let dir = self
+            .rules
+            .dir_in(&self.task.path, self.task.reach.as_deref());
         let mut st = self.state.lock();
         st.entries |= all().next().is_some();
         for s in all() {
@@ -350,7 +353,7 @@ impl Listing {
                     st.marker[k] = read(n, len);
                 }
             }
-            if !whole && self.rules.may_be_sibling(n) {
+            if !whole && dir.may_be_sibling(n) {
                 st.siblings.insert(n.to_vec());
             }
         }
@@ -362,9 +365,6 @@ impl Listing {
         if whole && let Some((_, c)) = st.close.iter().find(|(d, _)| *d == self.dir) {
             inside.push(c.rule);
         }
-        let dir = self
-            .rules
-            .dir_in(&self.task.path, self.task.reach.as_deref());
         let reach = (!subdirs.is_empty()).then(|| Arc::new(dir.reach().clone()));
         let mut out = BlockClass::default();
         let parent_protected = self.task.protection.protected();
