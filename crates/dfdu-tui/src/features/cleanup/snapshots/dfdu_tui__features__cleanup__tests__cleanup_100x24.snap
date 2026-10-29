@@ -1,18 +1,16 @@
 ---
 source: crates/dfdu-tui/src/features/cleanup/tests.rs
-assertion_line: 30
+assertion_line: 31
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                  done in 00:00
  whole scan: /r                                                 12 items · 95.7 KiB   size ↓ · disk
- reclaimable  safe 11.7 KiB   regenerable 58.6 KiB   review 0 B   manual 0 B
- ▸ OS and user caches    safe         11.7 KiB  1 item
- ▸ Project build output  regenerable  58.6 KiB  1 item
-
- Tagged cache directory  safe
- The directory holds a valid CACHEDIR.TAG (bford.info/cachedir), which marks its whole subtree as
-cache.
- Lost: Cached data; the owning program recreates it.
+ Selected 0 B of 70.3 KiB · 0 of 2 items                                          d delete selected
+                size   items  modified  path
+ ▾ [ ] Safe to delete · caches the owning program recreates                          11.7 KiB     1
+   ▸ [ ] OS and user caches                                                          11.7 KiB     1
+ ▾ [ ] Regenerable · rebuilt or reinstalled when needed                              58.6 KiB     1
+   ▸ [ ] Project build output                                                        58.6 KiB     1
 
 
 
@@ -21,9 +19,11 @@ cache.
 
 
 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Safe to delete
+ caches the owning program recreates; 1 match
 
 
 
 
-
- ↑↓ move  Enter open  Space mark  A mark suggested  d trash marked  ? help  q quit  [ ] views
+ ↑↓ move  Enter close  Space tick  A tick suggested  d delete selected  ? help  q quit  [ ] views

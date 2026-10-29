@@ -12,8 +12,8 @@ expression: frame
   ┃ PgDn             page down                      x      skip directories that are not         ┃
   ┃ Ctrl-U           half a page up                        responding                            ┃
   ┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
-  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
-  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
+  ┃ g Home           first entry                    X      untick all: clear every mark          ┃
+  ┃ G End            last entry                     A      tick what Cleanup or Duplicates       ┃
   ┃ → l              open directory (tree mode:            suggests deleting                     ┃
   ┃                  expand it)                     R      duplicates: compare the files again   ┃
   ┃ Enter            open directory, even in        N      cleanup: the item's own cleanup       ┃

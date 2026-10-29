@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
 use ratatui::crossterm::event::KeyCode;
+use ratatui::style::Modifier;
 
 use super::*;
 use crate::model::snapshot;
-use crate::tests::{press, render, render_buffer};
+use crate::tests::{press, render};
 use crate::theme::Theme;
 
 #[test]
@@ -159,35 +160,41 @@ fn rows_show_the_path_below_the_shared_directory_and_align_the_dates() {
         ],
     );
     // `render` shows `\` as `/`, so the frame is the same on every platform.
-    let out = render(&mut app, t0, 80, 12);
-    insta::assert_snapshot!("dupes_80x12", out);
+    let out = render(&mut app, t0, 80, 14);
+    insta::assert_snapshot!("dupes_80x14", out);
     let lines: Vec<&str> = out.lines().collect();
-    assert!(
-        lines[3].contains("· in photos/2026/trip-to-the-coast/"),
-        "{out}"
-    );
-    // The shared directory is joined with the platform's separator, as the cells hold it.
-    let buf = render_buffer(&mut app, t0, 80, 12);
-    let header: String = (0..80).map(|x| buf[(x, 3)].symbol()).collect();
-    let sep = std::path::MAIN_SEPARATOR;
-    let shared = format!("· in photos{sep}2026{sep}trip-to-the-coast{sep}");
-    assert!(header.contains(&shared), "{header}");
-    let files: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|l| l.ends_with("UTC"))
+    let groups: Vec<&str> = (lines.iter().copied())
+        .filter(|l| l.contains(" copies of "))
         .collect();
-    assert_eq!(files.len(), 4, "{out}");
-    assert!(files.iter().all(|l| l.chars().count() == 80), "{out}");
-    assert!(files.iter().all(|l| !l.contains("photos")), "{out}");
-    assert!(files[0].contains(" IMG_0001.jpg "), "{out}");
     assert!(
-        files[1].contains('…') && files[1].contains("small).jpg"),
+        groups[0].contains("· in photos/2026/trip-to-the-coast/"),
         "{out}"
     );
     // Files in the scan root share no directory: the header names none.
-    assert!(!lines[6].contains(" in "), "{out}");
-    assert!(files[3].contains(" backup/a.bin "), "{out}");
+    assert!(!groups[1].contains(" in "), "{out}");
+    let files: Vec<&str> = (lines.iter().copied())
+        .filter(|l| ["   [", "   KEEP"].iter().any(|s| l.starts_with(s)))
+        .collect();
+    assert_eq!(files.len(), 4, "{out}");
+    assert!(files.iter().all(|l| l.chars().count() <= 80), "{out}");
+    assert!(files.iter().all(|l| !l.contains("photos")), "{out}");
+    // The paths start in one column, after the size and the age.
+    let starts: Vec<_> = files
+        .iter()
+        .map(|l| {
+            l.char_indices()
+                .skip(28)
+                .find(|&(_, c)| c != ' ')
+                .map(|(i, _)| i)
+        })
+        .collect();
+    assert!(starts.iter().all(|&s| s == starts[0]), "{out}");
+    assert!(files[0].ends_with(" IMG_0001.jpg"), "{out}");
+    assert!(
+        files[1].contains('…') && files[1].ends_with("small).jpg"),
+        "{out}"
+    );
+    assert!(files[3].ends_with(" backup/a.bin"), "{out}");
 }
 
 /// Marking every copy keeps the oldest, labelled `keep` in its row; `K` cycles the rule through
@@ -220,15 +227,28 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
     };
     assert_eq!(kept_after_a(&mut app), "/r/a/archive/old.bin");
     let out = render(&mut app, t0, 80, 10);
-    assert!(out.contains("keep: oldest"), "{out}");
+    // Every rule is listed, the one in force highlighted.
+    let in_force = |app: &mut App, rule: &str| {
+        let buf = crate::tests::render_buffer(app, t0, 80, 10);
+        let style = crate::tests::style_at(&buf, rule);
+        style.add_modifier.contains(Modifier::REVERSED)
+    };
+    assert!(
+        out.contains("keep oldest · newest · shortest path · first in path order"),
+        "{out}"
+    );
+    assert!(in_force(&mut app, "oldest") && !in_force(&mut app, "newest"));
     let row = |out: &str, name: &str| {
         (out.lines())
             .find(|l| l.contains(name))
             .unwrap_or_else(|| panic!("{name}: {out}"))
             .to_owned()
     };
-    assert!(row(&out, "old.bin").contains("keep  "), "{out}");
-    assert!(!row(&out, "new.bin").contains("keep  "), "{out}");
+    // Unticked, the kept copy says so.
+    app.key(press(KeyCode::Char('X')), t0);
+    let out = render(&mut app, t0, 80, 10);
+    assert!(row(&out, "old.bin").contains(" KEEP "), "{out}");
+    assert!(row(&out, "new.bin").contains(" [ ] "), "{out}");
     insta::assert_snapshot!("dupes_keep_80x10", out);
 
     for want in ["newest", "shortest path", "first in path order", "oldest"] {
@@ -237,8 +257,8 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
         let status = app.status.clone().unwrap_or_default();
         assert!(status.contains(want), "{status}");
         let kept = kept_after_a(&mut app);
-        let out = render(&mut app, t0, 80, 10);
-        assert!(out.contains(&format!("keep: {want}")), "{out}");
+        assert!(in_force(&mut app, want), "{want}");
+        let out = render(&mut app, t0, 80, 12);
         let expect = match want {
             "newest" => "/r/b/new.bin",
             "shortest path" => "/r/c.bin",
@@ -247,7 +267,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
         };
         assert_eq!(kept, expect, "{want}");
         let name = expect.rsplit('/').next().unwrap();
-        assert!(row(&out, name).contains("keep  "), "{out}");
+        assert!(row(&out, name).contains(" KEEP "), "{out}");
     }
 }
 

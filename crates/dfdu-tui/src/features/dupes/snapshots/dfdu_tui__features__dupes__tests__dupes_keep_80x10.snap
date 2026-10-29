@@ -1,15 +1,15 @@
 ---
 source: crates/dfdu-tui/src/features/dupes/tests.rs
-assertion_line: 218
+assertion_line: 241
 expression: out
 ---
  dfdu │ 1 2 3 [4 Duplicates] 5                                 ⠋ scanning 00:00
  whole scan                                       0 items · 0 B   size ↓ · disk
- 1 group of identical files of 1.0 MiB or more · up to 2.0 MiB t…  keep: oldest
- 3 copies of 1.0 MiB · 2.0 MiB to free
-   ● b/new.bin                                              2025-10-09 08:53 UTC
-     a/archive/old.bin                                keep  2023-11-14 22:13 UTC
-   ● c.bin                                                  2024-10-27 03:33 UTC
+ Selected 0 B of 2.0 MiB · 0 of 2 copies · 1 group            d delete selected
+ keep oldest · newest · shortest path · first in path order   K change
+             size  modified  path
+ ▾ 3 copies of 1.0 MiB · frees 2.0 MiB
+   [ ]    1.0 MiB       1 y  b/new.bin
+   KEEP   1.0 MiB       2 y  a/archive/old.bin
 
- marked 2 copies (the oldest file of each group is kept)   ● 2 marked (2.0 MiB)
- ↑↓ move  Space mark  A mark suggested  d trash marked  ? help  q quit
+ ↑↓ move  Space tick  A tick suggested  d delete selected  ? help  q quit

@@ -1,0 +1,19 @@
+---
+source: crates/dfdu-tui/src/features/dupes/tests.rs
+assertion_line: 157
+expression: out
+---
+ dfdu │ 1 2 3 [4 Duplicates] 5                                 ⠋ scanning 00:00
+ whole scan                                       0 items · 0 B   size ↓ · disk
+ Selected 0 B of 2.0 MiB · 0 of 2 copies · 2 groups           d delete selected
+ keep oldest · newest · shortest path · first in path order   K change
+             size  modified  path
+ ▾ 2 copies of 1.0 MiB · frees 1.0 MiB · in photos/2026/trip-to-the-coast/
+   KEEP   1.0 MiB       1 y  IMG_0001.jpg
+   [ ]    1.0 MiB       1 y  edited/exports for the family …1 (final, small).jpg
+ ▾ 2 copies of 1.0 MiB · frees 1.0 MiB
+   KEEP   1.0 MiB       2 y  a.bin
+   [ ]    1.0 MiB       2 y  backup/a.bin
+
+
+ ↑↓ move  Space tick  A tick suggested  d delete selected  ? help  q quit

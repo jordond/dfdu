@@ -89,17 +89,15 @@ fn every_action_has_one_registry_row() {
     assert_eq!(groups.len(), 6, "every group has an action");
     let keyless: Vec<_> = ACTIONS.iter().filter(|r| r.keys.is_empty()).collect();
     let keyless: Vec<_> = keyless.iter().map(|r| r.action).collect();
-    assert_eq!(
-        keyless,
-        [Action::ClearMarks, Action::MarkPattern, Action::InvertMarks]
-    );
+    assert_eq!(keyless, [Action::MarkPattern, Action::InvertMarks]);
 }
 
 #[test]
 fn first_key_is_the_first_binding() {
     assert_eq!(first_key(Action::Up), "↑");
     assert_eq!(first_key(Action::Palette), ":");
-    assert_eq!(first_key(Action::ClearMarks), "");
+    assert_eq!(first_key(Action::ClearMarks), "X");
+    assert_eq!(first_key(Action::MarkPattern), "");
 }
 
 #[test]

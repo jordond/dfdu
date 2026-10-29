@@ -5,8 +5,9 @@
 //! lock and keeps the largest [`TOP`] files in a bounded heap. It walks again when the view
 //! opens, for another directory or size mode, and when the scan data changed: at once when no
 //! scan is running (a delete), and during a scan at most every [`MIN_INTERVAL`] and at most a
-//! tenth of the time, as the run loop paces the snapshot. `Enter` goes to the selected file in
-//! its directory, `Space` marks it as in the list, and `1` comes back to the list.
+//! tenth of the time, as the run loop paces the snapshot. It is one of the review views
+//! (`features::review`): `Space` ticks a file (marks it, as in the list), `Enter` shows it in
+//! Files, in its directory, and `d` deletes what is ticked.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -16,7 +17,7 @@ use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::keys::{self, Action};
+use crate::app::keys;
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
@@ -243,17 +244,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::End | KeyCode::Char('G') => l.cursor = last,
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => go(app),
         KeyCode::Char(' ') => toggle(app),
-        _ => match keys::action_for(k) {
-            Some(Action::Trash | Action::DeletePermanent)
-                if app.marks.is_empty() && !app.read_only =>
-            {
-                let space = keys::first_key(Action::ToggleMark);
-                app.status = Some(format!(
-                    "mark files with {space} first: d and D delete them"
-                ));
-            }
-            _ => return None,
-        },
+        _ => return crate::features::review::delete_needs_ticks(app, k),
     }
     Some(Vec::new())
 }

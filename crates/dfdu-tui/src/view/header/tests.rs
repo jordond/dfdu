@@ -6,6 +6,7 @@ use dfdu_tree::Totals;
 use dfdu_tree::filetype::TypeFilter;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyCode;
+use ratatui::style::Modifier;
 
 use super::*;
 use crate::model::snapshot::Snapshot;

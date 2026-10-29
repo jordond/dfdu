@@ -1,8 +1,11 @@
-//! The cleanup view (`3`): every match of the rules, grouped by category
-//! and safety, with the reclaimable total of each level. A group opens to its items (size,
-//! entries, age, path); the selected item's explanation and what deleting it loses are shown
-//! below. Marks are the list's: `d` and `D` delete what is marked through the same dialog.
-//! The first time the user opens the view and it has items, it marks the recommended ones:
+//! The cleanup view (`3`): every match of the rules in the whole scan, one of the review views
+//! (`features::review`). Sections by safety level (the decision being made), each saying what
+//! the level means, hold the categories found at that level, which open to their items (size,
+//! entries, age, path, and a one-word reason why they are suggested or not); levels without
+//! matches are left out. The selected item's rule, what deleting it loses and the reason in full
+//! are in the detail pane. Ticks are the list's marks: `d` and `D` delete what is ticked through
+//! the same dialog, and `Enter` on an item shows it in Files.
+//! The first time the user opens the view and it has items, it ticks the suggested ones:
 //! `safe` items above their rule's minimum size, `regenerable` ones only when stale, never
 //! `review` or worse, and nothing changed in the last 7 days or in use. A read-only browser
 //! marks nothing, as nothing marked could be deleted. `N` opens an item's native command: its dry
@@ -24,6 +27,11 @@ use crate::theme::human;
 
 mod draw;
 mod pane;
+mod rows;
+
+pub use rows::enter_does;
+pub(crate) use rows::selected_item;
+use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;
 
@@ -36,8 +44,10 @@ pub struct Cleanup {
     pub on: bool,
     cursor: usize,
     scroll: usize,
-    /// Groups shown with their items, by (category, safety).
+    /// Categories shown with their items, by (category, safety); closed by default.
     open: HashSet<(u16, Safety)>,
+    /// Safety sections closed by the user; open by default.
+    closed: HashSet<Safety>,
     /// Only items this safe or safer; `None` shows all.
     filter: Option<Safety>,
     /// The recommended items were marked (once, when the view was first opened with items).
@@ -216,12 +226,13 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// The status line after `n` recommended items of `size` in all were marked.
+/// The status line after `n` suggested items of `size` in all were ticked.
 fn marked_status(n: usize, size: u64) -> String {
     format!(
-        "marked {n} recommended item{} ({}) · Space unmarks",
+        "Ticked {n} suggested item{} ({}) · {} untick all",
         plural(n),
-        human(size)
+        human(size),
+        crate::app::keys::first_key(crate::app::keys::Action::ClearMarks)
     )
 }
 
@@ -309,70 +320,13 @@ fn markable(it: &Item) -> bool {
     it.class.safety < Safety::Protected
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Row {
-    Group { cat: u16, safety: Safety },
-    Item(usize),
-}
-
-/// The rows: groups in order of safety, then size; each open group followed by its items.
-fn rows(app: &App) -> Vec<Row> {
-    let Some(rules) = &app.snap.rules else {
-        return vec![];
-    };
-    let items = &app.extras.cleanup.items;
-    let mut groups: Vec<((u16, Safety), u64)> = vec![];
-    for it in items {
-        if app.cleanup.filter.is_some_and(|f| it.class.safety > f) {
-            continue;
-        }
-        let key = (rules.rule(it.class.rule).category, it.class.safety);
-        match groups.iter_mut().find(|g| g.0 == key) {
-            Some(g) => g.1 += it.size,
-            None => groups.push((key, it.size)),
-        }
-    }
-    groups.sort_by(|a, b| a.0.1.cmp(&b.0.1).then(b.1.cmp(&a.1)));
-    let mut out = vec![];
-    for ((cat, safety), _) in groups {
-        out.push(Row::Group { cat, safety });
-        if app.cleanup.open.contains(&(cat, safety)) {
-            out.extend(
-                items
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, it)| {
-                        it.class.safety == safety && rules.rule(it.class.rule).category == cat
-                    })
-                    .map(|(i, _)| Row::Item(i)),
-            );
-        }
-    }
-    out
-}
-
-fn group_items(app: &App, cat: u16, safety: Safety) -> Vec<usize> {
-    let Some(rules) = &app.snap.rules else {
-        return vec![];
-    };
-    (app.extras.cleanup.items.iter().enumerate())
-        .filter(|(_, it)| it.class.safety == safety && rules.rule(it.class.rule).category == cat)
-        .map(|(i, _)| i)
-        .collect()
-}
-
-pub(crate) fn selected_item(app: &App) -> Option<&Item> {
-    match rows(app).get(app.cleanup.cursor)? {
-        Row::Item(i) => app.extras.cleanup.items.get(*i),
-        Row::Group { .. } => None,
-    }
-}
-
 /// Keys the view takes before the action registry; `None` passes the key on.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     if app.cleanup.pane.is_some() {
         return Some(pane::key(app, k));
     }
+    // What the first opening ticked is said until the next key.
+    app.status = None;
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let c = &mut app.cleanup;
@@ -388,29 +342,36 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::Home | KeyCode::Char('g') => c.cursor = 0,
         KeyCode::End | KeyCode::Char('G') => c.cursor = last,
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(c.cursor) {
-            Some(&Row::Group { cat, safety }) => {
-                if !c.open.remove(&(cat, safety)) {
-                    c.open.insert((cat, safety));
-                }
+            Some(&Row::Item(i)) => show_in_files(app, i),
+            Some(&row) => {
+                let open = is_open(app, row);
+                set_open(app, row, !open);
             }
-            Some(Row::Item(_)) => return Some(pane::open_pane(app)),
             None => {}
         },
         KeyCode::Left | KeyCode::Char('h') => {
             let at = (0..=c.cursor.min(last))
                 .rev()
-                .find(|&i| matches!(rows.get(i), Some(Row::Group { .. })));
-            if let Some(i) = at
-                && let Row::Group { cat, safety } = rows[i]
-            {
-                c.open.remove(&(cat, safety));
-                c.cursor = i;
+                .find(|&i| !matches!(rows[i], Row::Item(_)) && is_open(app, rows[i]));
+            if let Some(i) = at {
+                set_open(app, rows[i], false);
+                app.cleanup.cursor = i;
             }
         }
         KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
-        _ => return None,
+        _ => return crate::features::review::delete_needs_ticks(app, k),
     }
     Some(Vec::new())
+}
+
+/// Shows item `i` in Files: closes the view, opens the item's directory and selects it there.
+fn show_in_files(app: &mut App, i: usize) {
+    let Some(path) = app.extras.cleanup.items.get(i).map(|it| it.path.clone()) else {
+        return;
+    };
+    let root = app.snap.root_path.clone();
+    app.cleanup.on = false;
+    app.go_to(&path, &root);
 }
 
 /// `f` ([`Action::CleanupFilter`](crate::app::keys::Action)): shows only the safer levels,
@@ -440,7 +401,7 @@ pub fn tick_suggested(app: &mut App) {
     }
     let (n, size) = mark_recommended(app);
     app.status = Some(if n == 0 {
-        "every recommended item is marked already".into()
+        "every suggested item is ticked already".into()
     } else {
         marked_status(n, size)
     });
@@ -456,6 +417,7 @@ fn toggle(app: &mut App, row: Option<Row>) {
     let picks: Vec<usize> = match row {
         Some(Row::Item(i)) => vec![i],
         Some(Row::Group { cat, safety }) => group_items(app, cat, safety),
+        Some(Row::Section(safety)) => section_items(app, safety),
         None => return,
     };
     let items: Vec<Item> = picks

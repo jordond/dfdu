@@ -1,20 +1,28 @@
-//! Drawing the view: the progress of a comparison, then the summary with the keep rule, and the
-//! groups. A group's header names the directory all its files are in; each file's row shows the
-//! rest of its path, shortened in the middle, `keep` on the copy marking leaves, and its date in a
-//! column at the right edge.
+//! Drawing the view: the progress of a comparison, then the review layout (`features::review`):
+//! the summary bar, the keep rule with every rule listed and the current one highlighted, the
+//! column names, and the groups. A group's header says how many copies, what deleting them
+//! frees and the directory all its files are in; clones, which free nothing, are dimmed. Each
+//! file's row has its checkbox (`KEEP` on the copy the keep rule keeps), size, age and the rest
+//! of its path. The detail pane shows the selected copy, which one is kept and which go, and
+//! whether deleting frees anything.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
 
-use dfdu_dupes::{Group, Progress};
+use dfdu_dupes::{Candidate, Found, Group, Progress};
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Row, kept, live, min_size, rows};
+use super::{Keep, Row, kept, live, open, rows};
 use crate::app::App;
-use crate::theme::{count, human, truncate_middle};
+use crate::app::keys::{Action, first_key};
+use crate::features::review::{self, Tally, Tick};
+use crate::model::outside::tilde;
+use crate::theme::{Theme, count, human, truncate_middle};
+use crate::view::columns::cursor;
 
 /// `path` relative to `root`, or whole when it is not below it.
 fn shown(path: &Path, root: &Path) -> PathBuf {
@@ -64,29 +72,11 @@ fn group_paths(app: &App, group: &Group, root: &Path) -> GroupPaths {
     (dir, rest)
 }
 
-/// The label of the copy marking leaves, in a column of its own before the dates.
-const KEEP: &str = "  keep";
-
-/// `s` cut to `w` cells, ending in `…` when it was cut.
-fn clip_end(s: &str, w: usize) -> String {
-    if Span::raw(s).width() <= w {
-        return s.to_owned();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = Span::raw(c.to_string()).width();
-        if used + cw + 1 > w {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    if w > 0 {
-        out.push('…');
-    }
-    out
-}
+/// Cells of the size and age columns.
+const SIZE: usize = 9;
+const AGE: usize = 8;
+/// Before a file's checkbox, under its group's `▾`.
+const INDENT: &str = "   ";
 
 fn progress_line(p: &Progress) -> String {
     let get = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
@@ -103,12 +93,62 @@ fn progress_line(p: &Progress) -> String {
     )
 }
 
+/// What the summary bar counts: every copy still in the tree that deleting would free
+/// something for, but the kept ones unless they are ticked.
+fn tally(app: &App, found: &Found) -> (Tally, usize) {
+    let mut t = Tally::default();
+    let mut groups = 0;
+    for group in &found.groups {
+        let left = group
+            .files
+            .iter()
+            .filter(|c| live(app, c).is_some())
+            .count();
+        if left < 2 {
+            continue;
+        }
+        groups += 1;
+        if group.all_clones() {
+            continue;
+        }
+        let keep = kept(app, group);
+        for (i, c) in group.files.iter().enumerate() {
+            let Some(node) = live(app, c) else {
+                continue;
+            };
+            let ticked = app.marks.contains(node);
+            if Some(i) != keep || ticked {
+                t.add(c.freed(), ticked);
+            }
+        }
+    }
+    (t, groups)
+}
+
+/// The keep rule: every rule, the one in force highlighted, and the key that changes it.
+fn keep_line(t: &Theme, keep: Keep) -> Line<'static> {
+    let mut spans = vec![Span::styled(" keep ", t.fg_dim)];
+    for (i, rule) in Keep::ALL.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", t.fg_dim));
+        }
+        spans.push(if rule == keep {
+            Span::styled(rule.label(), t.key.add_modifier(Modifier::REVERSED))
+        } else {
+            Span::styled(rule.label(), t.fg_dim)
+        });
+    }
+    spans.push(Span::styled(
+        format!("   {} change", first_key(Action::DupesKeep)),
+        t.fg_dim,
+    ));
+    Line::from(spans)
+}
+
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let t = app.theme.clone();
-    let height = area.height as usize;
-    app.list_height = height.saturating_sub(1);
     let Some(run) = app.dupes.run.clone() else {
-        let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
+        let again = first_key(Action::CompareAgain);
         let msg = format!(" duplicates: not compared yet ({again} compares the files of the scan)");
         f.render_widget(Paragraph::new(Line::styled(msg, t.fg_dim)), area);
         return;
@@ -121,51 +161,49 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let rows = rows(app);
-    let wasted: u64 = rows
-        .iter()
-        .filter_map(|r| match r {
-            Row::Group(g) => Some(found.groups[*g].wasted()),
-            Row::File(..) => None,
-        })
-        .sum();
-    let groups = rows.iter().filter(|r| matches!(r, Row::Group(_))).count();
-    let mut summary = format!(
-        " {} of identical files of {} or more · up to {} to free · {} files compared",
-        match groups {
-            1 => "1 group".to_string(),
-            n => format!("{} groups", count(n as u64)),
-        },
-        human(min_size()),
-        human(wasted),
-        count(found.compared)
+    let (sum, groups) = tally(app, found);
+    let mut extra = format!(
+        " · {} group{}",
+        count(groups as u64),
+        if groups == 1 { "" } else { "s" },
     );
     if found.skipped > 0 {
-        summary.push_str(" · ");
-        summary.push_str(&count(found.skipped));
-        summary.push_str(" skipped");
+        extra.push_str(&format!(" · {} skipped", count(found.skipped)));
     }
-    // The keep rule at the right edge, where a narrow terminal does not cut it.
-    let keep = format!("  keep: {} ", app.dupes.keep.label());
-    let room = (area.width as usize).saturating_sub(Span::raw(&keep).width());
-    let summary = clip_end(&summary, room);
-    let pad = room.saturating_sub(Span::raw(&summary).width());
-    let mut lines = vec![Line::from(vec![
-        Span::styled(summary, t.fg_dim),
-        Span::raw(" ".repeat(pad)),
-        Span::styled(keep, t.fg_dim),
-    ])];
-    if rows.is_empty() {
-        lines.push(Line::raw(" no duplicates"));
-    }
-    let fit = height.saturating_sub(1).max(1);
+    let head = vec![
+        review::summary(app, sum, "copies", &extra, area.width),
+        keep_line(&t, app.dupes.keep),
+    ];
+    let head_h = crate::view::cells(head.len());
+    let body = Rect {
+        y: area.y + head_h.min(area.height),
+        height: area.height.saturating_sub(head_h),
+        ..area
+    };
+    f.render_widget(Paragraph::new(head), area);
+    let (list, pane) = review::split(body, 5);
+    let fit = usize::from(list.height).saturating_sub(1).max(1);
+    app.list_height = fit;
     let d = &mut app.dupes;
     d.cursor = d.cursor.min(rows.len().saturating_sub(1));
     d.scroll = d
         .scroll
         .min(d.cursor)
         .max((d.cursor + 1).saturating_sub(fit));
-    let (cursor, scroll) = (d.cursor, d.scroll);
-    let width = area.width as usize;
+    let (cursor_at, scroll) = (d.cursor, d.scroll);
+    let app = &*app;
+    let width = usize::from(list.width);
+    let headings = format!(
+        "{INDENT}{:w$} {:>SIZE$}  {:>AGE$}  path",
+        "",
+        "size",
+        "modified",
+        w = review::CHECK_WIDTH
+    );
+    let mut lines = vec![Line::styled(headings, t.fg_dim)];
+    if rows.is_empty() {
+        lines.push(Line::raw(" no duplicates"));
+    }
     // The shared directory and the rest of each path, for the groups on screen.
     let mut paths: Vec<Option<GroupPaths>> = vec![None; found.groups.len()];
     for row in rows.iter().skip(scroll).take(fit) {
@@ -174,64 +212,164 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             paths[g] = Some(group_paths(app, &found.groups[g], &run.root));
         }
     }
+    let now = dfdu_tree::now_secs();
     for (i, row) in rows.iter().enumerate().skip(scroll).take(fit) {
         let (Row::Group(group) | Row::File(group, _)) = *row;
         let Some((dir, files)) = &paths[group] else {
             continue;
         };
-        let mut line = match *row {
-            Row::Group(_) => {
-                let gr = &found.groups[group];
-                let free = if gr.all_clones() {
-                    "clones: deleting copies frees nothing".to_string()
-                } else {
-                    format!("{} to free", human(gr.wasted()))
-                };
-                let n = files.len();
-                let mut spans = vec![
-                    Span::styled(format!(" {n} copies of {}", human(gr.size)), t.title),
-                    Span::styled(format!(" · {free}"), t.fg_dim),
-                ];
-                if !dir.as_os_str().is_empty() {
-                    spans.push(Span::styled(" · in ", t.fg_dim));
-                    let used: usize = spans.iter().map(Span::width).sum();
-                    let dir = format!("{}{}", dir.display(), std::path::MAIN_SEPARATOR);
-                    spans.push(Span::raw(truncate_middle(&dir, width.saturating_sub(used))));
-                }
-                Line::from(spans)
-            }
+        let gr = &found.groups[group];
+        let line = match *row {
+            Row::Group(_) => group_line(app, group, gr, dir, files.len(), width),
             Row::File(_, file) => {
-                let c = &found.groups[group].files[file];
-                let marked = live(app, c).is_some_and(|n| app.marks.contains(n));
-                let mark = if marked { "●" } else { " " };
-                let date = dfdu_store::history::date_time(c.mtime);
                 let rest = (files.iter())
                     .find(|(i, _)| *i == file)
                     .map(|(_, p)| p.display().to_string())
                     .unwrap_or_default();
-                let lead = Span::styled(format!("   {mark} "), t.key);
-                let keep = if kept(app, &found.groups[group]) == Some(file) {
-                    Span::styled(KEEP, t.status_ok)
-                } else {
-                    Span::raw(" ".repeat(KEEP.len()))
-                };
-                let date = Span::styled(format!("  {date}"), t.fg_dim);
-                let room = width.saturating_sub(lead.width() + keep.width() + date.width());
-                let path = truncate_middle(&rest, room);
-                let pad = room.saturating_sub(Span::raw(&path).width());
-                Line::from(vec![
-                    lead,
-                    Span::raw(path),
-                    Span::raw(" ".repeat(pad)),
-                    keep,
-                    date,
-                ])
+                file_line(app, gr, file, &rest, now, width)
             }
         };
-        if i == cursor {
-            line = line.style(t.cursor);
-        }
-        lines.push(line);
+        lines.push(if i == cursor_at {
+            cursor(&t, line, list.width)
+        } else {
+            line
+        });
     }
-    f.render_widget(Paragraph::new(lines), area);
+    f.render_widget(Paragraph::new(lines), list);
+    if let Some(pane) = pane {
+        let detail = detail_lines(app, found, rows.get(cursor_at), &run.root);
+        review::draw_detail(f, &t, pane, review::on_right(body), detail);
+    }
+}
+
+/// A group's header: `▾ 3 copies of 1.0 MiB · frees 2.0 MiB · in photos/`; clones dimmed.
+fn group_line(
+    app: &App,
+    g: usize,
+    group: &Group,
+    dir: &Path,
+    n: usize,
+    width: usize,
+) -> Line<'static> {
+    let t = &app.theme;
+    let clones = group.all_clones();
+    let arrow = if open(app, g, group) {
+        " ▾ "
+    } else {
+        " ▸ "
+    };
+    let (what, free) = if clones {
+        (
+            "clones",
+            "frees nothing (clones share their data)".to_owned(),
+        )
+    } else {
+        ("copies", format!("frees {}", human(group.wasted())))
+    };
+    let style = if clones { t.fg_dim } else { t.title };
+    let mut spans = vec![
+        Span::raw(arrow),
+        Span::styled(format!("{n} {what} of {}", human(group.size)), style),
+        Span::styled(format!(" · {free}"), t.fg_dim),
+    ];
+    if !dir.as_os_str().is_empty() {
+        spans.push(Span::styled(" · in ", t.fg_dim));
+        let used: usize = spans.iter().map(Span::width).sum();
+        let dir = format!("{}{}", dir.display(), std::path::MAIN_SEPARATOR);
+        spans.push(Span::raw(truncate_middle(&dir, width.saturating_sub(used))));
+    }
+    Line::from(spans)
+}
+
+/// A file's row: its checkbox, size, age at `now` and `rest`, its path below the group's
+/// directory, in `width` cells.
+fn file_line(
+    app: &App,
+    group: &Group,
+    file: usize,
+    rest: &str,
+    now: i64,
+    width: usize,
+) -> Line<'static> {
+    let t = &app.theme;
+    let c = &group.files[file];
+    let ticked = live(app, c).is_some_and(|n| app.marks.contains(n));
+    let tick = match (ticked, kept(app, group) == Some(file)) {
+        (true, _) => Tick::On,
+        (false, true) => Tick::Keep,
+        (false, false) => Tick::Off,
+    };
+    let mut spans = vec![
+        Span::raw(INDENT),
+        review::checkbox(t, tick),
+        Span::raw(format!(" {:>SIZE$}", human(c.size))),
+        Span::styled(format!("  {:>AGE$}  ", review::age(c.mtime, now)), t.fg_dim),
+    ];
+    let used: usize = spans.iter().map(Span::width).sum();
+    let style = if group.all_clones() {
+        t.fg_dim
+    } else {
+        ratatui::style::Style::new()
+    };
+    spans.extend(review::path(t, rest, 0, width.saturating_sub(used), style));
+    Line::from(spans)
+}
+
+/// What deleting copy `c` frees, in words.
+fn frees(c: &Candidate) -> String {
+    if c.links > 0 {
+        format!(
+            "has {} other name{} (hard links): deleting this one frees nothing",
+            c.links,
+            if c.links == 1 { "" } else { "s" }
+        )
+    } else {
+        match c.private {
+            Some(0) => "a clone: shares all its data, deleting it frees nothing".into(),
+            Some(p) if p < c.alloc => format!("shares some data: deleting it frees {}", human(p)),
+            _ => format!("deleting it frees {}", human(c.freed())),
+        }
+    }
+}
+
+/// The detail pane: the selected copy, the copy kept and those that go, and what deleting the
+/// selected one frees. On a group's row, its copies.
+fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec<Line<'static>> {
+    let t = &app.theme;
+    let Some(&row) = row else {
+        return Vec::new();
+    };
+    let (Row::Group(g) | Row::File(g, _)) = row;
+    let group = &found.groups[g];
+    let home = app.home.as_deref();
+    let name = |c: &Candidate| tilde(&dfdu_tree::HostPath::local(&c.path), home);
+    let mut out = Vec::new();
+    if let Row::File(_, i) = row {
+        let c = &group.files[i];
+        out.push(Line::styled(name(c), t.title));
+        let modified = dfdu_store::history::date_time(c.mtime);
+        out.push(Line::styled(
+            format!("{} · modified {modified}", human(c.size)),
+            t.fg_dim,
+        ));
+        out.push(Line::styled(frees(c), t.fg_dim));
+        out.push(Line::raw(""));
+    }
+    let keep = kept(app, group);
+    for (i, c) in group.files.iter().enumerate() {
+        if live(app, c).is_none() {
+            continue;
+        }
+        let rel = shown(&c.path, root).display().to_string();
+        let (label, style) = if Some(i) == keep {
+            ("kept", t.status_ok)
+        } else {
+            ("goes", t.fg_dim)
+        };
+        out.push(Line::from(vec![
+            Span::styled(format!("{label} "), style),
+            Span::raw(rel),
+        ]));
+    }
+    out
 }

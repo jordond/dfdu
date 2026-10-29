@@ -330,11 +330,16 @@ pub const ACTIONS: &[ActionInfo] = &[
         "mark or unmark, then move down",
         Group::Act,
     ),
-    row(Action::ClearMarks, "", "clear all marks", Group::Act),
+    row(
+        Action::ClearMarks,
+        "X",
+        "untick all: clear every mark",
+        Group::Act,
+    ),
     row(
         Action::TickSuggested,
         "A",
-        "mark what Cleanup or Duplicates suggests deleting",
+        "tick what Cleanup or Duplicates suggests deleting",
         Group::Act,
     ),
     row(

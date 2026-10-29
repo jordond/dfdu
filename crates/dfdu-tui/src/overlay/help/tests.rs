@@ -104,15 +104,13 @@ fn help_is_one_column_when_narrow() {
         "{frame}"
     );
     // An action without a key shows the palette's key in the keys column.
-    let frame = render(&mut app, t0, 60, 60);
-    let keyless = inside(&frame)
-        .into_iter()
-        .find(|r| r.contains("clear all marks"))
+    let frame = render(&mut app, t0, 60, 80);
+    let rows = inside(&frame);
+    let at = (rows.iter())
+        .position(|r| r.contains("mark by pattern"))
         .unwrap_or_else(|| panic!("{frame}"));
-    assert!(
-        keyless.starts_with(" :  ") && keyless.contains("(in the palette)"),
-        "{frame}"
-    );
+    assert!(rows[at].starts_with(" :  "), "{frame}");
+    assert!(rows[at + 1].contains("(in the palette)"), "{frame}");
 }
 
 #[test]

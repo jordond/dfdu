@@ -1,0 +1,25 @@
+---
+source: crates/dfdu-tui/src/features/cleanup/tests.rs
+assertion_line: 183
+expression: frame
+---
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
+ whole scan: /r                             12 items · 95.7 KiB   size ↓ · disk
+ Selected 0 B of 175.8 KiB · 0 of 3 items                     d delete selected
+                size   items  modified  path
+ ▾ [ ] Regenerable · rebuilt or reinstalled when needed         117.2 KiB     2
+   ▾ [ ] Project dependencies                                    58.6 KiB     1
+       [ ]  58.6 KiB       6       3 d  /r/web/node_modules         recent
+   ▾ [ ] Project build output                                    58.6 KiB     1
+       [ ]  58.6 KiB       6       3 d  /r/target                   recent
+ ▾ [ ] Review first · may hold work                              58.6 KiB     1
+   ▾ [ ] Project dependencies                                    58.6 KiB     1
+       [ ]  58.6 KiB       6       3 d  /r…6/frontend/node_modules  review
+────────────────────────────────────────────────────────────────────────────────
+ Regenerable
+ rebuilt or reinstalled when needed; 2 matches
+
+
+
+
+ ↑↓ move  Enter close  Space tick  d delete selected  ? help  q quit  [ ] views

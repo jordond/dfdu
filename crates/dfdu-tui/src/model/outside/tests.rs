@@ -162,7 +162,7 @@ fn the_cleanup_view_lists_links_out_of_the_scan() {
         )),
         "{frame}"
     );
-    assert!(frame.contains("▸ OS and user caches"), "{frame}");
+    assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
 }
 
 #[test]

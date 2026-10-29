@@ -14,20 +14,22 @@ use dfdu_store::history;
 use dfdu_tree::{Host, HostPath};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
 use super::{cells, mmss, spread};
 use crate::app::App;
-use crate::app::keys::first_key;
-use crate::app::views::{self, View};
+use crate::app::views;
 use crate::input::mouse::{Crumb, Tab};
 use crate::model::growth;
 use crate::model::outside::{rel_text, tilde};
 use crate::state::filter;
 use crate::state::order::SortKey;
-use crate::theme::{Bars, Theme, count, human, spinner, truncate_middle};
+use crate::theme::{Theme, count, human, spinner, truncate_middle};
+
+mod tabs;
+
+use tabs::{TABS_NAMED_FROM, Tabs, tabs};
 
 /// Between two breadcrumbs.
 const SEPARATOR: &str = " › ";
@@ -297,73 +299,12 @@ fn mode_forms(app: &App) -> Vec<Vec<Span<'static>>> {
     forms
 }
 
-/// Between two tabs, and between the title and the tabs; `|` with [`Bars::Ascii`].
-fn tab_separator(bars: Bars) -> &'static str {
-    match bars {
-        Bars::Unicode => "│",
-        Bars::Ascii => "|",
-    }
-}
-/// The tab bar names every view from this many columns; below, only the one shown.
-const TABS_NAMED_FROM: u16 = 80;
 /// Between the totals and the modes on the second line.
 const SCOPE_GAP: &str = "   ";
 /// Before the scan root on the scope line of the views that cover the whole scan.
 const WHOLE_SCAN: &str = "whole scan: ";
 /// The fewest cells of the scan root the whole-scan scope keeps before the modes give way.
 const WHOLE_SCAN_ROOT_MIN: usize = 8;
-
-/// One form of the tab bar: its spans after the title, and the column offset and width of each
-/// tab in them.
-struct Tabs {
-    spans: Vec<Span<'static>>,
-    hits: Vec<(usize, usize, View)>,
-}
-
-/// The tab of the view shown: the focus colour as its background, bold. Reverse video carries
-/// it without colour too.
-fn active_tab(t: &Theme) -> Style {
-    t.border_focus
-        .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-}
-
-/// The tab bar after the title. `named`: every view by key and name, separated by `│`, with
-/// what the view holds after the name when `badges`. Otherwise the keys alone and the view
-/// shown named in brackets: `1 2 [3 Cleanup] 4 5`.
-fn tabs(app: &App, named: bool, badges: bool) -> Tabs {
-    let t = &app.theme;
-    let shown = views::current(app);
-    let (mut spans, mut hits, mut x) = (Vec::new(), Vec::new(), 0);
-    for (i, view) in View::ALL.into_iter().enumerate() {
-        let key = first_key(view.action());
-        let active = view == shown;
-        let text = if named {
-            let badge = (badges.then(|| views::badge(app, view)).flatten())
-                .map(|b| format!(" {b}"))
-                .unwrap_or_default();
-            format!(" {key} {}{badge} ", view.name())
-        } else if active {
-            format!("[{key} {}]", view.name())
-        } else {
-            key.to_owned()
-        };
-        let sep = match (named, i) {
-            (true, _) => tab_separator(t.bars).to_owned(),
-            (false, 0) => format!("{} ", tab_separator(t.bars)),
-            (false, _) => " ".to_owned(),
-        };
-        x += Span::raw(&sep).width();
-        spans.push(Span::styled(sep, t.fg_dim));
-        let w = Span::raw(&text).width();
-        hits.push((x, w, view));
-        spans.push(Span::styled(
-            text,
-            if active { active_tab(t) } else { t.fg_dim },
-        ));
-        x += w;
-    }
-    Tabs { spans, hits }
-}
 
 fn width(spans: &[Span]) -> usize {
     spans.iter().map(Span::width).sum()
@@ -476,7 +417,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     // The scope keeps the current directory's name whole (or a few cells of the scan root):
     // the modes give way first, in their longest form that leaves it room.
     let lead = 1;
-    let whole_scan = views::current(app).whole_scan();
+    let view = views::current(app);
+    let whole_scan = view.whole_scan();
     // Before the first snapshot the root is not known: the directory opened is.
     let root_path = if s.root_path.is_empty() {
         &s.dir_path
@@ -522,6 +464,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
         if !root.is_empty() && rest >= Span::raw(&root).width().min(WHOLE_SCAN_ROOT_MIN) {
             scope.push(Span::styled(WHOLE_SCAN, t.fg_dim));
             scope.push(Span::styled(truncate_middle(&root, rest), t.title));
+            // What the view covers of it, when that fits whole.
+            let note = views::scope_note(view).map(|n| format!(" · {n}"));
+            let left = rest.saturating_sub(Span::raw(&root).width());
+            if let Some(note) = note.filter(|n| Span::raw(n).width() <= left) {
+                scope.push(Span::styled(note, t.fg_dim));
+            }
         } else {
             let short = truncate_middle(WHOLE_SCAN.trim_end_matches([':', ' ']), scope_room);
             scope.push(Span::styled(short, t.fg_dim));

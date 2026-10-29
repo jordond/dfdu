@@ -20,9 +20,9 @@ L6 2-2 fg=cyan | 4-7 bold | 52-52 bold | 97-97 fg=cyan
 L7 0-1 fg=red | 2-2 fg=cyan | 4-9 bold | 97-97 fg=cyan
  ~┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
 L8 0-1 fg=yellow | 2-2 fg=cyan | 4-9 bold | 52-56 bold | 97-97 fg=cyan
-  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
-L9 2-2 fg=cyan | 4-9 bold | 52-52 fg=darkgray | 97-97 fg=cyan
-  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
+  ┃ g Home           first entry                    X      untick all: clear every mark          ┃
+L9 2-2 fg=cyan | 4-9 bold | 52-52 bold | 97-97 fg=cyan
+  ┃ G End            last entry                     A      tick what Cleanup or Duplicates       ┃
 L10 2-2 fg=cyan | 4-8 bold | 52-52 bold | 97-97 fg=cyan
   ┃ → l              open directory (tree mode:            suggests deleting                     ┃
 L11 2-2 fg=cyan | 4-6 bold | 97-97 fg=cyan

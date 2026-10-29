@@ -129,6 +129,12 @@ pub fn step(app: &mut App, by: isize) -> Vec<Effect> {
     Vec::new()
 }
 
+/// What the scope line adds after `whole scan: <root>` for `view`: which files Duplicates
+/// compares.
+pub fn scope_note(view: View) -> Option<String> {
+    (view == View::Duplicates).then(|| format!("files of {} or more", human(dupes::min_size())))
+}
+
 /// What a tab adds after its name: Cleanup's reclaimable total once a read of its matches came
 /// in, and the number of groups of duplicates once a comparison finished, `…` while one runs.
 pub fn badge(app: &App, view: View) -> Option<String> {

@@ -45,8 +45,8 @@ expression: frame
             │ scan into the selected mount (another filesystem)                 act  m │
             │ skip directories that are not responding                          act  x │
             │ mark or unmark, then move down                                act  Space │
-            │ clear all marks                                                      act │
-            │ mark what Cleanup or Duplicates suggests deleting                 act  A │
+            │ untick all: clear every mark                                      act  X │
+            │ tick what Cleanup or Duplicates suggests deleting                 act  A │
             │ duplicates: compare the files again                               act  R │
             │ cleanup: the item's own cleanup command (dry run first)           act  N │
             │ mark a range: moving marks every row passed (v or Esc ends)       act  v │

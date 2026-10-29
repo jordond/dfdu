@@ -125,7 +125,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
 }
 
 /// A line with `left` at the start and `right` at the end of `width` cells.
-fn spread<'a>(left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) -> Line<'a> {
+pub(crate) fn spread<'a>(left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) -> Line<'a> {
     let lw: usize = left.iter().map(Span::width).sum();
     let rw: usize = right.iter().map(Span::width).sum();
     let pad = (width as usize).saturating_sub(lw + rw);

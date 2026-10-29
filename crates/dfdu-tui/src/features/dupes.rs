@@ -9,7 +9,7 @@
 //! oldest, and `K` cycles the rule ([`Keep`]); `R` compares again. Groups of APFS clones, which
 //! free nothing, are listed but `A` leaves them alone.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -40,6 +40,9 @@ pub struct Dupes {
     scroll: usize,
     run: Option<Run>,
     keep: Keep,
+    /// Groups opened or closed against their default (open, but clones closed), by index in
+    /// the result; cleared by a new comparison.
+    toggled: HashSet<usize>,
 }
 
 /// Which copy of a group marking leaves unmarked. Ties go to the first in path order.
@@ -53,6 +56,14 @@ pub enum Keep {
 }
 
 impl Keep {
+    /// Every rule, in the order `K` steps through them.
+    pub const ALL: [Keep; 4] = [
+        Keep::Oldest,
+        Keep::Newest,
+        Keep::ShortestPath,
+        Keep::FirstPath,
+    ];
+
     fn next(self) -> Keep {
         match self {
             Keep::Oldest => Keep::Newest,
@@ -157,6 +168,7 @@ fn start(app: &mut App) -> Vec<Effect> {
     }
     app.dupes.cursor = 0;
     app.dupes.scroll = 0;
+    app.dupes.toggled.clear();
     app.extras.dupes.clear();
     vec![Effect::FindDupes]
 }
@@ -228,13 +240,21 @@ fn live(app: &App, c: &Candidate) -> Option<NodeRef> {
     app.extras.dupes.get(&c.path).copied().flatten()
 }
 
-/// The groups with at least two files left, each followed by its files.
+/// Whether group `g` shows its files: by default unless it is clones, which free nothing.
+fn open(app: &App, g: usize, group: &Group) -> bool {
+    !group.all_clones() ^ app.dupes.toggled.contains(&g)
+}
+
+/// The groups with at least two files left, clones last; each open one followed by its files.
 fn rows(app: &App) -> Vec<Row> {
     let Some(f) = found(app) else {
         return Vec::new();
     };
+    let mut order: Vec<usize> = (0..f.groups.len()).collect();
+    order.sort_by_key(|&g| f.groups[g].all_clones());
     let mut out = Vec::new();
-    for (g, group) in f.groups.iter().enumerate() {
+    for g in order {
+        let group = &f.groups[g];
         let left: Vec<usize> = (0..group.files.len())
             .filter(|&i| live(app, &group.files[i]).is_some())
             .collect();
@@ -242,7 +262,9 @@ fn rows(app: &App) -> Vec<Row> {
             continue;
         }
         out.push(Row::Group(g));
-        out.extend(left.into_iter().map(|i| Row::File(g, i)));
+        if open(app, g, group) {
+            out.extend(left.into_iter().map(|i| Row::File(g, i)));
+        }
     }
     out
 }
@@ -354,9 +376,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 None => {}
             }
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-            let f = found(app)?;
-            if let Some(&Row::File(g, i)) = rows.get(app.dupes.cursor) {
+        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(d.cursor) {
+            Some(&Row::Group(g)) => {
+                if !d.toggled.remove(&g) {
+                    d.toggled.insert(g);
+                }
+            }
+            Some(&Row::File(g, i)) => {
+                let f = found(app)?;
                 let (path, root) = (
                     f.groups[g].files[i].path.clone(),
                     app.dupes.run.as_ref()?.root.clone(),
@@ -364,8 +391,23 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 app.dupes.on = false;
                 app.go_to(&HostPath::local(&path), &HostPath::local(&root));
             }
+            None => {}
+        },
+        KeyCode::Left | KeyCode::Char('h') => {
+            let at = (0..=d.cursor.min(last))
+                .rev()
+                .find(|&i| matches!(rows.get(i), Some(Row::Group(_))));
+            if let Some(i) = at
+                && let Row::Group(g) = rows[i]
+                && let Some(group) = found(app).map(|f| &f.groups[g])
+            {
+                if open(app, g, group) {
+                    app.dupes.toggled.insert(g);
+                }
+                app.dupes.cursor = i;
+            }
         }
-        _ => return None,
+        _ => return crate::features::review::delete_needs_ticks(app, k),
     }
     Some(Vec::new())
 }

@@ -177,7 +177,7 @@ fn keys_move_mark_and_refuse() {
     assert!(
         app.status
             .as_deref()
-            .is_some_and(|s| s.contains("mark files"))
+            .is_some_and(|s| s.contains("tick items with Space first"))
     );
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks.items().len(), 1);
@@ -189,9 +189,17 @@ fn keys_move_mark_and_refuse() {
         .lines()
         .find(|l| l.contains(".cache/huge"))
         .unwrap_or_default();
-    assert!(row.starts_with("●"), "{frame}");
+    assert!(row.starts_with(" [x] "), "{frame}");
+    assert!(
+        frame.contains("Selected 8.8 KiB of 20.5 KiB · 1 of 4 files"),
+        "{frame}"
+    );
     app.key(press(KeyCode::Char('d')), t0);
     assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+    app.key(press(KeyCode::Esc), t0);
+    // `X` unticks every file.
+    app.key(press(KeyCode::Char('X')), t0);
+    assert!(app.marks.is_empty());
 
     // A read-only browser marks nothing.
     let (mut ro, t0) = opened(&m);

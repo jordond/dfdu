@@ -25,15 +25,20 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     // Both are below their rules' minimum sizes: nothing is recommended.
     assert!(app.marks.is_empty());
     let frame = render(&mut app, t0, 100, 24);
-    assert!(frame.contains("reclaimable"), "{frame}");
-    assert!(frame.contains("▸ OS and user caches"), "{frame}");
+    assert!(
+        frame.contains("Selected 0 B of 70.3 KiB · 0 of 2 items"),
+        "{frame}"
+    );
+    assert!(frame.contains("▾ [ ] Safe to delete · "), "{frame}");
+    assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
     insta::assert_snapshot!("cleanup_100x24", frame);
 
-    // The first group is the safe one; Enter opens it, Space marks its item and again
-    // unmarks it.
+    // The first section is the safe one, and its first category below it; Enter opens it,
+    // Space ticks its item and again unticks it.
+    app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Enter), t0);
     let frame = render(&mut app, t0, 100, 24);
-    assert!(frame.contains("▾ OS and user caches"), "{frame}");
+    assert!(frame.contains("▾ [ ] OS and user caches"), "{frame}");
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(
@@ -46,6 +51,20 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     app.key(press(KeyCode::Up), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(app.marks.is_empty(), "Space on a group toggles all of it");
+    // On the section, Space ticks the whole level, and `←` closes it.
+    app.key(press(KeyCode::Up), t0);
+    app.key(press(KeyCode::Char(' ')), t0);
+    assert_eq!(app.marks.items().len(), 1);
+    let frame = render(&mut app, t0, 100, 24);
+    assert!(frame.contains("▾ [x] Safe to delete"), "{frame}");
+    app.key(press(KeyCode::Char('X')), t0);
+    assert!(app.marks.is_empty(), "X unticks everything");
+    app.key(press(KeyCode::Home), t0);
+    app.key(press(KeyCode::Left), t0);
+    let frame = render(&mut app, t0, 100, 24);
+    assert!(frame.contains("▸ [ ] Safe to delete"), "{frame}");
+    assert!(!frame.contains("OS and user caches"), "{frame}");
+    app.key(press(KeyCode::Right), t0);
     // `f` shows safe items only: the regenerable group goes.
     app.key(press(KeyCode::Char('f')), t0);
     let frame = render(&mut app, t0, 100, 24);
@@ -96,8 +115,11 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     assert_eq!(marked, [&HostPath::from("/r").join(b"old-cache")]);
     assert_eq!(
         app.status.as_deref(),
-        Some("marked 1 recommended item (1.0 GiB) · Space unmarks")
+        Some("Ticked 1 suggested item (1.0 GiB) · X untick all")
     );
+    // Said until the next key.
+    app.key(press(KeyCode::Down), t0);
+    assert_eq!(app.status, None);
     // Unmarked, it stays so: through later reads, and when the view opens again.
     marks::clear(&mut app);
     sync(&mut app, &fx.m, t0);
@@ -166,16 +188,17 @@ fn group_columns_fit_the_categories_shown() {
             app.cleanup.open.insert((cat, safety));
         }
     }
-    let frame = render(&mut app, t0, 80, 16);
-    insta::assert_snapshot!("cleanup_columns_80x16", frame);
+    let frame = render(&mut app, t0, 80, 20);
+    insta::assert_snapshot!("cleanup_columns_80x20", frame);
     let deps: Vec<&str> = (frame.lines())
         .filter(|l| l.contains("Project dependencies"))
         .collect();
     assert_eq!(deps.len(), 2, "{frame}");
-    assert!(
-        deps[0].contains("regenerable") && deps[1].contains("review"),
-        "{frame}"
-    );
+    // Each under the section of its level.
+    let line_of = |s: &str| frame.lines().position(|l| l.contains(s)).unwrap();
+    let (regenerable, review) = (line_of("Regenerable · "), line_of("Review first · "));
+    let first_deps = line_of("Project dependencies");
+    assert!(regenerable < first_deps && first_deps < review, "{frame}");
     let at = |l: &str| l.find("KiB").unwrap();
     assert_eq!(at(deps[0]), at(deps[1]), "{frame}");
     assert!(
@@ -194,6 +217,7 @@ fn details_follow_the_cleanup_selection() {
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char('i')), t0);
@@ -217,7 +241,7 @@ fn a_short_terminal_still_shows_the_groups() {
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
     let frame = render(&mut app, t0, 100, 10);
-    assert!(frame.contains("▸ OS and user caches"), "{frame}");
+    assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
 }
 
 #[test]
@@ -282,8 +306,8 @@ fn recommended_items() {
     assert!(!Verdict::Newer(7).recommended());
 }
 
-/// Each item row says why it is or is not recommended, and the space under the rows explains
-/// the selected item's rule instead of repeating the keys.
+/// Each item row says in a word why it is or is not suggested, and the detail pane explains the
+/// selected item's rule and the reason in full.
 #[test]
 fn rows_say_why_and_the_rule_is_explained_below() {
     let fx = with_recommended();
@@ -308,21 +332,15 @@ fn rows_say_why_and_the_rule_is_explained_below() {
             .to_owned()
     };
     assert!(
-        row(&frame, "/r/old-cache").ends_with("recommended"),
+        row(&frame, "/r/old-cache").ends_with("✓ suggested"),
         "{frame}"
     );
     // `m0` and `big` are below their rules' minimum sizes.
-    assert!(
-        row(&frame, "/r/mid/m0").ends_with("below 50.0 MiB"),
-        "{frame}"
-    );
-    assert!(
-        row(&frame, "/r/big").ends_with("below 100.0 MiB"),
-        "{frame}"
-    );
+    assert!(row(&frame, "/r/mid/m0").ends_with("small"), "{frame}");
+    assert!(row(&frame, "/r/big").ends_with("small"), "{frame}");
     insta::assert_snapshot!("cleanup_notes_100x24", frame);
 
-    // On an item, its rule and the reason in full, one line under the last row.
+    // On an item, its rule and the reason in full in the pane below the rows.
     let items = app.extras.cleanup.items.clone();
     let at = items
         .iter()
@@ -334,8 +352,19 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     let name = &rules.rule(items[at].class.rule).name;
     let lines: Vec<&str> = frame.lines().collect();
     let last = lines.iter().rposition(|l| l.contains("/r/")).unwrap();
-    assert!(lines[last + 2].contains(name.as_str()), "{frame}");
-    assert!(frame.contains("Recommended: safe to delete."), "{frame}");
+    let rule = lines
+        .iter()
+        .position(|l| l.contains(name.as_str()))
+        .unwrap();
+    assert!(rule > last, "{frame}");
+    assert!(frame.contains("Suggested: safe to delete."), "{frame}");
+    assert!(frame.contains(" You lose: "), "{frame}");
+    // From 110 columns the pane is on the right of the rows.
+    let wide = render(&mut app, t0, 120, 24);
+    let line = (wide.lines())
+        .find(|l| l.contains("/r/old-cache"))
+        .unwrap_or_default();
+    assert!(line.contains(" │ "), "{wide}");
 }
 
 #[test]

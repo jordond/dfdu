@@ -21,9 +21,9 @@ L6 2-2 fg=#88c0d0 | 4-7 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0
 L7 0-1 fg=#ff8f8f | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 97-97 fg=#88c0d0
  ~┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
 L8 0-1 fg=#ebcb8b | 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-56 fg=#88c0d0 bold | 97-97 fg=#88c0d0
-  ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
-L9 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-52 fg=#8b94a7 | 97-97 fg=#88c0d0
-  ┃ G End            last entry                     A      mark what Cleanup or Duplicates       ┃
+  ┃ g Home           first entry                    X      untick all: clear every mark          ┃
+L9 2-2 fg=#88c0d0 | 4-9 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
+  ┃ G End            last entry                     A      tick what Cleanup or Duplicates       ┃
 L10 2-2 fg=#88c0d0 | 4-8 fg=#88c0d0 bold | 52-52 fg=#88c0d0 bold | 97-97 fg=#88c0d0
   ┃ → l              open directory (tree mode:            suggests deleting                     ┃
 L11 2-2 fg=#88c0d0 | 4-6 fg=#88c0d0 bold | 97-97 fg=#88c0d0
