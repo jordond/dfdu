@@ -3,9 +3,9 @@ source: crates/dfdu-tui/src/features/treemap/tests.rs
 expression: "styled(&render_buffer(&mut app, t0, 90, 24))"
 ---
  dfdu  /r                                                                   done in 00:00
-L0 0-5 bold | 7-8 bold
+L0 0-5 bold | 7-8 bold | 76-88 fg=green
  12 items · 95.7 KiB                                 size ↓ · disk · top folder · depth 3
-L1 59-61 fg=darkgray | 66-68 fg=darkgray | 79-81 fg=darkgray
+L1 0-11 fg=darkgray | 12-19 bold | 59-61 fg=darkgray | 66-68 fg=darkgray | 79-81 fg=darkgray
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌─────────────────────────────────┐
 L2 0-54 fg=cyan bold | 55-89 fg=blue
 ┃ big/  58.6 KiB  61%                                 ┃│ mid/  24.4 KiB  25%             │

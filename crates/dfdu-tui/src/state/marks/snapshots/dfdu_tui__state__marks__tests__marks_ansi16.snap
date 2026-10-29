@@ -3,9 +3,9 @@ source: crates/dfdu-tui/src/state/marks/tests.rs
 expression: styled(&buf)
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 bold | 7-14 bold
+L0 0-5 bold | 7-14 bold | 83-98 fg=cyan
  3.0k items · 241.6 GiB                                                               size ↓ · disk
-L1 92-94 fg=darkgray
+L1 0-13 fg=darkgray | 14-22 bold | 92-94 fg=darkgray
         size                     share   items  name
 L2 0-99 fg=darkgray
 ●⠋ 112.0 GiB  ████████████████   46.4%    1.0k  Library/

@@ -3,9 +3,9 @@ source: crates/dfdu-tui/src/tests/matrix.rs
 expression: "styled(&frame(state, theme(name, level)))"
 ---
  dfdu  /home/jo                                                                    ⠋ scanning 00:14
-L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold
+L0 0-5 fg=#eceff4 bold | 7-14 fg=#eceff4 bold | 83-98 fg=#88c0d0
  1.9M items · 241.6 GiB · 1 error                                                     size ↓ · disk
-L1 26-32 fg=#ff8f8f | 92-94 fg=#8b94a7
+L1 0-13 fg=#8b94a7 | 14-22 fg=#eceff4 bold | 23-25 fg=#8b94a7 | 26-32 fg=#ff8f8f | 92-94 fg=#8b94a7
         size                     share   items  name
 L2 0-99 fg=#8b94a7
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/

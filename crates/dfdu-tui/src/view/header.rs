@@ -120,22 +120,28 @@ fn breadcrumbs(
 /// first, then the shorter forms for narrow terminals: `read-only · done in 00:16`,
 /// `read-only · done 00:16`, `done 00:16`, `00:16`. While scanning, each keeps the spinner.
 fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
-    let (long, short, bare) = match app.done_at {
+    let ((long, short, bare), style) = match app.done_at {
         Some(done) if !app.snap.busy => {
             let time = mmss(done.duration_since(app.started));
-            (format!("done in {time}"), format!("done {time}"), time)
+            (
+                (format!("done in {time}"), format!("done {time}"), time),
+                app.theme.scan_done,
+            )
         }
         _ => {
             let (spin, time) = (spinner(frame), mmss(now.duration_since(app.started)));
             let scanning = format!("{spin} scanning {time}");
-            (scanning.clone(), scanning, format!("{spin} {time}"))
+            (
+                (scanning.clone(), scanning, format!("{spin} {time}")),
+                app.theme.scan_active,
+            )
         }
     };
-    let state = |text: &str| vec![Span::raw(text.to_owned()), Span::raw(" ")];
+    let state = |text: &str| vec![Span::styled(text.to_owned(), style), Span::raw(" ")];
     let read_only = |text: &str| {
         let mut spans = vec![
             Span::styled("read-only", app.theme.status_warn),
-            Span::raw(" · "),
+            Span::styled(" · ", app.theme.fg_dim),
         ];
         spans.extend(state(text));
         spans
@@ -309,13 +315,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
 
     let root = s.root_total;
     let size = app.size_mode.of(&root);
-    let mut info = vec![Span::raw(format!(
-        " {} items · {}",
-        count(root.items),
-        human(size)
-    ))];
+    let mut info = vec![
+        Span::styled(format!(" {} items · ", count(root.items)), t.fg_dim),
+        Span::styled(human(size), t.header),
+    ];
     if root.errors > 0 {
-        info.push(Span::raw(" · "));
+        info.push(Span::styled(" · ", t.fg_dim));
         info.push(Span::styled(
             match root.errors {
                 1 => "1 error".to_string(),
