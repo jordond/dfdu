@@ -274,7 +274,8 @@ pub fn unrefreshed(tree: &Tree, ix: Ix) -> bool {
     } else {
         tree.parent(ix)
     };
-    dir.and_then(|d| tree.dir(d)).is_some_and(|d| d.job == JobId(0))
+    dir.and_then(|d| tree.dir(d))
+        .is_some_and(|d| d.job == JobId(0))
 }
 
 fn empty_dir_meta() -> Meta {
@@ -507,7 +508,9 @@ impl<B: Backend> Applier<B> {
             dry_run: false,
             ..
         } = cmd
-            && m.tree.resolve_visible(*node).is_some_and(|ix| unrefreshed(&m.tree, ix))
+            && m.tree
+                .resolve_visible(*node)
+                .is_some_and(|ix| unrefreshed(&m.tree, ix))
         {
             return Some(
                 "native command: not refreshed yet: loaded from a file, and the resume has not reached it",

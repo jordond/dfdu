@@ -207,7 +207,10 @@ mod firmlink_tests {
             data("/System/Library/Caches/c"),
             Path::new("/System/Volumes/Data/System/Library/Caches/c")
         );
-        assert_eq!(data("/System/Library/Fonts"), Path::new("/System/Library/Fonts"));
+        assert_eq!(
+            data("/System/Library/Fonts"),
+            Path::new("/System/Library/Fonts")
+        );
         assert_eq!(data("/Usersx"), Path::new("/Usersx"));
         assert_eq!(data("/"), Path::new("/"));
         // A root above the Data volume, at it, and below a firmlink see the same change.
@@ -217,10 +220,15 @@ mod firmlink_tests {
             Path::new("System/Volumes/Data/Users/me/x")
         );
         assert_eq!(
-            change.strip_prefix(data("/System/Volumes/Data/Users")).unwrap(),
+            change
+                .strip_prefix(data("/System/Volumes/Data/Users"))
+                .unwrap(),
             Path::new("me/x")
         );
-        assert_eq!(change.strip_prefix(data("/Users/me")).unwrap(), Path::new("x"));
+        assert_eq!(
+            change.strip_prefix(data("/Users/me")).unwrap(),
+            Path::new("x")
+        );
     }
 
     /// A kept directory is handed out once.

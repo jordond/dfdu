@@ -146,13 +146,22 @@ fn a_changed_root_keeps_its_unchanged_subdirectories() {
     let e = resume(tree, &["", "deep/a/b", "deep/a", "renamed", "new/deeper"]);
     e.read(|m| {
         let t = &m.tree;
-        for p in ["added", "new/deeper/n", "renamed/m", "renamed/late", "deep/a/b/more"] {
+        for p in [
+            "added",
+            "new/deeper/n",
+            "renamed/m",
+            "renamed/late",
+            "deep/a/b/more",
+        ] {
             assert!(find(t, p).is_some(), "{p} is scanned");
         }
         for p in ["gone", "old", "link"] {
             assert!(find(t, p).is_none(), "{p} is gone");
         }
-        for (r, p) in kept.iter().zip(["keep", "keep/sub", "keep/sub/k2", "keep/k1"]) {
+        for (r, p) in kept
+            .iter()
+            .zip(["keep", "keep/sub", "keep/sub/k2", "keep/k1"])
+        {
             assert_eq!(t.resolve_visible(*r), find(t, p), "{p} is kept as loaded");
         }
     });
@@ -181,7 +190,10 @@ fn what_the_journal_does_not_name_stays_as_loaded() {
     let e = resume(tree, &["a/b/c"]);
     e.read(|m| {
         let t = &m.tree;
-        assert!(find(t, "a/b/c/new").is_some(), "a named directory is listed");
+        assert!(
+            find(t, "a/b/c/new").is_some(),
+            "a named directory is listed"
+        );
         assert!(find(t, "a/top").is_none(), "the directory above it is not");
         assert!(find(t, "quiet/unseen").is_none());
         assert!(find(t, "a/other/unseen").is_none());
