@@ -9,6 +9,7 @@ use dfdu_scan::journal::Keep;
 use dfdu_scan::{Backend, DirId, JobId, JobOptions};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Pages, Tree};
 
+use super::work::Work;
 use super::{Applier, Job, JobKind, JobPhase, Model};
 use crate::links::VISIBLE;
 
@@ -154,10 +155,23 @@ impl<B: Backend> Applier<B> {
         // (another device, no mount), each with a tree and a generation of its own: they are
         // scanned again in full.
         let mut mounts = Vec::new();
+        let links = &mut self.links;
         let mut own = |tree: &mut Tree, ix: Ix| {
             if let Some(d) = tree.dir_mut(ix) {
                 d.job = JobId(id);
                 d.dir_id = DirId::ROOT;
+            }
+            // Its hard links are the visible ones, which the links rescans find are merged
+            // with; one of each inode is charged, the lowest path once the rescans end.
+            let linked: Vec<Ix> = tree
+                .children(ix)
+                .filter(|&c| tree.flags(c).has(NodeFlags::HARDLINK))
+                .collect();
+            for c in linked {
+                links.add_scanned(tree.dev_ino(c), 0, VISIBLE, |charged| {
+                    tree.set_charged(c, charged);
+                    tree.node_ref(c)
+                });
             }
             let other_dev = || {
                 tree.parent(ix)
@@ -224,6 +238,7 @@ impl<B: Backend> Applier<B> {
             },
         );
         m.tree.bump_version();
+        self.work.push_back(Work::FinalPassVisible);
         self.queue_checks(m);
         for (t, k) in targets.into_iter().zip(kept) {
             let r = m.tree.node_ref(t);

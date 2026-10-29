@@ -94,13 +94,19 @@ fn imported_trees_cannot_delete() {
     assert!(root.join("f.bin").exists());
     e.shutdown(Duration::from_secs(1));
 
-    // The same tree loaded to be resumed is deleted from, so what kept the file above was
-    // the import.
+    // The same tree loaded to be resumed is deleted from once the resume has taken it over,
+    // so what kept the file above was the import.
     #[cfg(unix)]
     {
         let (tree, f) = loaded_tree(root, "f.bin");
         let e = Engine::start(dfdu_scan::PortableBackend::default(), opts());
+        let node = tree.node_ref(tree.roots().next().unwrap());
         e.load(tree);
+        e.send(Command::Resume {
+            node,
+            opts: dfdu_scan::JobOptions::default(),
+            changed: Some(vec![]),
+        });
         e.send(Command::Delete {
             items: vec![f],
             mode: Mode::Permanent,
