@@ -159,11 +159,15 @@ fn paths_of_another_kind_of_host_are_shown_and_found_as_they_are() {
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &m, t0);
     assert_eq!(app.snap.dir_path, path);
+    // `render` shows `\` as `/` on Windows, `pro\j` included.
     let header = render(&mut app, t0, 80, 8);
-    assert!(
-        header.contains(&format!("{root_name} › {name}")),
-        "{header}"
-    );
+    let want = format!("{root_name} › {name}");
+    let want = if cfg!(windows) {
+        want.replace('\\', "/")
+    } else {
+        want
+    };
+    assert!(header.contains(&want), "{header}");
 }
 
 #[test]

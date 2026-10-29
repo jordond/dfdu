@@ -18,8 +18,21 @@ fn paths_join_with_the_hosts_separator() {
         br"C:\Users\u\proj"
     );
     assert_eq!(win(r"C:\").join(b"x").as_bytes(), br"C:\x");
-    assert_eq!(win("C:/Users").join(b"x").as_bytes(), b"C:/Users\\x");
+    assert_eq!(win("C:/Users").join(b"x").as_bytes(), br"C:\Users\x");
     assert_eq!(HostPath::empty(Host::Unix).join(b"a").as_bytes(), b"a");
+}
+
+/// Windows reads `/` as a separator, so a path written with it is the one written with `\`:
+/// equal, with the same hash, and the parent of one is the other's. A Unix `\` stays a name.
+#[test]
+fn windows_paths_written_with_slashes_are_the_same_path() {
+    let p = win("/r/a");
+    assert_eq!(p, win("/r").join(b"a"));
+    assert_eq!(p.as_bytes(), br"\r\a");
+    assert_eq!(win(r"C:\Users/u").as_bytes(), br"C:\Users\u");
+    let marked = std::collections::HashSet::from([win("/r").join(b"a")]);
+    assert!(marked.contains(&win("/r/a").join(b"x").parent().unwrap()));
+    assert_ne!(unix(b"/r/a"), unix(b"/r\\a"));
 }
 
 /// `\` is part of a Unix name, and bytes that are not UTF-8 stay as they are.
