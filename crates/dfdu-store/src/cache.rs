@@ -348,7 +348,12 @@ impl Cache {
                     removed.bytes += f.bytes;
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", f.path.display()))),
+                Err(e) => {
+                    return Err(io::Error::new(
+                        e.kind(),
+                        format!("{}: {e}", f.path.display()),
+                    ));
+                }
             }
         }
         Ok(removed)
@@ -439,10 +444,17 @@ impl Slot {
     #[must_use]
     pub fn cached(&self, now: u64) -> bool {
         fs::symlink_metadata(&self.path).is_ok_and(|m| {
-            m.is_file()
-                && owned(&m)
-                && now.saturating_sub(m.modified().map_or(0, secs)) <= MAX_AGE
+            m.is_file() && owned(&m) && now.saturating_sub(m.modified().map_or(0, secs)) <= MAX_AGE
         })
+    }
+
+    /// Sweeps the cache this slot is in ([`Cache::sweep`] under [`SIZE_CAP`]), keeping this
+    /// slot's file.
+    pub fn sweep(&self, now: u64) -> Removed {
+        Cache {
+            dir: self.dir.clone(),
+        }
+        .sweep(now, SIZE_CAP, Some(&self.path))
     }
 
     /// Removes the cached scan.
@@ -460,12 +472,20 @@ impl Slot {
     pub fn load(&self, now: u64) -> Result<Option<Hit>, ImportError> {
         let file = match open_own(&self.path) {
             Ok(f) => f,
-            Err(e) if matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) =>
+            {
                 return Ok(None);
             }
             Err(e) => return Err(e.into()),
         };
-        let loaded = match snapshot::read(io::BufReader::with_capacity(1 << 16, file), &Limits::default()) {
+        let loaded = match snapshot::read(
+            io::BufReader::with_capacity(1 << 16, file),
+            &Limits::default(),
+        ) {
             Ok(l) => l,
             Err(e) => {
                 self.remove();

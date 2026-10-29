@@ -1,0 +1,6 @@
+---
+source: crates/dfdu-tui/src/view/header/tests.rs
+expression: "header(&mut app, 100)"
+---
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest   ⠋ cached 3 h ago, refreshing 00:00
+ /srv/data                                                            0 items · 0 B   size ↓ · disk

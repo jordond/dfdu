@@ -460,3 +460,43 @@ fn cleanup_shows_what_it_would_free_once_read() {
     sync(&mut app, &fx.m, t0);
     assert_eq!(badge(&app, View::Cleanup).as_deref(), Some("170.3K"));
 }
+
+/// While the cached scan is read and then brought up to date, the scan state says so, with its
+/// age, shorter on narrow terminals; then it is the usual one.
+#[test]
+fn a_cached_scan_says_so_until_it_is_refreshed() {
+    use crate::model::cache_link::Cached;
+    let root = "/srv/data";
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    let snap = Snapshot {
+        dir_path: root.into(),
+        root_path: root.into(),
+        busy: true,
+        ..snap_without_totals(Vec::new(), 1)
+    };
+    app.refresh(snap, t0);
+    app.cached = Some(Cached::Loading);
+    let loading = first_line(&render_buffer(&mut app, t0, 100, 8));
+    assert!(
+        loading.ends_with("loading the cached scan 00:00"),
+        "{loading}"
+    );
+    let written = dfdu_tree::now_secs().cast_unsigned() - 3 * 3_600 - 5;
+    app.cached = Some(Cached::Refreshing { written });
+    let header = |app: &mut App, width| {
+        let buf = render_buffer(app, t0, width, 8);
+        text(&buf)
+            .lines()
+            .take(2)
+            .flat_map(|l| [l, "\n"])
+            .collect::<String>()
+    };
+    insta::assert_snapshot!("cached_refreshing_100", header(&mut app, 100));
+    let narrow = header(&mut app, 56);
+    let first = narrow.lines().next().unwrap_or_default();
+    assert!(first.ends_with(" cached 3 h ago"), "{narrow}");
+    app.cached = None;
+    let after = first_line(&render_buffer(&mut app, t0, 100, 8));
+    assert!(after.ends_with("scanning 00:00"), "{after}");
+}

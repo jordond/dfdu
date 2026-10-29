@@ -1,8 +1,8 @@
-use super::super::tests::{bytes, header, sample};
 use super::super::VERSION_3;
+use super::super::tests::{bytes, header, sample};
 use super::super::write::write_as;
-use crate::ncdu::tests::dump;
 use super::*;
+use crate::ncdu::tests::dump;
 
 fn rec(b: &[u8]) -> Rec<&[u8]> {
     Rec(b)

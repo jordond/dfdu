@@ -123,7 +123,11 @@ fn old_scans_expire() {
     let (_tmp, _cache, slot) = setup();
     let now = now();
     let (t, _) = tree_of(slot.key.root(), 3);
-    save(&slot, &t, &header(now - FULL_RESCAN_AFTER - 10, now - FULL_RESCAN_AFTER - 10));
+    save(
+        &slot,
+        &t,
+        &header(now - FULL_RESCAN_AFTER - 10, now - FULL_RESCAN_AFTER - 10),
+    );
     let hit = slot.load(now).unwrap().expect("a hit");
     assert!(hit.full_rescan);
     // Brought up to date from the journal since: still the old full scan.
@@ -196,9 +200,18 @@ fn bad_files_are_not_loaded() {
 
     // Another directory's scan under this name.
     fs::create_dir(tmp.path().join("elsewhere")).unwrap();
-    let (other, _) = tree_of(&dunce::canonicalize(tmp.path().join("elsewhere")).unwrap(), 2);
+    let (other, _) = tree_of(
+        &dunce::canonicalize(tmp.path().join("elsewhere")).unwrap(),
+        2,
+    );
     let mut bytes = vec![];
-    snapshot::write(&other, other.roots().next().unwrap(), &mut bytes, &header(now, now)).unwrap();
+    snapshot::write(
+        &other,
+        other.roots().next().unwrap(),
+        &mut bytes,
+        &header(now, now),
+    )
+    .unwrap();
     fs::write(&slot.path, &bytes).unwrap();
     assert!(slot.load(now).unwrap().is_none());
     // Other options.

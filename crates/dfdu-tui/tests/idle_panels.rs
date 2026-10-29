@@ -108,6 +108,7 @@ fn settled_with_panels(
         debug: true,
         home: None,
         history: None,
+        cache: None,
         types: dfdu_tree::filetype::TypeFilter::default(),
         local: false,
         read_only: false,

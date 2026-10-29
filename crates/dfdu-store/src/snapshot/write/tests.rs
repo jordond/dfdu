@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use super::super::{VERSION_2, VERSION_3};
 use super::super::tests::{header, sample};
+use super::super::{VERSION_2, VERSION_3};
 use super::*;
 
 fn u(v: u64) -> Vec<u8> {

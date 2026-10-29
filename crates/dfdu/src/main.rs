@@ -43,6 +43,7 @@ fn written_to<T>(what: &dyn std::fmt::Display, r: std::io::Result<T>) -> Result<
 
 // After `outln!`, which they use.
 mod browse;
+mod cache;
 mod clean;
 mod disks;
 mod dupes;
@@ -115,6 +116,12 @@ struct Cli {
     /// Do not record the scan in the history, nor show what grew since the last one.
     #[arg(long)]
     no_history: bool,
+    /// Scan PATH afresh: do not open its cached scan, nor save this one (`DFDU_CACHE=0` turns
+    /// the cache off for good). Without it, the browser opens the last complete scan of PATH
+    /// at once, if one is cached, and brings it up to date in the background; scans that take
+    /// 3 s or more are cached for 14 days (`dfdu cache list`).
+    #[arg(long)]
+    no_cache: bool,
     /// Colour theme: auto, dark, light, ansi (the terminal's own 16 colours), mono, high-contrast,
     /// or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto
     /// asks the terminal for its background colour at start (up to 1 s if it does not answer)
@@ -180,6 +187,9 @@ enum Cmd {
     /// List what earlier sessions left unfinished (staged items, interrupted deletes), and
     /// finish, restore or dismiss them.
     Recover(recover::RecoverArgs),
+    /// List or clear the scans the browser cached, which it opens at once next time.
+    #[command(subcommand)]
+    Cache(cache::CacheCmd),
     /// Write man pages (dfdu.1 and one per command) into DIR, for packagers.
     #[command(hide = true)]
     Man { dir: PathBuf },
@@ -386,6 +396,7 @@ fn main() -> ExitCode {
         Some(Cmd::Export(args)) => transfer::export(&args),
         Some(Cmd::Import(args)) => transfer::import(&args),
         Some(Cmd::Recover(args)) => recover::run(args),
+        Some(Cmd::Cache(cmd)) => cache::run(&cmd),
         Some(Cmd::Man { dir }) => man(&dir),
         Some(Cmd::Agent { threads }) => remote::agent(threads),
         Some(Cmd::Completions { shell }) => {

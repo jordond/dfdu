@@ -180,7 +180,10 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     } else {
         None
     };
-    let started = (std::time::Instant::now(), dfdu_tree::now_secs().max(0).cast_unsigned());
+    let started = (
+        std::time::Instant::now(),
+        dfdu_tree::now_secs().max(0).cast_unsigned(),
+    );
     // A resume from the journal keeps the last full scan's time; anything else is one.
     let full_scan = match resumed {
         Some(l) => {

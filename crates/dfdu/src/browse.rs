@@ -66,14 +66,20 @@ pub fn run(cli: Cli) -> ExitCode {
             job: cli.mounts.job(),
             rules: cli.rules.load(),
         };
+        // The cache is for a directory named on the command line, not one read from a file or
+        // chosen from the disks.
+        let slot = (resumed.is_none() && !cli.disks && !cli.no_cache)
+            .then(|| cache_slot(&path, &local))
+            .flatten();
         let start: StartLocal = Box::new(move |path, opts| local.start(path, opts));
-        match resumed {
-            Some((tree, journal)) => Source::Resumed {
+        match (resumed, slot) {
+            (Some((tree, journal)), _) => Source::Resumed {
                 tree,
                 journal,
                 start,
             },
-            None => Source::Local {
+            (None, Some(slot)) => Source::Cached { path, slot, start },
+            (None, None) => Source::Local {
                 path: (!cli.disks).then_some(path),
                 start,
             },
@@ -99,6 +105,17 @@ pub fn run(cli: Cli) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Where the scan of `path` with the options of `local` is cached; `None` when the cache is
+/// off ([`dfdu_store::cache::OFF_VAR`]) or not this user's, or `path` is not a directory (the
+/// scan then says why).
+fn cache_slot(path: &Path, local: &Local) -> Option<dfdu_store::cache::Slot> {
+    let cache = dfdu_store::cache::Cache::open_default()?;
+    let key =
+        dfdu_store::cache::Key::new(path, local.job.cross_mounts, local.job.network, local.mft)
+            .ok()?;
+    Some(cache.slot(key))
 }
 
 /// The theme `--theme` names: `auto`, a built-in theme, or the theme file `NAME.toml` in

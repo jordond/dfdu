@@ -14,6 +14,7 @@ use ratatui::crossterm::event::Event;
 use crate::app::{self, App, Effect};
 use crate::features::{debug, dupes, selected_path};
 use crate::input::mouse;
+use crate::model::cache_link::Cacher;
 use crate::model::extras::{self, Read};
 use crate::model::history_link::Recorder;
 use crate::model::{outside, snapshot};
@@ -81,6 +82,7 @@ where
         debug: debug_on,
         home,
         history,
+        cache,
         types,
         local,
         read_only,
@@ -98,11 +100,13 @@ where
         debug::toggle(&mut app);
     }
     let mut recorder = Recorder::new(history);
+    let mut cacher = Cacher::new(cache);
     let mut pacing = Pacing::new(app.size_mode);
     loop {
         let history_changed = recorder.poll(&mut app, engine);
+        let cache_changed = cacher.poll(&mut app, engine);
         let outside_changed = app.outside.poll();
-        if history_changed || outside_changed {
+        if history_changed || cache_changed || outside_changed {
             pacing.input_dirty = true;
         }
         let now = Instant::now();
@@ -121,7 +125,7 @@ where
             return Ok(());
         }
 
-        let wake = pacing.wake(&app, &recorder, now);
+        let wake = pacing.wake(&app, recorder.busy() || cacher.busy(), now);
         select! {
             recv(input) -> ev => match ev {
                 Ok(Event::Key(k)) => {
@@ -305,8 +309,9 @@ impl Pacing {
         self.input_dirty = false;
     }
 
-    /// How long to wait for input or engine changes before the next timed frame.
-    fn wake(&self, app: &App, recorder: &Recorder, now: Instant) -> Duration {
+    /// How long to wait for input or engine changes before the next timed frame; `polling`
+    /// while the history or the cache has more to take in.
+    fn wake(&self, app: &App, polling: bool, now: Instant) -> Duration {
         let mut wake = IDLE;
         let since = |t: Option<Instant>| t.map_or(Duration::ZERO, |t| now.duration_since(t));
         if self.data_dirty {
@@ -321,7 +326,7 @@ impl Pacing {
         if let Some(t) = app.motion.next_frame_at() {
             wake = wake.min(t.saturating_duration_since(now));
         }
-        if recorder.busy() || app.outside.pending() {
+        if polling || app.outside.pending() {
             wake = wake.min(DATA_FRAME);
         }
         if app.extras_stale() {
@@ -366,7 +371,8 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
     }
 }
 
-/// The header spinner and clock move while the engine is busy; nothing animates otherwise.
+/// The header spinner and clock move while the engine is busy or the cached scan is read or
+/// refreshed; nothing animates otherwise.
 fn spinners_visible(app: &App) -> bool {
-    app.snap.busy || dupes::running(app)
+    app.snap.busy || app.cached.is_some() || dupes::running(app)
 }

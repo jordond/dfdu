@@ -45,6 +45,7 @@ use ratatui::crossterm::execute;
 pub use app::{App, Effect, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Overlay};
 pub use features::debug::summary as debug_summary;
 pub use features::picker::{Picked, Picker};
+pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
 pub use model::outside::{
     NotEntered, home_dir, linked_note, not_entered, not_entered_lines, tilde,
@@ -77,6 +78,14 @@ pub enum Source {
     Resumed {
         tree: dfdu_tree::Tree,
         journal: Option<JournalPosition>,
+        start: StartLocal,
+    },
+    /// A directory on this host, as [`Source::Local`], opened from its cached scan in `slot`
+    /// when there is one (shown at once and brought up to date as [`Source::Resumed`] is), and
+    /// whose complete scans are saved there.
+    Cached {
+        path: PathBuf,
+        slot: dfdu_store::cache::Slot,
         start: StartLocal,
     },
     /// A scan read from a file, browsed read-only.
@@ -122,6 +131,9 @@ pub struct UiOptions {
     pub home: Option<PathBuf>,
     /// The scan history this browser reads and adds to.
     pub history: Option<HistoryLink>,
+    /// The scan cache: what the browser opens (it sends the first scan or resume itself) and
+    /// saves complete scans to.
+    pub cache: Option<CacheLink>,
     /// The file type filter to start with.
     pub types: dfdu_tree::filetype::TypeFilter,
     /// The scan is of this machine's disks: mounts it did not enter and links out of it are
@@ -146,6 +158,7 @@ impl UiOptions {
             debug: false,
             home: None,
             history: None,
+            cache: None,
             types: dfdu_tree::filetype::TypeFilter::default(),
             local: false,
             read_only: false,
@@ -191,6 +204,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         // Another host's paths are not below this one's home directory.
         home: setup::home_dir().filter(|_| local),
         history,
+        cache: None,
         types: ui.types.clone(),
         local,
         read_only,
@@ -231,6 +245,22 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             };
             let history = link(&path, &job, &opts.engine);
             return browse(&mut terminal, engine, ui_opts(theme, history, true));
+        }
+        Source::Cached { path, slot, start } => {
+            let root = slot.key.root().to_path_buf();
+            let (engine, job) = start(&path, opts.engine.clone());
+            let history = link(&root, &job, &opts.engine);
+            let cache = CacheLink {
+                slot,
+                path,
+                job,
+                save: !read_only,
+            };
+            let ui = UiOptions {
+                cache: Some(cache),
+                ..ui_opts(theme, history, true)
+            };
+            return browse(&mut terminal, engine, ui);
         }
         Source::Local { path, start } => (path, start),
     };

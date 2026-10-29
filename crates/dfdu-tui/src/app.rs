@@ -158,6 +158,8 @@ pub struct App {
     pub home: Option<PathBuf>,
     /// The sizes of the last recorded scan of this root, to show what grew since.
     pub growth: Option<std::sync::Arc<dfdu_store::history::Growth>>,
+    /// The scan shown is the cached one, being read or brought up to date.
+    pub cached: Option<crate::model::cache_link::Cached>,
     /// Mounts the scan did not enter and links out of it, as looked up (`outside`).
     pub outside: crate::model::outside::Outside,
     /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
@@ -263,6 +265,7 @@ impl App {
             areas: Areas::default(),
             home: None,
             growth: None,
+            cached: None,
             outside: crate::model::outside::Outside::default(),
             sort_gen: 0,
             read_only: false,
