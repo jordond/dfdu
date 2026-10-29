@@ -231,6 +231,27 @@ fn details_follow_the_cleanup_selection() {
     assert!(app.extras.details.facts.is_none());
 }
 
+/// With rules but nothing they match, the view says what it looks for and how to go back.
+#[test]
+fn no_matches_have_an_empty_state() {
+    let mut fx = crate::features::treemap::tests::tree();
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    fx.m.rules = Some(std::sync::Arc::new(dfdu_rules::builtin(&env).0));
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    assert!(active(&app) && app.extras.cleanup.items.is_empty());
+    let frame = render(&mut app, t0, 100, 20);
+    assert!(frame.contains("╭ Cleanup ─"), "{frame}");
+    assert!(frame.contains("Esc  back to Files"), "{frame}");
+    assert!(
+        frame.contains("Nothing matched yet") || frame.contains("Nothing the rules know"),
+        "{frame}"
+    );
+}
+
 /// On a short terminal the rule text gives way so that the list still shows rows.
 #[test]
 fn a_short_terminal_still_shows_the_groups() {

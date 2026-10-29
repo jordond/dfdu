@@ -16,13 +16,14 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Keep, Row, kept, live, open, rows};
+use super::{Keep, Row, kept, live, min_size, open, rows};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, Tally, Tick};
 use crate::model::outside::tilde;
 use crate::theme::{Theme, count, human, truncate_middle};
 use crate::view::columns::cursor;
+use crate::view::empty::{self, Empty};
 
 /// `path` relative to `root`, or whole when it is not below it.
 fn shown(path: &Path, root: &Path) -> PathBuf {
@@ -145,12 +146,55 @@ fn keep_line(t: &Theme, keep: Keep) -> Line<'static> {
     Line::from(spans)
 }
 
+/// What the view does, the first line of its empty states.
+fn what_it_does() -> String {
+    format!(
+        "Finds files with identical contents anywhere in the scan (files of {} or more).",
+        human(min_size())
+    )
+}
+
+/// Before anything was compared: how many files a comparison would read, and the key that
+/// starts it.
+fn not_compared(f: &mut Frame, app: &App, area: Rect) {
+    let back = (first_key(Action::Close), "back to Files");
+    let (why, keys) = match (app.snap.busy, app.dupes.candidates) {
+        _ if !app.outside.local => (
+            "It reads this machine's files, and this scan is remote or from a file: there is \
+             nothing here to compare."
+                .to_owned(),
+            vec![back],
+        ),
+        (true, _) => (
+            "The scan is still running: compare once it is done.".to_owned(),
+            vec![back],
+        ),
+        (false, None) => ("Counting the files to compare…".to_owned(), vec![back]),
+        (false, Some(0)) => (
+            "No two files that large have the same size: there is nothing to compare.".into(),
+            vec![back],
+        ),
+        (false, Some(n)) => (
+            format!(
+                "{} files share their size with another. Nothing is compared until you ask: \
+                 comparing reads the files and can take a while.",
+                count(n as u64)
+            ),
+            vec![(first_key(Action::Enter), "compare now"), back],
+        ),
+    };
+    let e = Empty {
+        title: "Duplicates",
+        text: vec![what_it_does(), why],
+        keys,
+    };
+    empty::draw(f, &app.theme, area, &e);
+}
+
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let t = app.theme.clone();
     let Some(run) = app.dupes.run.clone() else {
-        let again = first_key(Action::CompareAgain);
-        let msg = format!(" duplicates: not compared yet ({again} compares the files of the scan)");
-        f.render_widget(Paragraph::new(Line::styled(msg, t.fg_dim)), area);
+        not_compared(f, app, area);
         return;
     };
     let Some(found) = run.result.get() else {
@@ -161,6 +205,24 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let rows = rows(app);
+    if rows.is_empty() {
+        let e = Empty {
+            title: "Duplicates",
+            text: vec![
+                what_it_does(),
+                format!(
+                    "No duplicates among the {} files compared.",
+                    count(found.compared)
+                ),
+            ],
+            keys: vec![
+                (first_key(Action::CompareAgain), "compare again"),
+                (first_key(Action::Close), "back to Files"),
+            ],
+        };
+        empty::draw(f, &t, area, &e);
+        return;
+    }
     let (sum, groups) = tally(app, found);
     let mut extra = format!(
         " · {} group{}",
@@ -201,9 +263,6 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         w = review::CHECK_WIDTH
     );
     let mut lines = vec![Line::styled(headings, t.fg_dim)];
-    if rows.is_empty() {
-        lines.push(Line::raw(" no duplicates"));
-    }
     // The shared directory and the rest of each path, for the groups on screen.
     let mut paths: Vec<Option<GroupPaths>> = vec![None; found.groups.len()];
     for row in rows.iter().skip(scroll).take(fit) {

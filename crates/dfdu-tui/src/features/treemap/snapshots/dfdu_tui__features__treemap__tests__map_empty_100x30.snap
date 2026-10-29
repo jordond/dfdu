@@ -1,0 +1,35 @@
+---
+source: crates/dfdu-tui/src/features/treemap/tests.rs
+assertion_line: 307
+expression: frame
+---
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
+ /r                                                                   0 items · 0 B   size ↓ · disk
+ colour: top folder  ╱ cleanup candidate                                               depth 1  + -
+
+
+
+
+
+
+
+
+            ╭ Map ─────────────────────────────────────────────────────────────────────╮
+            │ Shows this directory as tiles sized by what they hold; inside the        │
+            │ selected tile, what Enter opens.                                         │
+            │                                                                          │
+            │ This directory is empty.                                                 │
+            │                                                                          │
+            │ ←  parent directory      Esc  back to Files                              │
+            ╰──────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  d trash  ? help  q quit  [ ] views

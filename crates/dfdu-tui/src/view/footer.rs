@@ -153,6 +153,19 @@ fn offered_now(app: &App) -> Vec<Hint> {
             views,
         ];
     }
+    if crate::features::dupes::active(app) && !crate::features::dupes::compared(app) {
+        let mut hints = vec![
+            hint(first_key(Action::Close), "back to Files", 1),
+            help,
+            quit,
+            views,
+        ];
+        // Only this machine's files are compared.
+        if app.outside.local {
+            hints.insert(0, hint(first_key(Action::Enter), "compare now", 0));
+        }
+        return hints;
+    }
     if crate::features::dupes::active(app) {
         return vec![
             hint(arrows.clone(), "move", 3),

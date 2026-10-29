@@ -1,13 +1,15 @@
-//! The duplicates view (`4`): files with identical contents below the scan root, found on
-//! request with [`dfdu_dupes`] once the scan is done.
+//! The Duplicates view (`4`): files with identical contents below the scan root, found on
+//! request with [`dfdu_dupes`] once the scan is done; one of the review views
+//! (`features::review`).
 //!
-//! Switching the view on starts the comparison in a thread of its own, from the candidates read
+//! Switching the view on compares nothing: it says how many files a comparison would read
+//! ([`count`]), and `Enter` (or `R`) starts one in a thread of its own, from the candidates read
 //! under the read lock ([`Effect::FindDupes`]); the view shows its progress and then the groups,
-//! the most space to free first. Marks are the list's: `Space` marks a copy, or on a group every
-//! copy but the one kept, `A` does that for every group, and `d` and `D` delete what is marked
-//! through the usual dialog, which checks each file against the scan. The copy kept is the
-//! oldest, and `K` cycles the rule ([`Keep`]); `R` compares again. Groups of APFS clones, which
-//! free nothing, are listed but `A` leaves them alone.
+//! the most space to free first, clones last and closed. Ticks are the list's marks: `Space`
+//! ticks a copy, or on a group every copy but the one kept, `A` does that for every group, and
+//! `d` and `D` delete what is ticked through the usual dialog, which checks each file against
+//! the scan. The copy kept is the oldest, and `K` cycles the rule ([`Keep`]); `R` compares
+//! again. Groups of APFS clones, which free nothing, are listed but `A` leaves them alone.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -43,6 +45,9 @@ pub struct Dupes {
     /// Groups opened or closed against their default (open, but clones closed), by index in
     /// the result; cleared by a new comparison.
     toggled: HashSet<usize>,
+    /// How many files a comparison would read, counted when the view opens before any was
+    /// asked for.
+    candidates: Option<usize>,
 }
 
 /// Which copy of a group marking leaves unmarked. Ties go to the first in path order.
@@ -136,7 +141,8 @@ pub fn groups(app: &App) -> Option<Option<usize>> {
     Some(Some(f.groups.iter().filter(|g| live(g)).count()))
 }
 
-/// Switches the view on or off. On, it starts a comparison unless one ran already.
+/// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):
+/// before that the view says how many files a comparison would read.
 pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     app.dupes.on = on;
     if !on {
@@ -145,9 +151,42 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     crate::features::treemap::show(app, false);
     crate::features::cleanup::show(app, false);
     if app.dupes.run.is_none() {
-        return start(app);
+        app.dupes.candidates = None;
     }
     Vec::new()
+}
+
+/// A comparison was asked for: it runs or it is done.
+pub fn compared(app: &App) -> bool {
+    app.dupes.run.is_some()
+}
+
+/// The view waits to be asked to compare, and the files to compare are not counted yet.
+fn wants_count(app: &App) -> bool {
+    app.dupes.on
+        && app.outside.local
+        && app.dupes.run.is_none()
+        && app.dupes.candidates.is_none()
+        && !app.snap.busy
+}
+
+/// Under the read lock, while the view waits to be asked: how many files a comparison would
+/// read. A walk of the scan, once per opening.
+pub fn count(m: &Model, app: &App) -> Option<usize> {
+    if !wants_count(app) {
+        return None;
+    }
+    Some(match m.tree.roots().next() {
+        Some(r) => dfdu_dupes::candidates(&m.tree, r, min_size()).len(),
+        None => 0,
+    })
+}
+
+/// Takes in what [`count`] found.
+pub fn apply(app: &mut App) {
+    if let Some(n) = app.extras.dupe_candidates.take() {
+        app.dupes.candidates = Some(n);
+    }
 }
 
 fn start(app: &mut App) -> Vec<Effect> {
@@ -196,15 +235,17 @@ pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
     }
 }
 
-/// The view needs a read: a result whose files have no nodes yet.
+/// The view needs a read: the files to compare are to be counted, or a result's files have no
+/// nodes yet.
 pub fn stale(app: &App) -> bool {
-    app.dupes.on
-        && found(app).is_some_and(|f| {
-            f.groups
-                .iter()
-                .flat_map(|g| &g.files)
-                .any(|c| !app.extras.dupes.contains_key(&c.path))
-        })
+    wants_count(app)
+        || app.dupes.on
+            && found(app).is_some_and(|f| {
+                f.groups
+                    .iter()
+                    .flat_map(|g| &g.files)
+                    .any(|c| !app.extras.dupes.contains_key(&c.path))
+            })
 }
 
 /// Under the read lock: the node of every file of the result, found once by path and then
@@ -338,6 +379,9 @@ pub(crate) fn selected_path(app: &App) -> Option<PathBuf> {
 }
 
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
+    if app.dupes.run.is_none() && k.code == KeyCode::Enter {
+        return Some(start(app));
+    }
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let page = app.list_height.max(1);

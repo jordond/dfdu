@@ -1,9 +1,11 @@
 //! Drawing. Works only from [`App`] and its snapshot, never from the engine model, so it runs
 //! after the read lock is released. [`draw`] lays out the screen, draws the header, the list
 //! or the treemap, and the footer (modules here, the treemap in its own), the details pane or the marks pane in its place, the debug panel and the open overlay (each in its
-//! feature's module), and last lets motion effects work on the finished buffer.
+//! feature's module), and last lets motion effects work on the finished buffer. `empty` draws
+//! the box a view shows when it has nothing to show.
 
 pub mod columns;
+pub mod empty;
 mod footer;
 mod header;
 mod list;

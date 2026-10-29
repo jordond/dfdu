@@ -26,6 +26,7 @@ use super::{ColorBy, color_shown, key_of, selected_top};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::theme::{Bars, Category, Rgb, color_rgb, count, human, percent};
+use crate::view::empty::{self, Empty};
 use crate::view::spread;
 
 /// Age bands for [`ColorBy::Age`]: their upper bound in days and name.
@@ -117,10 +118,24 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     }
     draw_legend(f, app, legend, &slots);
     if l.tiles.is_empty() {
-        f.render_widget(
-            Paragraph::new(Line::styled("  (empty)", app.theme.fg_dim)),
-            map,
-        );
+        let e = Empty {
+            title: "Map",
+            text: vec![
+                "Shows this directory as tiles sized by what they hold; inside the selected \
+                 tile, what Enter opens."
+                    .into(),
+                if app.filter.active() {
+                    "Nothing here matches the filter.".into()
+                } else {
+                    "This directory is empty.".into()
+                },
+            ],
+            keys: vec![
+                (first_key(Action::Parent), "parent directory"),
+                (first_key(Action::Close), "back to Files"),
+            ],
+        };
+        empty::draw(f, &app.theme, map, &e);
         return;
     }
     let mut colors = Colors::new(app.theme.level());

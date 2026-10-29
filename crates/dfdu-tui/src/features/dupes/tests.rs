@@ -42,8 +42,10 @@ fn duplicates_are_found_marked_and_shown() {
     app.target = target;
     app.refresh(snap, t0);
 
-    // Another machine's tree (remote or from a file) is not compared with this one's files.
+    // Nothing is compared until asked, and another machine's tree (remote or from a file) is
+    // not compared with this one's files.
     assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
+    assert!(app.key(press(KeyCode::Enter), t0).is_empty());
     assert!(
         app.status
             .as_deref()
@@ -51,7 +53,7 @@ fn duplicates_are_found_marked_and_shown() {
             .contains("this machine's files")
     );
     app.outside.local = true;
-    let fx = app.key(press(KeyCode::Char('4')), t0);
+    let fx = app.key(press(KeyCode::Enter), t0);
     assert!(matches!(fx[..], [Effect::FindDupes]));
     let (root, cands) = engine.read(|m| {
         let r = m.tree.roots().next().unwrap();
@@ -269,6 +271,50 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
         let name = expect.rsplit('/').next().unwrap();
         assert!(row(&out, name).contains(" KEEP "), "{out}");
     }
+}
+
+/// Before comparing, the view says what it does and how many files it would read, and
+/// compares on `Enter`; `Esc` goes back to Files instead.
+#[test]
+fn nothing_is_compared_until_asked() {
+    use crate::features::treemap::tests::{Fixture, sync};
+    let (mut fx, root) = Fixture::new();
+    let big = 2 * min_size();
+    for name in ["a.iso", "b.iso", "c.iso"] {
+        fx.file(root, name, big);
+    }
+    fx.file(root, "other.bin", big + 1);
+    fx.m.tree.dir_mut(root).expect("root").state = dfdu_tree::DirState::Complete;
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.snap.busy = false;
+    // A tree from another machine (or a file) counts nothing and offers no comparison.
+    assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
+    assert!(!stale(&app));
+    let frame = render(&mut app, t0, 100, 20);
+    assert!(frame.contains("this scan is remote or from"), "{frame}");
+    assert!(!frame.contains("compare now"), "{frame}");
+    app.key(press(KeyCode::Esc), t0);
+    app.outside.local = true;
+    assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
+    assert!(stale(&app), "the files to compare are counted");
+    sync(&mut app, &fx.m, t0);
+    app.snap.busy = false;
+    assert_eq!(app.dupes.candidates, Some(3));
+    let frame = render(&mut app, t0, 100, 20);
+    assert!(frame.contains("╭ Duplicates ─"), "{frame}");
+    assert!(frame.contains("3 files share their size"), "{frame}");
+    assert!(
+        frame.contains("Enter  compare now      Esc  back to Files"),
+        "{frame}"
+    );
+    insta::assert_snapshot!("dupes_not_compared_100x20", frame);
+    app.key(press(KeyCode::Esc), t0);
+    assert!(!active(&app));
+    app.key(press(KeyCode::Char('4')), t0);
+    let fx_out = app.key(press(KeyCode::Enter), t0);
+    assert!(matches!(fx_out[..], [Effect::FindDupes]), "{fx_out:?}");
 }
 
 #[test]

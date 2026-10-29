@@ -18,13 +18,13 @@ pub(crate) struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> (Self, Ix) {
+    pub(crate) fn new() -> (Self, Ix) {
         let mut m = Model::default();
         let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
         (Fixture { m, ino: 1 }, root)
     }
 
-    fn dir(&mut self, parent: Ix, name: &str) -> Ix {
+    pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
         self.ino += 1;
         let d = self
             .m
@@ -36,7 +36,7 @@ impl Fixture {
         d
     }
 
-    fn file(&mut self, parent: Ix, name: &str, size: u64) {
+    pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) {
         self.ino += 1;
         let f = self.m.tree.add_file(
             parent,
@@ -52,7 +52,7 @@ impl Fixture {
 
 /// `/r` with `big/` (`a/` with two files, and `b`), `mid/` (three files), `small` and dotfile
 /// `.hid`.
-fn tree() -> Fixture {
+pub(crate) fn tree() -> Fixture {
     let (mut fx, root) = Fixture::new();
     fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
     let big = fx.dir(root, "big");
@@ -292,6 +292,22 @@ fn labels_stay_inside_their_tiles() {
             }
         }
     }
+}
+
+#[test]
+fn an_empty_directory_has_an_empty_state() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    app.refresh(snap_without_totals(Vec::new(), 1), t0);
+    app.key(press(KeyCode::Char('2')), t0);
+    let frame = render(&mut app, t0, 100, 30);
+    assert!(frame.contains("╭ Map ─"), "{frame}");
+    assert!(frame.contains("This directory is empty."), "{frame}");
+    assert!(
+        frame.contains("←  parent directory      Esc  back to Files"),
+        "{frame}"
+    );
+    insta::assert_snapshot!("map_empty_100x30", frame);
 }
 
 #[test]

@@ -22,6 +22,7 @@ use crate::model::outside::tilde;
 use crate::theme::{count, human};
 use crate::view::cells;
 use crate::view::columns::cursor;
+use crate::view::empty::{self, Empty};
 
 /// Before an item's checkbox, under its category's name.
 const ITEM_INDENT: usize = 7;
@@ -49,6 +50,24 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let rows = rows(app);
+    if rows.is_empty() {
+        let e = Empty {
+            title: "Cleanup",
+            text: vec![
+                "Lists what the rules recognise in the whole scan (caches, build output, \
+                 dependencies), by how safe it is to delete."
+                    .into(),
+                if app.snap.busy {
+                    "Nothing matched yet; the scan is still running.".into()
+                } else {
+                    "Nothing the rules know about was found.".into()
+                },
+            ],
+            keys: vec![(first_key(Action::Close), "back to Files")],
+        };
+        empty::draw(f, &app.theme, area, &e);
+        return;
+    }
     let mut head = vec![review::summary(app, tally(app), "items", "", area.width)];
     head.extend(notes(app));
     let head_h = cells(head.len()).min(area.height);
@@ -73,16 +92,6 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         indent = ITEM_INDENT + CHECK_WIDTH
     );
     let mut lines = vec![Line::styled(headings, t.fg_dim)];
-    if rows.is_empty() {
-        lines.push(Line::styled(
-            if app.snap.busy {
-                " nothing matched yet; still scanning"
-            } else {
-                " nothing the rules know about was found"
-            },
-            t.fg_dim,
-        ));
-    }
     let now = now_secs();
     let width = usize::from(list.width);
     let shared = review::shared_prefix(

@@ -22,6 +22,8 @@ pub struct Extras {
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
     /// A new walk for the largest files below, when one was due.
     pub largest: Option<largest::Info>,
+    /// How many files a comparison of duplicates would read, when they were counted.
+    pub dupe_candidates: Option<usize>,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
@@ -36,6 +38,7 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
         cleanup: cleanup::read(m, app),
         dupes: crate::features::dupes::read(m, app),
         largest: largest::read(m, app),
+        dupe_candidates: crate::features::dupes::count(m, app),
     }
 }
 
@@ -47,6 +50,7 @@ pub fn apply(app: &mut App, extras: Extras) {
     details::apply(app);
     cleanup::apply(app);
     largest::apply(app);
+    crate::features::dupes::apply(app);
 }
 
 /// What the run loop reads from the model before a frame.

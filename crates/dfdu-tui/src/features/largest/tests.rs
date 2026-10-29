@@ -105,6 +105,18 @@ fn lists_the_largest_files_below_with_their_paths_relative() {
 }
 
 #[test]
+fn a_directory_without_files_has_an_empty_state() {
+    let mut m = Model::default();
+    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    add_dir(&mut m, root, "empty", 2);
+    let (mut app, t0) = opened(&m);
+    let frame = render(&mut app, t0, 100, 20);
+    assert!(frame.contains("╭ Largest ─"), "{frame}");
+    assert!(frame.contains("No files below /r."), "{frame}");
+    assert!(frame.contains("parent directory"), "{frame}");
+}
+
+#[test]
 fn enter_goes_to_the_file_in_its_directory() {
     let m = model();
     let (mut app, t0) = opened(&m);

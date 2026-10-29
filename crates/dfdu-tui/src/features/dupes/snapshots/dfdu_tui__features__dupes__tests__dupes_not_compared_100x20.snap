@@ -1,0 +1,25 @@
+---
+source: crates/dfdu-tui/src/features/dupes/tests.rs
+assertion_line: 293
+expression: frame
+---
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                        done in 00:00
+ whole scan: /r · files of 1.0 MiB or more                        5 items · 8.0 MiB   size ↓ · disk
+
+
+
+
+            ╭ Duplicates ──────────────────────────────────────────────────────────────╮
+            │ Finds files with identical contents anywhere in the scan (files of 1.0   │
+            │ MiB or more).                                                            │
+            │                                                                          │
+            │ 3 files share their size with another. Nothing is compared until you     │
+            │ ask: comparing reads the files and can take a while.                     │
+            │                                                                          │
+            │ Enter  compare now      Esc  back to Files                               │
+            ╰──────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+ Enter compare now  Esc back to Files  ? help  q quit  [ ] views

@@ -11,11 +11,13 @@ use ratatui::widgets::Paragraph;
 
 use super::File;
 use crate::app::App;
+use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, CHECK_WIDTH, Tally, Tick};
 use crate::model::outside::tilde;
 use crate::theme::{bar, count, percent, ratio, truncate_middle};
 use crate::view::cells;
 use crate::view::columns::{self, Col, ColSet, cursor, left, right};
+use crate::view::empty::{self, Empty};
 
 /// Rows above the files: the summary bar and the column names.
 const HEAD: usize = 2;
@@ -34,14 +36,25 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let (t, l) = (&app.theme, &app.largest);
     let dir = tilde(&app.snap.dir_path, app.home.as_deref());
     let width = area.width;
-    if l.walked.is_none() || l.files.is_empty() {
-        let text = if l.walked.is_none() {
-            format!(" reading the files below {dir}…")
-        } else {
-            format!(" no files below {dir}")
-        };
+    if l.walked.is_none() {
+        let text = format!(" reading the files below {dir}…");
         let text = truncate_middle(&text, usize::from(width));
         f.render_widget(Paragraph::new(Line::styled(text, t.fg_dim)), area);
+        return;
+    }
+    if l.files.is_empty() {
+        let e = Empty {
+            title: "Largest",
+            text: vec![
+                "Lists the largest files anywhere below this directory, however deep.".into(),
+                format!("No files below {dir}."),
+            ],
+            keys: vec![
+                (first_key(Action::Parent), "parent directory"),
+                (first_key(Action::Close), "back to Files"),
+            ],
+        };
+        empty::draw(f, t, area, &e);
         return;
     }
     let mut tally = Tally::default();
