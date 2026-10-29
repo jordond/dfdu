@@ -153,3 +153,92 @@ fn quick_or_read_only_scans_are_not_saved() {
         e.shutdown(Duration::from_millis(200));
     }
 }
+
+/// Measures opening a cached scan of about a million entries: how long the first poll and the
+/// first frame take on the UI thread, when the cached tree is shown, and the longest poll.
+/// `cargo test --release -p dfdu-tui --lib -- --ignored --nocapture measure_opening`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn measure_opening_a_million() {
+    use dfdu_tree::{Kind, Meta, Tree};
+    let tmp = tempfile::tempdir().unwrap();
+    let link = link(tmp.path());
+    let root = link.slot.key.root();
+    let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
+    let mut t = Tree::new();
+    let r = t.new_root(root.as_os_str().as_encoded_bytes(), &meta, true);
+    if let Some(d) = t.dir_mut(r) {
+        d.state = DirState::Complete;
+    }
+    let mut ino = 10;
+    for d in 0..10_000 {
+        ino += 1;
+        let dir = t.add_dir_flagged(
+            r,
+            format!("dir-{d:05}").as_bytes(),
+            &Meta { ino, ..meta },
+            0,
+        );
+        if let Some(x) = t.dir_mut(dir) {
+            x.state = DirState::Complete;
+        }
+        let own = t.own(dir);
+        t.propagate_add(r, &own);
+        for f in 0..100 {
+            ino += 1;
+            let m = Meta {
+                kind: Kind::File,
+                apparent: f * 1000,
+                alloc: 4096,
+                ino,
+                nlink: 1,
+                ..meta
+            };
+            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
+            let own = t.own(x);
+            t.propagate_add(dir, &own);
+        }
+    }
+    let now = cache::now();
+    let header = Header {
+        tool_version: "test".into(),
+        written: now - 3_600,
+        cross_mounts: false,
+        network: false,
+        journal: dfdu_engine::journal_position(root),
+        last_full_scan: now - 3_600,
+        scan_ms: 60_000,
+    };
+    let saved = link
+        .slot
+        .save(&header, |f| f(&t), &AtomicBool::new(false))
+        .unwrap();
+    drop(t);
+    let e = engine();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    let mut c = Cacher::new(Some(link.clone()));
+    c.poll(&mut app, &e);
+    let first_poll = t0.elapsed();
+    let _ = crate::tests::render_buffer(&mut app, Instant::now(), 100, 30);
+    let first_frame = t0.elapsed();
+    let mut longest = Duration::ZERO;
+    let mut shown = None;
+    while app.cached.is_some() {
+        assert!(t0.elapsed() < Duration::from_secs(60), "timed out");
+        let p = Instant::now();
+        c.poll(&mut app, &e);
+        longest = longest.max(p.elapsed());
+        if shown.is_none() && matches!(app.cached, Some(Cached::Refreshing { .. })) {
+            shown = Some(t0.elapsed());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    eprintln!(
+        "{saved:?}\nfirst poll {first_poll:?}, first frame {first_frame:?}, cached tree shown \
+         {shown:?}, refreshed {:?}, longest poll {longest:?}",
+        t0.elapsed()
+    );
+    drop(c);
+    e.shutdown(Duration::from_millis(500));
+}

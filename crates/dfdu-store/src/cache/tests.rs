@@ -334,3 +334,67 @@ fn the_cache_turns_off_by_environment() {
         assert!(!is_off(std::ffi::OsStr::new(v)), "{v}");
     }
 }
+
+/// Measures a save and a load of about a million entries: how long the tree is held still at
+/// once, and how long each takes. `cargo test --release -p dfdu-store -- --ignored --nocapture
+/// measure_a_million`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn measure_a_million() {
+    let (_tmp, _cache, slot) = setup();
+    let mut t = Tree::new();
+    let root_path = slot.key.root();
+    let meta = Meta::from_metadata(&fs::metadata(root_path).unwrap());
+    let r = t.new_root(root_path.as_os_str().as_encoded_bytes(), &meta, true);
+    let mut ino = 10u64;
+    for d in 0..10_000u64 {
+        ino += 1;
+        let dm = Meta { ino, ..meta };
+        let dir = t.add_dir_flagged(r, format!("dir-{d:05}").as_bytes(), &dm, 0);
+        let own = t.own(dir);
+        t.propagate_add(r, &own);
+        for f in 0..100u64 {
+            ino += 1;
+            let m = Meta {
+                kind: Kind::File,
+                apparent: f * 1000,
+                alloc: 4096,
+                ino,
+                nlink: 1,
+                ..meta
+            };
+            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
+            let own = t.own(x);
+            t.propagate_add(dir, &own);
+        }
+    }
+    let lock = std::sync::RwLock::new(t);
+    let mut holds = vec![];
+    let t0 = Instant::now();
+    let saved = slot
+        .save(
+            &header(now(), now()),
+            |f| {
+                let g = lock.read().unwrap();
+                let h = Instant::now();
+                f(&g);
+                holds.push(h.elapsed());
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let save = t0.elapsed();
+    holds.sort();
+    let p = |q: usize| holds[(holds.len() - 1) * q / 100];
+    let t0 = Instant::now();
+    let hit = slot.load(now()).unwrap().unwrap();
+    let load = t0.elapsed();
+    eprintln!(
+        "{saved:?}\nsave {save:?} in {} steps: hold p50 {:?} p99 {:?} max {:?}\nload {load:?}, {} entries",
+        holds.len(),
+        p(50),
+        p(99),
+        p(100),
+        hit.loaded.entries
+    );
+}
