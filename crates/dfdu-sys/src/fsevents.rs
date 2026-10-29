@@ -371,11 +371,19 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Held by each test: the last one checks that no sync directory of this process is left,
+    /// which another test's call in flight would break.
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
     /// Writes below a directory after an event id show up as changes of the directories they
     /// were made in; nothing before the id does.
     #[test]
     fn changes_after_an_id_are_reported() {
+        let _one = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("a/b")).unwrap();
@@ -409,6 +417,9 @@ mod tests {
     /// A change made just before the call is reported, without waiting or asking again.
     #[test]
     fn a_change_just_before_the_call_is_reported() {
+        let _one = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         for i in 0..5 {

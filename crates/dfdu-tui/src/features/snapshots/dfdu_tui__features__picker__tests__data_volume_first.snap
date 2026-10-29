@@ -1,0 +1,10 @@
+---
+source: crates/dfdu-tui/src/features/picker.rs
+expression: out
+---
+ dfdu  choose a disk to scan
+ mounted on               type           size       used       free
+ /System/Volumes/Data     apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  Data  shares space with /
+ /                        apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  System (read-only)  shares space with /System/Volumes/Data
+
+ ↑↓ move  Enter scan  q quit

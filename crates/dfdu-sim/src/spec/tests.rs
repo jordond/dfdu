@@ -23,19 +23,19 @@ fn a_seed_gives_the_same_draws() {
 /// and absent entries start out removed.
 #[test]
 fn the_builder_counts_links_and_records_parents() {
-    let mut b = SpecBuilder::new();
-    let d = b.dir(ROOT, "d");
-    let f = b.file(d, "f", 5000);
-    let g = b.link(ROOT, "g", f);
-    let h = b.link(d, "h", f);
-    let single = b.file(ROOT, "single", 1);
-    let gone = b.file(d, "gone", 1);
-    b.absent(gone);
-    let spec = b.build();
+    let mut sb = SpecBuilder::new();
+    let d = sb.dir(ROOT, "d");
+    let f = sb.file(d, "f", 5000);
+    let g = sb.link(ROOT, "g", f);
+    let h = sb.link(d, "h", f);
+    let single = sb.file(ROOT, "single", 1);
+    let gone = sb.file(d, "gone", 1);
+    sb.absent(gone);
+    let spec = sb.build();
     for n in [f, g, h] {
-        let m = spec.nodes[n as usize].meta;
+        let meta = spec.nodes[n as usize].meta;
         assert_eq!(
-            (m.ino, m.nlink, m.apparent, m.alloc),
+            (meta.ino, meta.nlink, meta.apparent, meta.alloc),
             (spec.nodes[f as usize].meta.ino, 3, 5000, 8192)
         );
     }
@@ -56,14 +56,14 @@ fn the_builder_counts_links_and_records_parents() {
 /// and a removed entry are not for the deleter.
 #[test]
 fn deleting_takes_the_subtree_and_spares_faulted_listings() {
-    let mut b = SpecBuilder::new();
-    let d = b.dir(ROOT, "d");
-    let inner = b.dir(d, "inner");
-    let f = b.file(inner, "f", 1);
-    let faulted = b.dir(ROOT, "faulted");
-    let in_faulted = b.file(faulted, "x", 1);
-    b.fault(faulted, Fault::Eacces);
-    let spec = b.build();
+    let mut sb = SpecBuilder::new();
+    let d = sb.dir(ROOT, "d");
+    let inner = sb.dir(d, "inner");
+    let f = sb.file(inner, "f", 1);
+    let faulted = sb.dir(ROOT, "faulted");
+    let in_faulted = sb.file(faulted, "x", 1);
+    sb.fault(faulted, Fault::Eacces);
+    let spec = sb.build();
     assert!(spec.deletable(d) && spec.deletable(f) && spec.deletable(faulted));
     assert!(!spec.deletable(ROOT));
     assert!(!spec.deletable(in_faulted));

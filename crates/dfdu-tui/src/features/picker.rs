@@ -1,10 +1,11 @@
 //! The disk picker (`dfdu --disks`): the mounted filesystems with their usage; the chosen one
-//! is scanned.
+//! is scanned. A macOS data volume comes first, chosen to begin with: the system volume shows
+//! its files only through firmlinks it does not descend.
 
 use std::io;
 use std::path::PathBuf;
 
-use dfdu_sys::{Disk, FsClass};
+use dfdu_sys::{Disk, FsClass, Role};
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
@@ -26,7 +27,8 @@ pub enum Picked {
 
 impl Picker {
     #[must_use]
-    pub fn new(disks: Vec<Disk>) -> Self {
+    pub fn new(mut disks: Vec<Disk>) -> Self {
+        disks.sort_by_key(|d| d.role != Some(Role::Data));
         Picker {
             disks,
             cursor: 0,
@@ -149,10 +151,24 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
     if d.class == FsClass::Network {
         spans.push(Span::styled("  network", t.fg_dim));
     }
+    if let Some(role) = d.role {
+        spans.push(Span::styled(format!("  {}", role.label()), t.fg_dim));
+    }
     if !d.also_at.is_empty() {
         let also: Vec<String> = d.also_at.iter().map(|p| p.display().to_string()).collect();
         spans.push(Span::styled(
             format!("  also at {}", also.join(", ")),
+            t.fg_dim,
+        ));
+    }
+    if !d.shares_space_with.is_empty() {
+        let with: Vec<String> = d
+            .shares_space_with
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        spans.push(Span::styled(
+            format!("  shares space with {}", with.join(", ")),
             t.fg_dim,
         ));
     }
@@ -174,6 +190,56 @@ pub fn pick(terminal: &mut ratatui::DefaultTerminal, theme: &Theme) -> io::Resul
             if let Some(done) = p.key(k.code) {
                 return Ok(done);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dfdu_sys::{Disk, FsClass, Role, Space};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::KeyCode;
+
+    use super::{Picked, Picker, draw};
+    use crate::theme::Theme;
+
+    fn apfs(at: &str, role: Option<Role>, with: &str) -> Disk {
+        let gib = 1u64 << 30;
+        Disk {
+            mount_point: at.into(),
+            also_at: vec![],
+            fstype: "apfs".into(),
+            source: String::new(),
+            class: FsClass::Local,
+            space: Some(Space {
+                total: 926 * gib,
+                used: 822 * gib,
+                available: 104 * gib,
+            }),
+            role,
+            shares_space_with: vec![with.into()],
+        }
+    }
+
+    /// The system volume and its data volume, as `dfdu_sys::disks` lists them on macOS: the
+    /// data volume comes first and is chosen to begin with.
+    #[test]
+    fn data_volume_first() {
+        let mut p = Picker::new(vec![
+            apfs("/", Some(Role::System), "/System/Volumes/Data"),
+            apfs("/System/Volumes/Data", Some(Role::Data), "/"),
+        ]);
+        let theme = Theme::no_color();
+        let mut term = Terminal::new(TestBackend::new(160, 6)).expect("terminal");
+        term.draw(|f| draw(f, &p, &theme)).expect("draw");
+        let out = crate::tests::text(term.backend().buffer());
+        insta::assert_snapshot!("data_volume_first", out);
+        match p.key(KeyCode::Enter) {
+            Some(Picked::Scan(path)) => {
+                assert_eq!(path, std::path::Path::new("/System/Volumes/Data"));
+            }
+            _ => panic!("expected a scan of the data volume"),
         }
     }
 }

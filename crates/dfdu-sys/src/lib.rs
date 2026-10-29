@@ -12,7 +12,7 @@ mod disks;
 mod mounted;
 mod profile;
 mod storage;
-pub use disks::{DISK_TIMEOUT, Disk, Space, disks};
+pub use disks::{DISK_TIMEOUT, Disk, Role, Space, disks};
 pub use mounted::{MountInfo, mounts_at};
 pub use profile::Profile;
 pub use storage::{Storage, storage, storage_in, storage_of_mount};

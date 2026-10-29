@@ -75,7 +75,7 @@ fn an_empty_frame_is_not_written() {
     );
     fw.frame().unwrap();
     assert_eq!(fw.frames, 1);
-    assert!(fw.raw.is_empty());
+    assert_eq!(fw.raw, Vec::<u8>::new());
     assert_eq!(fw.w[4..8], 7u32.to_le_bytes(), "the raw length");
 }
 

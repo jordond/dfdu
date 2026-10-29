@@ -167,11 +167,14 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
         info.push(Span::styled(" · incomplete", t.status_warn));
     }
     if let Some((done, requested)) = s.measuring {
-        let pct = (done * 100).checked_div(requested).unwrap_or(0);
-        info.push(Span::styled(
-            format!(" · measuring shared data {pct}%"),
-            t.fg_dim,
-        ));
+        // While a scan runs, measurement can catch up with what it has asked for so far: no
+        // percentage then, as the scan asks for more.
+        let text = if done < requested {
+            format!(" · measuring shared data {}%", done * 100 / requested)
+        } else {
+            " · measuring shared data".to_string()
+        };
+        info.push(Span::styled(text, t.fg_dim));
     }
     if s.unmeasured > 0 {
         info.push(Span::styled(

@@ -313,6 +313,7 @@ impl<B: Backend> Applier<B> {
             }
             self.refresh_status(m);
         }
+        self.measure_listing(m, job, ix);
         self.dec_pending(m, job, ix);
     }
 

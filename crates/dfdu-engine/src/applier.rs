@@ -36,12 +36,13 @@ pub use native::native_argv;
 pub(crate) use native::native_req;
 
 use crate::classifier::CheckReq;
-use crate::extents::ExtentTable;
+use crate::extents::{ExtentTable, Inode};
 use crate::links::{LinkTable, Scope, VISIBLE};
 use crate::measure::MeasureReq;
 use crate::recent::Event;
 use delete::ActivePlan;
 use jobs::JobStart;
+use measure::MeasureAt;
 use undo::Undoable;
 use work::Work;
 
@@ -131,6 +132,8 @@ struct Job {
     stalled: HashMap<u32, u64>,
     submitted_seq: u64,
     phase: JobPhase,
+    /// Directories it scanned were queued for extent measurement as their listings closed.
+    measures: bool,
 }
 
 /// What the applier knows about a `DirId` of a job.
@@ -210,7 +213,8 @@ pub struct Applier<B: Backend> {
     pub read_only: bool,
     /// The tree was loaded from a file: refuse everything that would touch the filesystem.
     pub(crate) imported: bool,
-    /// Measure extents after each job.
+    /// Measure extents: each directory of a scan as its listing closes, and what is left of a
+    /// job's tree when it ends.
     pub measure: bool,
     /// Files allocating less are not measured (`MEASURE_MIN` in the engine).
     pub measure_min: u64,
@@ -219,7 +223,9 @@ pub struct Applier<B: Backend> {
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
     extent_devs: HashSet<u64>,
-    measure_stack: Vec<NodeRef>,
+    measure_stack: Vec<MeasureAt>,
+    /// The node each inode with a measurement in flight was requested for.
+    measure_awaited: HashMap<Inode, NodeRef>,
     outgoing_measure: Vec<MeasureReq>,
     /// Requests for the classifier pool, taken by the runtime after each slice.
     outgoing_checks: Vec<CheckReq>,
@@ -287,6 +293,7 @@ impl<B: Backend> Applier<B> {
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
             measure_stack: Vec::new(),
+            measure_awaited: HashMap::new(),
             outgoing_measure: Vec::new(),
             outgoing_checks: Vec::new(),
             checks: false,
@@ -336,7 +343,7 @@ impl<B: Backend> Applier<B> {
         }
         m.status.stalled = stalled;
         m.status.settling = !self.work.is_empty();
-        if self.measure_stack.is_empty() && self.measure_inflight == 0 {
+        if self.measure_idle() {
             m.status.measuring = None;
         }
     }

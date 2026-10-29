@@ -25,6 +25,31 @@ pub struct Disk {
     pub class: FsClass,
     /// `None` when the filesystem did not answer in time (a hung network mount).
     pub space: Option<Space>,
+    /// What the volume holds, where the system says (macOS).
+    pub role: Option<Role>,
+    /// Other disks listed that draw on the same space (APFS volumes of one container): the
+    /// size, use and free space shown are the container's, for each of them.
+    pub shares_space_with: Vec<PathBuf>,
+}
+
+/// What a volume holds. macOS starts from a sealed, read-only system volume and keeps
+/// everything that changes on a data volume of the same APFS container, which the system's
+/// tree reaches through firmlinks (`/Users` is `/System/Volumes/Data/Users`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Role {
+    System,
+    Data,
+}
+
+impl Role {
+    /// How the disk list names it.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Role::System => "System (read-only)",
+            Role::Data => "Data",
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -103,6 +128,8 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
             source: first.source.clone(),
             class: crate::classify_fs(&first.fstype),
             space: None,
+            role: None,
+            shares_space_with: vec![],
         };
         pending.push((disk, rx));
     }
@@ -168,6 +195,8 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
                         used: total.saturating_sub(available),
                         available,
                     }),
+                    role: None,
+                    shares_space_with: vec![],
                 }
             })
             .collect::<Vec<_>>()
@@ -178,12 +207,116 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the disk list did not answer"))?;
     out.retain(|d| d.class != FsClass::Kernel && d.space.is_some_and(|s| s.total > 0));
     out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+    #[cfg(target_os = "macos")]
+    if let Ok(volumes) = crate::macos::volumes() {
+        describe_volumes(&mut out, &volumes);
+    }
     Ok(out)
+}
+
+/// A mounted volume as it describes itself: where it is mounted, what from, and its role.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) struct Volume {
+    pub at: PathBuf,
+    /// The device (`/dev/disk3s5`; `/dev/disk3s1s1` for a snapshot of `disk3s1`).
+    pub from: String,
+    pub role: Option<Role>,
+}
+
+/// The APFS container a volume's device is part of: `disk3` for `/dev/disk3s5`.
+#[cfg(any(target_os = "macos", test))]
+fn container(dev: &str) -> Option<&str> {
+    let name = dev.strip_prefix("/dev/")?;
+    let digits = name.strip_prefix("disk")?;
+    let n = digits.bytes().take_while(u8::is_ascii_digit).count();
+    (n > 0 && digits.as_bytes().get(n) == Some(&b's')).then(|| &name[..4 + n])
+}
+
+/// Sets each disk's role, and the other disks on the same APFS container, from `volumes`.
+#[cfg(any(target_os = "macos", test))]
+fn describe_volumes(disks: &mut [Disk], volumes: &[Volume]) {
+    let of = |d: &Disk| volumes.iter().find(|v| v.at == d.mount_point);
+    let containers: Vec<Option<&str>> = disks
+        .iter()
+        .map(|d| {
+            of(d)
+                .filter(|_| d.fstype == "apfs")
+                .and_then(|v| container(&v.from))
+        })
+        .collect();
+    for i in 0..disks.len() {
+        disks[i].role = of(&disks[i]).and_then(|v| v.role);
+        let Some(c) = containers[i] else { continue };
+        let others: Vec<PathBuf> = (0..disks.len())
+            .filter(|&j| j != i && containers[j] == Some(c))
+            .map(|j| disks[j].mount_point.clone())
+            .collect();
+        disks[i].shares_space_with = others;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn disk(at: &str, fstype: &str) -> Disk {
+        Disk {
+            mount_point: at.into(),
+            also_at: vec![],
+            fstype: fstype.into(),
+            source: String::new(),
+            class: FsClass::Local,
+            space: None,
+            role: None,
+            shares_space_with: vec![],
+        }
+    }
+
+    fn volume(at: &str, from: &str, role: Option<Role>) -> Volume {
+        Volume {
+            at: at.into(),
+            from: from.into(),
+            role,
+        }
+    }
+
+    #[test]
+    fn containers_come_from_the_device_name() {
+        assert_eq!(container("/dev/disk3s5"), Some("disk3"));
+        assert_eq!(container("/dev/disk3s1s1"), Some("disk3"));
+        assert_eq!(container("/dev/disk12s2"), Some("disk12"));
+        assert_eq!(container("/dev/disk4"), None);
+        assert_eq!(container("map auto_home"), None);
+        assert_eq!(container("/dev/sda1"), None);
+    }
+
+    #[test]
+    fn apfs_volumes_of_one_container_share_space_and_keep_their_roles() {
+        let mut disks = vec![
+            disk("/", "apfs"),
+            disk("/System/Volumes/Data", "apfs"),
+            disk("/Volumes/Backup", "apfs"),
+            disk("/Volumes/USB", "msdos"),
+        ];
+        let volumes = [
+            volume("/", "/dev/disk3s1s1", Some(Role::System)),
+            volume("/System/Volumes/Data", "/dev/disk3s5", Some(Role::Data)),
+            volume("/System/Volumes/VM", "/dev/disk3s6", None),
+            volume("/Volumes/Backup", "/dev/disk5s1", None),
+            volume("/Volumes/USB", "/dev/disk6s1", None),
+        ];
+        describe_volumes(&mut disks, &volumes);
+        let roles: Vec<Option<Role>> = disks.iter().map(|d| d.role).collect();
+        assert_eq!(roles, [Some(Role::System), Some(Role::Data), None, None]);
+        assert_eq!(
+            disks[0].shares_space_with,
+            [PathBuf::from("/System/Volumes/Data")]
+        );
+        assert_eq!(disks[1].shares_space_with, [PathBuf::from("/")]);
+        let none: [PathBuf; 0] = [];
+        assert_eq!(disks[2].shares_space_with, none);
+        assert_eq!(disks[3].shares_space_with, none);
+    }
 
     #[test]
     fn lists_the_root_filesystem_once() {

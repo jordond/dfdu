@@ -60,6 +60,7 @@ impl<B: Backend> Applier<B> {
             stalled: HashMap::new(),
             submitted_seq: 0,
             phase: JobPhase::Running,
+            measures: false,
         };
         job.set_live(DirId::ROOT, m.tree.node_ref(root));
         job.submitted_seq = self.scanner_start_job(JobId(id), &path, opts);

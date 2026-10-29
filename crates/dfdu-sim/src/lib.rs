@@ -425,6 +425,64 @@ impl Sim {
         Ok(())
     }
 
+    /// Takes the applier's measurement requests into the queue, one per file so answers can
+    /// arrive in any order. A file is never asked about twice at once: a request for an inode
+    /// whose earlier request in the same round is unanswered and still names a visible node
+    /// fails the run.
+    ///
+    /// # Errors
+    ///
+    /// The duplicate request, with the seed.
+    pub fn queue_measurements(&mut self) -> Result<(), String> {
+        for r in self.applier.take_measure_requests() {
+            for f in r.files {
+                let tree = &self.model.tree;
+                if self.meas_q.iter().any(|q| {
+                    q.round == r.round
+                        && q.files[0].inode == f.inode
+                        && tree.resolve_visible(q.files[0].node).is_some()
+                }) {
+                    return Err(self.fail(format!(
+                        "{} asked to be measured again before its answer",
+                        r.dir
+                            .join(String::from_utf8_lossy(&f.name).as_ref())
+                            .display()
+                    )));
+                }
+                self.meas_q.push(MeasureReq {
+                    round: r.round,
+                    dir: r.dir.clone(),
+                    files: vec![f],
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Answers every measurement asked for, and those the answers lead to; returns how many
+    /// files were measured.
+    ///
+    /// # Errors
+    ///
+    /// When a check of the run fails; the message names the seed and what went wrong.
+    pub fn answer_measurements(&mut self) -> Result<u64, String> {
+        let mut measured = 0;
+        loop {
+            self.queue_measurements()?;
+            let Some(req) = self.meas_q.pop() else {
+                return Ok(measured);
+            };
+            let msg = self.shared.backend.measure(&req);
+            measured += u64::from(matches!(
+                msg.result,
+                dfdu_engine::MeasureResult::Measured(_)
+            ));
+            let now = self.clock.now();
+            self.applier.apply_measure(&mut self.model, msg, now);
+            self.check(" after measurement")?;
+        }
+    }
+
     /// Nothing is running, queued or in flight anywhere.
     #[must_use]
     pub fn settled(&self) -> bool {

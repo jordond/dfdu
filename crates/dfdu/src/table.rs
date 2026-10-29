@@ -350,17 +350,17 @@ mod tests {
 
     #[test]
     fn errors_inside_are_counted_apart_from_the_entry_own() {
-        let mut m = Model::default();
-        let t = &mut m.tree;
-        let r = t.new_root(b"/r", &meta(Kind::Dir, 1), true);
-        let d = t.add_dir(r, b"d", &meta(Kind::Dir, 2));
+        let mut model = Model::default();
+        let tree = &mut model.tree;
+        let r = tree.new_root(b"/r", &meta(Kind::Dir, 1), true);
+        let d = tree.add_dir(r, b"d", &meta(Kind::Dir, 2));
         for (ino, name) in [(3, b"a"), (4, b"b")] {
-            let f = t.add_file(d, name, &meta(Kind::File, ino), false, None);
-            t.set_error(f, ErrKind::PermissionDenied);
+            let f = tree.add_file(d, name, &meta(Kind::File, ino), false, None);
+            tree.set_error(f, ErrKind::PermissionDenied);
         }
-        assert_eq!(notes(&m, d), "2 errors inside");
-        m.tree.set_error(d, ErrKind::Other);
-        assert_eq!(notes(&m, d), "could not be read; 2 errors inside");
-        assert_eq!(notes(&m, r), "3 errors inside");
+        assert_eq!(notes(&model, d), "2 errors inside");
+        model.tree.set_error(d, ErrKind::Other);
+        assert_eq!(notes(&model, d), "could not be read; 2 errors inside");
+        assert_eq!(notes(&model, r), "3 errors inside");
     }
 }

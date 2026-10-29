@@ -379,6 +379,7 @@ impl<B: Backend> Applier<B> {
                 stalled: HashMap::new(),
                 submitted_seq: 0,
                 phase: JobPhase::Done,
+                measures: false,
             },
         );
         m.tree.bump_version();
@@ -393,20 +394,8 @@ impl<B: Backend> Applier<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dfdu_tree::{Kind, Meta};
-
-    fn meta(kind: Kind, ino: u64) -> Meta {
-        Meta {
-            kind,
-            apparent: 0,
-            alloc: 0,
-            mtime: 0,
-            dev: 1,
-            ino,
-            nlink: 1,
-            mount: 0,
-        }
-    }
+    use crate::test_util::meta;
+    use dfdu_tree::Kind;
 
     /// /r/{a/{b/, f}, c/}; returns the tree and r, a, b, c.
     #[expect(
@@ -415,11 +404,11 @@ mod tests {
     )]
     fn tree() -> (Tree, [Ix; 4]) {
         let mut t = Tree::new();
-        let r = t.new_root(b"/r", &meta(Kind::Dir, 1), true);
-        let a = t.add_dir(r, b"a", &meta(Kind::Dir, 2));
-        let b = t.add_dir(a, b"b", &meta(Kind::Dir, 3));
-        let c = t.add_dir(r, b"c", &meta(Kind::Dir, 4));
-        t.add_file(a, b"f", &meta(Kind::File, 5), false, None);
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+        let a = t.add_dir(r, b"a", &meta(Kind::Dir, 0, 2));
+        let b = t.add_dir(a, b"b", &meta(Kind::Dir, 0, 3));
+        let c = t.add_dir(r, b"c", &meta(Kind::Dir, 0, 4));
+        t.add_file(a, b"f", &meta(Kind::File, 0, 5), false, None);
         (t, [r, a, b, c])
     }
 

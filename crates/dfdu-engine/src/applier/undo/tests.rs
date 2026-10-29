@@ -67,5 +67,5 @@ fn what_an_undo_put_back_is_rescanned_from_the_topmost_directory() {
             .map(|j| j.target)
             .collect();
     assert_eq!(rescans, [target]);
-    assert!(r.a.rescan_paths.is_empty());
+    assert_eq!(r.a.rescan_paths, Vec::<std::path::PathBuf>::new());
 }

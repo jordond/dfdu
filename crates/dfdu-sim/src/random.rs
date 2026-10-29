@@ -1,7 +1,7 @@
 //! The random driver: one step at a time, chosen by the seed.
 
 use dfdu_clean::DeleterMsg;
-use dfdu_engine::{Command, MeasureReq, MeasureResult, Mode};
+use dfdu_engine::{Command, MeasureResult, Mode};
 use dfdu_scan::Clock;
 
 use crate::check::random_dir;
@@ -18,16 +18,7 @@ impl Sim {
     pub fn random_step(&mut self) -> Result<(), String> {
         self.report.ticks += 1;
         self.check_q.extend(self.applier.take_check_requests());
-        // One request per file, so answers can arrive in any order.
-        for r in self.applier.take_measure_requests() {
-            for f in r.files {
-                self.meas_q.push(MeasureReq {
-                    round: r.round,
-                    dir: r.dir.clone(),
-                    files: vec![f],
-                });
-            }
-        }
+        self.queue_measurements()?;
         let r = self.rng.below(100);
         match r {
             0..55 => {

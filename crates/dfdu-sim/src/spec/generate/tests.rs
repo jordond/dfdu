@@ -60,7 +60,7 @@ fn the_tree_is_well_formed() {
                 );
             }
             if node.meta.kind != Kind::Dir {
-                assert!(node.children.is_empty());
+                assert_eq!(node.children, Vec::<u32>::new());
             }
             if node.subvol.is_some() {
                 assert_eq!(node.meta.ino, 256, "seed {seed}");
@@ -155,7 +155,7 @@ fn hard_links_are_one_file() {
 #[test]
 fn rule_names_are_given_only_when_asked_for() {
     let plain = SpecConfig::default();
-    let named = SpecConfig {
+    let with_names = SpecConfig {
         rule_names: true,
         ..SpecConfig::default()
     };
@@ -180,8 +180,8 @@ fn rule_names_are_given_only_when_asked_for() {
         "{:?}",
         names(&plain)
     );
-    let named = names(&named);
+    let with_names = names(&with_names);
     for want in ["target", "Cargo.toml", "CACHEDIR.TAG"] {
-        assert!(named.contains(want), "{want}");
+        assert!(with_names.contains(want), "{want}");
     }
 }

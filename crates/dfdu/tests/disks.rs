@@ -24,4 +24,19 @@ fn lists_the_filesystems_under_a_header() {
             .any(|l| l.split_whitespace().next() == Some("/")),
         "the root filesystem is not listed:\n{out}"
     );
+    // The sealed system volume and its data volume: one container's space, shown twice.
+    #[cfg(target_os = "macos")]
+    if let Some(data) = disks
+        .iter()
+        .find(|l| l.starts_with("/System/Volumes/Data "))
+    {
+        assert!(data.contains("  Data  "), "{out}");
+        assert!(data.contains("shares space with /"), "{out}");
+        let root = disks.iter().find(|l| l.starts_with("/ ")).unwrap();
+        assert!(root.contains("System (read-only)"), "{out}");
+        assert!(
+            root.contains("shares space with /System/Volumes/Data"),
+            "{out}"
+        );
+    }
 }

@@ -49,9 +49,20 @@ pub fn run() -> ExitCode {
         if d.class == dfdu_sys::FsClass::Network {
             line += "  network";
         }
+        if let Some(role) = d.role {
+            let _ = write!(line, "  {}", role.label());
+        }
         if !d.also_at.is_empty() {
             let also: Vec<String> = d.also_at.iter().map(|p| p.display().to_string()).collect();
             let _ = write!(line, "  also at {}", also.join(", "));
+        }
+        if !d.shares_space_with.is_empty() {
+            let others: Vec<String> = d
+                .shares_space_with
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            let _ = write!(line, "  shares space with {}", others.join(", "));
         }
         outln!("{line}");
     }

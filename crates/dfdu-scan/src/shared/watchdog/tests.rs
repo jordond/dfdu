@@ -41,7 +41,7 @@ fn a_stuck_call_is_reported_once() {
     assert!(sh.abandon(JobId(1), DirId(7)));
     let rep = sh.watchdog_round(&inbox, 1400);
     assert_eq!((rep.stuck, rep.stuck_abandoned), (1, 1));
-    assert!(stalls(&inbox.take()).is_empty());
+    assert_eq!(stalls(&inbox.take()), Vec::new());
 }
 
 #[test]

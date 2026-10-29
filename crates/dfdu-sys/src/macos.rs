@@ -260,12 +260,11 @@ fn field(chars: &[libc::c_char]) -> Vec<u8> {
         .collect()
 }
 
-/// The mounted filesystems as the kernel last recorded them (`getfsstat` with `MNT_NOWAIT`):
-/// mount point and type, in mount order. No filesystem is asked, so a network mount that does
-/// not answer is listed like any other.
+/// What the kernel last recorded of each mounted filesystem (`getfsstat` with `MNT_NOWAIT`),
+/// in mount order. No filesystem is asked, so a network mount that does not answer is listed
+/// like any other.
 #[allow(unsafe_code)]
-pub(crate) fn mounted() -> io::Result<Vec<(std::path::PathBuf, String)>> {
-    use std::os::unix::ffi::OsStrExt;
+fn fsstat() -> io::Result<Vec<libc::statfs>> {
     // SAFETY: a null buffer only asks for the number of mounted filesystems.
     let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
     if n < 0 {
@@ -285,12 +284,45 @@ pub(crate) fn mounted() -> io::Result<Vec<(std::path::PathBuf, String)>> {
     };
     // SAFETY: the first `got` records (at most `cap`) were written.
     unsafe { buf.set_len(got.min(cap)) };
-    Ok(buf
+    Ok(buf)
+}
+
+/// The mounted filesystems: mount point and type, in mount order ([`fsstat`]).
+pub(crate) fn mounted() -> io::Result<Vec<(std::path::PathBuf, String)>> {
+    use std::os::unix::ffi::OsStrExt;
+    Ok(fsstat()?
         .iter()
         .map(|s| {
             let at = std::ffi::OsStr::from_bytes(&field(&s.f_mntonname)).to_owned();
             let fstype = String::from_utf8_lossy(&field(&s.f_fstypename)).into_owned();
             (at.into(), fstype)
+        })
+        .collect())
+}
+
+/// `MNT_EXT_ROOT_DATA_VOL` of `<sys/mount.h>`, in `f_flags_ext`: the data volume of the volume
+/// group the system started from.
+const MNT_EXT_ROOT_DATA_VOL: u32 = 0x1;
+
+/// The mounted volumes with their devices and roles ([`fsstat`]): the read-only root is the
+/// system volume, and the kernel marks its data volume.
+pub(crate) fn volumes() -> io::Result<Vec<crate::disks::Volume>> {
+    use std::os::unix::ffi::OsStrExt;
+    let system = (libc::MNT_ROOTFS | libc::MNT_RDONLY).cast_unsigned();
+    Ok(fsstat()?
+        .iter()
+        .map(|s| crate::disks::Volume {
+            at: std::ffi::OsStr::from_bytes(&field(&s.f_mntonname))
+                .to_owned()
+                .into(),
+            from: String::from_utf8_lossy(&field(&s.f_mntfromname)).into_owned(),
+            role: if s.f_flags & system == system {
+                Some(crate::Role::System)
+            } else if s.f_flags_ext & MNT_EXT_ROOT_DATA_VOL != 0 {
+                Some(crate::Role::Data)
+            } else {
+                None
+            },
         })
         .collect())
 }

@@ -48,6 +48,8 @@ pub struct DirRec {
     pub reported: bool,
     pub cut: bool,
     pub stalled: bool,
+    /// Its files were queued for extent measurement, so a walk of the subtree skips them.
+    pub measure_queued: bool,
     pub chunks_seen: u32,
     /// Chunk sequence numbers applied, for dropping duplicates: 0-63 in `seen_low`, the rest
     /// in `seen_high`, which stays unallocated for all but wide directories (a directory
@@ -72,6 +74,7 @@ impl DirRec {
             reported: false,
             cut: false,
             stalled: false,
+            measure_queued: false,
             chunks_seen: 0,
             seen_low: 0,
             seen_high: FixedBitSet::new(),

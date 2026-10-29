@@ -365,6 +365,8 @@ fn disk_picker() {
         source: String::new(),
         class,
         space,
+        role: None,
+        shares_space_with: vec![],
     };
     let mut p = crate::Picker::new(vec![
         Disk {
