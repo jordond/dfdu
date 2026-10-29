@@ -1,85 +1,105 @@
-# dfdu
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/dfdu-logo-dark.svg">
+  <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
+</picture>
 
-A disk usage browser for the terminal, written in Rust. It starts from what `ncdu` does well (a fast, keyboard-driven list of the biggest directories) and adds the things ncdu does not do: a UI that is usable while the scan is still running, parallel scanning tuned to the storage device, categories for what it finds (caches, build outputs, emulators, simulators, containers), and a cleanup view that recommends what to delete and how much space that will actually free.
+A disk usage browser for the terminal. Browse, sort and delete while the scan is still running, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
 ![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
 
+## Features
+
+- **Browse while it scans.** The list fills in and re-sorts as the scan runs. Nothing to wait for.
+- **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](docs/benchmarks.md).
+- **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](docs/rules.md) are extendable.
+- **Treemap, tree mode, duplicates and largest files**, one key away from the list.
+- **History.** Every scan is recorded, so you can ask what grew since last week.
+- **Remote.** Browse and delete on another machine over ssh.
+- **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
+- **Safe by default.** Deletes go to the Trash; permanent deletes ask you to type `delete`. `--read-only` removes the delete keys.
+
+## Compared to other tools
+
+|                              | dfdu | [ncdu](https://dev.yorhel.nl/ncdu) | [gdu](https://github.com/dundee/gdu) | [dua](https://github.com/Byron/dua-cli) | [Dust](https://github.com/bootandy/dust) |
+| ---------------------------- | :--: | :--: | :--: | :--: | :--: |
+| Interactive browser          | ✓    | ✓    | ✓    | ✓    |      |
+| Parallel scan                | ✓    | ✓    | ✓    | ✓    | ✓    |
+| Treemap                      | ✓    |      |      |      |      |
+| Cleanup recommendations      | ✓    |      |      |      |      |
+| Duplicate files              | ✓    |      |      |      |      |
+| Scan history and diffs       | ✓    |      |      |      |      |
+| Reads ncdu exports           | ✓    | ✓    | ✓    |      |      |
+
+Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](docs/benchmarks.md) have the full numbers.
+
 ## Install
 
-Release builds for macOS (Apple silicon and Intel), Linux (static musl, x86_64 and aarch64) and Windows (x86_64) are attached to each [GitHub release](https://github.com/jordond/dfdu/releases), with the man pages and completion scripts.
-
 ```sh
-brew install jordond/tap/dfdu                                     # macOS and Linux
+brew install jordond/tap/dfdu                                            # macOS, Linux
 curl -LsSf https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.sh | sh
-cargo binstall --git https://github.com/jordond/dfdu dfdu         # a release binary through cargo
-cargo install --locked --git https://github.com/jordond/dfdu dfdu # from source (Rust 1.95 or later)
+cargo binstall --git https://github.com/jordond/dfdu dfdu
 nix run github:jordond/dfdu
 ```
 
-On Windows: `powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.ps1 | iex"`. Manifests for Scoop, winget and the AUR (`dfdu-bin`) are in `pkg/`; `cargo xtask release manifests VERSION` fills them in from a release.
+Windows:
 
-The release archives carry `man/` and `completions/`; Homebrew installs them as man pages and bash, zsh and fish completions. `dfdu completions SHELL` prints the same scripts and `dfdu man DIR` writes the same pages.
-
-## Trying it
-
-```sh
-cargo run --release -- ~/some/dir          # interactive browser
-cargo run --release -- scan ~/some/dir     # headless summary
-cargo run --release -- --read-only /       # browse without the delete keys
-cargo run --release -- --disks             # choose a disk to browse
-cargo run --release -- disks               # list disks with size and free space, like df -h
-dfdu --type video ~                        # browse only video files: folders show what their videos use
-dfdu scan ~ --type audio,.iso --depth 2    # the same for the headless summary
-dfdu scan ~ --by-type                      # disk usage by file type and the largest extensions
-dfdu dupes ~ --min-size 10MiB              # identical files, the most space to free first
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.ps1 | iex"
 ```
 
-File types come from the extension: video, audio, image, document, archive, disk-image, code, executable, font, data and other. With a type filter, a folder's size and item count are those of the matching files inside it, and folders without any are left out; folders cannot be marked or deleted then, since their size is not what deleting them would remove.
+Binaries for macOS, Linux (static) and Windows are on the [releases page](https://github.com/jordond/dfdu/releases), with man pages and shell completions. To build from source (Rust 1.95+): `cargo install --locked --git https://github.com/jordond/dfdu dfdu`.
 
-Keys follow ncdu: arrows or `hjkl` to move and open, `s n C M` to sort, `a` apparent size, `c` columns (items, then modification date, then neither), `T` tree mode (directories expand in place with the arrows, `*` expands the largest entries level by level, `z` changes what folds into `… N more`), `r` rescan, `d` move to Trash, `D` delete permanently (asks you to type `delete`), `v` mark a range as you move, `y` copy the selected path (OSC 52), `o` open it in the file manager, `!` list what could not be read, `/` filter by name, `t` show only some file types (video, audio, image, `.iso`...), `2` treemap (`1` back to the list, `+`/`-` depth, `p` colour), `3` cleanup view, `4` duplicate files, `5` the largest files anywhere below, `?` help, `q` quit.
-
-Entries that could not be read are marked `!` with the reason (permission denied, removed during the scan, an I/O error, not responding), and directories with such entries below them are marked `.` with a count, as in ncdu. `!` lists them all and jumps to the one you pick. `dfdu scan` prints the reason next to each entry, a breakdown at the end (with a hint to run as root when permissions were the cause), lists every one with `--errors`, and exits with status 3 when anything was not read.
-
-Like `ncdu -x`, a scan stays on the filesystem of the directory it starts in (`-x` is accepted and is the default); mounts below it are listed but not entered. `--cross-mounts` enters other local filesystems. Network filesystems (NFS, SMB, sshfs and other FUSE network mounts) are entered only with `--network`, and kernel filesystems (`/proc`, `/sys`, `/dev`, cgroups) never are. Mounts are classified from the mount table, so a hung network mount is not touched when it is skipped. A directory named on the command line is always scanned, whatever filesystem it is on.
-
-## Cleanup, scripts and history
+## Usage
 
 ```sh
-dfdu report ~/dev                              # what the rules found: caches, build output, dependencies
-dfdu report ~/dev --format json --fail-above 20GiB   # for CI: exit 4 over the limit
-dfdu clean ~/dev                               # what would be deleted (a dry run)
-dfdu clean ~/dev --yes --mode stage            # delete the recommended matches
-dfdu scan / --format ndjson > scan.ndjson      # one record per entry
-dfdu export ~ --snapshot -o home.snap          # save a scan; dfdu -f home.snap browses it
-dfdu --resume-from home.snap                   # show it at once; on macOS rescan only what changed
-dfdu --remote server /srv                      # browse and delete on another host (ssh; dfdu installed there)
-dfdu -f scan.ncdu                              # browse an ncdu export (JSON, zstd or ncdu -O binary)
-dfdu diff ~ --since 7d                         # what grew in the last week
-dfdu recover                                   # what an interrupted session left behind
+dfdu                      # browse the current directory
+dfdu ~                    # browse a directory
+dfdu --disks              # pick a disk first
+dfdu --type video ~       # only video files
+dfdu --remote server /srv # another host over ssh (dfdu installed there)
 ```
 
-`report` lists every match of the cleanup rules with its size, age, safety level (`safe`, `regenerable`, `review`, `manual`, `protected`), how it is cleaned up and whether it is recommended. `clean` deletes the recommended matches (or, with `--all`, every match that passes `--category`, `--min-size`, `--older-than` and `--safety`); it changes nothing without `--yes` and runs a tool's own cleanup command (`docker system prune`) only with `--allow-commands`. JSON output carries a `schema_version`; the schemas are in `schema/`. Each scan is recorded in a small SQLite history in the state directory (`--no-history` to skip), which `diff` and the browser's "+1.2 GiB since 2026-10-18" notes compare against. `dfdu --help` lists the exit codes; `dfdu completions SHELL` prints a completion script.
+Keys follow ncdu. Press `?` in the app for the full list.
 
-## Development
+| Key | Action | Key | Action |
+| --- | --- | --- | --- |
+| `↑↓←→` / `hjkl` | Move, open, go back | `1` `2` | List, treemap |
+| `s` `n` `C` `M` | Sort by size, name, count, date | `3` | Cleanup |
+| `T` | Tree mode | `4` | Duplicates |
+| `/` `t` | Filter by name, by file type | `5` | Largest files |
+| `v` | Mark a range | `d` | Move to Trash |
+| `o` `y` | Open in file manager, copy path | `D` | Delete permanently |
+| `r` | Rescan | `q` | Quit |
 
-Common tasks go through `cargo xtask` (`crates/xtask`), which runs the same commands as the CI jobs of the same names; `cargo xtask --help` lists them all.
+Unreadable entries are marked `!` with the reason. Press `!` to list them all.
+
+Like `ncdu -x`, a scan stays on one filesystem. Add `--cross-mounts` for other local filesystems and `--network` for network mounts.
+
+## Command line
 
 ```sh
-cargo xtask lint                                  # fmt, clippy, docs, unused dependencies, cargo-deny, zizmor
-cargo xtask test                                  # every test (nextest when installed), then doc tests
-cargo xtask ci                                    # the local part of CI with a summary (--quick, --full)
-cargo xtask sim --seeds 20000                     # more simulation seeds
-cargo xtask sim --seed 1234                       # rerun one seed
-cargo xtask sim --seed 1234 --trace /sim/d0/f1    # trace one path through that seed
-cargo xtask loom                                  # loom model tests
-cargo xtask crash --rounds 40                     # kill dfdu while it writes and deletes, check recovery
-cargo xtask coverage --html                       # line coverage, failing below CI's floor
-cargo xtask linux --privileged                    # the workspace tests in a Linux container
-cargo xtask windows                               # type-check for x86_64-pc-windows-msvc
-cargo xtask demo                                  # record the demo GIFs (demo/README.md)
-DFDU_CHECK=1 cargo run --release -- scan /usr     # check every invariant after every slice
+dfdu scan ~                                 # print a summary
+dfdu scan ~ --by-type                       # usage by file type
+dfdu disks                                  # disks and free space, like df -h
+dfdu dupes ~ --min-size 10MiB               # duplicate files
+dfdu report ~/dev                           # what the cleanup rules found
+dfdu report ~/dev --format json --fail-above 20GiB   # CI: exit 4 over the limit
+dfdu clean ~/dev                            # dry run of the recommended deletes
+dfdu clean ~/dev --yes                      # move them to the Trash
+dfdu diff ~ --since 7d                      # what grew in the last week
+dfdu export ~ --snapshot -o home.snap       # save a scan
+dfdu -f home.snap                           # browse a saved scan or an ncdu export
 ```
 
-Fuzzing needs nightly and cargo-fuzz, or Docker with the `dfdu-fuzz` image: `cargo xtask fuzz snapshot --seconds 600` runs one target from its corpus, seeds (`fuzz/seeds`) and regressions; without a target it runs each in turn, and `--list` names them. Releases: `cargo xtask release check` (assets, advisories, `dist plan`), `cargo xtask release bump 0.2.0 --commit` (version, lockfile, man pages and completions, commit and tag; pushing the tag publishes), and `cargo xtask release manifests 0.2.0` for the Scoop, winget and AUR files.
+`clean` changes nothing without `--yes`. JSON output is versioned; the schemas are in [`schema/`](schema). `dfdu --help` lists every option and exit code.
 
-The simulation (`crates/dfdu-sim`) is the main test of the data pipeline: it runs the real worker, watchdog and applier code against an in-memory filesystem with injected faults, random rescans, deletes and cancels, in a seeded schedule, and compares the result with the filesystem. CI runs 5,000 seeds per suite on every push.
+## Docs
+
+- [Cleanup rules](docs/rules.md): the built-in rules and how to write your own
+- [Themes](docs/themes.md): five built-in themes and custom TOML themes
+- [Benchmarks](docs/benchmarks.md): scan time and memory against other tools
+- [Contributing](CONTRIBUTING.md): building, testing and releasing
+
+## License
+
+[MIT](LICENSE)
