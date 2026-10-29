@@ -89,14 +89,57 @@ impl Keep {
 }
 
 /// The next keep rule, with the status line saying so.
+/// The next keep rule, with the status line saying so. A copy the new rule keeps is unticked:
+/// the copy kept is never one that `d` deletes.
 pub fn cycle_keep(app: &mut App) {
     let d = &mut app.dupes;
     d.keep = d.keep.next();
+    let kept_now: Vec<(Candidate, NodeRef)> = found(app)
+        .map(|f| {
+            (f.groups.iter())
+                .filter_map(|g| {
+                    let c = &g.files[kept(app, g)?];
+                    live(app, c).map(|n| (c.clone(), n))
+                })
+                .filter(|(_, n)| app.marks.contains(*n))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (c, n) in &kept_now {
+        marks::set(app, mark_of(c, *n), false);
+    }
     app.status = Some(format!(
-        "duplicates: keep the {} copy ({} marks the others)",
-        d.keep.label(),
+        "duplicates: keep the {} copy ({} ticks the others)",
+        app.dupes.keep.label(),
         crate::app::keys::first_key(crate::app::keys::Action::TickSuggested)
     ));
+}
+
+/// The nodes of the files the view lists (still in the tree), for `d` to act on its ticks
+/// only; `None` before a comparison finished.
+pub fn listed(app: &App) -> Option<HashSet<NodeRef>> {
+    let f = found(app)?;
+    Some(
+        (f.groups.iter())
+            .flat_map(|g| &g.files)
+            .filter_map(|c| live(app, c))
+            .collect(),
+    )
+}
+
+/// A group whose every copy still in the tree is ticked, by its file's name: deleting what is
+/// ticked would leave no copy of it.
+pub fn whole_group_ticked(app: &App) -> Option<String> {
+    let f = found(app)?;
+    f.groups.iter().find_map(|g| {
+        let left: Vec<NodeRef> = g.files.iter().filter_map(|c| live(app, c)).collect();
+        let all = left.len() >= 2 && left.iter().all(|&n| app.marks.contains(n));
+        all.then(|| {
+            let first = g.files.iter().find(|c| live(app, c).is_some())?;
+            Some(first.path.file_name()?.to_string_lossy().into_owned())
+        })
+        .flatten()
+    })
 }
 
 /// A comparison, running or done.
@@ -189,20 +232,28 @@ pub fn apply(app: &mut App) {
     }
 }
 
-fn start(app: &mut App) -> Vec<Effect> {
+/// Whether a comparison can start now; when not, the status line says why.
+fn can_start(app: &mut App) -> bool {
     // The comparison reads the files here: for another machine's tree it would read this
     // one's files at the same paths, and a delete would then remove the other's.
     if !app.outside.local {
         app.status = Some(
             "duplicates reads this machine's files; this scan is remote or from a file".into(),
         );
-        return Vec::new();
+        return false;
     }
     if app.snap.busy {
         let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
         app.status = Some(format!(
             "duplicates: wait until the scan is done, then press {again}"
         ));
+        return false;
+    }
+    true
+}
+
+fn start(app: &mut App) -> Vec<Effect> {
+    if !can_start(app) {
         return Vec::new();
     }
     app.dupes.cursor = 0;
@@ -451,7 +502,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 app.dupes.cursor = i;
             }
         }
-        _ => return crate::features::review::delete_needs_ticks(app, k),
+        _ => return None,
     }
     Some(Vec::new())
 }
@@ -459,6 +510,10 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 /// `R` ([`Action::CompareAgain`](crate::app::keys::Action)): stops the comparison that runs,
 /// if one does, and starts another.
 pub fn compare_again(app: &mut App) -> Vec<Effect> {
+    // What there is stays shown when a new comparison cannot start.
+    if !can_start(app) {
+        return Vec::new();
+    }
     if let Some(r) = app.dupes.run.take() {
         r.cancel.store(true, Ordering::Relaxed);
     }

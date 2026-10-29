@@ -10,18 +10,23 @@
 //! [`DETAIL_RIGHT_FROM`] columns and below the rows otherwise ([`split`]).
 //!
 //! The keys are the registry's: `Space` ticks, `A` ticks what the view suggests, `X` unticks
-//! everything, `d` and `D` delete what is ticked; with nothing ticked they say how to tick
-//! instead of deleting the list's selection hidden behind the view ([`delete_needs_ticks`]).
+//! everything. `d` and `D` delete what is ticked among what the view lists, the marks made
+//! elsewhere left alone, so the delete matches the summary bar; with nothing ticked there they
+//! say how to tick instead of deleting the list's selection hidden behind the view
+//! ([`delete`], which the registry runs, from a key or from the palette alike).
 
+use dfdu_engine::Mode;
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 
-use crate::app::keys::{self, Action, first_key};
+use crate::app::keys::{Action, first_key};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
+use crate::features::{cleanup, dupes, largest};
+use crate::overlay::confirm;
 use crate::theme::{Theme, human, truncate_middle};
 
 /// From this many columns the detail pane goes on the right of the rows; below, under them.
@@ -284,21 +289,38 @@ pub fn on_right(area: Rect) -> bool {
     area.width >= DETAIL_RIGHT_FROM
 }
 
-/// `d` and `D` with nothing ticked: says how to tick, so that the delete keys never act on the
-/// list's selection hidden behind the view. `None` passes the key on.
-pub fn delete_needs_ticks(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
-    match keys::action_for(k)? {
-        Action::Trash | Action::DeletePermanent if app.marks.is_empty() && !app.read_only => {
-            app.status = Some(format!(
-                "tick items with {} first: {} and {} delete the ticked ones",
-                first_key(Action::ToggleMark),
-                first_key(Action::Trash),
-                first_key(Action::DeletePermanent)
-            ));
-            Some(Vec::new())
-        }
-        _ => None,
+/// `d` and `D` (in `mode`): in a review view, the delete dialog for what is ticked among what
+/// the view lists, and only that; with nothing ticked there, or in Duplicates with every copy
+/// of a group ticked, the status line says why instead. In the other views, the list's delete.
+pub fn delete(app: &mut App, mode: Mode) -> Vec<Effect> {
+    let listed = match views::current(app) {
+        View::Files | View::Map => return confirm::open(app, mode),
+        View::Largest => largest::listed(app),
+        View::Cleanup => cleanup::listed(app),
+        View::Duplicates => dupes::listed(app).unwrap_or_default(),
+    };
+    let ticked = (app.marks.items().iter())
+        .filter_map(|m| m.target.node)
+        .any(|n| listed.contains(&n));
+    if !ticked {
+        app.status = Some(format!(
+            "tick items with {} first: {} and {} delete the ticked ones",
+            first_key(Action::ToggleMark),
+            first_key(Action::Trash),
+            first_key(Action::DeletePermanent)
+        ));
+        return Vec::new();
     }
+    if views::current(app) == View::Duplicates
+        && let Some(name) = dupes::whole_group_ticked(app)
+    {
+        app.status = Some(format!(
+            "every copy of {name} is ticked: untick one to keep it ({} unticks)",
+            first_key(Action::ToggleMark)
+        ));
+        return Vec::new();
+    }
+    confirm::open_only(app, mode, &listed)
 }
 
 #[cfg(test)]

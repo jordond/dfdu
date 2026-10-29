@@ -350,18 +350,28 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             None => {}
         },
         KeyCode::Left | KeyCode::Char('h') => {
-            let at = (0..=c.cursor.min(last))
-                .rev()
-                .find(|&i| !matches!(rows[i], Row::Item(_)) && is_open(app, rows[i]));
-            if let Some(i) = at {
-                set_open(app, rows[i], false);
+            // The nearest open section or category at or above the cursor; none without rows.
+            let at = (0..=c.cursor.min(last)).rev().find_map(|i| {
+                let row = *rows.get(i)?;
+                (!matches!(row, Row::Item(_)) && is_open(app, row)).then_some((i, row))
+            });
+            if let Some((i, row)) = at {
+                set_open(app, row, false);
                 app.cleanup.cursor = i;
             }
         }
         KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
-        _ => return crate::features::review::delete_needs_ticks(app, k),
+        _ => return None,
     }
     Some(Vec::new())
+}
+
+/// The nodes of the matches the view lists and of what ticking them ticks (a container's
+/// rest), for `d` to act on its ticks only.
+pub fn listed(app: &App) -> HashSet<NodeRef> {
+    (app.extras.cleanup.items.iter())
+        .flat_map(|it| std::iter::once(it.node).chain(it.rest.iter().map(|r| r.node)))
+        .collect()
 }
 
 /// Shows item `i` in Files: closes the view, opens the item's directory and selects it there.

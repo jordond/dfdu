@@ -344,3 +344,75 @@ fn half_pages_move_the_cursor_and_y_copies_the_file() {
     let fx = app.key(press(KeyCode::Char('y')), t0);
     assert!(fx.is_empty(), "a group's row has no path: {fx:?}");
 }
+
+/// The copies `d` would delete in a group: the ticked ones still in the tree.
+fn ticked(app: &App, group: usize) -> usize {
+    let g = &found(app).unwrap().groups[group];
+    (g.files.iter())
+        .filter_map(|c| live(app, c))
+        .filter(|&n| app.marks.contains(n))
+        .count()
+}
+
+/// `A`, then `K`, then `A` again never ticks every copy: the copy the new rule keeps is
+/// unticked when the rule changes.
+#[test]
+fn the_kept_copy_is_never_ticked_by_a_and_k() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[
+            ("/r/new.bin", 1_760_000_000),
+            ("/r/a/old.bin", 1_700_000_000),
+        ]],
+    );
+    for keys in ["A", "AKA", "AKAKA", "KAKAKA"] {
+        marks::clear(&mut app);
+        for k in keys.chars() {
+            app.key(press(KeyCode::Char(k)), t0);
+            assert!(ticked(&app, 0) < 2, "{keys}: every copy is ticked");
+        }
+        assert_eq!(ticked(&app, 0), 1, "{keys}");
+    }
+}
+
+/// Every copy of a group ticked by hand: `d` refuses rather than delete them all.
+#[test]
+fn deleting_every_copy_of_a_group_is_refused() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
+    );
+    app.dupes.cursor = 1;
+    app.key(press(KeyCode::Char(' ')), t0);
+    app.key(press(KeyCode::Char(' ')), t0);
+    assert_eq!(ticked(&app, 0), 2);
+    for key in ['d', 'D'] {
+        assert!(app.key(press(KeyCode::Char(key)), t0).is_empty());
+        assert!(matches!(app.overlay, crate::app::Overlay::None));
+        let status = app.status.clone().unwrap_or_default();
+        assert!(status.contains("every copy of"), "{status}");
+    }
+    // One unticked, the other goes.
+    app.dupes.cursor = 1;
+    app.key(press(KeyCode::Char(' ')), t0);
+    app.key(press(KeyCode::Char('d')), t0);
+    assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
+}
+
+/// `R` while a scan runs keeps the comparison shown: it cannot start another yet.
+#[test]
+fn compare_again_while_scanning_keeps_what_is_shown() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(&mut app, &[&[("/r/a", 1), ("/r/b", 1)]]);
+    app.outside.local = true;
+    app.snap.busy = true;
+    assert!(app.key(press(KeyCode::Char('R')), t0).is_empty());
+    assert!(found(&app).is_some(), "the result is kept");
+    let status = app.status.clone().unwrap_or_default();
+    assert!(status.contains("wait until the scan is done"), "{status}");
+}

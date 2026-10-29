@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{ACTIONS, Action, ActionInfo};
 
 /// One key of [`ActionInfo::keys`]: the key code and whether it needs Ctrl.
-pub(super) fn parse(key: &str) -> Option<(KeyCode, bool)> {
+pub(crate) fn parse(key: &str) -> Option<(KeyCode, bool)> {
     let mut chars = key.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {
         return Some(match c {

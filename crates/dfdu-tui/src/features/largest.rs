@@ -244,9 +244,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::End | KeyCode::Char('G') => l.cursor = last,
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => go(app),
         KeyCode::Char(' ') => toggle(app),
-        _ => return crate::features::review::delete_needs_ticks(app, k),
+        _ => return None,
     }
     Some(Vec::new())
+}
+
+/// The nodes of the files the view lists, for `d` to act on its ticks only.
+pub fn listed(app: &App) -> std::collections::HashSet<NodeRef> {
+    app.largest.files.iter().map(|f| f.node).collect()
 }
 
 /// Goes to the selected file: closes the view, opens the file's directory and selects it there.

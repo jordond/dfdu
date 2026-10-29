@@ -8,8 +8,8 @@ use dfdu_engine::{Command, Mode, SizeMode};
 
 use super::views::{self, View};
 use super::{App, Effect, Overlay};
-use crate::features::{cleanup, debug, details, dupes, selected_path, treemap};
-use crate::overlay::{confirm, help, mark_pattern, palette, type_filter};
+use crate::features::{cleanup, debug, details, dupes, review, selected_path, treemap};
+use crate::overlay::{help, mark_pattern, palette, type_filter};
 use crate::state::order::SortKey;
 use crate::state::{filter, marks, tree};
 
@@ -18,7 +18,7 @@ mod lookup;
 
 use act::{enter_mount, only_in, sort_by, toggle_size};
 #[cfg(test)]
-use lookup::parse;
+pub(crate) use lookup::parse;
 pub use lookup::{action_for, first_key, half_page, offered};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -503,8 +503,8 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
                 app.status = Some("skipping directories that are not responding".into());
             }
         }
-        Action::Trash => fx.extend(confirm::open(app, Mode::Trash)),
-        Action::DeletePermanent => fx.extend(confirm::open(app, Mode::Permanent)),
+        Action::Trash => fx.extend(review::delete(app, Mode::Trash)),
+        Action::DeletePermanent => fx.extend(review::delete(app, Mode::Permanent)),
         Action::Undo => match &app.snap.undo {
             Some(u) if !app.snap.undoing => {
                 fx.push(Effect::Send(Command::Undo { plan: u.plan }));

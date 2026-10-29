@@ -133,29 +133,62 @@ pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
         let e = app.selected_entry().filter(|e| !e.pseudo);
         e.map(Item::of).into_iter().collect()
     } else {
-        let dir = &app.snap.dir_path;
-        app.marks
-            .items()
-            .iter()
-            .filter_map(|m| {
-                let path = &m.target.path;
-                let shown = match rel_text(path, dir) {
-                    Some(rel) if !rel.is_empty() => rel,
-                    _ => path.to_string(),
-                };
-                Some(Item {
-                    node: m.target.node?,
-                    name: shown,
-                    size: m.size,
-                    items: m.items,
-                    shared_out: m.shared_out,
-                    is_dir: m.is_dir,
-                    scanning: m.scanning,
-                    inside: m.inside,
-                })
-            })
-            .collect()
+        marked(app, |_| true)
     };
+    ask(app, mode, targets)
+}
+
+/// Asks to delete the marked entries among `only` (a review view's): the other marks stay.
+pub fn open_only(
+    app: &mut App,
+    mode: Mode,
+    only: &std::collections::HashSet<dfdu_tree::NodeRef>,
+) -> Vec<Effect> {
+    let targets = marked(app, |n| only.contains(&n));
+    ask(app, mode, targets)
+}
+
+/// The marked entries whose node `keep` lets in, named below the current directory.
+/// A mark inside another counts as inside only while that other one is kept too: left out,
+/// it is deleted on its own.
+fn marked(app: &App, keep: impl Fn(dfdu_tree::NodeRef) -> bool) -> Vec<Item> {
+    let dir = &app.snap.dir_path;
+    let kept: Vec<&crate::state::marks::Item> = (app.marks.items().iter())
+        .filter(|m| m.target.node.is_some_and(&keep))
+        .collect();
+    let all = kept.len() == app.marks.items().len();
+    let below_a_kept = |m: &crate::state::marks::Item| {
+        kept.iter().any(|o| {
+            o.target.node != m.target.node
+                && m.target
+                    .path
+                    .rel(&o.target.path)
+                    .is_some_and(|r| !r.is_empty())
+        })
+    };
+    kept.iter()
+        .filter_map(|m| {
+            let path = &m.target.path;
+            let shown = match rel_text(path, dir) {
+                Some(rel) if !rel.is_empty() => rel,
+                _ => path.to_string(),
+            };
+            Some(Item {
+                node: m.target.node?,
+                name: shown,
+                size: m.size,
+                items: m.items,
+                shared_out: m.shared_out,
+                is_dir: m.is_dir,
+                scanning: m.scanning,
+                inside: m.inside && (all || below_a_kept(m)),
+            })
+        })
+        .collect()
+}
+
+/// Opens the dialog for `targets`, and asks the engine what deleting them would free.
+fn ask(app: &mut App, mode: Mode, targets: Vec<Item>) -> Vec<Effect> {
     if targets.is_empty() {
         return Vec::new();
     }
