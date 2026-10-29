@@ -14,8 +14,13 @@ use crossbeam_channel::unbounded;
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
 use dfdu_tree::{Meta, Tree};
 
+/// A plan item for `p`, with the identity a scan would record: on Windows what `dfdu-sys`
+/// reads (volume serial, file id), as the scanners and the deleter's check do.
 fn item(tree: &mut Tree, p: &Path) -> PlanItem {
+    #[cfg(not(windows))]
     let m = Meta::from_metadata(&fs::symlink_metadata(p).unwrap());
+    #[cfg(windows)]
+    let m = Meta::from_windows(&dfdu_sys::stat_path(p, false).unwrap());
     let r = tree.new_root(b"/", &m, false);
     PlanItem {
         node: tree.node_ref(r),
@@ -68,8 +73,10 @@ fn run_plan(journals: &Path, root: &Path, mode: Mode, paths: &[&Path]) {
             _ => {}
         }
     }
-    drop(d);
-    std::thread::sleep(Duration::from_millis(100));
+    // The session ends, and with it the lock on its journal (which on Windows also keeps
+    // other handles from reading it).
+    drop(d.reqs);
+    d.thread.join().unwrap();
 }
 
 /// A permanent delete whose end the journal never recorded is listed as interrupted; it can
@@ -100,7 +107,10 @@ fn an_interrupted_delete_is_dismissed() {
     fs::write(&journal, cut).unwrap();
 
     let list = recover(&journals, &[]);
-    assert!(list.contains("  1  ") && list.contains("/root/c"), "{list}");
+    assert!(
+        list.contains("  1  ") && list.contains(&root.join("c").display().to_string()),
+        "{list}"
+    );
     assert!(!list.contains("  2  "), "{list}");
     for refused in ["--finish", "--restore"] {
         let o = recover_status(&journals, &[refused, "1"]);
@@ -137,11 +147,13 @@ fn staged_items_are_restored_or_finished() {
 
     let list = recover(&journals, &[]);
     assert!(
-        list.contains("  1  ") && list.contains("/root/a: staged at"),
+        list.contains("  1  ")
+            && list.contains(&format!("{}: staged at", root.join("a").display())),
         "{list}"
     );
     assert!(
-        list.contains("  2  ") && list.contains("/root/b: staged at"),
+        list.contains("  2  ")
+            && list.contains(&format!("{}: staged at", root.join("b").display())),
         "{list}"
     );
     let done = recover(&journals, &["--restore", "1", "--finish", "2"]);

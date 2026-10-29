@@ -17,8 +17,13 @@ pub fn canonical_tempdir() -> tempfile::TempDir {
 }
 
 /// The identity a scan would record for `p` (not following a symlink); `None` when it is gone.
+/// On Windows that is what `dfdu-sys` reads (volume serial, file id), as the scanners and the
+/// deleter's check do; std has neither.
 pub fn identity(p: &Path) -> Option<Identity> {
+    #[cfg(not(windows))]
     let m = Meta::from_metadata(&fs::symlink_metadata(p).ok()?);
+    #[cfg(windows)]
+    let m = Meta::from_windows(&dfdu_sys::stat_path(p, false).ok()?);
     Some(Identity {
         dev: m.dev,
         ino: m.ino,
