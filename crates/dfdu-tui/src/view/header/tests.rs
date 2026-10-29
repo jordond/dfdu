@@ -424,16 +424,30 @@ fn the_active_tab_is_reversed_and_bold_in_every_theme() {
 fn cleanup_shows_what_it_would_free_once_read() {
     use crate::app::views::{View, badge};
     use crate::features::treemap::tests::{classified, sync};
-    let fx = classified();
+    let mut fx = classified();
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     sync(&mut app, &fx.m, t0);
+    // Counted with the scan done, before the view was ever opened.
+    let size = badge(&app, View::Cleanup).expect("a badge");
     let first = first_line(&render_buffer(&mut app, t0, 120, 8));
-    assert!(first.contains("│ 3 Cleanup │"), "nothing read yet: {first}");
+    assert!(first.contains(&format!("│ 3 Cleanup {size} │")), "{first}");
+    // The same total as the view's summary bar.
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
+    let frame = text(&render_buffer(&mut app, t0, 120, 20));
+    assert!(frame.contains("Selected 0 B of 70.3 KiB"), "{frame}");
+    assert_eq!(size, "70.3K");
+    // With the view closed, the tab follows the tree: a match that grows.
     app.key(press(KeyCode::Char('1')), t0);
-    let first = first_line(&render_buffer(&mut app, t0, 120, 8));
-    let size = badge(&app, View::Cleanup).expect("a badge once read");
-    assert!(first.contains(&format!("│ 3 Cleanup {size} │")), "{first}");
+    let root = fx.m.tree.roots().next().expect("root");
+    let big = (fx.m.tree.children(root))
+        .find(|&c| fx.m.tree.name(c) == b"big")
+        .expect("big");
+    let meta = crate::tests::meta(dfdu_tree::Kind::File, 100 << 10, 900);
+    let f = fx.m.tree.add_file(big, b"more", &meta, false, None);
+    let own = fx.m.tree.own(f);
+    fx.m.tree.propagate_add(big, &own);
+    sync(&mut app, &fx.m, t0);
+    assert_eq!(badge(&app, View::Cleanup).as_deref(), Some("170.3K"));
 }

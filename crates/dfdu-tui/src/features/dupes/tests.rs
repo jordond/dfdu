@@ -313,6 +313,9 @@ fn nothing_is_compared_until_asked() {
     app.key(press(KeyCode::Esc), t0);
     assert!(!active(&app));
     app.key(press(KeyCode::Char('4')), t0);
+    // Counted once for this tree: coming back, or passing through, counts nothing again.
+    assert!(!stale(&app));
+    assert_eq!(count(&fx.m, &app), None);
     let fx_out = app.key(press(KeyCode::Enter), t0);
     assert!(matches!(fx_out[..], [Effect::FindDupes]), "{fx_out:?}");
 }

@@ -22,8 +22,9 @@ pub struct Extras {
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
     /// A new walk for the largest files below, when one was due.
     pub largest: Option<largest::Info>,
-    /// How many files a comparison of duplicates would read, when they were counted.
-    pub dupe_candidates: Option<usize>,
+    /// How many files a comparison of duplicates would read, when they were counted, and the
+    /// tree's version then.
+    pub dupe_candidates: Option<(u64, usize)>,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree, but for the largest

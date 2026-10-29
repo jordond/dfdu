@@ -127,7 +127,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     pane::draw(f, app, area, t);
 }
 
-/// What the summary bar counts: the items that can be ticked.
+/// What the summary bar counts: the items that can be ticked, as the tab's total does
+/// (`super::reclaimable`).
 fn tally(app: &App) -> Tally {
     let mut sum = Tally::default();
     for it in app.extras.cleanup.items.iter().filter(|it| markable(it)) {

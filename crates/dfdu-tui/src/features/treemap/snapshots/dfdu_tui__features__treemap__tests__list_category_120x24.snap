@@ -1,8 +1,9 @@
 ---
 source: crates/dfdu-tui/src/features/treemap/tests.rs
+assertion_line: 663
 expression: frame
 ---
- dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                                            done in 00:00
+ dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                                      done in 00:00
  /r                                                                    12 items · 95.7 KiB   sort size ↓  ·  disk usage
         size                 share         name                                 ╭ big/ ────────────────────────────────╮
     58.6 KiB  ████████████   61.2%  build  big/                                 │ /r/big                               │

@@ -173,6 +173,11 @@ fn candidates_skip_small_files_links_placeholders_and_unique_sizes() {
     assert_eq!(paths, ["/r/a", "/r/sub/b"]);
     assert_eq!(c[0].links, 1);
     assert_eq!(candidates(&t, root, 1).len(), 4);
+    // Counting finds the same files without building their paths.
+    for min in [1, 100, 5000] {
+        let n = candidates(&t, root, min).len();
+        assert_eq!(count_candidates(&t, root, min), n, "{min}");
+    }
 }
 
 /// APFS clones are identical but deleting one frees nothing; a real copy next to them does.

@@ -149,8 +149,25 @@ pub struct Found {
 /// not cloud placeholders, and only sizes that more than one file has.
 #[must_use]
 pub fn candidates(tree: &Tree, root: Ix, min_size: u64) -> Vec<Candidate> {
+    picks(tree, root, min_size)
+        .into_iter()
+        .map(|(ix, c)| Candidate {
+            path: tree.path_buf(ix),
+            ..c
+        })
+        .collect()
+}
+
+/// How many files [`candidates`] would return, without building their paths.
+#[must_use]
+pub fn count_candidates(tree: &Tree, root: Ix, min_size: u64) -> usize {
+    picks(tree, root, min_size).len()
+}
+
+/// The candidates and their nodes, with empty paths.
+fn picks(tree: &Tree, root: Ix, min_size: u64) -> Vec<(Ix, Candidate)> {
     let mut by_inode: HashMap<(u64, u64), usize> = HashMap::new();
-    let mut out: Vec<Candidate> = Vec::new();
+    let mut out: Vec<(Ix, Candidate)> = Vec::new();
     let mut add = |c: Ix| {
         if tree.kind(c) != Kind::File {
             return;
@@ -165,29 +182,33 @@ pub fn candidates(tree: &Tree, root: Ix, min_size: u64) -> Vec<Candidate> {
             && let Some(&i) = by_inode.get(&dev_ino)
         {
             // Only one name of a hard-linked file is charged with its allocation.
-            out[i].alloc = out[i].alloc.max(own.alloc);
-            out[i].links += 1;
+            let f: &mut Candidate = &mut out[i].1;
+            f.alloc = f.alloc.max(own.alloc);
+            f.links += 1;
             return;
         }
         by_inode.insert(dev_ino, out.len());
-        out.push(Candidate {
-            path: tree.path_buf(c),
-            size: own.apparent,
-            alloc: own.alloc,
-            dev_ino,
-            mtime: tree.mtime(c),
-            links: 0,
-            private: None,
-        });
+        out.push((
+            c,
+            Candidate {
+                path: PathBuf::new(),
+                size: own.apparent,
+                alloc: own.alloc,
+                dev_ino,
+                mtime: tree.mtime(c),
+                links: 0,
+                private: None,
+            },
+        ));
     };
     tree.for_each_leaf(root, &mut add);
     // Nothing allocated for a file with data: a placeholder whose data is elsewhere.
-    out.retain(|f| f.alloc > 0);
+    out.retain(|(_, f)| f.alloc > 0);
     let mut sizes: HashMap<u64, u32> = HashMap::new();
-    for f in &out {
+    for (_, f) in &out {
         *sizes.entry(f.size).or_default() += 1;
     }
-    out.retain(|f| sizes[&f.size] > 1);
+    out.retain(|(_, f)| sizes[&f.size] > 1);
     out
 }
 

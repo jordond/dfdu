@@ -61,6 +61,8 @@ pub struct Cleanup {
     fresh: bool,
     /// What the last read found to reclaim, for the view's tab; `None` before the first.
     reclaimable: Option<u64>,
+    /// The tree's version and number of matches the last total was counted at.
+    counted_at: Option<(u64, usize)>,
 }
 
 /// One match, as the last read found it.
@@ -97,6 +99,9 @@ pub struct Info {
     pub native: Option<NativeView>,
     /// What native size commands reported, by rule name.
     pub native_sizes: Vec<(String, Result<u64, String>)>,
+    /// What the matches that can be ticked add up to, for the tab and the summary bar alike,
+    /// with the tree's version and number of matches it was counted at.
+    pub total: Option<((u64, usize), u64)>,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
@@ -122,10 +127,17 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     Vec::new()
 }
 
-/// What the matches that can be marked would free, as the last read while the view was open
-/// found; `None` before that.
+/// What the matches that can be ticked add up to: the summary bar's total, kept current while
+/// the view is closed too (counted again when the tree changes, once the scan is done);
+/// `None` before the first count.
 pub fn reclaimable(app: &App) -> Option<u64> {
     app.cleanup.reclaimable
+}
+
+/// The tree's version and its number of matches: the total is counted again when either
+/// changes.
+fn count_key(m: &Model) -> (u64, usize) {
+    (m.tree.version(), m.tree.classes().count())
 }
 
 /// The view needs a read: it was just switched on.
@@ -137,7 +149,22 @@ pub fn stale(app: &App) -> bool {
 /// matched directory, and below it only those a rule that does not stop the descent lets in.
 pub fn read(m: &Model, app: &App) -> Info {
     if !app.cleanup.on {
-        return Info::default();
+        // Closed, only the total for the tab, when the tree changed since it was counted.
+        let at = count_key(m);
+        let Some(rules) = &m.rules else {
+            return Info::default();
+        };
+        if app.snap.busy || app.cleanup.counted_at == Some(at) {
+            return Info::default();
+        }
+        let total = (dfdu_engine::listed(&m.tree, rules).iter())
+            .filter(|l| l.class.safety < Safety::Protected)
+            .map(|l| l.total.alloc)
+            .sum();
+        return Info {
+            total: Some((at, total)),
+            ..Info::default()
+        };
     }
     let t = &m.tree;
     let item = |ix: Ix, path: HostPath, class: Class, tot: Totals, scanning: bool| Item {
@@ -192,10 +219,16 @@ pub fn read(m: &Model, app: &App) -> Info {
         None => vec![],
     };
     native_sizes.sort_by(|a, b| a.0.cmp(&b.0));
+    let total = items
+        .iter()
+        .filter(|it| markable(it))
+        .map(|it| it.size)
+        .sum();
     Info {
         items,
         native,
         native_sizes,
+        total: Some((count_key(m), total)),
     }
 }
 
@@ -203,13 +236,9 @@ pub fn read(m: &Model, app: &App) -> Info {
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
-    if app.cleanup.on {
-        let items = &app.extras.cleanup.items;
-        let markable = items.iter().filter(|it| markable(it));
-        let total = markable
-            .map(|it| it.size.saturating_sub(it.shared_out))
-            .sum();
+    if let Some((at, total)) = app.extras.cleanup.total {
         app.cleanup.reclaimable = Some(total);
+        app.cleanup.counted_at = Some(at);
     }
     let premark = std::mem::take(&mut app.cleanup.premark);
     if !app.cleanup.on || !premark || app.extras.cleanup.items.is_empty() {

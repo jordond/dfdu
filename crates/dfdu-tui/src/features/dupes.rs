@@ -45,9 +45,13 @@ pub struct Dupes {
     /// Groups opened or closed against their default (open, but clones closed), by index in
     /// the result; cleared by a new comparison.
     toggled: HashSet<usize>,
-    /// How many files a comparison would read, counted when the view opens before any was
-    /// asked for.
+    /// How many files a comparison would read, counted while the view waits to be asked, and
+    /// the tree's version they were counted at.
     candidates: Option<usize>,
+    counted_at: Option<u64>,
+    /// The groups with two files left, counted when the files' nodes were last read; `None`
+    /// while the view is closed.
+    live_groups: Option<usize>,
 }
 
 /// Which copy of a group marking leaves unmarked. Ties go to the first in path order.
@@ -177,11 +181,7 @@ pub fn groups(app: &App) -> Option<Option<usize>> {
     let Some(f) = run.result.get() else {
         return Some(None);
     };
-    if app.extras.dupes.is_empty() {
-        return Some(Some(f.groups.len()));
-    }
-    let live = |g: &Group| g.files.iter().filter(|c| live(app, c).is_some()).count() >= 2;
-    Some(Some(f.groups.iter().filter(|g| live(g)).count()))
+    Some(Some(app.dupes.live_groups.unwrap_or(f.groups.len())))
 }
 
 /// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):
@@ -193,9 +193,6 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
     }
     crate::features::treemap::show(app, false);
     crate::features::cleanup::show(app, false);
-    if app.dupes.run.is_none() {
-        app.dupes.candidates = None;
-    }
     Vec::new()
 }
 
@@ -204,32 +201,45 @@ pub fn compared(app: &App) -> bool {
     app.dupes.run.is_some()
 }
 
-/// The view waits to be asked to compare, and the files to compare are not counted yet.
+/// The view waits to be asked to compare this machine's files, and the scan is done.
+fn waits(app: &App) -> bool {
+    app.dupes.on && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
+}
+
+/// The view waits, and the files to compare were never counted.
 fn wants_count(app: &App) -> bool {
-    app.dupes.on
-        && app.outside.local
-        && app.dupes.run.is_none()
-        && app.dupes.candidates.is_none()
-        && !app.snap.busy
+    waits(app) && app.dupes.candidates.is_none()
 }
 
 /// Under the read lock, while the view waits to be asked: how many files a comparison would
-/// read. A walk of the scan, once per opening.
-pub fn count(m: &Model, app: &App) -> Option<usize> {
-    if !wants_count(app) {
+/// read, and the tree's version. A walk of the scan without building paths, once per change
+/// of the tree: passing through the view again counts nothing.
+pub fn count(m: &Model, app: &App) -> Option<(u64, usize)> {
+    let version = m.tree.version();
+    if !waits(app) || app.dupes.counted_at == Some(version) {
         return None;
     }
-    Some(match m.tree.roots().next() {
-        Some(r) => dfdu_dupes::candidates(&m.tree, r, min_size()).len(),
-        None => 0,
-    })
+    Some((
+        version,
+        match m.tree.roots().next() {
+            Some(r) => dfdu_dupes::count_candidates(&m.tree, r, min_size()),
+            None => 0,
+        },
+    ))
 }
 
-/// Takes in what [`count`] found.
+/// Takes in what [`count`] found, and counts the groups left for the view's tab.
 pub fn apply(app: &mut App) {
-    if let Some(n) = app.extras.dupe_candidates.take() {
+    if let Some((version, n)) = app.extras.dupe_candidates.take() {
         app.dupes.candidates = Some(n);
+        app.dupes.counted_at = Some(version);
     }
+    app.dupes.live_groups = found(app)
+        .filter(|_| !app.extras.dupes.is_empty())
+        .map(|f| {
+            let left = |g: &&Group| g.files.iter().filter(|c| live(app, c).is_some()).count() >= 2;
+            f.groups.iter().filter(left).count()
+        });
 }
 
 /// Whether a comparison can start now; when not, the status line says why.
@@ -383,14 +393,15 @@ fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
 /// The index in `group` of the file still in the tree that the keep rule keeps.
 fn kept(app: &App, group: &Group) -> Option<usize> {
     let left = (group.files.iter().enumerate()).filter(|(_, c)| live(app, c).is_some());
-    let by_path = |c: &Candidate| c.path.clone();
-    match app.dupes.keep {
-        Keep::Oldest => left.min_by_key(|(_, c)| (c.mtime, by_path(c))),
-        Keep::Newest => left.min_by_key(|(_, c)| (std::cmp::Reverse(c.mtime), by_path(c))),
-        Keep::ShortestPath => left.min_by_key(|(_, c)| (c.path.as_os_str().len(), by_path(c))),
-        Keep::FirstPath => left.min_by_key(|(_, c)| by_path(c)),
-    }
-    .map(|(i, _)| i)
+    // Compared by reference: this runs for every group on every frame.
+    let order = |a: &Candidate, b: &Candidate| match app.dupes.keep {
+        Keep::Oldest => a.mtime.cmp(&b.mtime),
+        Keep::Newest => b.mtime.cmp(&a.mtime),
+        Keep::ShortestPath => (a.path.as_os_str().len()).cmp(&b.path.as_os_str().len()),
+        Keep::FirstPath => std::cmp::Ordering::Equal,
+    };
+    left.min_by(|(_, a), (_, b)| order(a, b).then_with(|| a.path.cmp(&b.path)))
+        .map(|(i, _)| i)
 }
 
 /// The files of `group` still in the tree, but the one [`kept`].
