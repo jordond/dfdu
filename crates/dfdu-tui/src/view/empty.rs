@@ -71,9 +71,11 @@ pub fn draw(f: &mut Frame, t: &Theme, area: Rect, e: &Empty) {
             spans.push(Span::styled(*key, t.key));
             spans.push(Span::styled(format!("  {does}"), t.fg_dim));
         }
+        // The keys line wraps too on a narrow terminal.
+        let keys: String = spans.iter().map(|s| s.content.as_ref()).collect();
         lines.push(Line::raw(""));
         lines.push(Line::from(spans));
-        height += 2;
+        height += 1 + wrapped(&keys, inner);
     }
     let box_h = cells(height + 2).min(area.height);
     let r = area.centered(Constraint::Length(width), Constraint::Length(box_h));
@@ -92,6 +94,23 @@ pub fn draw(f: &mut Frame, t: &Theme, area: Rect, e: &Empty) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On a narrow terminal the keys line wraps, and the box grows to hold it.
+    #[test]
+    fn a_wrapped_keys_line_fits_in_the_box() {
+        let t = Theme::no_color();
+        let e = Empty {
+            title: "Map",
+            text: vec!["Shows this directory.".into()],
+            keys: vec![("Backspace", "parent directory"), ("Esc", "back to Files")],
+        };
+        let mut term =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).expect("terminal");
+        term.draw(|f| draw(f, &t, f.area(), &e)).expect("draw");
+        let frame = crate::tests::text(term.backend().buffer());
+        assert!(frame.contains("back to Files"), "{frame}");
+        assert!(frame.contains('╰'), "{frame}");
+    }
 
     #[test]
     fn wrapping_counts_the_lines() {

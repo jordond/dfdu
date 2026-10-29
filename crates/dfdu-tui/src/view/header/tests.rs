@@ -136,6 +136,15 @@ fn the_scan_state_shortens_before_the_tabs_do() {
     assert_eq!(Span::raw(&first).width(), 31, "{first}");
 }
 
+/// A long scan root is shortened in the middle before the size shown gives way.
+#[test]
+fn a_long_root_leaves_room_for_the_size_shown() {
+    let root = "/private/tmp/claude-501/scratchpad/projects/2026/client-deliverables/demo";
+    let (_, scope) = done_at_root(root, 100);
+    assert!(scope.contains("size ↓ · disk"), "{scope}");
+    assert!(scope.contains('…'), "{scope}");
+}
+
 #[test]
 fn a_long_scan_root_is_shortened_in_the_middle() {
     let root = "/Volumes/Backup Drive/archive/projects/2026/client-deliverables/final";

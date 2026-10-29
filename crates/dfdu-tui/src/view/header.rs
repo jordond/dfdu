@@ -303,6 +303,9 @@ fn mode_forms(app: &App) -> Vec<Vec<Span<'static>>> {
 const SCOPE_GAP: &str = "   ";
 /// Before the scan root on the scope line of the views that cover the whole scan.
 const WHOLE_SCAN: &str = "whole scan: ";
+/// The most cells of the current directory's name the scope line keeps before the modes give
+/// way: a longer name is shortened in the middle instead.
+const SCOPE_KEPT: usize = 24;
 /// The fewest cells of the scan root the whole-scan scope keeps before the modes give way.
 const WHOLE_SCAN_ROOT_MIN: usize = 8;
 
@@ -414,8 +417,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
         })
         .collect();
 
-    // The scope keeps the current directory's name whole (or a few cells of the scan root):
-    // the modes give way first, in their longest form that leaves it room.
+    // The scope keeps the current directory's name whole, up to [`SCOPE_KEPT`] cells of it (a
+    // long name or scan root is shortened in the middle rather than hide the global state),
+    // or a few cells of the scan root: the modes give way first, in their longest form that
+    // leaves it room.
     let lead = 1;
     let view = views::current(app);
     let whole_scan = view.whole_scan();
@@ -430,7 +435,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     let least = if whole_scan {
         Span::raw(WHOLE_SCAN).width() + Span::raw(&root).width().min(WHOLE_SCAN_ROOT_MIN)
     } else {
-        least_width(&segs)
+        least_width(&segs).min(SCOPE_KEPT)
     };
     // Then the scope shortens, as the sort is never left out while the line has room for the
     // totals and it.

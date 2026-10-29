@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/treemap/tests.rs
-assertion_line: 674
 expression: "render(&mut app, t0, 80, 24)"
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
@@ -26,4 +25,4 @@ expression: "render(&mut app, t0, 80, 24)"
 └─────────┘└─────────┘└────────┘└───────┘└─────────┘└───────┘└─────┘└────┘└────┘
  ▶ dir-0/  911.1 KiB  4.8%  ·  22 items                                    1/30
  map depth 2
- ←↑↓→ move  Enter zoom in  Backspace zoom out  ? help  q quit  [ ] views
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  p colour  Space mark

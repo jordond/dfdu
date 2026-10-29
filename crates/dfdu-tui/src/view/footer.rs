@@ -61,7 +61,7 @@ pub fn status(f: &mut Frame, app: &App, area: Rect, list_view: bool) {
 }
 
 /// At most this many hints on the line.
-const MAX_HINTS: usize = 10;
+const MAX_HINTS: usize = 12;
 
 /// One key hint: the keys and a short label. When the line is too short, the hints with the
 /// highest `drop` go first.
@@ -140,75 +140,62 @@ fn offered_now(app: &App) -> Vec<Hint> {
         ];
     }
     if crate::features::largest::active(app) {
-        return vec![
-            hint(arrows, "move", 3),
+        let actions = vec![
+            hint(arrows, "move", 1),
             hint("Enter", "show in Files", 2),
             hint(first_key(Action::ToggleMark), "tick", 1),
-            hint(first_key(Action::ClearMarks), "untick all", 5),
-            hint(first_key(Action::CopyPath), "copy path", 6),
-            hint(first_key(Action::OpenPath), "open", 7),
+            hint(first_key(Action::ClearMarks), "untick all", 3),
+            hint(first_key(Action::CopyPath), "copy path", 4),
+            hint(first_key(Action::OpenPath), "open", 5),
             hint(first_key(Action::Trash), "delete selected", 0),
-            help,
-            quit,
-            views,
         ];
+        return in_view(actions, help, quit, views);
     }
     if crate::features::dupes::active(app) && !crate::features::dupes::compared(app) {
-        let mut hints = vec![
-            hint(first_key(Action::Close), "back to Files", 1),
-            help,
-            quit,
-            views,
-        ];
+        let mut actions = vec![hint(first_key(Action::Close), "back to Files", 1)];
         // Only this machine's files are compared.
         if app.outside.local {
-            hints.insert(0, hint(first_key(Action::Enter), "compare now", 0));
+            actions.insert(0, hint(first_key(Action::Enter), "compare now", 0));
         }
-        return hints;
+        return in_view(actions, help, quit, views);
     }
     if crate::features::dupes::active(app) {
-        return vec![
-            hint(arrows.clone(), "move", 3),
+        let actions = vec![
+            hint(arrows.clone(), "move", 1),
             hint(first_key(Action::ToggleMark), "tick", 1),
             hint(first_key(Action::TickSuggested), "tick suggested", 2),
-            hint(first_key(Action::ClearMarks), "untick all", 5),
-            hint(first_key(Action::DupesKeep), "keep rule", 6),
-            hint("Enter", "show in Files", 4),
-            hint(first_key(Action::CompareAgain), "compare again", 7),
+            hint(first_key(Action::ClearMarks), "untick all", 4),
+            hint(first_key(Action::DupesKeep), "keep rule", 4),
+            hint("Enter", "show in Files", 3),
+            hint(first_key(Action::CompareAgain), "compare again", 3),
             hint(first_key(Action::Trash), "delete selected", 0),
-            help,
-            quit,
-            views,
         ];
+        return in_view(actions, help, quit, views);
     }
     if crate::features::cleanup::active(app) {
-        return vec![
-            hint(arrows, "move", 3),
+        let actions = vec![
+            hint(arrows, "move", 1),
             hint("Enter", crate::features::cleanup::enter_does(app), 2),
             hint(first_key(Action::ToggleMark), "tick", 1),
-            hint(first_key(Action::TickSuggested), "tick suggested", 4),
-            hint(first_key(Action::ClearMarks), "untick all", 5),
-            hint(first_key(Action::CleanupFilter), "filter", 6),
+            hint(first_key(Action::TickSuggested), "tick suggested", 3),
+            hint(first_key(Action::ClearMarks), "untick all", 4),
+            hint(first_key(Action::CleanupFilter), "filter", 4),
             hint(first_key(Action::CleanupCommand), "command", 4),
             hint(first_key(Action::Trash), "delete selected", 0),
-            help,
-            quit,
-            views,
         ];
+        return in_view(actions, help, quit, views);
     }
     if crate::features::treemap::active(app) {
-        return vec![
-            hint("←↑↓→", "move", 2),
-            hint("Enter", "zoom in", 3),
-            hint("Backspace", "zoom out", 4),
-            hint("+ -", "depth", 6),
-            hint(first_key(Action::TreemapColor), "colour", 7),
-            hint(first_key(Action::ToggleMark), "mark", 6),
+        let actions = vec![
+            hint("←↑↓→", "move", 1),
+            hint("Enter", "zoom in", 2),
+            hint("Backspace", "zoom out", 3),
+            hint("+ -", "depth", 4),
+            hint(first_key(Action::TreemapColor), "colour", 4),
+            hint(first_key(Action::ToggleMark), "mark", 5),
             hint(first_key(Action::Trash), "trash", 5),
-            help,
-            quit,
-            views,
         ];
+        return in_view(actions, help, quit, views);
     }
     if let Some(tree) = app.tree_shown() {
         let fold = crate::state::tree::act::fold_label(tree.fold_ratio).unwrap_or("no fold");
@@ -226,6 +213,27 @@ fn offered_now(app: &App) -> Vec<Hint> {
         ];
     }
     list_hints(app, arrows, help, quit, views)
+}
+
+/// The hints of a view (Map, Cleanup, Duplicates, Largest): its own actions keep their place
+/// first, then `[ ] views`, then `? help`, and `q quit` goes first when the line is short.
+fn in_view(mut actions: Vec<Hint>, help: Hint, quit: Hint, views: Hint) -> Vec<Hint> {
+    let last = actions.iter().map(|h| h.drop).max().unwrap_or(0);
+    actions.extend([
+        Hint {
+            drop: last + 2,
+            ..help
+        },
+        Hint {
+            drop: last + 3,
+            ..quit
+        },
+        Hint {
+            drop: last + 1,
+            ..views
+        },
+    ]);
+    actions
 }
 
 /// The hints of a filter or search being typed, where the arrows do `arrows_do`.

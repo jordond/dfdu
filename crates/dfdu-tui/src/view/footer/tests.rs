@@ -23,14 +23,33 @@ fn shown(app: &App, width: u16) -> String {
         .collect()
 }
 
+/// Cleanup's footer keeps its own keys before `[ ] views`, `? help` and `q quit`.
+#[test]
+fn view_keys_come_before_help_and_quit() {
+    use crate::features::treemap::tests::{classified, sync};
+    let fx = classified();
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, &fx.m, t0);
+    let wide = shown(&app, 160);
+    for want in ["f filter", "N command", "[ ] views", "q quit"] {
+        assert!(wide.contains(want), "{wide}");
+    }
+    let narrow = shown(&app, 80);
+    assert!(narrow.contains("↑↓ move"), "{narrow}");
+    assert!(!narrow.contains("q quit"), "quit goes first: {narrow}");
+}
+
 #[test]
 fn hints_change_with_context() {
     let t0 = Instant::now();
     let mut list = app(false, 0, t0);
     assert_eq!(
         shown(&list, 120),
-        " ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ? help  \
-         q quit  [ ] views"
+        " ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  \
+         ? help  q quit  [ ] views"
     );
     let scanning = app(true, 0, t0);
     assert!(shown(&scanning, 200).contains("  S re-sort  "));
@@ -38,7 +57,7 @@ fn hints_change_with_context() {
     let errors = app(false, 3, t0);
     assert!(shown(&errors, 200).contains("  ! errors  ? help"));
     assert!(!shown(&list, 200).contains("! errors"));
-    // Never more than ten, whatever the width.
+    // Never more than twelve, whatever the width.
     let busy_errors = app(true, 3, t0);
     let all = shown(&busy_errors, 400);
     assert_eq!(all.matches("  ").count() + 1, MAX_HINTS, "{all}");
@@ -51,7 +70,7 @@ fn hints_change_with_context() {
     assert_eq!(
         shown(&list, 120),
         " ↑↓ move  → open  ← up  Space mark  d trash marked  D delete marked  s n C M sort  \
-         / filter  ? help  q quit"
+         / filter  : commands  ? help  q quit"
     );
     list.key(press(KeyCode::Char('D')), t0);
     assert!(matches!(list.overlay, Overlay::ConfirmDelete(_)));

@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/treemap/tests.rs
-assertion_line: 621
 expression: styled(&buf)
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest    done in 00:00
@@ -37,5 +36,5 @@ L14 0-47 fg=#88c0d0 bg=#2c3751 | 49-67 fg=#ffffff bg=#483710 | 69-79 fg=#ffffff 
 L15 0-35 fg=#d8dee9 | 75-79 fg=#8b94a7
 
 L16 0-0 fg=#8b94a7
- ←↑↓→ move  Enter zoom in  Backspace zoom out  ? help  q quit  [ ] views
-L17 1-4 fg=#88c0d0 bold | 5-9 fg=#8b94a7 | 12-16 fg=#88c0d0 bold | 17-24 fg=#8b94a7 | 27-35 fg=#88c0d0 bold | 36-44 fg=#8b94a7 | 47-47 fg=#88c0d0 bold | 48-52 fg=#8b94a7 | 55-55 fg=#88c0d0 bold | 56-60 fg=#8b94a7 | 63-65 fg=#88c0d0 bold | 66-71 fg=#8b94a7
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  p colour  Space mark
+L17 1-4 fg=#88c0d0 bold | 5-9 fg=#8b94a7 | 12-16 fg=#88c0d0 bold | 17-24 fg=#8b94a7 | 27-35 fg=#88c0d0 bold | 36-44 fg=#8b94a7 | 47-49 fg=#88c0d0 bold | 50-55 fg=#8b94a7 | 58-58 fg=#88c0d0 bold | 59-65 fg=#8b94a7 | 68-72 fg=#88c0d0 bold | 73-77 fg=#8b94a7

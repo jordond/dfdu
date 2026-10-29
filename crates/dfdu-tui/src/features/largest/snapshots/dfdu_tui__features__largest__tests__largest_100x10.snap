@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/largest/tests.rs
-assertion_line: 82
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                        done in 00:00
@@ -12,4 +11,4 @@ expression: frame
  [ ]    3.9 KiB  ██████████▋                19.0%  top.txt
  [ ]    2.9 KiB  ████████                   14.3%  a/deep/x.bin
 
- ↑↓ move  Enter show in Files  Space tick  y copy path  d delete selected  ? help  q quit  [ ] views
+ ↑↓ move  Enter show in Files  Space tick  X untick all  y copy path  o open  d delete selected

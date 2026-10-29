@@ -48,5 +48,5 @@ L20 0-54 fg=cyan bold | 55-78 fg=magenta | 79-89 fg=green
 L21 85-89 fg=darkgray
  map depth 3
 L22 0-11 fg=darkgray
- ←↑↓→ move  Enter zoom in  Backspace zoom out  d trash  ? help  q quit  [ ] views
-L23 1-4 bold | 5-9 fg=darkgray | 12-16 bold | 17-24 fg=darkgray | 27-35 bold | 36-44 fg=darkgray | 47-47 bold | 48-53 fg=darkgray | 56-56 bold | 57-61 fg=darkgray | 64-64 bold | 65-69 fg=darkgray | 72-74 bold | 75-80 fg=darkgray
+ ←↑↓→ move  Enter zoom in  Backspace zoom out  + - depth  p colour  Space mark  d trash
+L23 1-4 bold | 5-9 fg=darkgray | 12-16 bold | 17-24 fg=darkgray | 27-35 bold | 36-44 fg=darkgray | 47-49 bold | 50-55 fg=darkgray | 58-58 bold | 59-65 fg=darkgray | 68-72 bold | 73-77 fg=darkgray | 80-80 bold | 81-86 fg=darkgray

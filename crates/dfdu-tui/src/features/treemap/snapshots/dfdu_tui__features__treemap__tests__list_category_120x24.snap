@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/treemap/tests.rs
-assertion_line: 663
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                                      done in 00:00
@@ -26,4 +25,4 @@ expression: frame
                                                                                 │                                      │
                                                                                 ╰──────────────────────────────────────╯
  ▸ big/  58.6 KiB · 6 items · build                                                                                 1/4
- ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  : commands  ? help  q quit  [ ] views
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit  [ ] views

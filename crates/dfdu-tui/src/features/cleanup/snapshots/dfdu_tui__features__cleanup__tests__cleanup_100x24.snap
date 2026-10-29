@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/cleanup/tests.rs
-assertion_line: 31
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup 70.3K │ 4 Duplicates │ 5 Largest                  done in 00:00
@@ -26,4 +25,4 @@ expression: frame
 
 
 
- ↑↓ move  Enter close  Space tick  A tick suggested  d delete selected  ? help  q quit  [ ] views
+ ↑↓ move  Enter close  Space tick  A tick suggested  X untick all  f filter  d delete selected

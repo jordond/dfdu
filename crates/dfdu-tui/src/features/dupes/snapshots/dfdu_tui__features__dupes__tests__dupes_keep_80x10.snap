@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/dupes/tests.rs
-assertion_line: 241
 expression: out
 ---
  dfdu │ 1 2 3 [4 Duplicates] 5                                 ⠋ scanning 00:00
@@ -12,4 +11,4 @@ expression: out
    [ ]    1.0 MiB       1 y  b/new.bin
    KEEP   1.0 MiB       2 y  a/archive/old.bin
 
- ↑↓ move  Space tick  A tick suggested  d delete selected  ? help  q quit
+ ↑↓ move  Space tick  A tick suggested  Enter show in Files  d delete selected

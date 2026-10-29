@@ -406,6 +406,28 @@ fn deleting_every_copy_of_a_group_is_refused() {
     assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
 }
 
+/// The footer keeps every key of the view at 120 columns, and at 80 lets `q quit` go before
+/// `[ ] views` and the arrows.
+#[test]
+fn the_footer_keeps_the_views_keys_first() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(&mut app, &[&[("/r/a", 1), ("/r/b", 2)]]);
+    let footer = |app: &mut App, w| {
+        let frame = render(app, t0, w, 12);
+        frame.lines().last().unwrap_or_default().to_owned()
+    };
+    let wide = footer(&mut app, 180);
+    for want in ["R compare again", "K keep rule", "[ ] views", "q quit"] {
+        assert!(wide.contains(want), "{wide}");
+    }
+    let narrow = footer(&mut app, 80);
+    assert!(narrow.contains("↑↓ move"), "{narrow}");
+    if narrow.contains("q quit") {
+        assert!(narrow.contains("[ ] views"), "{narrow}");
+    }
+}
+
 /// `R` while a scan runs keeps the comparison shown: it cannot start another yet.
 #[test]
 fn compare_again_while_scanning_keeps_what_is_shown() {
