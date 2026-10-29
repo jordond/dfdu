@@ -294,6 +294,51 @@ fn labels_stay_inside_their_tiles() {
     }
 }
 
+/// As the app sees a scan: the map is drawn before the matches are decided, and the matches
+/// lie deep inside the top-level directories (`dev/shop/node_modules`). Once decided, `dev/`
+/// takes the colour of what is matched inside it, and the legend names it.
+#[test]
+fn category_colour_follows_matches_found_later_and_deep_inside() {
+    let (mut fx, root) = Fixture::new();
+    let dev = fx.dir(root, "dev");
+    let shop = fx.dir(dev, "shop");
+    let deps = fx.dir(shop, "node_modules");
+    fx.file(deps, "react.js", 50_000);
+    fx.file(shop, "app.js", 1_000);
+    let docs = fx.dir(root, "docs");
+    fx.file(docs, "taxes.pdf", 20_000);
+    fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    let rules = dfdu_rules::builtin(&env).0;
+    let rule = rules.index("node.node_modules").expect("the rule");
+    fx.m.rules = Some(Arc::new(rules));
+    let t0 = Instant::now();
+    let mut app = treemap_app(&fx.m, t0);
+    app.theme = Theme::named("dark", crate::theme::ColorLevel::TrueColor, None).expect("dark");
+    let slot_of = |app: &mut App, name: &str| {
+        render(app, t0, 100, 30);
+        let l = app.treemap.layout.as_ref().expect("layout");
+        let i = (l.tiles.iter().position(|t| t.name == name)).expect(name);
+        super::draw::base_style(app, &l.tiles, i, 0).1
+    };
+    assert_eq!(slot_of(&mut app, "dev"), None, "nothing matched yet");
+    assert!(!render(&mut app, t0, 100, 30).contains("■ build"));
+    // The scan decides the match.
+    let class = dfdu_tree::Class {
+        rule,
+        safety: dfdu_rules::Safety::Regenerable,
+        degraded: None,
+        flags: 0,
+    };
+    fx.m.tree.set_class(deps, Some(class));
+    sync(&mut app, &fx.m, t0);
+    let build = crate::theme::Category::Build as usize;
+    assert_eq!(slot_of(&mut app, "dev"), Some(build));
+    assert_eq!(slot_of(&mut app, "docs"), None, "nothing matched in docs/");
+    let frame = render(&mut app, t0, 100, 30);
+    assert!(frame.contains("colour: category  ■ build"), "{frame}");
+}
+
 #[test]
 fn an_empty_directory_has_an_empty_state() {
     let t0 = Instant::now();
@@ -304,7 +349,7 @@ fn an_empty_directory_has_an_empty_state() {
     assert!(frame.contains("╭ Map ─"), "{frame}");
     assert!(frame.contains("This directory is empty."), "{frame}");
     assert!(
-        frame.contains("←  parent directory      Esc  back to Files"),
+        frame.contains("Backspace  parent directory      Esc  back to Files"),
         "{frame}"
     );
     insta::assert_snapshot!("map_empty_100x30", frame);

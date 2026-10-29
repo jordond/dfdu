@@ -12,7 +12,7 @@ mod format;
 use ratatui::style::{Modifier, Style};
 
 pub use builtin::BuiltinTheme;
-pub use color::{ColorLevel, ColorSpec, Rgb, color_rgb, lightness, rgb_color};
+pub use color::{ColorLevel, ColorSpec, Rgb, color_rgb, contrast, lightness, rgb_color};
 pub use detect::{
     choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
 };

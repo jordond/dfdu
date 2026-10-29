@@ -30,7 +30,7 @@ If `NO_COLOR` is set, dfdu uses no colours (the `mono` theme) unless you pass `-
 
 ### Bars
 
-Size bars use eighth-block characters (`█▌`). If your terminal or font has no block characters, pass `--bars ascii`: bars are drawn with `#`, and treemap tiles are framed with `=`, `|` and `+`. A theme file can set the same with `bars = "ascii"`; `--bars` overrides it. Every built-in theme, `mono` included, uses `unicode`.
+Size bars use eighth-block characters (`█▌`). If your terminal or font has no block characters, pass `--bars ascii`: bars are drawn with `#`, and Map tiles are framed with `=`, `|` and `+` and shaded with `#`, `%`, `+` and `.` (by depth; `.` also for the tile of entries too small to show) in place of `█▓▒░`, and cleanup candidates are hatched with `/` in place of `╱`. A theme file can set the same with `bars = "ascii"`; `--bars` overrides it. Every built-in theme, `mono` included, uses `unicode`.
 
 ## Writing a theme
 

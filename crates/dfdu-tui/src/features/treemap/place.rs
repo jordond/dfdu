@@ -40,8 +40,8 @@ pub(super) struct Tile {
     pub parent: u64,
     pub mtime: i64,
     pub tag: Option<Tag>,
-    /// The theme's category colour slot of the largest category among the children read, for
-    /// a directory without a match of its own.
+    /// The theme's category colour slot of most of what is matched inside, for a directory
+    /// without a match of its own.
     pub dominant: Option<usize>,
     /// The tile of the entries merged for being too small: how many.
     pub small: u64,
@@ -52,8 +52,10 @@ pub(super) struct Tile {
 #[derive(Clone, Debug)]
 pub(super) struct Layout {
     pub key: Key,
-    /// What the levels below the top were read for when this was laid out.
+    /// What the levels below the top were read for when this was laid out, and how many
+    /// matches the tree had then.
     pub below: Option<Key>,
+    pub classes: usize,
     pub area: Rect,
     /// Laid out for drawing without colour, with frames.
     pub framed: bool,
@@ -65,6 +67,8 @@ pub(super) struct Layout {
 /// What a tile is laid out from.
 struct Item<'a> {
     entry: Option<(NodeRef, usize)>,
+    /// Its node, to look its main category up; `None` for the merged tile.
+    node: Option<NodeRef>,
     name: String,
     is_dir: bool,
     size: u64,
@@ -79,6 +83,7 @@ impl<'a> Item<'a> {
         (kids.items.iter())
             .map(|k| Item {
                 entry: None,
+                node: Some(k.node),
                 name: String::from_utf8_lossy(&k.name).into_owned(),
                 is_dir: k.is_dir,
                 size: k.size,
@@ -97,7 +102,8 @@ struct Placer<'r> {
     tops: Vec<usize>,
     depth: u8,
     framed: bool,
-    rules: Option<&'r dfdu_rules::RuleSet>,
+    /// The main category below each directory (`super::dominant`).
+    dominant: &'r HashMap<NodeRef, usize>,
 }
 
 /// The smallest tile that shows its children.
@@ -112,20 +118,6 @@ impl Placer<'_> {
         } else {
             Rect::new(r.x + 1, r.y + 1, r.width - 2, r.height - 2)
         }
-    }
-
-    /// The colour slot of the category that holds the most of `kids` among those matched.
-    fn dominant(&self, kids: Option<&Kids>) -> Option<usize> {
-        let rules = self.rules?;
-        let mut by: HashMap<usize, u64> = HashMap::new();
-        for k in &kids?.items {
-            if let Some(tag) = k.tag {
-                *by.entry(tag.category(rules).1).or_default() += k.size;
-            }
-        }
-        by.into_iter()
-            .max_by_key(|&(slot, size)| (size, std::cmp::Reverse(slot)))
-            .map(|(slot, _)| slot)
     }
 
     /// Turns the largest of `items` into tiles of `area`, merging those too small to label.
@@ -160,6 +152,7 @@ impl Placer<'_> {
         if rest_size > 0 {
             items.push(Item {
                 entry: None,
+                node: None,
                 name: String::new(),
                 is_dir: false,
                 size: rest_size,
@@ -190,11 +183,9 @@ impl Placer<'_> {
                 .kids
                 .filter(|k| level + 1 < self.depth && !k.items.is_empty())
                 .filter(|_| tile.width >= NEST_MIN.0 && tile.height >= NEST_MIN.1);
-            let dominant = if level == 0 && item.tag.is_none() {
-                self.dominant(item.kids)
-            } else {
-                None
-            };
+            let dominant = (item.tag.is_none())
+                .then(|| item.node.and_then(|n| self.dominant.get(&n).copied()))
+                .flatten();
             self.tiles.push(Tile {
                 rect: tile,
                 bound: area,
@@ -239,6 +230,7 @@ pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
             let e = &entries[i];
             Item {
                 entry: Some((e.node, i)),
+                node: Some(e.node),
                 name: String::from_utf8_lossy(&e.name).into_owned(),
                 is_dir: e.is_dir,
                 size: e.size,
@@ -254,12 +246,13 @@ pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
         tops: Vec::new(),
         depth: app.treemap.depth,
         framed,
-        rules: app.snap.rules.as_deref(),
+        dominant: &app.extras.treemap.dominant,
     };
     p.place(items, (0, 0), area, 0, None);
     Layout {
         key,
         below: app.extras.treemap.key,
+        classes: app.extras.treemap.classes,
         area,
         framed,
         tiles: p.tiles,
@@ -289,7 +282,7 @@ pub(super) fn peek(app: &App, l: &Layout, at: usize) -> Vec<Tile> {
         tops: Vec::new(),
         depth: 2,
         framed: l.framed,
-        rules: app.snap.rules.as_deref(),
+        dominant: &app.extras.treemap.dominant,
     };
     let inner = p.inner(tile.rect);
     p.place(

@@ -10,7 +10,7 @@ use super::draw::{
     LABEL_MIN, base_style, candidate, cells_of, fit_name, hatch, put, rgb_of, texts, third_line,
 };
 use super::glyph::ASCII_SELECTED;
-use super::paint::{self, Colors};
+use super::paint::{self, Colors, Shades};
 use super::place::Tile;
 use crate::app::App;
 use crate::theme::{Bars, color_rgb};
@@ -37,7 +37,7 @@ pub(super) fn fill_tile(
     if tile.small > 0 {
         // The merged tile: shaded in its parent's colour, labelled only when that fits.
         let style = Style::new().fg(colors.get(base));
-        let shade = paint::shade(Bars::Unicode, 3).repeat(usize::from(r.width));
+        let shade = paint::shade(t.bars, 3).repeat(usize::from(r.width));
         for y in r.top()..r.bottom() {
             buf.set_stringn(r.x, y, &shade, usize::from(r.width), style);
         }
@@ -48,7 +48,8 @@ pub(super) fn fill_tile(
     }
     let selected = tile.level == 0 && sel == Some(tile.top) && tile.entry.is_some();
     let accent = t.border_focus.fg.and_then(color_rgb).unwrap_or(base);
-    let body = paint::body(base, tile.level);
+    let shades = Shades::of(t);
+    let body = shades.body(base, tile.level);
     let body_style = colors.on(body);
     for y in r.top()..r.bottom() {
         buf.set_stringn(
@@ -65,7 +66,7 @@ pub(super) fn fill_tile(
         let head = if selected {
             accent
         } else {
-            paint::header(base)
+            shades.header(base)
         };
         let head_style = colors.on(head);
         let row = " ".repeat(usize::from(r.width));
@@ -101,7 +102,7 @@ pub(super) fn fill_tile(
     }
     if candidate(tile) {
         let style = Style::new()
-            .fg(colors.get(paint::header(base)))
+            .fg(colors.get(shades.header(base)))
             .bg(colors.get(body));
         // Sparser than without colour: the fill already tells the tile apart.
         hatch(buf, r, first_free, style, t.bars, 4);

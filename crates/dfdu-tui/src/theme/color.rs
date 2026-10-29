@@ -187,7 +187,6 @@ pub fn relative_luminance(c: Rgb) -> f64 {
 }
 
 /// WCAG 2.1 contrast ratio, 1 to 21.
-#[cfg(test)]
 pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     let (la, lb) = (relative_luminance(a), relative_luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)

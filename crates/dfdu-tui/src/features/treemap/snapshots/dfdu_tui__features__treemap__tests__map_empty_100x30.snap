@@ -1,6 +1,5 @@
 ---
 source: crates/dfdu-tui/src/features/treemap/tests.rs
-assertion_line: 307
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
@@ -20,7 +19,7 @@ expression: frame
             │                                                                          │
             │ This directory is empty.                                                 │
             │                                                                          │
-            │ ←  parent directory      Esc  back to Files                              │
+            │ Backspace  parent directory      Esc  back to Files                      │
             ╰──────────────────────────────────────────────────────────────────────────╯
 
 

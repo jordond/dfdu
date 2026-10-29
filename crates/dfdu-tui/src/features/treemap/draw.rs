@@ -71,8 +71,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     let paint = Paint::of(&app.theme);
     let framed = paint == Paint::Glyphs;
     let key = key_of(app);
+    let below = &app.extras.treemap;
     let current = app.treemap.layout.as_ref().is_some_and(|l| {
-        l.key == key && l.area == map && l.below == app.extras.treemap.key && l.framed == framed
+        l.key == key
+            && l.area == map
+            && l.below == below.key
+            && l.classes == below.classes
+            && l.framed == framed
     });
     if !current {
         app.treemap.layout = Some(build(app, map, framed));
@@ -131,7 +136,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
                 },
             ],
             keys: vec![
-                (first_key(Action::Parent), "parent directory"),
+                // The map takes the arrows to move between tiles.
+                ("Backspace", "parent directory"),
                 (first_key(Action::Close), "back to Files"),
             ],
         };
