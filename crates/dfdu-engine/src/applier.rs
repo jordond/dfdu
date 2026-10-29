@@ -74,7 +74,8 @@ pub enum Command {
     /// Rescan the root of a tree loaded from a file ([`Engine::load`](crate::Engine::load))
     /// with these options, which no scan job of this session holds. With `changed` (paths
     /// relative to the root, as [`changed_since`](crate::changed_since) gives them), the tree
-    /// is classified as loaded and only those directories are rescanned.
+    /// is classified as loaded and only those directories, and those above them, are listed
+    /// again: the subdirectories they still have are kept as loaded.
     Resume {
         node: NodeRef,
         opts: JobOptions,

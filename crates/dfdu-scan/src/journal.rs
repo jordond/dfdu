@@ -1,6 +1,6 @@
 //! Change journals: which directories changed since a snapshot was taken (`FSEvents` on macOS,
 //! the USN journal on Windows, btrfs generations on Linux as root),
-//! so a resume rescans only those (the engine's `Command::Resume`).
+//! so a resume lists only those again (the engine's `Command::Resume`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
