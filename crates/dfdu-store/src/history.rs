@@ -5,7 +5,8 @@
 //! with the same options, since other mount options count other data.
 //!
 //! The database runs in WAL mode with a busy timeout, so a browser and a `dfdu scan` from
-//! cron can both write. `PRAGMA user_version` is the schema version; [`History::open`] brings an
+//! cron can both write, and syncs at checkpoints rather than every commit, so each holds the
+//! write lock only briefly. `PRAGMA user_version` is the schema version; [`History::open`] brings an
 //! older database up to date and refuses a newer one.
 
 use std::collections::BTreeMap;
@@ -291,6 +292,12 @@ impl History {
                 Err(e) => return Err(err(e)),
             }
         }
+        // In WAL mode a commit then only appends to the log and checkpoints sync it: a power
+        // loss can drop the last scans recorded but never damages the database. Without the
+        // sync in every commit the write lock is held for a moment instead of a flush, which on
+        // Windows is long enough that connections waiting their turn ran out the busy timeout.
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(err)?;
         conn.pragma_update(None, "foreign_keys", true)
             .map_err(err)?;
         let mut h = History { conn };
@@ -307,16 +314,17 @@ impl History {
             .map_err(err)
     }
 
+    /// Brings the schema up to [`SCHEMA`]. A database already there is only read, so opening one
+    /// does not queue for the write lock behind the connections recording.
     fn migrate(&mut self) -> io::Result<()> {
+        if Self::version(&self.conn)? == SCHEMA {
+            return Ok(());
+        }
         let tx = self.write()?;
-        let version: i64 = tx
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .map_err(err)?;
-        if version > SCHEMA {
-            return Err(io::Error::other(format!(
-                "the history database has schema {version}, written by a newer dfdu (this one \
-                 reads {SCHEMA})"
-            )));
+        // Read again under the lock: another connection may have migrated in between.
+        let version = Self::version(&tx)?;
+        if version == SCHEMA {
+            return Ok(());
         }
         if version < 1 {
             tx.execute_batch(
@@ -351,6 +359,20 @@ impl History {
         tx.pragma_update(None, "user_version", SCHEMA)
             .map_err(err)?;
         tx.commit().map_err(err)
+    }
+
+    /// The schema version of the database, refused when newer than [`SCHEMA`].
+    fn version(conn: &Connection) -> io::Result<i64> {
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(err)?;
+        if version > SCHEMA {
+            return Err(io::Error::other(format!(
+                "the history database has schema {version}, written by a newer dfdu (this one \
+                 reads {SCHEMA})"
+            )));
+        }
+        Ok(version)
     }
 
     /// Records a scan in one transaction and drops the oldest scans of its root past

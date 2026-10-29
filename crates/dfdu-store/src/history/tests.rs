@@ -50,6 +50,24 @@ fn concurrent_opens_and_records_wait_for_each_other() {
     assert_eq!(History::open(&db).unwrap().scans(None).unwrap().len(), 40);
 }
 
+/// Opening a database already at the schema only reads it, so it does not queue behind a
+/// connection holding the write lock; commits sync only at checkpoints.
+#[test]
+fn opening_a_current_database_does_not_wait_for_a_writer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("history.sqlite3");
+    let mut writer = History::open(&db).unwrap();
+    let tx = writer.write().unwrap();
+    let t0 = std::time::Instant::now();
+    let h = History::open(&db).unwrap();
+    assert!(t0.elapsed() < BUSY / 2, "{:?}", t0.elapsed());
+    let sync: i64 = (h.conn)
+        .query_row("PRAGMA synchronous", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(sync, 1, "NORMAL");
+    drop(tx);
+}
+
 fn record(h: &mut History, root: &str, options: &str, at: i64, rows: &SizeMap) -> i64 {
     h.record(&Record {
         root: Path::new(root),
