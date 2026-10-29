@@ -16,7 +16,16 @@ use serde_json::Value;
 /// Sets the modification time of `p` (a file or directory) `days` back.
 fn age(p: &Path, days: u64) {
     let t = SystemTime::now() - Duration::from_secs(days * 86_400);
-    fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let mut o = fs::OpenOptions::new();
+    o.read(true);
+    // Windows opens a directory only with FILE_FLAG_BACKUP_SEMANTICS, and setting its times
+    // needs FILE_WRITE_ATTRIBUTES.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.access_mode(0x0100).custom_flags(0x0200_0000);
+    }
+    o.open(p).unwrap().set_modified(t).unwrap();
 }
 
 /// Every path below `root` with its size, sorted.

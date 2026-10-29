@@ -12,6 +12,9 @@ summary=${GITHUB_STEP_SUMMARY:-/dev/stdout}
 cd "$(dirname "$0")/../../fuzz" || exit 1
 
 targets=$(cargo "+$toolchain" fuzz list) || exit 1
+# cargo-fuzz defaults to the triple it was built for, and a prebuilt binary may be musl,
+# which the sanitizers reject; build for the toolchain's host instead.
+host=$(rustc "+$toolchain" -vV | sed -n 's/^host: //p')
 failed=()
 rows=()
 for t in $targets; do
@@ -22,7 +25,7 @@ for t in $targets; do
     done
     before=$(find "corpus/$t" -type f | wc -l)
     result=ok
-    if ! cargo "+$toolchain" fuzz run "$t" "${dirs[@]}" -- \
+    if ! cargo "+$toolchain" fuzz run --target "$host" "$t" "${dirs[@]}" -- \
         -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048; then
         failed+=("$t")
         result=failed

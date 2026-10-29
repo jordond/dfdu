@@ -132,13 +132,12 @@ fn data_used_outside_the_scan_may_free_less() {
     let t = Instant::now();
     let mut app = App::new(Theme::no_color(), t);
     let out = show(&e, &mut app, &root, t);
-    // a.bin's 8 MiB are shared with sub and snap-ro; only-here.bin is not shared.
-    let shared = format!("{} also used outside the scan", human(8 << 20));
-    assert!(line_with(&out, "a.bin").contains(&shared), "{out}");
-    assert!(
-        !line_with(&out, "only-here.bin").contains("outside"),
-        "{out}"
-    );
+    // a.bin's 8 MiB are shared with sub and snap-ro; only-here.bin is not shared. Rows carry
+    // the ↔ flag; the status line for the selected a.bin says how much.
+    assert!(line_with(&out, "a.bin").contains('↔'), "{out}");
+    assert!(!line_with(&out, "only-here.bin").contains('↔'), "{out}");
+    let shared = format!("↔ {} also used outside the scan", human(8 << 20));
+    assert!(line_with(&out, "▸ a.bin").contains(&shared), "{out}");
     select(&mut app, "a.bin", t);
     app.key(press(KeyCode::Char('D')), t);
     assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));

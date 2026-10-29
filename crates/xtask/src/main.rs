@@ -344,6 +344,10 @@ fn coverage(html: bool, open: bool, no_fail: bool) -> anyhow::Result<()> {
     need_cargo("llvm-cov")?;
     need_cargo("nextest")?;
     let min = ci_value("MIN_LINES")?;
+    // `--no-report` does not clean, and the report reads every test binary in the target
+    // directory: binaries from older builds (or the CI cache) map stale functions onto the
+    // current sources and drag the numbers down.
+    run(&mut cargo(["llvm-cov", "clean", "--workspace"]))?;
     run(&mut cargo([
         "llvm-cov",
         "nextest",
