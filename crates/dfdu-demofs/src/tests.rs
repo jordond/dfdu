@@ -410,6 +410,30 @@ fn imports_copy_files_links_and_directories() {
     assert!(Fixture::parse(&missing).unwrap().build().is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn import_patterns_take_every_match_and_fail_on_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("sys");
+    for arch in ["aarch64-linux-gnu", "x86_64-linux-gnu", "other"] {
+        std::fs::create_dir_all(src.join(arch)).unwrap();
+        std::fs::write(src.join(arch).join("libc.so.6"), arch).unwrap();
+    }
+    let build = |pattern: &str| {
+        let text = format!(
+            "now = \"2026-10-01\"\nimport = [{:?}]\n",
+            format!("{}/{pattern}", src.display())
+        );
+        Fixture::parse(&text).unwrap().build()
+    };
+    let t = build("*-linux-*/lib*.so.6").unwrap();
+    let at = |p: &str| t.resolve(src.join(p).to_str().unwrap());
+    assert_eq!(read_all(&t, at("aarch64-linux-gnu/libc.so.6").unwrap()), b"aarch64-linux-gnu");
+    assert_eq!(read_all(&t, at("x86_64-linux-gnu/libc.so.6").unwrap()), b"x86_64-linux-gnu");
+    assert!(at("other/libc.so.6").is_err());
+    assert!(build("*-linux-gnu/libm.so.6").is_err());
+}
+
 #[test]
 fn a_fixture_extends_another_removing_and_replacing_entries() {
     let week_ago = r#"

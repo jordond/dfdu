@@ -281,10 +281,12 @@ impl Fixture {
                 format!("{at}/{p}")
             }
         };
-        for from in &self.import {
-            let dir = mkdir_p(tree, &parent_of(&under(from)), default_mtime)?;
-            import(tree, dir, std::path::Path::new(from), default_mtime)
-                .with_context(|| format!("import {from:?}"))?;
+        for pattern in &self.import {
+            for from in expand(pattern).with_context(|| format!("import {pattern:?}"))? {
+                let dir = mkdir_p(tree, &parent_of(&under(&from)), default_mtime)?;
+                import(tree, dir, std::path::Path::new(&from), default_mtime)
+                    .with_context(|| format!("import {from:?}"))?;
+            }
         }
         for e in &self.entries {
             add(tree, e, &under, now, default_mtime)
@@ -297,6 +299,60 @@ impl Fixture {
 fn parent_of(path: &str) -> String {
     path.rsplit_once('/')
         .map_or(String::new(), |(p, _)| p.to_owned())
+}
+
+/// The paths an import names: itself, or with `*` in a component (any run of characters, not
+/// `/`) every path that matches, in name order, so one list serves each architecture's
+/// library paths. A pattern that matches nothing is an error, as a missing path is.
+fn expand(pattern: &str) -> anyhow::Result<Vec<String>> {
+    if !pattern.contains('*') {
+        return Ok(vec![pattern.to_owned()]);
+    }
+    let mut paths = vec![String::new()];
+    for part in pattern.split('/').filter(|p| !p.is_empty()) {
+        let mut next = vec![];
+        for dir in &paths {
+            if !part.contains('*') {
+                next.push(format!("{dir}/{part}"));
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(if dir.is_empty() { "/" } else { dir }) else {
+                continue;
+            };
+            let mut names: Vec<_> = entries
+                .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter(|n| matches_glob(part, n))
+                .collect();
+            names.sort();
+            next.extend(names.into_iter().map(|n| format!("{dir}/{n}")));
+        }
+        paths = next;
+    }
+    paths.retain(|p| std::fs::symlink_metadata(p).is_ok());
+    if paths.is_empty() {
+        bail!("no path matches");
+    }
+    Ok(paths)
+}
+
+/// Whether `name` matches `pattern`, where `*` stands for any run of characters.
+fn matches_glob(pattern: &str, name: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<_> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for p in middle {
+        match rest.find(p) {
+            Some(i) => rest = &rest[i + p.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
 }
 
 /// Copies the file, symlink or directory at `from` into `dir` under its own name, with its

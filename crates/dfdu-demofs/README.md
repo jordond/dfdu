@@ -144,9 +144,11 @@ place, so listings keep their order. Other entries are added after the inherited
 the fixture's root: files with their bytes and permission bits, symlinks as they are (not
 followed), directories with everything below them. They are owned by the fixture's `uid` and
 get its default age. A symlink's target is not imported with it; list both. Imports come
-before the entries, so an entry can set the attributes of an imported directory. This is for
-a root a shell can run in (`demo/fixtures/system.toml`); a missing path is an error, so `check`
-of such a fixture fails outside the recording image.
+before the entries, so an entry can set the attributes of an imported directory. A `*` in a
+path component matches any run of characters, and every match is imported
+(`/usr/lib/*-linux-gnu/libc.so.6` is either architecture's). This is for a root a shell can
+run in (`demo/fixtures/system.toml`); a missing path, or a pattern that matches nothing, is an
+error, so `check` of such a fixture fails outside the recording image.
 
 ### Fill
 
