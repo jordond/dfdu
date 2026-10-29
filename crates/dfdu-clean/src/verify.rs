@@ -8,26 +8,64 @@ use dfdu_rules::{Env, rule_path};
 
 use dfdu_tree::{ErrKind, Kind, Meta};
 
-use crate::{DeleteResult, Mode, PlanItem, Refusal};
+use crate::{DeleteResult, Mode, Plan, PlanItem, Refusal};
+
+/// Why [`verify`] keeps an item from being deleted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Rejection {
+    /// Changed on disk since the scan, or gone.
+    Stale(String),
+    Refused(Refusal),
+    /// The item or its directory could not be read.
+    Failed {
+        err: ErrKind,
+        msg: String,
+    },
+}
+
+impl Rejection {
+    fn failed(e: &io::Error) -> Rejection {
+        Rejection::Failed {
+            err: ErrKind::from(e),
+            msg: e.to_string(),
+        }
+    }
+}
+
+impl From<Rejection> for DeleteResult {
+    fn from(r: Rejection) -> DeleteResult {
+        match r {
+            Rejection::Stale(why) => DeleteResult::Stale(why),
+            Rejection::Refused(r) => DeleteResult::Refused(r),
+            Rejection::Failed { err, msg } => DeleteResult::Failed {
+                partial: false,
+                err,
+                msg,
+            },
+        }
+    }
+}
 
 /// Paths never deleted, whatever a plan or rule says: filesystem roots, top-level directories,
 /// the user's home directory itself, and everything at or below a protected path or name of
-/// `dfdu_rules::protected`, with its exceptions, so the tree
-/// and this check agree on what may be deleted. Files tracked by version control are protected
-/// by the classifier, in the tree.
+/// `dfdu_rules::protected`, with its exceptions, for this process's environment
+/// ([`Env::current`], read once). [`verify`] also refuses what the protected paths of the plan's
+/// rule set cover, which are those the tree was marked with. Files tracked by version control
+/// are protected by the classifier, in the tree.
 #[must_use]
 pub fn is_protected(path: &Path) -> bool {
-    // One snapshot of the environment for the protected paths and the home directory.
-    static RULES: LazyLock<(Protected, Option<String>)> = LazyLock::new(|| {
-        let env = Env::current();
-        (Protected::new(&env), env.home())
-    });
-    protected_by(&RULES.0, RULES.1.as_deref(), path)
+    static ENV: LazyLock<Protected> = LazyLock::new(|| Protected::new(&Env::current()));
+    protected_by(&ENV, path)
 }
 
-/// [`is_protected`] for the protected paths `rules` and the home directory `home` (as
-/// [`Env::home`] gives it).
-fn protected_by(rules: &Protected, home: Option<&str>, path: &Path) -> bool {
+/// Whether deletion refuses `path`: [`is_protected`], or protected by `rules` (a plan's rule
+/// set), so that a rule set never makes the check weaker than the environment's.
+fn refused(rules: Option<&Protected>, path: &Path) -> bool {
+    is_protected(path) || rules.is_some_and(|r| protected_by(r, path))
+}
+
+/// [`is_protected`] for the protected paths `rules` and their home directory.
+fn protected_by(rules: &Protected, path: &Path) -> bool {
     let normal = path
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
@@ -39,7 +77,7 @@ fn protected_by(rules: &Protected, home: Option<&str>, path: &Path) -> bool {
     let p = rule_path(path);
     // The home directory is excepted from the protection of the directory holding it (so
     // what is below it can be deleted), but is never deleted itself.
-    home.is_some_and(|h| p == h.as_bytes()) || rules.covers(&p)
+    rules.home().is_some_and(|h| p == h.as_bytes()) || rules.covers(&p)
 }
 
 /// Linux: the freedesktop home trash is on the filesystem of `$XDG_DATA_HOME`. The `trash`
@@ -141,17 +179,17 @@ fn mount_inside(dir: &Path, dev: u64) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Checks an item before deletion. `Ok` means it may be deleted now.
+/// Checks an item of `plan` before deletion. `Ok` means it may be deleted now.
 ///
 /// # Errors
 ///
-/// The result to report instead of deleting: refused (outside the scan root, protected, on
-/// another filesystem), gone, or changed since the scan.
-pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), DeleteResult> {
-    let path = &item.path;
+/// Why not to delete it now: refused (outside the scan root, protected, on another
+/// filesystem), gone, changed since the scan, or not readable.
+pub fn verify(item: &PlanItem, plan: &Plan) -> Result<(), Rejection> {
+    let (path, scan_root, mode) = (&item.path, plan.scan_root.as_path(), plan.mode);
     if !path.is_absolute() || !scan_root.is_absolute() {
         // Callers canonicalise the scan root; a relative path here is a bug, not a target.
-        return Err(DeleteResult::Refused(Refusal::OutsideScanRoot));
+        return Err(Rejection::Refused(Refusal::OutsideScanRoot));
     }
     // `..` would leave the root while the path still starts with it; plan paths are built
     // from names and never have one.
@@ -159,16 +197,16 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         .components()
         .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
     {
-        return Err(DeleteResult::Refused(Refusal::OutsideScanRoot));
+        return Err(Rejection::Refused(Refusal::OutsideScanRoot));
     }
     if path == scan_root {
-        return Err(DeleteResult::Refused(Refusal::ScanRoot));
+        return Err(Rejection::Refused(Refusal::ScanRoot));
     }
     if !path.starts_with(scan_root) {
-        return Err(DeleteResult::Refused(Refusal::OutsideScanRoot));
+        return Err(Rejection::Refused(Refusal::OutsideScanRoot));
     }
-    if is_protected(path) {
-        return Err(DeleteResult::Refused(Refusal::Protected));
+    if refused(plan.protected.as_deref(), path) {
+        return Err(Rejection::Refused(Refusal::Protected));
     }
     // A directory above the item replaced by a symlink since the scan would take the delete
     // somewhere else, outside the root or into a protected path: the item's directory must
@@ -176,21 +214,17 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
     match path.parent().map(dunce::canonicalize) {
         Some(Ok(real)) if real == path.parent().unwrap_or(path) => {}
         Some(Ok(_)) => {
-            return Err(DeleteResult::Stale(
+            return Err(Rejection::Stale(
                 "a directory above it is now a symlink".into(),
             ));
         }
         Some(Err(e)) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(DeleteResult::Stale("no longer exists".into()));
+            return Err(Rejection::Stale("no longer exists".into()));
         }
         Some(Err(e)) => {
-            return Err(DeleteResult::Failed {
-                partial: false,
-                err: ErrKind::from(&e),
-                msg: e.to_string(),
-            });
+            return Err(Rejection::failed(&e));
         }
-        None => return Err(DeleteResult::Refused(Refusal::OutsideScanRoot)),
+        None => return Err(Rejection::Refused(Refusal::OutsideScanRoot)),
     }
     // The same conversion the scanner used, so the fields compare like for like (on Windows
     // the file id and volume serial number, which std does not report).
@@ -201,14 +235,10 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
     let now = match now {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(DeleteResult::Stale("no longer exists".into()));
+            return Err(Rejection::Stale("no longer exists".into()));
         }
         Err(e) => {
-            return Err(DeleteResult::Failed {
-                partial: false,
-                err: ErrKind::from(&e),
-                msg: e.to_string(),
-            });
+            return Err(Rejection::failed(&e));
         }
     };
     let id = &item.identity;
@@ -219,7 +249,7 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         && now.mtime == id.mtime
         && (kind == Kind::Dir || now.apparent == id.apparent);
     if !same {
-        return Err(DeleteResult::Stale("changed since the scan".into()));
+        return Err(Rejection::Stale("changed since the scan".into()));
     }
     // A mount point, judged by mount id where the system has one: btrfs subvolume roots have
     // their own `st_dev` but are on their parent's mount, and may be deleted.
@@ -233,7 +263,7 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
             None => Meta::from_metadata(&pm).dev != now.dev,
         };
         if mount_point {
-            return Err(DeleteResult::Refused(Refusal::MountPoint));
+            return Err(Rejection::Refused(Refusal::MountPoint));
         }
     }
     // A rename takes whatever is mounted inside along with the item (a permanent delete
@@ -243,12 +273,12 @@ pub fn verify(item: &PlanItem, scan_root: &Path, mode: Mode) -> Result<(), Delet
         && matches!(mode, Mode::Trash | Mode::Stage)
         && let Some(m) = mount_inside(path, now.dev)
     {
-        return Err(DeleteResult::Refused(Refusal::ContainsMount(m)));
+        return Err(Rejection::Refused(Refusal::ContainsMount(m)));
     }
     if mode == Mode::Trash
         && let Some(r) = trash_refusal(path, now.dev)
     {
-        return Err(DeleteResult::Refused(r));
+        return Err(Rejection::Refused(r));
     }
     Ok(())
 }
@@ -261,8 +291,7 @@ mod tests {
     fn check(platform: Platform, home: &str) -> impl Fn(&str) -> bool {
         let env = Env::with(platform, &[("HOME", home)]);
         let rules = Protected::new(&env);
-        let home = env.home();
-        move |p| protected_by(&rules, home.as_deref(), Path::new(p))
+        move |p| protected_by(&rules, Path::new(p))
     }
 
     /// Deletion refuses what the tree marks protected, with the same exceptions, and also
@@ -294,5 +323,21 @@ mod tests {
         assert!(linux("/home/u"));
         assert!(!linux("/home/u/.cache/pip"));
         assert!(!linux("/var/cache/apt"));
+    }
+
+    /// A plan's protected paths for another platform do not take away this process's.
+    #[cfg(unix)]
+    #[test]
+    fn a_plans_protected_paths_add_to_the_environments() {
+        let (other, path) = if cfg!(target_os = "macos") {
+            (Platform::Linux, "/System/Library/x")
+        } else {
+            (Platform::MacOs, "/proc/1/fd")
+        };
+        let rules = Protected::new(&Env::with(other, &[("HOME", "/nonexistent/u")]));
+        let path = Path::new(path);
+        assert!(!protected_by(&rules, path));
+        assert!(refused(Some(&rules), path));
+        assert!(refused(None, path));
     }
 }

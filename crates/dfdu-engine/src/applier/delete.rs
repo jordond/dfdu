@@ -90,11 +90,9 @@ impl<B: Backend> Applier<B> {
         None
     }
 
+    /// Queues a plan for `items`. Read-only mode and imported trees are refused before this,
+    /// by [`Applier::refusal`].
     pub(super) fn submit_plan(&mut self, m: &mut Model, items: Vec<NodeRef>, mode: Mode) {
-        if self.read_only {
-            m.status.notice("delete: read-only mode".into());
-            return;
-        }
         let mut out = Vec::new();
         let mut seen: HashSet<Ix> = HashSet::new();
         for r in items {
@@ -169,6 +167,7 @@ impl<B: Backend> Applier<B> {
             mode,
             scan_root: root,
             items: out,
+            protected: m.rules.as_ref().map(|r| r.protected().clone()),
         });
         self.start_next_plan(m);
     }
@@ -216,7 +215,7 @@ impl<B: Backend> Applier<B> {
             match m.tree.resolve_visible(r) {
                 None => {}
                 Some(ix) if self.plan_overlaps(&m.tree, ix) => self.deferred_rescans.push(r),
-                Some(_) => self.rescan(m, r, None),
+                Some(_) => self.rescan(m, r, None, false),
             }
         }
     }

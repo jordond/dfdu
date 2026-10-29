@@ -3,7 +3,7 @@
 //!
 //! While the filter is on, the snapshot counts only the matching files: a directory's size and
 //! items are those of the matching files inside it, and entries without any are left out
-//! ([`crate::snapshot::build_view`]). The picker lists the current directory's files by type and
+//! ([`crate::model::snapshot::build_view`]). The picker lists the current directory's files by type and
 //! by extension, read with the snapshot while it is open; toggling a row applies at once.
 //! Directories cannot be marked or deleted while the filter is on, since the size shown is not
 //! what deleting one would remove.
@@ -19,8 +19,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use crate::app::{App, Overlay};
-use crate::input::{Edit, LineInput};
+use crate::app::{App, Effect, Overlay};
+use crate::input::line::{Edit, LineInput};
 use crate::theme::human;
 
 /// Why a directory cannot be marked or deleted while the filter is on.
@@ -31,7 +31,7 @@ const MAX_EXTS: usize = 300;
 
 /// State of the open picker, held in `Overlay::Types`.
 #[derive(Clone, Debug, Default)]
-pub struct Picker {
+pub struct TypePicker {
     input: LineInput,
     /// Index into [`rows`].
     cursor: usize,
@@ -56,7 +56,7 @@ pub fn active(app: &App) -> bool {
 
 /// Opens the picker.
 pub fn open(app: &mut App) {
-    app.overlay = Overlay::Types(Picker::default());
+    app.overlay = Overlay::Types(TypePicker::default());
 }
 
 /// Whether the snapshot was read with another filter, or lacks the breakdown the open picker
@@ -160,27 +160,27 @@ fn toggle(app: &mut App, r: Row) {
 
 /// Typing searches the rows; `↑`/`↓`/`PgUp`/`PgDn` move, `Space` toggles the row, `Enter`
 /// toggles it (unless something was toggled already) and closes, `Esc` closes.
-pub fn key(app: &mut App, k: KeyEvent) {
+pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let page = super::list_page(app);
     let Overlay::Types(p) = &app.overlay else {
-        return;
+        return Vec::new();
     };
     let rows = rows(app, p.input.text());
     let last = rows.len().saturating_sub(1);
     let current = rows.get(p.cursor.min(last)).map(|r| r.0);
     let Overlay::Types(p) = &mut app.overlay else {
-        return;
+        return Vec::new();
     };
     if let Some(cursor) = super::list_cursor(k.code, p.cursor, last, page) {
         p.cursor = cursor;
-        return;
+        return Vec::new();
     }
     if k.code == KeyCode::Char(' ') {
         p.toggled = true;
         if let Some(r) = current {
             toggle(app, r);
         }
-        return;
+        return Vec::new();
     }
     match p.input.key(&k) {
         Edit::Changed => {
@@ -197,6 +197,7 @@ pub fn key(app: &mut App, k: KeyEvent) {
         Edit::Cancel => app.overlay = Overlay::None,
         Edit::Moved | Edit::Ignored => {}
     }
+    Vec::new()
 }
 
 /// Draws the picker in `area` and returns the rectangle it covers.
@@ -276,7 +277,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::snapshot::{self, Target};
+    use crate::model::snapshot::{self, Target};
     use crate::tests::{press, render};
     use crate::theme::Theme;
 

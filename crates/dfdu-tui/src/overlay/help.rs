@@ -10,10 +10,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
-use crate::app::keys::{ACTIONS, Action, ActionInfo, Group, first_key};
+use crate::app::keys::{Action, ActionInfo, Group, first_key, offered};
 use crate::app::{App, Effect, Overlay};
-use crate::fuzzy::{Fuzzy, char_pos};
-use crate::input::{Edit, LineInput};
+use crate::input::fuzzy::{Fuzzy, char_pos};
+use crate::input::line::{Edit, LineInput};
 use crate::theme::Theme;
 
 /// The groups in the order they are shown, with their headings.
@@ -58,6 +58,8 @@ pub struct Help {
     scroll: Cell<usize>,
     /// The last first line the last frame could show, once a frame was drawn.
     max: Cell<Option<usize>>,
+    /// The browser is read-only: the actions that delete are left out.
+    read_only: bool,
 }
 
 /// An action that matches the search, with the matched characters of its keys and its label.
@@ -78,7 +80,7 @@ impl Help {
         self.searching
     }
 
-    /// The groups with the actions that match the search (all of them without one), in
+    /// The groups with the actions offered that match the search (all of them without one), in
     /// registry order. A query matches the keys and the label of an action together.
     fn rows(&self) -> Vec<(&'static str, Vec<Row>)> {
         let mut fuzzy = Fuzzy::new(self.search.text());
@@ -86,8 +88,7 @@ impl Help {
         GROUPS
             .iter()
             .filter_map(|&(group, heading)| {
-                let rows: Vec<Row> = ACTIONS
-                    .iter()
+                let rows: Vec<Row> = offered(self.read_only)
                     .filter(|info| info.group == group)
                     .filter_map(|info| {
                         let keys = char_pos(info.keys.chars().count());
@@ -109,7 +110,10 @@ impl Help {
 
 /// Opens the help at the top, without a search.
 pub fn open(app: &mut App) {
-    app.overlay = Overlay::Help(Help::default());
+    app.overlay = Overlay::Help(Help {
+        read_only: app.read_only,
+        ..Help::default()
+    });
 }
 
 /// `↑`/`↓`/`PgUp`/`PgDn` scroll; `/` starts a search, which `Enter` keeps and `Esc` clears;
@@ -206,7 +210,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
             spans.push(Span::raw(h.search.text().to_owned()));
         }
         spans.push(Span::styled(
-            format!("   {shown} of {}", ACTIONS.len()),
+            format!("   {shown} of {}", offered(h.read_only).count()),
             t.fg_dim,
         ));
         lines.push(Line::from(spans));
@@ -374,6 +378,7 @@ mod tests {
     use ratatui::style::Modifier;
 
     use super::*;
+    use crate::app::keys::ACTIONS;
     use crate::tests::{library_snap, press, render, render_buffer, style_at, text, typed};
 
     fn app_with_help(t0: Instant) -> App {
@@ -553,7 +558,7 @@ mod tests {
         typed(&mut app, "F12", t0);
         let frame = render(&mut app, t0, 100, 30);
         assert!(frame.contains("debug overlay"), "{frame}");
-        assert!(frame.contains("1 of 40"), "{frame}");
+        assert!(frame.contains("1 of 41"), "{frame}");
         typed(&mut app, " zzz", t0);
         let frame = render(&mut app, t0, 100, 30);
         assert!(frame.contains("nothing matches"), "{frame}");
@@ -563,7 +568,7 @@ mod tests {
         app.key(press(KeyCode::Enter), t0);
         assert!(!help(&app).searching);
         let frame = render(&mut app, t0, 100, 30);
-        assert!(frame.contains(" / F12   1 of 40"), "{frame}");
+        assert!(frame.contains(" / F12   1 of 41"), "{frame}");
         // Esc while searching clears the query and keeps the help open.
         app.key(press(KeyCode::Char('/')), t0);
         app.key(press(KeyCode::Esc), t0);
@@ -591,7 +596,7 @@ mod tests {
                 assert!(app.key(press(other), t0).is_empty());
                 assert!(matches!(app.overlay, Overlay::Help(_)), "{other:?}");
             }
-            assert_eq!(app.sort, crate::order::SortSpec::default());
+            assert_eq!(app.sort, crate::state::order::SortSpec::default());
             app.key(press(close), t0);
             assert!(matches!(app.overlay, Overlay::None), "{close:?}");
             assert!(!app.quit, "{close:?}");

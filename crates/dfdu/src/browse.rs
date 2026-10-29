@@ -173,13 +173,13 @@ mod tests {
         match theme_choice("nord", Some(themes)) {
             Ok(ThemeChoice::File(file)) => {
                 assert_eq!(file.name.as_deref(), Some("nord"));
-                assert_eq!(file.base(), "light");
+                assert_eq!(file.base(), dfdu_tui::BuiltinTheme::Light);
             }
             other => panic!("{other:?}"),
         }
         assert!(matches!(
             theme_choice("high-contrast", None),
-            Ok(ThemeChoice::Builtin("high-contrast"))
+            Ok(ThemeChoice::Builtin(dfdu_tui::BuiltinTheme::HighContrast))
         ));
         assert!(matches!(theme_choice("auto", None), Ok(ThemeChoice::Auto)));
     }

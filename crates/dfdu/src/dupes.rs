@@ -56,10 +56,10 @@ pub fn run(args: &DupesArgs) -> ExitCode {
         )
     });
     engine.shutdown(launch::SHUTDOWN);
-    let spinning = dfdu_engine::workers_for(dfdu_sys::storage(&args.path)) <= 2;
+    let defaults = Options::for_storage(dfdu_sys::storage(&args.path));
     let opts = Options {
         min_size: args.min_size,
-        threads: args.threads.unwrap_or(if spinning { 1 } else { 4 }),
+        threads: args.threads.unwrap_or(defaults.threads),
     };
     let progress = Progress::default();
     let cancel = AtomicBool::new(false);

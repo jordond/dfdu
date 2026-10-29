@@ -5,12 +5,31 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use dfdu_tree::{ErrKind, Kind, Meta, Subvol};
+use dfdu_sys::{FsClass, Profile, Storage};
+use dfdu_tree::{ErrKind, Meta, Subvol};
 
-use crate::FsClass;
 use crate::proto::NameSpan;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+pub mod ntfs;
+mod portable;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix;
+#[cfg(windows)]
+mod windows;
+
+#[cfg(target_os = "linux")]
+pub use linux::{LinuxBackend, LinuxStream};
+#[cfg(target_os = "macos")]
+pub use macos::{MacBackend, MacStream};
+pub use portable::PortableBackend;
+#[cfg(windows)]
+pub use windows::{WinLoc, WindowsBackend, WindowsStream, check_mft};
 
 /// One entry read from a directory.
 #[derive(Debug)]
@@ -115,7 +134,8 @@ pub trait DirStream: Send {
 
 /// Filesystem access for the scanner. A wrapper that changes one behaviour of another backend
 /// implements [`Forward`] instead, which forwards every other method. A method added here must
-/// also be forwarded in the `Forward` impl below.
+/// also be forwarded in the `Forward` impl below, and, if the native backends answer it like
+/// the portable one, in `portable_queries!`.
 pub trait Backend: Send + Sync + 'static {
     type Loc: Send + Clone + std::fmt::Debug + 'static;
     type Stream: DirStream<Loc = Self::Loc>;
@@ -135,7 +155,7 @@ pub trait Backend: Send + Sync + 'static {
     /// # Errors
     ///
     /// The directory could not be opened.
-    fn open(&self, loc: &Self::Loc, storage: dfdu_sys::Storage) -> io::Result<Self::Stream>;
+    fn open(&self, loc: &Self::Loc, storage: Storage) -> io::Result<Self::Stream>;
     /// The subvolume record if `loc` is a btrfs subvolume root. Called for job roots and for
     /// directories whose `dev` differs from their parent's.
     ///
@@ -151,7 +171,7 @@ pub trait Backend: Send + Sync + 'static {
         false
     }
     /// btrfs data profile of `loc`'s filesystem. Called with [`Backend::subvolume`].
-    fn data_profile(&self, _loc: &Self::Loc) -> Option<(&'static str, f64)> {
+    fn data_profile(&self, _loc: &Self::Loc) -> Option<(Profile, f64)> {
         None
     }
     /// The first `len` bytes (fewer if the file is shorter) of the regular file `name` in the
@@ -181,8 +201,8 @@ pub trait Backend: Send + Sync + 'static {
     /// What a mount's data is stored on ([`dfdu_sys::storage`]), for its concurrency limit: by
     /// `mount` id, or by device `dev` when there is no id. Answered from the mount table and
     /// sysfs, without touching the mount. Called once per mount.
-    fn mount_storage(&self, _mount: u64, _dev: u64) -> dfdu_sys::Storage {
-        dfdu_sys::Storage::Unknown
+    fn mount_storage(&self, _mount: u64, _dev: u64) -> Storage {
+        Storage::Unknown
     }
 }
 
@@ -202,7 +222,7 @@ pub trait Forward: Send + Sync + 'static {
     fn open(
         &self,
         loc: &<Self::Inner as Backend>::Loc,
-        storage: dfdu_sys::Storage,
+        storage: Storage,
     ) -> io::Result<Self::Stream>;
 }
 
@@ -218,7 +238,7 @@ impl<W: Forward> Backend for W {
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
         self.inner().stat_root(loc)
     }
-    fn open(&self, loc: &Self::Loc, storage: dfdu_sys::Storage) -> io::Result<W::Stream> {
+    fn open(&self, loc: &Self::Loc, storage: Storage) -> io::Result<W::Stream> {
         Forward::open(self, loc, storage)
     }
     fn subvolume(&self, loc: &Self::Loc) -> io::Result<Option<Subvol>> {
@@ -227,7 +247,7 @@ impl<W: Forward> Backend for W {
     fn shares_extents(&self, loc: &Self::Loc) -> bool {
         self.inner().shares_extents(loc)
     }
-    fn data_profile(&self, loc: &Self::Loc) -> Option<(&'static str, f64)> {
+    fn data_profile(&self, loc: &Self::Loc) -> Option<(Profile, f64)> {
         self.inner().data_profile(loc)
     }
     fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
@@ -242,274 +262,44 @@ impl<W: Forward> Backend for W {
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
         self.inner().mount_class(mount, dev)
     }
-    fn mount_storage(&self, mount: u64, dev: u64) -> dfdu_sys::Storage {
+    fn mount_storage(&self, mount: u64, dev: u64) -> Storage {
         self.inner().mount_storage(mount, dev)
     }
 }
 
-/// Mount id of a directory for [`Meta::mount`], 0 when unknown.
-fn mount_of(path: &Path) -> u64 {
-    dfdu_sys::mount_id(path).ok().flatten().unwrap_or(0)
-}
-
-/// `std::fs` backend: one `stat` per entry, no OS-specific fast paths. On Windows, where std
-/// has no allocation size, file id or link count, each entry is opened for them instead
-/// (`dfdu_sys::stat_path`).
-#[derive(Default, Debug)]
-pub struct PortableBackend {
-    /// Mount classes from the mount table; re-read when an unknown mount appears.
-    classes: parking_lot::Mutex<MountClasses>,
-}
-
-#[derive(Default, Debug)]
-struct MountClasses {
-    by_id: std::collections::HashMap<u64, FsClass>,
-    by_dev: std::collections::HashMap<u64, FsClass>,
-}
-
-impl MountClasses {
-    fn get(&self, mount: u64, dev: u64) -> Option<FsClass> {
-        if mount != 0 {
-            self.by_id.get(&mount).copied()
-        } else {
-            self.by_dev.get(&dev).copied()
+/// The [`Backend`] methods the native backends answer like [`PortableBackend`]: the mount
+/// table, subvolume and extent queries, asked at most once per directory. Expands inside a
+/// native backend's `impl Backend`, forwarding to its `portable` field; `$loc => $path` turns
+/// the backend's location into the portable one's. Every native backend uses this one list, so
+/// none can leave one of these methods at the trait default by leaving it out.
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+macro_rules! portable_queries {
+    ($loc:ident => $path:expr) => {
+        fn subvolume(&self, $loc: &Self::Loc) -> std::io::Result<Option<dfdu_tree::Subvol>> {
+            self.portable.subvolume($path)
         }
-    }
-}
-
-pub struct PortableStream {
-    iter: fs::ReadDir,
-    pending_err: Option<io::Error>,
-    done: bool,
-}
-
-/// `std::fs` entries; each one stats itself relative to the directory it was read from.
-struct PortableRaw(Vec<fs::DirEntry>);
-
-impl RawBlock<PathBuf> for PortableRaw {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn stat(&mut self, out: &mut Block<PathBuf>) -> io::Result<()> {
-        #[cfg(windows)]
-        let mut volume = None;
-        for entry in self.0.drain(..) {
-            let name = entry.file_name();
-            #[cfg(not(windows))]
-            let (mut meta, enter) = (entry.metadata().map(|m| Meta::from_metadata(&m)), true);
-            #[cfg(windows)]
-            let (mut meta, enter) = match windows_meta(&entry, &mut volume) {
-                Ok((m, enter)) => (Ok(m), enter),
-                Err(e) => (Err(e), true),
-            };
-            let child = match &mut meta {
-                Ok(m) if m.kind == Kind::Dir && enter => {
-                    let path = entry.path();
-                    m.mount = mount_of(&path);
-                    Some(path)
-                }
-                _ => None,
-            };
-            out.push(
-                &dfdu_tree::name_bytes(&name),
-                meta.map_err(|e| ErrKind::from(&e)),
-                child,
-            );
+        fn shares_extents(&self, $loc: &Self::Loc) -> bool {
+            self.portable.shares_extents($path)
         }
-        Ok(())
-    }
-}
-
-/// Metadata of a directory entry on Windows, and whether it may be opened: the entry's kind,
-/// write time and attributes from the listing (`FindNextFileW`), the rest from the entry opened
-/// with attribute access ([`dfdu_sys::stat_path`]), as std has no allocation size, file id or
-/// link count. The listing's size is used for directories and links; files take theirs from
-/// the file, as a directory entry's copy can be out of date for a file with several names.
-/// Cloud placeholders and offline files are not opened (`WinStat::recalls_on_open`): they get
-/// allocation 0 and file id 0, and a placeholder directory is not entered. `volume` caches the
-/// directory's volume serial number for them.
-#[cfg(windows)]
-fn windows_meta(entry: &fs::DirEntry, volume: &mut Option<u32>) -> io::Result<(Meta, bool)> {
-    use dfdu_tree::{WinStat, win_attr};
-    use std::os::windows::fs::MetadataExt;
-    let m = entry.metadata()?;
-    let mut w = WinStat {
-        attributes: m.file_attributes(),
-        // Only the name-surrogate bit decides the kind; the real tag comes with the handle.
-        reparse_tag: if m.file_type().is_symlink() {
-            win_attr::TAG_NAME_SURROGATE
-        } else {
-            0
-        },
-        size: m.len(),
-        alloc: 0,
-        last_write: m.last_write_time(),
-        volume: 0,
-        file_id: 0,
-        nlink: 1,
+        fn data_profile(&self, $loc: &Self::Loc) -> Option<(dfdu_sys::Profile, f64)> {
+            self.portable.data_profile($path)
+        }
+        fn duplicate_mounts(
+            &self,
+            scope: &std::path::Path,
+        ) -> Option<std::collections::HashSet<u64>> {
+            self.portable.duplicate_mounts(scope)
+        }
+        fn mount_class(&self, mount: u64, dev: u64) -> Option<dfdu_sys::FsClass> {
+            self.portable.mount_class(mount, dev)
+        }
+        fn mount_storage(&self, mount: u64, dev: u64) -> dfdu_sys::Storage {
+            self.portable.mount_storage(mount, dev)
+        }
     };
-    if w.recalls_on_open() {
-        w.volume = if let Some(v) = *volume {
-            v
-        } else {
-            let dir = entry.path();
-            let v = dfdu_sys::stat_path(dir.parent().unwrap_or(&dir), true)?.volume;
-            *volume = Some(v);
-            v
-        };
-        return Ok((Meta::from_windows(&w), false));
-    }
-    let h = dfdu_sys::stat_path(&entry.path(), false)?;
-    w.reparse_tag = h.reparse_tag;
-    w.alloc = h.alloc;
-    w.volume = h.volume;
-    w.file_id = h.file_id;
-    if w.kind() == Kind::File {
-        w.size = h.size;
-        w.nlink = h.nlink;
-    }
-    Ok((Meta::from_windows(&w), true))
 }
-
-impl DirStream for PortableStream {
-    type Loc = PathBuf;
-
-    fn next_raw(
-        &mut self,
-        max_entries: usize,
-        max_name_bytes: usize,
-    ) -> io::Result<(Raw<PathBuf>, bool)> {
-        if let Some(e) = self.pending_err.take() {
-            self.done = true;
-            return Err(e);
-        }
-        let mut raw = Vec::new();
-        let mut name_bytes = 0;
-        while !self.done && raw.len() < max_entries && name_bytes < max_name_bytes {
-            match self.iter.next() {
-                None => self.done = true,
-                Some(Err(e)) => {
-                    if raw.is_empty() {
-                        self.done = true;
-                        return Err(e);
-                    }
-                    self.pending_err = Some(e);
-                    break;
-                }
-                Some(Ok(entry)) => {
-                    name_bytes += entry.file_name().len();
-                    raw.push(entry);
-                }
-            }
-        }
-        Ok((Box::new(PortableRaw(raw)), !self.done))
-    }
-}
-
-impl Backend for PortableBackend {
-    type Loc = PathBuf;
-    type Stream = PortableStream;
-
-    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
-        read_prefix_at(dir, name, len)
-    }
-
-    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
-        link_target_missing_at(dir, name)
-    }
-
-    fn loc_from_path(&self, path: &Path) -> PathBuf {
-        path.to_path_buf()
-    }
-
-    fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        #[cfg(not(windows))]
-        let mut m = Meta::from_metadata(&fs::metadata(loc)?);
-        #[cfg(windows)]
-        let mut m = Meta::from_windows(&dfdu_sys::stat_path(loc, true)?);
-        m.mount = mount_of(loc);
-        Ok(m)
-    }
-
-    fn open(&self, loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<PortableStream> {
-        Ok(PortableStream {
-            iter: fs::read_dir(loc)?,
-            pending_err: None,
-            done: false,
-        })
-    }
-
-    fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
-        let table = dfdu_sys::mount_table().ok()?;
-        Some(crate::duplicate_mounts(&table, scope))
-    }
-
-    fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {
-        let mut c = self.classes.lock();
-        if c.get(mount, dev).is_none() {
-            // A mount made since the table was read: read it again.
-            let mut fresh = MountClasses::default();
-            for e in dfdu_sys::mount_table().ok()? {
-                let class = dfdu_sys::classify_fs(&e.fstype);
-                fresh.by_id.insert(e.id, class);
-                fresh.by_dev.insert(e.st_dev(), class);
-            }
-            *c = fresh;
-        }
-        c.get(mount, dev)
-    }
-
-    fn mount_storage(&self, mount: u64, dev: u64) -> dfdu_sys::Storage {
-        let Ok(table) = dfdu_sys::mount_table() else {
-            return dfdu_sys::Storage::Unknown;
-        };
-        let entry = table.iter().find(|e| {
-            if mount != 0 {
-                e.id == mount
-            } else {
-                e.st_dev() == dev
-            }
-        });
-        entry.map_or(dfdu_sys::Storage::Unknown, dfdu_sys::storage_of_mount)
-    }
-
-    fn shares_extents(&self, loc: &PathBuf) -> bool {
-        dfdu_sys::shares_extents(loc).unwrap_or(false)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn data_profile(&self, loc: &PathBuf) -> Option<(&'static str, f64)> {
-        let dir = fs::File::open(loc).ok()?;
-        let (p, devices) = dfdu_sys::data_profile(&dir).ok()?;
-        Some((p.name(), p.raw_ratio(devices)))
-    }
-
-    fn subvolume(&self, loc: &PathBuf) -> io::Result<Option<Subvol>> {
-        let Some(s) = dfdu_sys::subvol_info(loc)? else {
-            return Ok(None);
-        };
-        // Quota groups need root; without quotas or the privilege there are none.
-        #[cfg(target_os = "linux")]
-        let qgroup = if dfdu_sys::is_privileged() {
-            fs::File::open(loc)
-                .ok()
-                .and_then(|d| dfdu_sys::qgroup_usage(&d, s.id).ok().flatten())
-        } else {
-            None
-        };
-        #[cfg(not(target_os = "linux"))]
-        let qgroup = None;
-        Ok(Some(Subvol {
-            id: s.id,
-            uuid: s.uuid,
-            parent_uuid: s.parent_uuid,
-            read_only: s.read_only,
-            otime: s.otime,
-            qgroup,
-        }))
-    }
-}
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+use portable_queries;
 
 /// [`Backend::link_target_missing`] for backends whose location is a path.
 pub(crate) fn link_target_missing_at(dir: &Path, name: &[u8]) -> bool {
@@ -530,7 +320,9 @@ pub(crate) fn read_prefix_at(dir: &Path, name: &[u8], len: usize) -> Option<Vec<
 
 #[cfg(test)]
 mod tests {
+    use super::portable::PortableStream;
     use super::*;
+    use std::path::PathBuf;
 
     /// Answers every defaulted method with something other than its default.
     struct Answers;
@@ -545,7 +337,7 @@ mod tests {
         fn stat_root(&self, _loc: &PathBuf) -> io::Result<Meta> {
             Err(io::Error::other("stat_root"))
         }
-        fn open(&self, _loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<PortableStream> {
+        fn open(&self, _loc: &PathBuf, _storage: Storage) -> io::Result<PortableStream> {
             Err(io::Error::other("inner open"))
         }
         fn subvolume(&self, _loc: &PathBuf) -> io::Result<Option<Subvol>> {
@@ -554,8 +346,8 @@ mod tests {
         fn shares_extents(&self, _loc: &PathBuf) -> bool {
             true
         }
-        fn data_profile(&self, _loc: &PathBuf) -> Option<(&'static str, f64)> {
-            Some(("raid1", 2.0))
+        fn data_profile(&self, _loc: &PathBuf) -> Option<(Profile, f64)> {
+            Some((Profile::Raid1, 2.0))
         }
         fn read_prefix(&self, _dir: &PathBuf, name: &[u8], len: usize) -> Option<Vec<u8>> {
             Some(name[..len].to_vec())
@@ -569,8 +361,8 @@ mod tests {
         fn mount_class(&self, _mount: u64, _dev: u64) -> Option<FsClass> {
             Some(FsClass::Network)
         }
-        fn mount_storage(&self, _mount: u64, _dev: u64) -> dfdu_sys::Storage {
-            dfdu_sys::Storage::Rotational
+        fn mount_storage(&self, _mount: u64, _dev: u64) -> Storage {
+            Storage::Rotational
         }
     }
 
@@ -583,7 +375,7 @@ mod tests {
         fn inner(&self) -> &Answers {
             &self.0
         }
-        fn open(&self, _loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<PortableStream> {
+        fn open(&self, _loc: &PathBuf, _storage: Storage) -> io::Result<PortableStream> {
             Err(io::Error::other("wrapper open"))
         }
     }
@@ -596,7 +388,7 @@ mod tests {
     fn forward_answers_like_the_inner_backend_except_open() {
         let b = Wrapped(Answers);
         let dir = PathBuf::from("/d");
-        let unknown = dfdu_sys::Storage::Unknown;
+        let unknown = Storage::Unknown;
         assert_eq!(
             b.loc_from_path(Path::new("/d")),
             PathBuf::from("/d/answers")
@@ -605,7 +397,7 @@ mod tests {
         assert_eq!(err(Backend::open(&b, &dir, unknown)), "wrapper open");
         assert_eq!(err(b.subvolume(&dir)), "subvolume");
         assert!(b.shares_extents(&dir));
-        assert_eq!(b.data_profile(&dir), Some(("raid1", 2.0)));
+        assert_eq!(b.data_profile(&dir), Some((Profile::Raid1, 2.0)));
         assert_eq!(
             b.read_prefix(&dir, b"CACHEDIR.TAG", 5),
             Some(b"CACHE".to_vec())
@@ -613,6 +405,6 @@ mod tests {
         assert!(b.link_target_missing(&dir, b"link"));
         assert_eq!(b.duplicate_mounts(&dir), Some(HashSet::from([7])));
         assert_eq!(b.mount_class(1, 2), Some(FsClass::Network));
-        assert_eq!(b.mount_storage(1, 2), dfdu_sys::Storage::Rotational);
+        assert_eq!(b.mount_storage(1, 2), Storage::Rotational);
     }
 }

@@ -6,15 +6,15 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 
-use dfdu_tree::{ErrKind, Kind};
+use dfdu_sys::{FsClass, Storage};
+use dfdu_tree::{ErrKind, Kind, Meta};
 
 use super::{
     ChunkWork, Clock, DirParts, JobState, LISTING_PART, NO_TASK, Outbox, Shared, Sink, Task,
-    WorkerSlot, pack, panic_message,
+    TaskGate, WorkerSlot, pack, panic_message,
 };
-use crate::FsClass;
 use crate::backend::{Backend, Block, DirStream, Raw};
-use crate::classify::Listing;
+use crate::classify::{BlockParts, Listing};
 use crate::proto::{
     Chunk, ChunkStatus, DirId, EntryError, FileRec, ListingStatus, Probe, ScanMsg, SkipReason,
     SubdirRec,
@@ -94,7 +94,7 @@ impl<B: Backend> Worker<B> {
         let result = match r {
             Ok(r) => r,
             Err(payload) => {
-                self.slot.syscall_since.store(0, SeqCst);
+                self.slot.end_syscall();
                 self.on_panic(panic_message(&*payload), clock);
                 StepResult::Progress
             }
@@ -185,7 +185,7 @@ impl<B: Backend> Worker<B> {
         self.slot.stall_reported.store(false, SeqCst);
         // A part can end while its last call reported "not ready" (stopped after a stall); the
         // next task must not inherit that call's start time and look stalled.
-        self.slot.syscall_since.store(0, SeqCst);
+        self.slot.end_syscall();
     }
 
     /// Ends one part of a directory that has several; the last part sends the `Close`.
@@ -410,25 +410,19 @@ impl<B: Backend> Worker<B> {
     )]
     fn open_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
         let r = self.running.as_mut().expect("running");
-        self.slot.begin_syscall(clock.now());
-        let opened = if r.task.is_root {
-            sh.backend.stat_root(&r.task.loc).and_then(|m| {
+        let opened = self.slot.watch_io(clock.now(), || {
+            let (stream, root_meta) = if r.task.is_root {
+                let m = sh.backend.stat_root(&r.task.loc)?;
                 r.task.dev = m.dev;
                 r.task.mount = m.mount;
                 (r.task.storage, r.task.gate) = sh.gate_for(m.mount, m.dev, true);
                 r.job.mount_roots.lock().insert((m.dev, m.ino));
-                sh.backend
-                    .open(&r.task.loc, r.task.storage)
-                    .map(|s| (s, Some(m)))
-            })
-        } else {
-            sh.backend
-                .open(&r.task.loc, r.task.storage)
-                .map(|s| (s, None))
-        };
-        // Part of opening, under the same stall watch. A failed probe only loses the record.
-        let probe = match &opened {
-            Ok(_) if r.task.probe_subvol => Some(Probe {
+                (sh.backend.open(&r.task.loc, r.task.storage)?, Some(m))
+            } else {
+                (sh.backend.open(&r.task.loc, r.task.storage)?, None)
+            };
+            // Part of opening, under the same stall watch. A failed probe only loses the record.
+            let probe = r.task.probe_subvol.then(|| Probe {
                 subvol: sh.backend.subvolume(&r.task.loc).ok().flatten(),
                 shares_extents: sh.backend.shares_extents(&r.task.loc),
                 profile: if r.task.is_root {
@@ -436,12 +430,11 @@ impl<B: Backend> Worker<B> {
                 } else {
                     None
                 },
-            }),
-            _ => None,
-        };
-        self.slot.syscall_since.store(0, SeqCst);
+            });
+            Ok((stream, root_meta, probe))
+        });
         match opened {
-            Ok((stream, root_meta)) => {
+            Ok((stream, root_meta, probe)) => {
                 r.stream = Some(stream);
                 if root_meta.is_some() || probe.is_some() {
                     // The root's own stat and the probe travel in the first chunk.
@@ -452,10 +445,8 @@ impl<B: Backend> Worker<B> {
                     self.slot.outbox.lock().push(ScanMsg::Chunk(c), clock.now());
                 }
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.slot.begin_syscall(clock.now());
-                return StepResult::Blocked;
-            }
+            // The call is still in progress as far as the watchdog is concerned.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return StepResult::Blocked,
             Err(e) => self.finish_listing(ListingStatus::Failed(ErrKind::from(&e)), clock),
         }
         StepResult::Progress
@@ -485,15 +476,10 @@ impl<B: Backend> Worker<B> {
         }
 
         let limits = &sh.limits;
-        self.slot.begin_syscall(clock.now());
-        let res = r
-            .stream
-            .as_mut()
-            .expect("open stream")
-            .next_raw(limits.block_entries, limits.block_name_bytes);
-        if !matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
-            self.slot.syscall_since.store(0, SeqCst);
-        }
+        let stream = r.stream.as_mut().expect("open stream");
+        let res = self.slot.watch_io(clock.now(), || {
+            stream.next_raw(limits.block_entries, limits.block_name_bytes)
+        });
         let (raw, more) = match res {
             Ok(x) => x,
             // The call is still in progress as far as the watchdog is concerned.
@@ -587,12 +573,11 @@ impl<B: Backend> Worker<B> {
     fn inline_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
         let r = self.running.as_mut().expect("running");
         let block = r.inline.as_mut().expect("inline block");
-        self.slot.begin_syscall(clock.now());
-        let res = block.raw.stat(&mut self.block);
+        let out = &mut self.block;
+        let res = self.slot.watch_io(clock.now(), || block.raw.stat(out));
         if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
             return StepResult::Blocked;
         }
-        self.slot.syscall_since.store(0, SeqCst);
         let block = r.inline.take().expect("inline block");
         if let Err(e) = res {
             // Only "not ready" is expected; anything else loses the block, as a panic would.
@@ -623,12 +608,11 @@ impl<B: Backend> Worker<B> {
         // Stopped chunk tasks were turned away when taken; once stat'ing has begun it runs to
         // the end, like a blocking call.
         let work = r.task.chunk.as_mut().expect("chunk task");
-        self.slot.begin_syscall(clock.now());
-        let res = work.raw.stat(&mut self.block);
+        let out = &mut self.block;
+        let res = self.slot.watch_io(clock.now(), || work.raw.stat(out));
         if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
             return StepResult::Blocked;
         }
-        self.slot.syscall_since.store(0, SeqCst);
         let seq = work.seq;
         match res {
             Ok(()) => self.emit_block(sh, seq, false, clock),
@@ -657,18 +641,12 @@ impl<B: Backend> Worker<B> {
     /// `whole` is set when the block is the directory's whole listing.
     #[expect(clippy::expect_used, reason = "called only while a task runs")]
     #[expect(
-        clippy::too_many_lines,
-        reason = "one pass over the block's entries, building the chunk and the subdirectory tasks together"
-    )]
-    #[expect(
         clippy::cast_possible_truncation,
         reason = "a block holds at most `block_entries` entries, far below `u32::MAX`"
     )]
     fn emit_block(&mut self, sh: &Shared<B>, seq: u32, whole: bool, clock: &dyn Clock) {
         let r = self.running.as_mut().expect("running");
         let block = std::mem::take(&mut self.block);
-        let (cross, network) = (r.job.opts.cross_mounts, r.job.opts.network);
-        let (dir_dev, dir_mount) = (r.task.dev, r.task.mount);
         // Epoch first: `set_focus` stores the focus before it bumps the epoch, so a new epoch
         // read here comes with the new focus. The other order could pair the old focus with
         // the new epoch and keep the old focus's children prioritised after a change.
@@ -683,58 +661,15 @@ impl<B: Backend> Worker<B> {
         let mut files = Vec::new();
         let mut subdirs = Vec::new();
         let mut errors = Vec::new();
-        let mut child_locs = Vec::new();
+        let mut children = Vec::new();
         for e in block.entries {
             match e.meta {
                 Err(err) => errors.push(EntryError { name: e.name, err }),
                 Ok(m) if m.kind == Kind::Dir => {
-                    // Mount ids when both are known; otherwise a change of `dev` (which also
-                    // happens at btrfs subvolumes, so they are only traversed with mount ids).
-                    let mount_root = if m.mount != 0 && dir_mount != 0 {
-                        m.mount != dir_mount
-                    } else {
-                        m.dev != dir_dev
-                    };
-                    // Kernel filesystems are never scanned; network ones only when asked for,
-                    // decided from the mount table without touching the mount.
-                    let class = if mount_root {
-                        sh.backend.mount_class(m.mount, m.dev)
-                    } else {
-                        None
-                    };
-                    let wanted = match class {
-                        Some(FsClass::Kernel) => Err(SkipReason::Kernel),
-                        Some(FsClass::Network) if network => Ok(()),
-                        Some(FsClass::Network) => Err(SkipReason::Network),
-                        _ if cross => Ok(()),
-                        _ => Err(SkipReason::OtherFilesystem),
-                    };
-                    let skip = if !mount_root {
-                        None
-                    } else if let Err(why) = wanted {
-                        Some(why)
-                    } else if match &r.job.dup_mounts {
-                        Some(d) => d.contains(&m.mount),
-                        None => !r.job.mount_roots.lock().insert((m.dev, m.ino)),
-                    } {
-                        Some(SkipReason::DuplicateMount)
-                    } else {
-                        None
-                    };
-                    let loc = if skip.is_none() { e.child } else { None };
-                    let skip = if skip.is_none() && loc.is_none() {
-                        // A directory the backend gave no location for cannot be read.
-                        Some(SkipReason::Excluded)
-                    } else {
-                        skip
-                    };
-                    let (storage, gate) = match &loc {
-                        Some(_) if mount_root => sh.gate_for(m.mount, m.dev, false),
-                        Some(_) => (r.task.storage, r.task.gate.clone()),
-                        None => (dfdu_sys::Storage::Unknown, None),
-                    };
-                    child_locs
-                        .push(loc.map(|l| (l, m.dev, m.mount, m.dev != dir_dev, gate, storage)));
+                    let (mount_root, skip) =
+                        subdir_skip(sh, &r.task, &r.job, &m, e.child.is_some());
+                    let child = e.child.filter(|_| skip.is_none());
+                    children.push(child.map(|loc| Child::new(sh, &r.task, &m, mount_root, loc)));
                     subdirs.push(SubdirRec {
                         name: e.name,
                         meta: m,
@@ -754,44 +689,36 @@ impl<B: Backend> Worker<B> {
             let (slot, loc) = (&self.slot, &r.task.loc);
             // A marker file is read under the stall watch, like any other call.
             let read = |name: &[u8], len: usize| {
-                slot.begin_syscall(clock.now());
-                let got = sh.backend.read_prefix(loc, name, len);
-                slot.syscall_since.store(0, SeqCst);
-                got
+                slot.watch(clock.now(), || sh.backend.read_prefix(loc, name, len))
             };
             // Following a link may wait on another mount, so it is watched too.
-            let missing = |name: &[u8]| {
-                slot.begin_syscall(clock.now());
-                let got = sh.backend.link_target_missing(loc, name);
-                slot.syscall_since.store(0, SeqCst);
-                got
-            };
-            l.block(
-                &block.names,
-                &files,
-                &subdirs,
-                &others,
-                DirId(first),
+            let missing =
+                |name: &[u8]| slot.watch(clock.now(), || sh.backend.link_target_missing(loc, name));
+            let parts = BlockParts {
+                names: &block.names,
+                files: &files,
+                subdirs: &subdirs,
+                others: &others,
+                first_subdir: DirId(first),
                 whole,
-                &read,
-                &missing,
-            )
+            };
+            l.block(&parts, &read, &missing)
         });
         let mut tasks = Vec::new();
-        for (i, loc) in child_locs.into_iter().enumerate() {
-            if let Some((loc, dev, mount, probe_subvol, gate, storage)) = loc {
+        for (i, child) in children.into_iter().enumerate() {
+            if let Some(c) = child {
                 tasks.push(Task {
                     job: r.task.job,
                     dir: DirId(first + i as u32),
-                    loc,
+                    loc: c.loc,
                     focus_epoch: child_epoch,
                     is_root: false,
-                    dev,
-                    mount,
-                    probe_subvol,
+                    dev: c.dev,
+                    mount: c.mount,
+                    probe_subvol: c.probe_subvol,
                     chunk: None,
-                    gate,
-                    storage,
+                    gate: c.gate,
+                    storage: c.storage,
                     class: class.as_mut().and_then(|c| c.subdirs[i].take()),
                 });
             }
@@ -819,6 +746,91 @@ impl<B: Backend> Worker<B> {
         // Reverse so the first subdirectory is popped first (depth-first, in read order).
         ob.tasks.extend(tasks.into_iter().rev());
     }
+}
+
+/// A subdirectory the scan will read: its task's fields, known before its id is.
+struct Child<L> {
+    loc: L,
+    dev: u64,
+    mount: u64,
+    probe_subvol: bool,
+    gate: Option<Arc<TaskGate<L>>>,
+    storage: Storage,
+}
+
+impl<L> Child<L> {
+    /// The subdirectory `m` of the task's directory, at `loc`. A mount root takes its mount's
+    /// limit and storage; any other directory inherits its parent's.
+    fn new<B: Backend<Loc = L>>(
+        sh: &Shared<B>,
+        task: &Task<L>,
+        m: &Meta,
+        mount_root: bool,
+        loc: L,
+    ) -> Self {
+        let (storage, gate) = if mount_root {
+            sh.gate_for(m.mount, m.dev, false)
+        } else {
+            (task.storage, task.gate.clone())
+        };
+        Child {
+            loc,
+            dev: m.dev,
+            mount: m.mount,
+            probe_subvol: m.dev != task.dev,
+            gate,
+            storage,
+        }
+    }
+}
+
+/// Whether the subdirectory `m` of the task's directory is a mount root, and why it is not
+/// read, if it is not. Kernel filesystems are never read; network ones only with
+/// `JobOptions::network`, other mounts only with `cross_mounts`, both decided from the mount
+/// table without touching the mount; a mount the user entered is read either way. `has_loc`
+/// is false for a directory the backend gave no location for, which cannot be read.
+fn subdir_skip<B: Backend>(
+    sh: &Shared<B>,
+    task: &Task<B::Loc>,
+    job: &JobState,
+    m: &Meta,
+    has_loc: bool,
+) -> (bool, Option<SkipReason>) {
+    let unreadable = (!has_loc).then_some(SkipReason::Excluded);
+    // Mount ids when both are known; otherwise a change of `dev` (which also happens at btrfs
+    // subvolumes, so they are only traversed with mount ids).
+    let mount_root = if m.mount != 0 && task.mount != 0 {
+        m.mount != task.mount
+    } else {
+        m.dev != task.dev
+    };
+    if !mount_root {
+        return (false, unreadable);
+    }
+    let entered = job.opts.enter.contains(&(m.dev, m.ino));
+    let wanted = match sh.backend.mount_class(m.mount, m.dev) {
+        Some(FsClass::Kernel) => Err(SkipReason::Kernel),
+        _ if entered => Ok(()),
+        Some(FsClass::Network) if job.opts.network => Ok(()),
+        Some(FsClass::Network) => Err(SkipReason::Network),
+        _ if job.opts.cross_mounts => Ok(()),
+        _ => Err(SkipReason::OtherFilesystem),
+    };
+    if let Err(why) = wanted {
+        return (true, Some(why));
+    }
+    // Without a mount table this records the mount as entered, so it comes after every check
+    // that can turn the mount away.
+    let duplicate = match &job.dup_mounts {
+        Some(d) => d.contains(&m.mount),
+        None => !job.mount_roots.lock().insert((m.dev, m.ino)),
+    };
+    let skip = if duplicate {
+        Some(SkipReason::DuplicateMount)
+    } else {
+        unreadable
+    };
+    (true, skip)
 }
 
 fn empty_chunk<L>(task: &Task<L>, seq: u32, status: ChunkStatus) -> Chunk {

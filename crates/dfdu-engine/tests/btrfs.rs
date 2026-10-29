@@ -603,7 +603,7 @@ fn shared_data_matches_the_reference_and_btrfs() {
                 .qgroup
                 .expect("quota group");
             assert!(q.0 >= 10 << 20, "{q:?}");
-            assert_eq!(m.status.profile, Some(("single", 1.0)));
+            assert_eq!(m.status.profile, Some((dfdu_sys::Profile::Single, 1.0)));
         });
         e.shutdown(Duration::from_secs(1));
         return;

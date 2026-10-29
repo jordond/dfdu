@@ -76,7 +76,8 @@ kind = "dir"
 names = ["node_modules"]
 stop_descent = true
 top_most = true
-exclude = ["**/lib/node_modules", "{home}/.nvm/**"]
+# A global install (lib/node_modules) and the packages bundled inside one, such as npm's own.
+exclude = ["**/lib/node_modules", "**/lib/node_modules/**", "{home}/.nvm/**"]
   [[rule.match.sibling]]
   any_of = ["package.json"]
 [rule.guard]
@@ -226,12 +227,10 @@ lost = "Crates are downloaded again on the next build; offline builds fail until
 min_size = "200 MiB"
 [rule.match]
 kind = "dir"
-paths = [
-  "{env:CARGO_HOME|{home}/.cargo}/registry/cache",
-  "{env:CARGO_HOME|{home}/.cargo}/registry/src",
-  "{env:CARGO_HOME|{home}/.cargo}/git/checkouts",
-  "{env:CARGO_HOME|{home}/.cargo}/git/db",
-]
+# The two folders themselves, not cache/, src/, checkouts/ and db/ in them: cargo tags both
+# with a CACHEDIR.TAG, and only a match on the same folder outranks the tag's rule, which
+# stops the descent.
+paths = ["{env:CARGO_HOME|{home}/.cargo}/registry", "{env:CARGO_HOME|{home}/.cargo}/git"]
 stop_descent = true
 [rule.guard]
 not_running = ["cargo"]
@@ -289,8 +288,6 @@ paths = ["{env:GRADLE_USER_HOME|{home}/.gradle}/caches", "{env:GRADLE_USER_HOME|
 stop_descent = true
 [rule.guard]
 not_running = ["java"]
-[rule.native]
-pre = [["gradle", "--stop"]]
 
 [[rule]]
 id = "maven.repository"
@@ -381,8 +378,6 @@ paths = ["{home}/Library/Developer/Xcode/*OS DeviceSupport/*"]
 stop_descent = true
 [rule.guard]
 not_running = ["Xcode"]
-keep_newest = 1
-group_by = "/(\\w+OS) DeviceSupport/"
 
 [[rule]]
 id = "xcode.archives"
@@ -580,6 +575,9 @@ min_size = "200 MiB"
 [rule.match]
 kind = "dir"
 paths = { macos = ["{cache}/JetBrains/*", "{cache}/Google/AndroidStudio*"], linux = ["{cache}/JetBrains/*", "{cache}/Google/AndroidStudio*"], windows = ["{local_data}/JetBrains/*", "{local_data}/Google/AndroidStudio*"] }
+# JetBrains Toolbox keeps its app and downloads there, not an IDE's caches ({cache} is
+# {local_data} on Windows).
+exclude = ["{cache}/JetBrains/Toolbox*"]
 stop_descent = true
 
 [[rule]]

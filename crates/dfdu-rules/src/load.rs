@@ -33,6 +33,8 @@ impl std::fmt::Display for LoadError {
     }
 }
 
+impl std::error::Error for LoadError {}
+
 /// One rule as loaded, before the set is built: the rule, or a switch for an earlier one.
 enum Entry {
     Rule { rule: Box<Rule>, enabled: bool },
@@ -194,8 +196,9 @@ fn platforms(list: &[String]) -> Result<Vec<Platform>, String> {
         .collect()
 }
 
-/// Expands variables in `patterns` and compiles them. Patterns of `kind` `names` must not hold
-/// a `/`.
+/// Expands variables in `patterns` and compiles them. With `names`, patterns must not hold a
+/// `/` (they are names, not paths); path patterns also match where a link in them leads
+/// ([`Env::link_targets`]).
 fn globs(env: &Env, field: &str, patterns: &[String], names: bool) -> Result<Vec<Glob>, String> {
     let mut out = Vec::new();
     for p in patterns {
@@ -203,9 +206,16 @@ fn globs(env: &Env, field: &str, patterns: &[String], names: bool) -> Result<Vec
             return Err(format!("{field}: `{p}` is a path, not a name"));
         }
         for expanded in env.expand(p).map_err(|e| format!("{field}: {e}"))? {
-            let g = Glob::new(&expanded, glob::platform_folds_case(env.platform))
-                .map_err(|e| format!("{field}: `{p}`: {e}"))?;
-            out.push(g);
+            let all = if names {
+                vec![expanded]
+            } else {
+                env.link_targets(expanded)
+            };
+            for one in all {
+                let g = Glob::new(&one, glob::platform_folds_case(env.platform))
+                    .map_err(|e| format!("{field}: `{p}`: {e}"))?;
+                out.push(g);
+            }
         }
     }
     Ok(out)
@@ -235,7 +245,7 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
         category_index(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
     let name = need(def.name, "name")?;
     let safety = safety(&need(def.safety, "safety")?)?;
-    let action = action(def.action, def.native.as_ref())?;
+    let action = action(def.action, def.native)?;
     let min_size = match def.min_size {
         Some(s) => parse_size(&s).ok_or_else(|| format!("min_size: cannot read `{s}`"))?,
         None => 0,
@@ -291,11 +301,8 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
         guard: Guard {
             not_running: def.guard.not_running.get(p),
             not_vcs_tracked: def.guard.not_vcs_tracked,
-            keep_newest: def.guard.keep_newest,
-            group_by: def.guard.group_by,
         },
         degrade: degrade(def.degrade.when)?,
-        native: def.native,
         source: source.clone(),
     };
     if rule.degrade.iter().any(|d| d.safety < rule.safety) {
@@ -318,13 +325,30 @@ fn safety(s: &str) -> Result<Safety, String> {
         .ok_or_else(|| format!("unknown safety `{s}` (safe, regenerable, review or manual)"))
 }
 
-/// The `action` of a rule, `delete` when not set; `native` needs a `native.command`.
-fn action(s: Option<String>, native: Option<&NativeDef>) -> Result<Action, String> {
+/// The `action` of a rule, `delete` when not set. `native` needs a `native.command`, and
+/// `[rule.native]` is only for `native`.
+fn action(s: Option<String>, native: Option<NativeDef>) -> Result<Action, String> {
     let s = s.unwrap_or_else(|| "delete".into());
-    let action = Action::parse(&s)
-        .ok_or_else(|| format!("unknown action `{s}` (delete, trash, native or report)"))?;
-    if action == Action::Native && native.is_none_or(|n| n.command.is_empty()) {
-        return Err("`action = \"native\"` needs `native.command`".into());
+    let action = match s.as_str() {
+        "delete" => Action::Delete,
+        "trash" => Action::Trash,
+        "report" => Action::Report,
+        "native" => {
+            return match native {
+                Some(n) if !n.command.is_empty() => Ok(Action::Native(Box::new(n))),
+                _ => Err("`action = \"native\"` needs `native.command`".into()),
+            };
+        }
+        _ => {
+            return Err(format!(
+                "unknown action `{s}` (delete, trash, native or report)"
+            ));
+        }
+    };
+    if native.is_some() {
+        return Err(format!(
+            "`[rule.native]` is for `action = \"native\"`, not `{s}`"
+        ));
     }
     Ok(action)
 }
@@ -496,6 +520,11 @@ names = ["x"]
         for (body, want) in [
             ("[rule.match]\nnamez = [\"x\"]", "unknown field `namez`"),
             ("safety2 = 1", "unknown field `safety2`"),
+            // An old guard that was never enforced: refused rather than ignored.
+            (
+                "[rule.match]\nnames = [\"x\"]\n[rule.guard]\nkeep_newest = 1",
+                "unknown field `keep_newest`",
+            ),
             (
                 "min_size = \"10 parsecs\"\n[rule.match]\nnames = [\"x\"]",
                 "min_size: cannot read",
@@ -516,6 +545,10 @@ names = ["x"]
             (
                 "action = \"native\"\n[rule.match]\nnames = [\"x\"]",
                 "needs `native.command`",
+            ),
+            (
+                "action = \"trash\"\n[rule.match]\nnames = [\"x\"]\n[rule.native]\ncommand = [\"x\"]",
+                "`[rule.native]` is for `action = \"native\"`, not `trash`",
             ),
             ("[rule.match]\nkind = \"dir\"", "needs `names` or `paths`"),
             (
@@ -671,5 +704,64 @@ names = ["c"]
         assert_eq!(errors.len(), 1, "{errors:#?}");
         assert!(errors[0].source.ends_with("a.toml"));
         assert!(set.get("node.node_modules").is_none());
+    }
+
+    /// `~/.gradle` and `~/.cargo` are links to another disk, which the scan of the home folder
+    /// does not follow: the rules and protected paths there also apply where they lead.
+    #[cfg(unix)]
+    #[test]
+    fn path_patterns_follow_links_to_where_they_lead() {
+        use crate::{Candidate, Verdict};
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonical");
+        let (home, data) = (root.join("home"), root.join("data"));
+        for d in ["home", "data/gradle/caches", "data/cargo/bin"] {
+            std::fs::create_dir_all(root.join(d)).expect("mkdir");
+        }
+        std::os::unix::fs::symlink(data.join("gradle"), home.join(".gradle")).expect("link");
+        std::os::unix::fs::symlink(data.join("cargo"), home.join(".cargo")).expect("link");
+        let home_s = home.to_str().expect("utf-8");
+        let data_s = data.to_str().expect("utf-8").to_owned();
+        // On Linux, whose protected paths leave the temporary folder alone; the Gradle rule
+        // turned on there.
+        let on = "schema_version = 1\n[[rule]]\nid = \"gradle.user-caches\"\nenabled = true\n";
+        let files = [
+            (Source::Builtin, BUILTIN.to_owned()),
+            (Source::File("/rules/on.toml".into()), on.to_owned()),
+        ];
+        let classify = |env: &Env, parent: &str, name: &str| {
+            let (set, errors) = load_from(env, &files);
+            assert!(errors.is_empty(), "{errors:#?}");
+            let no = |_: &[u8]| false;
+            let c = Candidate {
+                parent: parent.as_bytes(),
+                name: name.as_bytes(),
+                is_dir: true,
+                sibling: &no,
+                inside: &[],
+                protection: set.protected().state_of(parent.as_bytes()),
+                partial: false,
+                stat: None,
+                link: None,
+            };
+            match set.classify(&c) {
+                // Without the CACHEDIR.TAG rule, which every directory is a candidate for.
+                Verdict::Hits(h) => (h.iter().map(|h| set.rule(h.rule).id.clone()))
+                    .filter(|id| id != "generic.cachedir-tag")
+                    .collect(),
+                Verdict::Protected(_) => vec!["protected".into()],
+                Verdict::None => vec![],
+            }
+        };
+        let env = Env::with(Platform::Linux, &[("HOME", home_s)]);
+        let gradle = format!("{data_s}/gradle");
+        let cargo = format!("{data_s}/cargo");
+        assert_eq!(classify(&env, &gradle, "caches"), Vec::<String>::new());
+        let env = env.resolving_links();
+        assert_eq!(classify(&env, &gradle, "caches"), ["gradle.user-caches"]);
+        assert_eq!(classify(&env, &cargo, "bin"), ["protected"]);
+        // Where the link is, the rule still applies (a scan of the link itself).
+        let at_link = format!("{home_s}/.gradle");
+        assert_eq!(classify(&env, &at_link, "caches"), ["gradle.user-caches"]);
     }
 }

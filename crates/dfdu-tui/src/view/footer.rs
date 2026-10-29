@@ -9,7 +9,9 @@ use ratatui::widgets::Paragraph;
 use super::spread;
 use crate::app::keys::{Action, first_key};
 use crate::app::{App, Overlay};
-use crate::{details, filter, marks};
+use crate::features::details;
+use crate::model::snapshot::Mark;
+use crate::state::{filter, marks};
 
 /// Drawn only while directories are stalled (the row has no height otherwise).
 pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
@@ -68,10 +70,21 @@ fn hint(keys: impl Into<String>, label: &'static str, drop: u8) -> Hint {
     }
 }
 
-/// The hints for what the keys do now, in the order they are shown. Whatever takes the keys
-/// first decides, as in [`App::key`]: the open overlay, the filter input, the focused details
-/// pane, or else the list (with what marks, a running scan and errors add).
+/// The hints for what the keys do now, in the order they are shown; in a read-only browser
+/// without the keys that delete.
 fn context(app: &App) -> Vec<Hint> {
+    let mut hints = offered_now(app);
+    if app.read_only {
+        let deleting = [Action::Trash, Action::DeletePermanent, Action::Undo].map(first_key);
+        hints.retain(|h| !deleting.contains(&h.keys.as_str()));
+    }
+    hints
+}
+
+/// The hints for what the keys do now. Whatever takes the keys first decides, as in
+/// [`App::key`]: the open overlay, the filter input, the focused details pane, or else the list
+/// (with what marks, a running scan and errors add).
+fn offered_now(app: &App) -> Vec<Hint> {
     let arrows = format!("{}{}", first_key(Action::Up), first_key(Action::Down));
     let help = hint(first_key(Action::Help), "help", 0);
     let quit = hint(first_key(Action::Quit), "quit", 1);
@@ -90,7 +103,7 @@ fn context(app: &App) -> Vec<Hint> {
             quit,
         ];
     }
-    if crate::dupes::active(app) {
+    if crate::features::dupes::active(app) {
         return vec![
             hint(arrows.clone(), "move", 3),
             hint(first_key(Action::ToggleMark), "mark", 1),
@@ -103,7 +116,7 @@ fn context(app: &App) -> Vec<Hint> {
             quit.clone(),
         ];
     }
-    if crate::cleanup::active(app) {
+    if crate::features::cleanup::active(app) {
         return vec![
             hint(arrows, "move", 3),
             hint("Enter", "open", 2),
@@ -117,7 +130,7 @@ fn context(app: &App) -> Vec<Hint> {
             quit,
         ];
     }
-    if crate::treemap::active(app) {
+    if crate::features::treemap::active(app) {
         let mut hints = vec![
             hint("←↑↓→", "move", 2),
             hint("Enter", "zoom in", 3),
@@ -204,6 +217,12 @@ fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint) -> Vec<Hint> {
         hint(first_key(Action::Open), "open", 3),
     ];
     hints.push(hint(first_key(Action::Parent), "up", 4));
+    if app
+        .selected_entry()
+        .is_some_and(|e| matches!(e.mark, Mark::OtherFs | Mark::Network))
+    {
+        hints.push(hint(first_key(Action::EnterMount), "scan it", 1));
+    }
     if !app.marks.is_empty() {
         hints.push(hint(first_key(Action::ToggleMark), "mark", 2));
         hints.push(hint(first_key(Action::Trash), "trash marked", 2));

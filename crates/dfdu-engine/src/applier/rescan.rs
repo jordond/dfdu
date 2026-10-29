@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use dfdu_scan::classify::ClassOpts;
-use dfdu_scan::{Backend, JobId, JobOptions};
+use dfdu_scan::{Backend, DirId, JobId, JobOptions};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Pages, Tree};
 
 use super::jobs::JobStart;
@@ -132,14 +132,51 @@ fn topmost(tree: &Tree, mut dirs: Vec<Ix>) -> Vec<Ix> {
     dirs
 }
 
+/// Whether `ix` is a mount the scan listed but did not enter: not a kernel filesystem, which is
+/// never scanned, nor a second mount of something counted elsewhere.
+fn left_out(tree: &Tree, ix: Ix) -> bool {
+    let f = tree.flags(ix);
+    tree.dir(ix).is_some_and(|d| d.state == DirState::Skipped)
+        && f.has(NodeFlags::MOUNT_ROOT)
+        && !f.has(NodeFlags::DUP_MOUNT)
+        && !f.has(NodeFlags::KERNEL)
+}
+
 impl<B: Backend> Applier<B> {
-    /// Rescans `node` with the options of the job that scanned it, or `given`.
-    pub(super) fn rescan(&mut self, m: &mut Model, node: NodeRef, given: Option<JobOptions>) {
+    /// Adds `entered` (a mount root's device and inode) to the mounts entered this session,
+    /// and has `opts` enter all of them.
+    fn enter_again(&mut self, opts: &mut JobOptions, entered: Option<(u64, u64)>) {
+        if let Some(at) = entered.filter(|at| !self.entered.contains(at)) {
+            self.entered.push(at);
+        }
+        for &at in &self.entered {
+            if !opts.enter.contains(&at) {
+                opts.enter.push(at);
+            }
+        }
+    }
+
+    /// Rescans `node` with the options of the job that scanned it, or `given`. With `enter`,
+    /// `node` is a mount that was not entered, and is scanned in place: a job's root is read
+    /// whatever filesystem it is on. Every rescan enters the mounts entered so far.
+    pub(super) fn rescan(
+        &mut self,
+        m: &mut Model,
+        node: NodeRef,
+        given: Option<JobOptions>,
+        enter: bool,
+    ) {
         let Some(ix) = m.tree.resolve_visible(node) else {
             m.status.notice("rescan: that directory is gone".into());
             return;
         };
+        if enter && !left_out(&m.tree, ix) {
+            m.status
+                .notice("enter: that is not a mount the scan left out".into());
+            return;
+        }
         let owner_id = match m.tree.dir(ix) {
+            Some(d) if enter => d.job.0,
             None => {
                 m.status.notice("rescan: not a directory".into());
                 return;
@@ -166,7 +203,7 @@ impl<B: Backend> Applier<B> {
                     .notice("rescan: that directory is on another filesystem".into());
                 return;
             }
-            Some(d) => d.job,
+            Some(d) => d.job.0,
         };
         // Overlap with deletes and other rescans.
         if self.plan_overlaps(&m.tree, ix) {
@@ -205,6 +242,7 @@ impl<B: Backend> Applier<B> {
             top = p;
         }
         opts.scope = Some(m.tree.path_buf(top));
+        self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
             m.rules = Some(c.rules.clone());
             m.tree
@@ -272,11 +310,11 @@ impl<B: Backend> Applier<B> {
             .resolve_visible(node)
             .filter(|&r| m.tree.dir(r).is_some() && m.tree.parent(r).is_none())
         else {
-            return self.rescan(m, node, Some(opts));
+            return self.rescan(m, node, Some(opts), false);
         };
         let mut targets = changed_dirs(&m.tree, root, changed);
         if targets.len() > MAX_RESUME_RESCANS || targets.contains(&root) {
-            return self.rescan(m, node, Some(opts));
+            return self.rescan(m, node, Some(opts), false);
         }
         let id = self.next_job;
         self.next_job += 1;
@@ -286,8 +324,8 @@ impl<B: Backend> Applier<B> {
         let mut mounts = Vec::new();
         let mut own = |tree: &mut Tree, ix: Ix| {
             if let Some(d) = tree.dir_mut(ix) {
-                d.job = id;
-                d.dir_id = 0;
+                d.job = JobId(id);
+                d.dir_id = DirId::ROOT;
             }
             let other_dev = || {
                 tree.parent(ix)
@@ -347,7 +385,7 @@ impl<B: Backend> Applier<B> {
         self.queue_checks(m);
         for t in targets {
             let r = m.tree.node_ref(t);
-            self.rescan(m, r, None);
+            self.rescan(m, r, None, false);
         }
     }
 }

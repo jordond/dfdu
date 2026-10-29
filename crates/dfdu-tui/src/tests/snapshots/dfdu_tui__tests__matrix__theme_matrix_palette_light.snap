@@ -12,30 +12,29 @@ L2 0-11 fg=#6c7180 bg=#d5dce8 bold | 12-13 fg=#1f2329 bg=#d5dce8 bold | 14-37 fg
 L3 0-11 fg=#6c7180 | 14-37 fg=#3d6fa8 | 46-53 fg=#6c7180 | 54-59 fg=#1d5ea8 bold
     51.0 GiB  ██████████▉                21.1%     214  .android/
 L4 14-37 fg=#3d6fa8 | 46-53 fg=#6c7180 | 54-64 fg=#1d5ea8 bold
-   625.0 MiB  ▏                           0.3%       1  notes.sqlite
-L5 14-37 fg=#3d6fa8 | 46-53 fg=#6c7180
- !       0 B┌ Commands 10/44 ──────────────────────────────────────────────────────────┐
-L6 0-1 fg=#b3261e | 2-11 fg=#6c7180
- ~       0 B│ : sort▌                                                                  │
-L7 0-1 fg=#8a5300 | 2-11 fg=#6c7180 | 13-14 fg=#1b6b8c bold | 20-20 fg=#1b6b8c bold
-            │ sort by size (again: reverse)                                    sort  s │
-L8 13-13 fg=#1f2329 bg=#d5dce8 bold | 14-17 fg=#9a3c00 bg=#d5dce8 bold underlined | 18-78 fg=#1f2329 bg=#d5dce8 bold | 79-82 fg=#6c7180 bg=#d5dce8 bold | 83-84 fg=#1f2329 bg=#d5dce8 bold | 85-85 fg=#1b6b8c bg=#d5dce8 bold | 86-86 fg=#1f2329 bg=#d5dce8 bold
+   625.0 MiB┌ Commands 11/45 ──────────────────────────────────────────────────────────┐
+ !       0 B│ : sort▌                                                                  │
+L6 0-1 fg=#b3261e | 2-11 fg=#6c7180 | 13-14 fg=#1b6b8c bold | 20-20 fg=#1b6b8c bold
+ ~       0 B│ sort by size (again: reverse)                                    sort  s │
+L7 0-1 fg=#8a5300 | 2-11 fg=#6c7180 | 13-13 fg=#1f2329 bg=#d5dce8 bold | 14-17 fg=#9a3c00 bg=#d5dce8 bold underlined | 18-78 fg=#1f2329 bg=#d5dce8 bold | 79-82 fg=#6c7180 bg=#d5dce8 bold | 83-84 fg=#1f2329 bg=#d5dce8 bold | 85-85 fg=#1b6b8c bg=#d5dce8 bold | 86-86 fg=#1f2329 bg=#d5dce8 bold
             │ sort by name (again: reverse)                                    sort  n │
-L9 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L8 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ sort by items (again: reverse)                                   sort  C │
-L10 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L9 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ sort by modification time (again: reverse)                       sort  M │
-L11 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L10 14-17 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ re-sort now                                                      sort  S │
-L12 17-20 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L11 17-20 fg=#9a3c00 underlined | 79-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ skip directories that are not responding                          act  x │
-L13 14-14 fg=#9a3c00 underlined | 25-26 fg=#9a3c00 underlined | 31-31 fg=#9a3c00 underlined | 80-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L12 14-14 fg=#9a3c00 underlined | 25-26 fg=#9a3c00 underlined | 31-31 fg=#9a3c00 underlined | 80-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ put back what was last moved to the Trash or staged               act  U │
-L14 53-53 fg=#9a3c00 underlined | 56-57 fg=#9a3c00 underlined | 60-60 fg=#9a3c00 underlined | 80-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L13 53-53 fg=#9a3c00 underlined | 56-57 fg=#9a3c00 underlined | 60-60 fg=#9a3c00 underlined | 80-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ close the overlay, or clear the filter                       global  Esc │
-L15 17-17 fg=#9a3c00 underlined | 33-34 fg=#9a3c00 underlined | 42-42 fg=#9a3c00 underlined | 75-80 fg=#6c7180 | 83-85 fg=#1b6b8c bold
+L14 17-17 fg=#9a3c00 underlined | 33-34 fg=#9a3c00 underlined | 42-42 fg=#9a3c00 underlined | 75-80 fg=#6c7180 | 83-85 fg=#1b6b8c bold
             │ duplicate files (compares the scanned files)                  display  4 │
-L16 28-28 fg=#9a3c00 underlined | 32-32 fg=#9a3c00 underlined | 36-36 fg=#9a3c00 underlined | 40-40 fg=#9a3c00 underlined | 76-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+L15 28-28 fg=#9a3c00 underlined | 32-32 fg=#9a3c00 underlined | 36-36 fg=#9a3c00 underlined | 40-40 fg=#9a3c00 underlined | 76-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
+            │ scan into the selected mount (another filesystem)                 act  m │
+L16 28-28 fg=#9a3c00 underlined | 38-38 fg=#9a3c00 underlined | 50-50 fg=#9a3c00 underlined | 59-59 fg=#9a3c00 underlined | 80-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             │ list what could not be read, and go to it                      panels  ! │
 L17 16-16 fg=#9a3c00 underlined | 25-25 fg=#9a3c00 underlined | 37-37 fg=#9a3c00 underlined | 50-50 fg=#9a3c00 underlined | 77-82 fg=#6c7180 | 85-85 fg=#1b6b8c bold
             └──────────────────────────────────────────────────────────────────────────┘

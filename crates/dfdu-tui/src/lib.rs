@@ -1,13 +1,15 @@
 //! The interactive browser. The run loop (`run_loop`) reads the engine model under the read lock
-//! only to copy a [`snapshot::Snapshot`] and the features' `extras::Extras`, then draws from the
+//! only to copy a [`Snapshot`] and the features' `model::extras::Extras`, then draws from the
 //! copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
-//! `view`. Each feature has its own module with its state, keys and drawing: the views
-//! `treemap`, `cleanup` and `dupes`; the overlays in `overlay` (`help`, `error_list`,
-//! `confirm`, `palette` and `type_filter`); the disk picker `picker`; and `marks`, `filter`,
-//! `details`, `growth`, `debug`, `motion` and `mouse`. `history_link` reads and records the
-//! scan history.
+//! `view`. Each feature has its own module with its state, keys and drawing: the views and
+//! panels in `features` (`treemap`, `cleanup`, `dupes`, `details`, `debug` and the disk
+//! `picker`); the overlays in `overlay` (`help`, `error_list`, `confirm`, `palette` and
+//! `type_filter`); and the rows' `marks`, `filter`, `order` and `motion` in `state`. `input`
+//! holds the text input, the mouse and fuzzy matching; `model` what is read from outside the
+//! UI: the engine model, the scan history (`history_link`, `growth`) and this machine
+//! (`outside`).
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -18,27 +20,14 @@
 //! selected for the details pane), they are read without copying the directory again.
 
 mod app;
-mod cleanup;
-mod debug;
-mod details;
-mod dupes;
-mod extras;
-mod filter;
-mod fuzzy;
-mod growth;
-mod history_link;
+mod features;
 mod input;
-mod marks;
-mod motion;
-mod mouse;
-mod order;
+mod model;
 mod overlay;
-mod picker;
 mod run_loop;
 mod setup;
-mod snapshot;
+mod state;
 mod theme;
-mod treemap;
 mod view;
 
 use std::io;
@@ -47,20 +36,23 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
-use dfdu_engine::{Command, Engine, EngineOptions};
+use dfdu_engine::{Command, Engine, EngineOptions, JournalPosition};
 use dfdu_scan::JobOptions;
 use dfdu_store::history;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
 pub use app::{App, Effect, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Overlay};
-pub use debug::summary as debug_summary;
-pub use history_link::HistoryLink;
-pub use picker::{Picked, Picker};
+pub use features::debug::summary as debug_summary;
+pub use features::picker::{Picked, Picker};
+pub use model::history_link::HistoryLink;
+pub use model::outside::{
+    NotEntered, home_dir, linked_note, not_entered, not_entered_lines, tilde,
+};
+pub use model::snapshot::{Snapshot, Target};
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings, theme_dir};
-pub use snapshot::{Snapshot, Target};
-pub use theme::{ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
+pub use theme::{BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
 
 /// How long the terminal gets to answer the background-colour query at start.
 const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
@@ -84,13 +76,13 @@ pub enum Source {
     /// tell what changed since, only that is rescanned.
     Resumed {
         tree: dfdu_tree::Tree,
-        journal: Option<dfdu_store::snapshot::Journal>,
+        journal: Option<JournalPosition>,
         start: StartLocal,
     },
     /// A scan read from a file, browsed read-only.
     Imported(dfdu_tree::Tree),
-    /// An engine scanning `path` on another host with `job`: read-only, nothing is recorded in
-    /// the history.
+    /// An engine scanning `path` on another host with `job`. It deletes there too (unless
+    /// [`EngineOptions::read_only`]); nothing is recorded in the history.
     Remote {
         engine: Engine<dfdu_scan::NativeBackend>,
         path: PathBuf,
@@ -100,7 +92,8 @@ pub enum Source {
 
 pub struct RunOptions {
     pub source: Source,
-    /// Options of engines the browser starts (all but [`Source::Remote`]'s).
+    /// Options of engines the browser starts (all but [`Source::Remote`]'s). Its `read_only`
+    /// also tells the browser to leave out the delete keys, for a remote engine as well.
     pub engine: EngineOptions,
     pub ui: UiSettings,
     /// Record a scan of this host's files in the history once it finishes, and show what grew
@@ -110,6 +103,10 @@ pub struct RunOptions {
 
 /// How the browser looks and behaves, decided before the loop starts.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent options of the browser, not one state spread over several bools"
+)]
 pub struct UiOptions {
     pub theme: Theme,
     /// The terminal's colour level, which a theme chosen in the palette is resolved for.
@@ -126,6 +123,12 @@ pub struct UiOptions {
     pub history: Option<HistoryLink>,
     /// The file type filter to start with.
     pub types: dfdu_tree::filetype::TypeFilter,
+    /// The scan is of this machine's disks: mounts it did not enter and links out of it are
+    /// looked up here (not for imported or remote scans).
+    pub local: bool,
+    /// Nothing is deleted (`--read-only`, imported scans): the delete keys are left out and
+    /// cleanup commands run only as dry runs.
+    pub read_only: bool,
 }
 
 impl UiOptions {
@@ -143,6 +146,8 @@ impl UiOptions {
             home: None,
             history: None,
             types: dfdu_tree::filetype::TypeFilter::default(),
+            local: false,
+            read_only: false,
         }
     }
 }
@@ -175,7 +180,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         setup::restore_terminal(mouse);
         return Err(e);
     }
-    let ui_opts = |theme: Theme, history: Option<HistoryLink>| UiOptions {
+    let read_only = opts.engine.read_only;
+    let ui_opts = |theme: Theme, history: Option<HistoryLink>, local: bool| UiOptions {
         theme,
         color_level: colors.level,
         background: colors.background,
@@ -184,28 +190,27 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         home: setup::home_dir(),
         history,
         types: ui.types.clone(),
+        local,
+        read_only,
     };
     // Only scans that count the same data are compared.
     let link = |root: &Path, job: &JobOptions, engine: &EngineOptions| {
         let db = history::default_path().filter(|_| opts.history)?;
-        let key = history::options_key(job.cross_mounts, job.network, engine.measure_workers > 0);
+        let key = history::options_key(job, engine.measure_workers > 0);
         Some(HistoryLink::start(db, root.to_path_buf(), key))
     };
     let (path, start) = match opts.source {
         Source::Imported(tree) => {
-            let engine = Engine::start(
-                dfdu_scan::PortableBackend::default(),
-                EngineOptions {
-                    imported: true,
-                    ..opts.engine
-                },
-            );
-            engine.load(tree);
-            return browse(&mut terminal, engine, ui_opts(theme, None));
+            let engine = Engine::start_imported(tree, opts.engine);
+            let ui = UiOptions {
+                read_only: true,
+                ..ui_opts(theme, None, false)
+            };
+            return browse(&mut terminal, engine, ui);
         }
         Source::Remote { engine, path, job } => {
             engine.send(Command::Scan { path, opts: job });
-            return browse(&mut terminal, engine, ui_opts(theme, None));
+            return browse(&mut terminal, engine, ui_opts(theme, None, false));
         }
         Source::Resumed {
             tree,
@@ -220,15 +225,15 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                 ));
             };
             let history = link(&path, &job, &opts.engine);
-            return browse(&mut terminal, engine, ui_opts(theme, history));
+            return browse(&mut terminal, engine, ui_opts(theme, history, true));
         }
         Source::Local { path, start } => (path, start),
     };
     let path = match path {
         Some(p) => p,
-        None => match picker::pick(&mut terminal, &theme) {
-            Ok(picker::Picked::Scan(p)) => p,
-            Ok(picker::Picked::Quit) => {
+        None => match features::picker::pick(&mut terminal, &theme) {
+            Ok(Picked::Scan(p)) => p,
+            Ok(Picked::Quit) => {
                 setup::restore_terminal(mouse);
                 return Ok(());
             }
@@ -242,7 +247,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     let (engine, job) = start(&path, opts.engine.clone());
     let history = link(&root, &job, &opts.engine);
     engine.send(Command::Scan { path, opts: job });
-    browse(&mut terminal, engine, ui_opts(theme, history))
+    browse(&mut terminal, engine, ui_opts(theme, history, true))
 }
 
 /// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
@@ -270,22 +275,14 @@ fn restore_on_panic(mouse: bool) {
 /// the scan; `None` when the tree has no root.
 fn resume(
     tree: dfdu_tree::Tree,
-    journal: Option<dfdu_store::snapshot::Journal>,
+    journal: Option<JournalPosition>,
     start: StartLocal,
     engine: &EngineOptions,
 ) -> Option<(Engine<dfdu_scan::NativeBackend>, PathBuf, JobOptions)> {
     let root = tree.roots().next()?;
     let path = tree.path_buf(root);
     let (engine, job) = start(&path, engine.clone());
-    let node = tree.node_ref(root);
-    engine.load(tree);
-    let changed =
-        journal.and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
-    engine.send(Command::Resume {
-        node,
-        opts: job.clone(),
-        changed,
-    });
+    engine.resume(tree, journal, job.clone());
     Some((engine, path, job))
 }
 

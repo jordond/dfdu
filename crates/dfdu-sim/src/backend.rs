@@ -8,9 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 
 use dfdu_engine::{MeasureMsg, MeasureReq, MeasureResult, Measurement};
-use dfdu_scan::{
-    Backend, Batch, Block, Budget, Clock, DirStream, FsClass, Raw, RawBlock, ScanMsg, Sink, Storage,
-};
+use dfdu_scan::{Backend, Batch, Block, Budget, Clock, DirStream, Raw, RawBlock, ScanMsg, Sink};
+use dfdu_sys::{FsClass, Storage};
 use dfdu_tree::{ErrKind, Kind, Meta, Subvol};
 use parking_lot::Mutex;
 

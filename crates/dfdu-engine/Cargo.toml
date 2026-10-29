@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-engine"
-description = "The applier (single writer of the tree), jobs, accounting, hard links, and the remote agent and wire protocol"
+description = "The applier (single writer of the tree), jobs, hard links, classifier and measurer pools, change journals, crash reports, config and rule directories, the remote agent and wire protocol, and the model queries the TUI and CLI share (sizes, problems, recommendations)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,7 +24,6 @@ gix-hash.workspace = true
 gix-path.workspace = true
 dfdu-sys.workspace = true
 crc32c.workspace = true
-etcetera.workspace = true
 humansize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

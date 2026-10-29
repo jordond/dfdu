@@ -13,18 +13,10 @@ use serde_json::value::RawValue;
 
 use crate::{DeleteResult, Mode, PlanItem};
 
-/// `$DFDU_STATE_DIR`, else the platform state directory, plus `dfdu/ops`.
+/// Where deletion journals are kept: `ops` in the state directory ([`dfdu_rules::dirs`]).
 #[must_use]
 pub fn default_journal_dir() -> Option<PathBuf> {
-    // The CLI convention: XDG directories on Linux and macOS, Known Folders on Windows (which
-    // has no state directory, so the data directory is used there).
-    use etcetera::BaseStrategy;
-    if let Some(d) = std::env::var_os("DFDU_STATE_DIR") {
-        return Some(PathBuf::from(d).join("ops"));
-    }
-    let dirs = etcetera::choose_base_strategy().ok()?;
-    let base = dirs.state_dir().unwrap_or_else(|| dirs.data_dir());
-    Some(base.join("dfdu").join("ops"))
+    dfdu_rules::dirs::journal_dir()
 }
 
 pub struct Journal {

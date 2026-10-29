@@ -6,7 +6,7 @@
 
 use std::cell::OnceCell;
 
-use dfdu_scan::classify::{ClassOpts, Listing, TaskClass};
+use dfdu_scan::classify::{BlockParts, ClassOpts, Listing, TaskClass};
 use dfdu_scan::{Backend, DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
 use dfdu_tree::{Ix, Kind, Tree};
 
@@ -75,16 +75,15 @@ pub(crate) fn classify_loaded<B: Backend>(
             backend.link_target_missing(loc, n)
         };
         let listing = Listing::new(opts.rules.clone(), DirId(0), task);
-        let out = listing.block(
-            &names,
-            &files,
-            &subdirs,
-            &others,
-            DirId(1),
-            true,
-            &read,
-            &missing,
-        );
+        let parts = BlockParts {
+            names: &names,
+            files: &files,
+            subdirs: &subdirs,
+            others: &others,
+            first_subdir: DirId(1),
+            whole: true,
+        };
+        let out = listing.block(&parts, &read, &missing);
         let closes = listing.finish();
         for (e, mark) in out.marks {
             let node = match e {

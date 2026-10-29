@@ -228,7 +228,7 @@ pub struct Opened {
     /// The program that wrote it and its version, when the file says.
     pub written_by: Option<String>,
     /// Where the change journal stood when the scan started (snapshots only).
-    pub journal: Option<snapshot::Journal>,
+    pub journal: Option<dfdu_scan::journal::JournalPosition>,
 }
 
 /// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by

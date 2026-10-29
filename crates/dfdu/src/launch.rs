@@ -9,7 +9,8 @@ use std::time::Duration;
 use dfdu_engine::{Command, Engine, EngineOptions, WaitIdle};
 use dfdu_rules::RuleSet;
 use dfdu_scan::classify::ClassOpts;
-use dfdu_scan::{Backend, JobOptions, NativeBackend, Storage, native_backend};
+use dfdu_scan::{Backend, JobOptions, NativeBackend, native_backend};
+use dfdu_sys::Storage;
 
 use crate::MountArgs;
 
@@ -118,12 +119,17 @@ pub fn scan(
     )
 }
 
-/// Sends `cmd` (a scan or a resume) and waits until the engine is done with it. An engine that
-/// failed, or a link to the agent that ended before anything arrived, ends the command: the
-/// reason is reported, the engine stopped and exit code 1 returned. A link that ended later is
-/// reported and leaves an incomplete tree to print.
+/// Sends `cmd` (a scan) and waits until the engine is done with it ([`wait_scan`]).
 pub fn run_scan<B: Backend>(engine: Engine<B>, cmd: Command) -> Result<Engine<B>, ExitCode> {
     engine.send(cmd);
+    wait_scan(engine)
+}
+
+/// Waits until the engine is done with the scan or resume sent to it. An engine that failed,
+/// or a link to the agent that ended before anything arrived, ends the command: the reason is
+/// reported, the engine stopped and exit code 1 returned. A link that ended later is reported
+/// and leaves an incomplete tree to print.
+pub fn wait_scan<B: Backend>(engine: Engine<B>) -> Result<Engine<B>, ExitCode> {
     if let WaitIdle::Fatal(msg) = engine.wait_idle(None) {
         eprintln!("dfdu: {msg}");
         engine.shutdown(SHUTDOWN);

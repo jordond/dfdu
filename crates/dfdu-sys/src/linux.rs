@@ -7,7 +7,7 @@ use std::path::Path;
 use rustix::fs::{AtFlags, CWD, Mode, OFlags, StatxFlags};
 use rustix::ioctl::{Getter, Setter, ioctl, opcode};
 
-use crate::SubvolInfo;
+use crate::{Profile, SubvolInfo};
 
 mod extents;
 mod generations;
@@ -518,55 +518,6 @@ pub fn qgroup_usage(fd: impl AsFd, subvol_id: u64) -> io::Result<Option<(u64, u6
         .iter()
         .find(|i| i.objectid == 0 && i.offset == subvol_id && i.data.len() >= 40)
         .and_then(|i| Some((le_u64(&i.data, 8)?, le_u64(&i.data, 24)?))))
-}
-
-/// Data allocation profile of a btrfs filesystem.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Profile {
-    Single,
-    Dup,
-    Raid0,
-    Raid1,
-    Raid1c3,
-    Raid1c4,
-    Raid10,
-    Raid5,
-    Raid6,
-}
-
-impl Profile {
-    /// Raw bytes stored per byte of data, given the number of devices.
-    #[must_use]
-    pub fn raw_ratio(self, devices: u64) -> f64 {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "device counts are far below 2^52"
-        )]
-        let n = devices.max(1) as f64;
-        match self {
-            Profile::Single | Profile::Raid0 => 1.0,
-            Profile::Dup | Profile::Raid1 | Profile::Raid10 => 2.0,
-            Profile::Raid1c3 => 3.0,
-            Profile::Raid1c4 => 4.0,
-            Profile::Raid5 => n / (n - 1.0).max(1.0),
-            Profile::Raid6 => n / (n - 2.0).max(1.0),
-        }
-    }
-
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Profile::Single => "single",
-            Profile::Dup => "DUP",
-            Profile::Raid0 => "RAID0",
-            Profile::Raid1 => "RAID1",
-            Profile::Raid1c3 => "RAID1C3",
-            Profile::Raid1c4 => "RAID1C4",
-            Profile::Raid10 => "RAID10",
-            Profile::Raid5 => "RAID5",
-            Profile::Raid6 => "RAID6",
-        }
-    }
 }
 
 #[repr(C)]

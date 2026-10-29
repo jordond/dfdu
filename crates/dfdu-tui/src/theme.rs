@@ -11,6 +11,7 @@ mod format;
 
 use ratatui::style::{Modifier, Style};
 
+pub use builtin::BuiltinTheme;
 pub use color::{ColorLevel, ColorSpec, Rgb};
 pub use detect::{
     choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
@@ -171,22 +172,23 @@ impl Category {
     }
 }
 
-/// How safe a cleanup candidate is to delete; indexes [`Theme::safety`].
+/// The style of a cleanup candidate by how safe it is to delete; indexes [`Theme::safety`].
+/// Three buckets for colour, not the rules' [`dfdu_rules::Safety`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Safety {
+pub enum SafetyStyle {
     Safe,
     Review,
     Keep,
 }
 
-impl Safety {
-    pub const ALL: [Safety; 3] = [Safety::Safe, Safety::Review, Safety::Keep];
+impl SafetyStyle {
+    pub const ALL: [SafetyStyle; 3] = [SafetyStyle::Safe, SafetyStyle::Review, SafetyStyle::Keep];
 
     pub const fn token(self) -> Token {
         match self {
-            Safety::Safe => Token::SafetySafe,
-            Safety::Review => Token::SafetyReview,
-            Safety::Keep => Token::SafetyKeep,
+            SafetyStyle::Safe => Token::SafetySafe,
+            SafetyStyle::Review => Token::SafetyReview,
+            SafetyStyle::Keep => Token::SafetyKeep,
         }
     }
 }
@@ -263,7 +265,7 @@ pub struct Theme {
     pub r#match: Style,
     /// Indexed by `Category as usize`.
     pub cat: [Style; 8],
-    /// Indexed by `Safety as usize`.
+    /// Indexed by `SafetyStyle as usize`.
     pub safety: [Style; 3],
     name: String,
     level: ColorLevel,
@@ -274,13 +276,13 @@ impl Theme {
     /// The 16-colour theme (`ansi`), readable on light and dark backgrounds.
     #[must_use]
     pub fn ansi16() -> Self {
-        Self::builtin("ansi", ColorLevel::Ansi16, None)
+        Self::builtin(BuiltinTheme::Ansi, ColorLevel::Ansi16, None)
     }
 
     /// The theme without colours (`mono`).
     #[must_use]
     pub fn no_color() -> Self {
-        Self::builtin("mono", ColorLevel::None, None)
+        Self::builtin(BuiltinTheme::Mono, ColorLevel::None, None)
     }
 
     /// The names [`Theme::named`] accepts.
@@ -293,22 +295,19 @@ impl Theme {
     /// `background` when known. `mono` always resolves without colours.
     #[must_use]
     pub fn named(name: &str, level: ColorLevel, background: Option<Rgb>) -> Option<Theme> {
-        let palette = builtin::palette(name)?;
-        let level = if name == "mono" {
+        BuiltinTheme::parse(name).map(|b| Self::builtin(b, level, background))
+    }
+
+    /// Built-in theme `b` resolved for `level`, on a terminal whose background is `background`
+    /// when known. `mono` always resolves without colours.
+    #[must_use]
+    pub fn builtin(b: BuiltinTheme, level: ColorLevel, background: Option<Rgb>) -> Self {
+        let level = if b == BuiltinTheme::Mono {
             ColorLevel::None
         } else {
             level
         };
-        Some(Self::resolve(name.to_owned(), &palette, level, background))
-    }
-
-    /// Built-in theme `name`, which must be one of [`builtin::NAMES`].
-    #[expect(
-        clippy::expect_used,
-        reason = "only called with names from builtin::NAMES, which all have a palette"
-    )]
-    fn builtin(name: &str, level: ColorLevel, background: Option<Rgb>) -> Self {
-        Self::named(name, level, background).expect("built-in theme")
+        Self::resolve(b.name().to_owned(), &b.palette(), level, background)
     }
 
     /// Resolves every token of `palette` for `level`. Without colours, each token that has a
@@ -320,11 +319,7 @@ impl Theme {
         level: ColorLevel,
         background: Option<Rgb>,
     ) -> Self {
-        #[expect(
-            clippy::expect_used,
-            reason = "`mono` is one of builtin::NAMES, which all have a palette"
-        )]
-        let mono = (level == ColorLevel::None).then(|| builtin::palette("mono").expect("mono"));
+        let mono = (level == ColorLevel::None).then(|| BuiltinTheme::Mono.palette());
         let style = |t: Token| {
             let mut spec = palette[t as usize];
             if let Some(mono) = &mono
@@ -356,7 +351,7 @@ impl Theme {
             status_ok: style(Token::StatusOk),
             r#match: style(Token::Match),
             cat: Category::ALL.map(|c| style(c.token())),
-            safety: Safety::ALL.map(|s| style(s.token())),
+            safety: SafetyStyle::ALL.map(|s| style(s.token())),
             name,
             level,
             background,
@@ -396,9 +391,9 @@ impl Theme {
             Token::CatDownload => self.cat[Category::Download as usize],
             Token::CatContainer => self.cat[Category::Container as usize],
             Token::CatOther => self.cat[Category::Other as usize],
-            Token::SafetySafe => self.safety[Safety::Safe as usize],
-            Token::SafetyReview => self.safety[Safety::Review as usize],
-            Token::SafetyKeep => self.safety[Safety::Keep as usize],
+            Token::SafetySafe => self.safety[SafetyStyle::Safe as usize],
+            Token::SafetyReview => self.safety[SafetyStyle::Review as usize],
+            Token::SafetyKeep => self.safety[SafetyStyle::Keep as usize],
         }
     }
 
@@ -437,7 +432,7 @@ mod tests {
                 Some(format!("{c:?}").to_lowercase().as_str())
             );
         }
-        for s in Safety::ALL {
+        for s in SafetyStyle::ALL {
             assert_eq!(
                 s.token().name().strip_prefix("safety."),
                 Some(format!("{s:?}").to_lowercase().as_str())
@@ -514,7 +509,7 @@ mod tests {
             theme.style(Token::CatMedia)
         );
         assert_eq!(
-            theme.safety[Safety::Keep as usize],
+            theme.safety[SafetyStyle::Keep as usize],
             theme.style(Token::SafetyKeep)
         );
     }

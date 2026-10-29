@@ -20,13 +20,13 @@ use std::fmt;
 use ratatui::style::{Color, Modifier};
 use toml::{Table, Value};
 
-use super::{ColorLevel, ColorSpec, Rgb, Theme, Token, builtin};
+use super::{BuiltinTheme, ColorLevel, ColorSpec, Rgb, Theme, Token, builtin};
 
 /// A parsed theme file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeFile {
     pub name: Option<String>,
-    base: &'static str,
+    base: BuiltinTheme,
     tokens: Vec<Setting>,
 }
 
@@ -98,7 +98,7 @@ impl ThemeFile {
         let table: Table = toml::from_str(text).map_err(|e| ThemeError::Syntax(e.to_string()))?;
         let mut file = ThemeFile {
             name: None,
-            base: "dark",
+            base: BuiltinTheme::Dark,
             tokens: Vec::new(),
         };
         for (key, value) in &table {
@@ -106,9 +106,7 @@ impl ThemeFile {
                 "name" => file.name = Some(string(key, value)?.to_owned()),
                 "base" => {
                     let base = string(key, value)?;
-                    file.base = builtin::NAMES
-                        .into_iter()
-                        .find(|&n| n == base)
+                    file.base = BuiltinTheme::parse(base)
                         .ok_or_else(|| ThemeError::UnknownBase(base.to_owned()))?;
                 }
                 "tokens" => {
@@ -127,20 +125,15 @@ impl ThemeFile {
 
     /// The built-in theme the file starts from.
     #[must_use]
-    pub fn base(&self) -> &'static str {
+    pub fn base(&self) -> BuiltinTheme {
         self.base
     }
 
     /// The theme for `level` on a terminal with background `background`, named after the file's
     /// `name`, or after its base when it has none.
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        clippy::missing_panics_doc,
-        reason = "parse only sets `base` to one of builtin::NAMES, which all have a palette"
-    )]
     pub fn resolve(&self, level: ColorLevel, background: Option<Rgb>) -> Theme {
-        let mut palette = builtin::palette(self.base).expect("base is a built-in theme");
+        let mut palette = self.base.palette();
         for s in &self.tokens {
             let spec = &mut palette[s.token as usize];
             if let Some(c) = s.color {
@@ -154,7 +147,10 @@ impl ThemeFile {
                 spec.modifiers = m;
             }
         }
-        let name = self.name.clone().unwrap_or_else(|| self.base.to_owned());
+        let name = self
+            .name
+            .clone()
+            .unwrap_or_else(|| self.base.name().to_owned());
         Theme::resolve(name, &palette, level, background)
     }
 }
@@ -301,7 +297,7 @@ fg          = "#d8dee9"
     fn theme_file_parses_the_documented_example() {
         let file = ThemeFile::parse(EXAMPLE).expect("example parses");
         assert_eq!(file.name.as_deref(), Some("my-theme"));
-        assert_eq!(file.base(), "dark");
+        assert_eq!(file.base(), BuiltinTheme::Dark);
 
         let t = file.resolve(ColorLevel::TrueColor, None);
         assert_eq!(t.name(), "my-theme");

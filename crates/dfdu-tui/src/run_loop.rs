@@ -12,9 +12,13 @@ use ratatui::Terminal;
 use ratatui::crossterm::event::Event;
 
 use crate::app::{self, App, Effect};
-use crate::extras::{self, Read};
-use crate::history_link::Recorder;
-use crate::{UiOptions, debug, dupes, motion, mouse, overlay, snapshot, view};
+use crate::features::{debug, dupes};
+use crate::input::mouse;
+use crate::model::extras::{self, Read};
+use crate::model::history_link::Recorder;
+use crate::model::{outside, snapshot};
+use crate::state::motion;
+use crate::{UiOptions, overlay, view};
 
 /// Fastest redraw rate for scan data (ncdu's default refresh is 10 per second).
 const DATA_FRAME: Duration = Duration::from_millis(100);
@@ -78,6 +82,8 @@ where
         home,
         history,
         types,
+        local,
+        read_only,
     } = ui;
     let start = Instant::now();
     let mut app = App::new(theme, start);
@@ -85,6 +91,8 @@ where
     app.background = background;
     app.home = home;
     app.types = types;
+    app.outside.local = local;
+    app.read_only = read_only;
     motion::start(&mut app);
     if debug_on {
         debug::toggle(&mut app);
@@ -92,7 +100,9 @@ where
     let mut recorder = Recorder::new(history);
     let mut pacing = Pacing::new(app.size_mode);
     loop {
-        if recorder.poll(&mut app, engine) {
+        let history_changed = recorder.poll(&mut app, engine);
+        let outside_changed = app.outside.poll();
+        if history_changed || outside_changed {
             pacing.input_dirty = true;
         }
         let now = Instant::now();
@@ -147,7 +157,7 @@ where
 /// What the loop remembers between frames to decide when to read the model and draw.
 struct Pacing {
     /// The directory the scanner was last asked to scan first.
-    focus: Option<(u32, u32)>,
+    focus: Option<(JobId, DirId)>,
     /// The model's fingerprint at the last full read.
     seen_version: Option<u64>,
     last_draw: Option<Instant>,
@@ -241,12 +251,13 @@ impl Pacing {
         self.seen_version = Some(snap.version);
         if snap.focus != self.focus {
             if let Some((job, dir)) = snap.focus {
-                engine.scanner().set_focus(JobId(job), DirId(dir));
+                engine.scanner().set_focus(job, dir);
             }
             self.focus = snap.focus;
         }
         app.target = target;
         app.refresh(snap, now);
+        outside::request(app);
         extras::apply(app, extras);
         // The refresh moved the selection (another directory, a rescan): read the extras
         // again for the entry this frame draws.
@@ -302,7 +313,7 @@ impl Pacing {
         if let Some(t) = app.motion.next_frame_at() {
             wake = wake.min(t.saturating_duration_since(now));
         }
-        if recorder.busy() {
+        if recorder.busy() || app.outside.pending() {
             wake = wake.min(DATA_FRAME);
         }
         if app.extras_stale() {
@@ -323,7 +334,7 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
                 let (root, cands) = engine.read(|m| match m.tree.roots().next() {
                     Some(r) => (
                         m.tree.path_buf(r),
-                        dfdu_dupes::candidates(&m.tree, r, dupes::MIN_SIZE),
+                        dfdu_dupes::candidates(&m.tree, r, dupes::min_size()),
                     ),
                     None => (std::path::PathBuf::new(), Vec::new()),
                 });

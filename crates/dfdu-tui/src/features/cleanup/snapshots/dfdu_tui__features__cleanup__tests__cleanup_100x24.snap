@@ -1,0 +1,28 @@
+---
+source: crates/dfdu-tui/src/features/cleanup/tests.rs
+expression: frame
+---
+ dfdu  /r                                                                             done in 00:00
+ 12 items · 95.7 KiB                                                       sort: size ↓  disk usage
+ reclaimable  safe 11.7 KiB   regenerable 58.6 KiB   review 0 B   manual 0 B
+ ▸ OS and user caches       safe          11.7 KiB  1 item
+ ▸ Project build output     regenerable   58.6 KiB  1 item
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Enter opens a group · Space marks · a marks the recommended · f filters by safety
+
+
+
+
+ ↑↓ move  Enter open  Space mark  a recommended  n command  d trash marked  1 list  ? help  q quit

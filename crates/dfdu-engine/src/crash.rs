@@ -9,10 +9,10 @@ use parking_lot::RwLock;
 
 use crate::applier::Model;
 
-/// The state directory's `crash` folder, next to the deletion journal's `ops` folder.
+/// The state directory's `crash` folder ([`dfdu_rules::dirs::crash_dir`]).
 #[must_use]
 pub fn default_crash_dir() -> Option<PathBuf> {
-    dfdu_clean::default_journal_dir().and_then(|d| d.parent().map(|p| p.join("crash")))
+    dfdu_rules::dirs::crash_dir()
 }
 
 fn crash_report(msg: &str, m: &Model) -> String {

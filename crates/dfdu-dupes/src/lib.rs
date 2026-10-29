@@ -45,6 +45,22 @@ impl Default for Options {
     }
 }
 
+impl Options {
+    /// The defaults for files on `storage`: one thread reading on a spinning disk, where
+    /// parallel reads only add seeks.
+    #[must_use]
+    pub fn for_storage(storage: dfdu_sys::Storage) -> Options {
+        let threads = match storage {
+            dfdu_sys::Storage::Rotational => 1,
+            _ => Options::default().threads,
+        };
+        Options {
+            threads,
+            ..Options::default()
+        }
+    }
+}
+
 /// A file that may have duplicates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
@@ -183,8 +199,9 @@ fn open_checked(c: &Candidate) -> Option<File> {
     o.read(true);
     #[cfg(unix)]
     {
+        use rustix::fs::OFlags;
         use std::os::unix::fs::OpenOptionsExt;
-        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        o.custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits().cast_signed());
     }
     let f = o.open(&c.path).ok()?;
     let m = f.metadata().ok()?;
@@ -423,12 +440,7 @@ pub fn find(
 /// The hash as lower-case hex.
 #[must_use]
 pub fn hex(hash: &[u8; 32]) -> String {
-    use std::fmt::Write;
-    hash.iter().fold(String::with_capacity(64), |mut s, b| {
-        // Writing to a `String` cannot fail.
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    hex::encode(hash)
 }
 
 /// Whether the file at the candidate's path is still the one it describes (its length and

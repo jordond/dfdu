@@ -17,14 +17,16 @@ use dfdu_engine::{Command, ErrorList, SizeMode};
 use dfdu_tree::NodeRef;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::extras::Extras;
-use crate::motion::Motion;
-use crate::order::{Order, SortSpec};
+use crate::features::{debug, details, treemap};
+use crate::input::mouse;
+use crate::model::extras::Extras;
+use crate::model::snapshot::{EntryData, Snapshot, Target};
 use crate::overlay::{confirm, error_list, help, palette, type_filter};
-use crate::snapshot::{EntryData, Snapshot, Target};
+use crate::state::motion::Motion;
+use crate::state::order::{Order, SortSpec};
+use crate::state::{filter, marks};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
-use crate::{debug, details, filter, marks, mouse, treemap};
 
 /// Automatic re-sort after this long without input...
 pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -52,7 +54,7 @@ pub enum Overlay {
     ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
     /// The file type picker.
-    Types(type_filter::Picker),
+    Types(type_filter::TypePicker),
 }
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
@@ -124,8 +126,8 @@ pub struct App {
     pub motion: Motion,
     pub mouse: mouse::Mouse,
     pub treemap: treemap::Treemap,
-    pub cleanup: crate::cleanup::Cleanup,
-    pub dupes: crate::dupes::Dupes,
+    pub cleanup: crate::features::cleanup::Cleanup,
+    pub dupes: crate::features::dupes::Dupes,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
@@ -134,8 +136,13 @@ pub struct App {
     pub home: Option<PathBuf>,
     /// The sizes of the last recorded scan of this root, to show what grew since.
     pub growth: Option<std::sync::Arc<dfdu_store::history::Growth>>,
+    /// Mounts the scan did not enter and links out of it, as looked up (`outside`).
+    pub outside: crate::model::outside::Outside,
     /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
     pub sort_gen: u64,
+    /// Nothing is deleted: the actions that delete are left out (`keys::Action::deletes`) and
+    /// cleanup commands run only as dry runs.
+    pub read_only: bool,
     last_input: Instant,
     last_sort: Instant,
     sort_requested: bool,
@@ -160,6 +167,17 @@ struct Folded {
     dir_changed: bool,
     /// The scan finished with it.
     finished: bool,
+}
+
+/// How [`App::update_order`] brings the rows up to date.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Reorder {
+    /// An exact sort: another directory, a sort or filter the user asked for.
+    Exact,
+    /// The automatic sort, after the user has been idle.
+    Auto,
+    /// No sort: the new entries of a fresh snapshot are synced into the order.
+    Sync,
 }
 
 /// Whether `e` gets a row when no filter hides it.
@@ -236,13 +254,15 @@ impl App {
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
             treemap: treemap::Treemap::default(),
-            cleanup: crate::cleanup::Cleanup::default(),
-            dupes: crate::dupes::Dupes::default(),
+            cleanup: crate::features::cleanup::Cleanup::default(),
+            dupes: crate::features::dupes::Dupes::default(),
             extras: Extras::default(),
             areas: Areas::default(),
             home: None,
             growth: None,
+            outside: crate::model::outside::Outside::default(),
             sort_gen: 0,
+            read_only: false,
             // No key pressed yet counts as idle.
             last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
             last_sort: now,
@@ -291,8 +311,8 @@ impl App {
         marks::stale(self)
             || details::stale(self)
             || treemap::stale(self)
-            || crate::cleanup::stale(self)
-            || crate::dupes::stale(self)
+            || crate::features::cleanup::stale(self)
+            || crate::features::dupes::stale(self)
     }
 
     fn auto_sort_due(&self, now: Instant) -> bool {
@@ -384,15 +404,14 @@ impl App {
         } = folded.unwrap_or_default();
         let requested = std::mem::take(&mut self.sort_requested);
         let refilter = std::mem::take(&mut self.refilter_requested);
-        // `Some(automatic)` when the rows are sorted, `None` when new entries are synced.
-        let sorted = if dir_changed || requested || refilter {
-            Some(false)
+        let mode = if dir_changed || requested || refilter {
+            Reorder::Exact
         } else if self.auto_sort_due(now)
             || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
         {
-            Some(true)
+            Reorder::Auto
         } else if fresh {
-            None
+            Reorder::Sync
         } else {
             // The entries and the order are those of the last frame: nothing below changes.
             return;
@@ -401,15 +420,16 @@ impl App {
         let entries = &self.snap.entries;
         let (hide, filter) = (self.hide_hidden, &self.filter);
         let visible = |i: usize, e: &EntryData| shown(hide, e) && filter.matches(i, e);
-        match sorted {
-            // Only the filter changed: its rows are picked from the kept exact sort of every
-            // entry it can show, in the order an exact sort of only those gives.
-            Some(false)
-                if refilter
-                    && !requested
-                    && !fresh
-                    && self.order.refilter(entries, visible, self.sort) => {}
-            Some(false) => {
+        // Only the filter changed: its rows are picked from the kept exact sort of every entry
+        // it can show, in the order an exact sort of only those gives.
+        let refiltered = mode == Reorder::Exact
+            && refilter
+            && !requested
+            && !fresh
+            && self.order.refilter(entries, visible, self.sort);
+        match mode {
+            Reorder::Exact if refiltered => {}
+            Reorder::Exact => {
                 self.order = Order::default();
                 if filter.active() {
                     self.order.sort_exact(entries, visible, self.sort);
@@ -418,10 +438,10 @@ impl App {
                         .sort_exact_unfiltered(entries, visible, self.sort);
                 }
             }
-            Some(true) => self.order.sort_auto(entries, visible, self.sort),
-            None => self.order.sync(entries, visible, self.sort),
+            Reorder::Auto => self.order.sort_auto(entries, visible, self.sort),
+            Reorder::Sync => self.order.sync(entries, visible, self.sort),
         }
-        let resorted = sorted.is_some();
+        let resorted = mode != Reorder::Sync;
         if resorted {
             self.sort_gen += 1;
             self.last_sort = now;
@@ -436,9 +456,8 @@ impl App {
             Vec::new()
         };
         self.rows.extend_from_slice(self.order.rows());
-        if let Some(auto) = sorted
-            && !dir_changed
-        {
+        if resorted && !dir_changed {
+            let auto = mode == Reorder::Auto;
             self.motion
                 .resorted(&old_rows, &self.rows, entries, auto, now);
         }
@@ -590,7 +609,7 @@ impl App {
         self.target = Target {
             node: Some(e.node),
             path,
-            ident: Some(crate::snapshot::Ident {
+            ident: Some(crate::model::snapshot::Ident {
                 dev_ino: e.dev_ino,
                 kind: e.kind,
             }),
@@ -675,10 +694,7 @@ impl App {
             Overlay::Errors { .. } => return error_list::key(self, k),
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
-            Overlay::Types(_) => {
-                type_filter::key(self, k);
-                return Vec::new();
-            }
+            Overlay::Types(_) => return type_filter::key(self, k),
         }
         if filter::editing(self) {
             return filter::key(self, k, now);
@@ -688,13 +704,13 @@ impl App {
         {
             return fx;
         }
-        if crate::dupes::active(self)
-            && let Some(fx) = crate::dupes::key(self, &k)
+        if crate::features::dupes::active(self)
+            && let Some(fx) = crate::features::dupes::key(self, &k)
         {
             return fx;
         }
-        if crate::cleanup::active(self)
-            && let Some(fx) = crate::cleanup::key(self, &k)
+        if crate::features::cleanup::active(self)
+            && let Some(fx) = crate::features::cleanup::key(self, &k)
         {
             return fx;
         }
@@ -714,7 +730,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::test_entry;
+    use crate::model::snapshot::test_entry;
     use crate::tests::{press, snap_without_totals};
 
     #[test]

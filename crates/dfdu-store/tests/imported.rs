@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions, Mode};
-use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_scan::JobOptions;
 use dfdu_store::ncdu::{self, Limits};
 
 const EXPORT: &[u8] = br#"[1,2,{},[{"name":"/nowhere"},[{"name":"d","dsize":4096},{"name":"f","asize":5,"dsize":4096}]]]"#;
@@ -12,15 +12,13 @@ const EXPORT: &[u8] = br#"[1,2,{},[{"name":"/nowhere"},[{"name":"d","dsize":4096
 #[test]
 fn imported_scans_are_read_only() {
     let im = ncdu::import(EXPORT, &Limits::default()).unwrap();
-    let e = Engine::start(
-        PortableBackend::default(),
+    let e = Engine::start_imported(
+        im.tree,
         EngineOptions {
-            imported: true,
             workers: 1,
             ..Default::default()
         },
     );
-    e.load(im.tree);
     let (d, total) = e.read(|m| {
         let r = m.tree.roots().next().unwrap();
         (

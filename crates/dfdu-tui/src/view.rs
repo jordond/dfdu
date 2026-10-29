@@ -15,8 +15,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Overlay};
+use crate::features::{debug, details, treemap};
 use crate::overlay::{confirm, error_list, help, palette, type_filter};
-use crate::{debug, details, filter, motion, treemap};
+use crate::state::{filter, motion};
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
 #[derive(Copy, Clone, Debug, Default)]
@@ -71,10 +72,10 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
 
     header::draw(f, app, header, now, frame);
     app.treemap.shown = app.treemap.on && treemap::fits(area);
-    if crate::dupes::active(app) {
-        crate::dupes::draw(f, app, list);
-    } else if crate::cleanup::active(app) {
-        crate::cleanup::draw(f, app, list);
+    if crate::features::dupes::active(app) {
+        crate::features::dupes::draw(f, app, list);
+    } else if crate::features::cleanup::active(app) {
+        crate::features::cleanup::draw(f, app, list);
     } else if app.treemap.shown {
         treemap::draw(f, app, list, now);
     } else {

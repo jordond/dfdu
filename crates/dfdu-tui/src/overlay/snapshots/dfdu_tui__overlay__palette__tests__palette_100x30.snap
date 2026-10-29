@@ -3,13 +3,13 @@ source: crates/dfdu-tui/src/overlay/palette.rs
 expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00
- 3 items · 3┌ Commands 44/44 ──────────────────────────────────────────────────────────┐ disk usage
+ 3 items · 3┌ Commands 45/45 ──────────────────────────────────────────────────────────┐ disk usage
      3.0 GiB│ : ▌                                                                      │
-   625.0 MiB│ treemap: colour by top folder or age                          display  p │
-            │ toggle apparent size / disk usage                             display  a │
+   625.0 MiB│ toggle apparent size / disk usage                             display  a │
             │ toggle disk usage like du (shared data once per file)         display  u │
             │ hide or show hidden files                                     display  e │
             │ rescan the selected directory                                     act  r │
+            │ scan into the selected mount (another filesystem)                 act  m │
             │ skip directories that are not responding                          act  x │
             │ mark or unmark, then move down                                act  Space │
             │ clear all marks                                                      act │

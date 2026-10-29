@@ -12,7 +12,8 @@ use std::io::{self, Write as _};
 use std::path::Path;
 use std::sync::Arc;
 
-use dfdu_scan::{Backend, Block, DirStream, FsClass, Raw, RawBlock, Storage};
+use dfdu_scan::{Backend, Block, DirStream, Raw, RawBlock};
+use dfdu_sys::{FsClass, Storage};
 use dfdu_tree::{Kind, Meta};
 
 use crate::{Entry, Plan, index};

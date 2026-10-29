@@ -139,19 +139,22 @@ fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
         buf
     });
     let deadline = Instant::now() + COMMAND_TIMEOUT;
-    let status = loop {
+    let waited = loop {
         match child.try_wait() {
-            Ok(Some(s)) => break s,
+            Ok(Some(s)) => break Ok(s),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "{prog}: no answer in {}s",
-                    COMMAND_TIMEOUT.as_secs()
-                ));
-            }
-            Err(e) => return Err(format!("{prog}: {e}")),
+            Ok(None) => break Err(format!("no answer in {}s", COMMAND_TIMEOUT.as_secs())),
+            Err(e) => break Err(e.to_string()),
+        }
+    };
+    let status = match waited {
+        Ok(s) => s,
+        Err(e) => {
+            // A timeout or a failed wait: the child is killed and reaped, and the reader ends
+            // when the pipe closes.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{prog}: {e}"));
         }
     };
     let buf = reader.join().unwrap_or_default();

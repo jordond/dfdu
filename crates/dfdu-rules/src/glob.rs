@@ -83,6 +83,8 @@ impl std::fmt::Display for GlobError {
     }
 }
 
+impl std::error::Error for GlobError {}
+
 impl Glob {
     /// Compiles `pattern`, lower-cased when `fold_case`.
     ///

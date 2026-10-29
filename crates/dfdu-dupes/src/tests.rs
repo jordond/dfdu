@@ -69,6 +69,19 @@ fn identical_files_are_grouped_and_near_misses_are_not() {
     assert_eq!(hex(&found.groups[0].hash), hex(&sha.into()));
 }
 
+/// The full hash is SHA-256 (the FIPS 180-2 test vector), as `dfdu dupes` reports it.
+#[test]
+fn full_hash_is_sha256() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("abc");
+    fs::write(&f, b"abc").unwrap();
+    let (hash, _) = full_hash(&cand(&f), &Progress::default(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        hex(&hash),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
 #[test]
 fn changed_and_unreadable_files_are_skipped() {
     let tmp = tempfile::tempdir().unwrap();
@@ -218,4 +231,15 @@ fn reflinks_free_nothing() {
     assert_eq!(by("b").private, Some(0));
     assert_eq!(by("c").private, None);
     assert!(!g.all_clones());
+}
+
+#[test]
+fn one_thread_reads_a_spinning_disk() {
+    use dfdu_sys::Storage;
+    assert_eq!(Options::for_storage(Storage::Rotational).threads, 1);
+    for s in [Storage::Solid, Storage::Network, Storage::Unknown] {
+        assert_eq!(Options::for_storage(s).threads, Options::default().threads);
+    }
+    let min = Options::default().min_size;
+    assert_eq!(Options::for_storage(Storage::Rotational).min_size, min);
 }

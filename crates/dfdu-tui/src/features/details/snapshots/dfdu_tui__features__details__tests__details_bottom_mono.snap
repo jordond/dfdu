@@ -1,0 +1,28 @@
+---
+source: crates/dfdu-tui/src/features/details/tests.rs
+expression: out
+---
+ dfdu  /r                                                         done in 00:00
+ 13 items · 80.6 KiB · 2 errors                        sort: size ↓  disk usage
+ !  78.6 KiB  ████████████████   97.6%      11  proj/  partly read: could not be
+     2.0 KiB  ▍                   2.4%       1  notes.txt
+
+
+
+
+
+
+
+
+╭ proj/ ───────────────────────────────────────────────────────────────────────╮
+│ /r/proj                                                                      │
+│ directory · incomplete                                                       │
+│ 78.6 KiB on disk · 11 items                                                  │
+│ 72.8 KiB apparent · 72.8 KiB like du                                         │
+│ 5.9 KiB also used outside the scan: deleting it frees less                   │
+│ partly read: could not be read                                               │
+│ 1 error below                                                                │
+│ largest by disk usage                                                        │
+╰────────────────────────────────────────────────────────────────────── ↓ more ╯
+
+ ↑↓ move  → open  ← up  Space mark  / filter  ! errors  ? help  q quit

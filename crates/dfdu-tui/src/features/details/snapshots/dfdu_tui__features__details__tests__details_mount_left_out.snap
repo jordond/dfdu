@@ -1,0 +1,18 @@
+---
+source: crates/dfdu-tui/src/features/details/tests.rs
+expression: out
+---
+ dfdu  /r                                                                                                 done in 00:00
+ 3 items · 8.0 KiB                                                                             sort: size ↓  disk usage
+ >   8.0 KiB  ████████████████  100.0%       2  data/  other filesystem (zfs, 1.╭ data/ ───────────────────────────────╮
+ >   8.0 KiB  ████████████████  100.0%       2  nas/  network filesystem (nfs4):│ /r/data                              │
+                                                                                │ directory                            │
+                                                                                │ not scanned: other filesystem        │
+                                                                                │ zfs · 1.3 TiB used of 3.0 TiB, not   │
+                                                                                │ counted here                         │
+                                                                                │ m scans it                           │
+                                                                                │ 8.0 KiB on disk · 2 items            │
+                                                                                │ 8.0 KiB apparent · 8.0 KiB like du   │
+                                                                                ╰────────────────────────────── ↓ more ╯
+
+ ↑↓ move  → open  ← up  m scan it  s n C M sort  Space mark  / filter  i details  ? help  q quit

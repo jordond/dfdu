@@ -43,6 +43,8 @@ pub(super) struct Channels {
     pub(super) measure_min: u64,
     /// Whoever deletes runs as root (the agent, for a remote engine).
     pub(super) privileged: bool,
+    /// The tree was loaded from a file ([`Engine::start_imported`](super::Engine::start_imported)).
+    pub(super) imported: bool,
     pub(super) chk_rx: Receiver<Vec<CheckMsg>>,
     /// `None` when the classifier pool is off.
     pub(super) classify: Option<Sender<Vec<CheckReq>>>,
@@ -152,6 +154,7 @@ pub(super) fn applier_loop<B: Backend>(
         measure,
         measure_min,
         privileged,
+        imported,
         chk_rx,
         classify,
         wake_tx,
@@ -159,8 +162,8 @@ pub(super) fn applier_loop<B: Backend>(
     let clock = RealClock::new();
     let mut applier = Applier::new(shared);
     applier.remote = remote;
-    applier.read_only = opts.read_only || opts.imported;
-    applier.imported = opts.imported;
+    applier.read_only = opts.read_only;
+    applier.imported = imported;
     applier.measure = measure.is_some();
     applier.measure_min = measure_min;
     applier.privileged = privileged;

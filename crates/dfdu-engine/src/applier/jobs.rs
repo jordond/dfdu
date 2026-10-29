@@ -43,8 +43,8 @@ impl<B: Backend> Applier<B> {
             opts,
         } = start;
         let rec = m.tree.dir_mut(root).expect("job root is a directory");
-        rec.job = id;
-        rec.dir_id = 0;
+        rec.job = JobId(id);
+        rec.dir_id = DirId::ROOT;
         let mut job = Job {
             id: JobId(id),
             kind,
@@ -58,11 +58,8 @@ impl<B: Backend> Applier<B> {
             submitted_seq: 0,
             phase: JobPhase::Running,
         };
-        job.set(DirId::ROOT, m.tree.node_ref(root));
-        job.submitted_seq = match &self.remote {
-            Some(l) => l.start_job(JobId(id), &path, &opts),
-            None => self.scan.start_job(JobId(id), &path, opts),
-        };
+        job.set_live(DirId::ROOT, m.tree.node_ref(root));
+        job.submitted_seq = self.scanner_start_job(JobId(id), &path, opts);
         self.jobs.insert(id, job);
     }
 
@@ -82,13 +79,10 @@ impl<B: Backend> Applier<B> {
         let (job, dir) = (rec.job, rec.dir_id);
         if !rec.reported {
             rec.reported = true;
-            self.report_up(m, job, ix);
+            self.report_up(m, job.0, ix);
         }
         m.tree.touch(ix);
-        match &self.remote {
-            Some(l) => l.stop_dirs(JobId(job), vec![DirId(dir)]),
-            None => self.scan.stop_dirs(JobId(job), [DirId(dir)]),
-        }
+        self.scanner_stop_dirs(job, [dir]);
     }
 
     pub(super) fn cancel(&mut self, id: u32) {
@@ -99,11 +93,8 @@ impl<B: Backend> Applier<B> {
             return;
         }
         j.phase = JobPhase::Cancelled;
-        match &self.remote {
-            Some(l) => l.end_job(j.id),
-            None => self.scan.end_job(j.id),
-        }
-        let root = j.root;
+        let (job, root) = (j.id, j.root);
+        self.scanner_end_job(job);
         self.work.push_back(Work::CancelWalk {
             job: id,
             stack: vec![root],
@@ -142,22 +133,12 @@ impl<B: Backend> Applier<B> {
         if rec.listing_closed || rec.cut {
             return;
         }
-        if let Some(j) = self.jobs.get_mut(&job) {
-            j.stalled.remove(&dir);
+        if let Some(j) = self.jobs.get_mut(&job.0) {
+            j.stalled.remove(&dir.0);
         }
         m.tree.set_error(ix, ErrKind::Stalled);
-        self.close_listing(m, job, ix, DirState::Abandoned);
-        self.scanner_abandon(JobId(job), DirId(dir));
-    }
-
-    pub(super) fn scanner_abandon(&mut self, job: JobId, dir: DirId) {
-        let complete = match &self.remote {
-            Some(l) => l.abandon(job, dir),
-            None => self.scan.abandon(job, dir),
-        };
-        if !complete {
-            self.retry_abandon.push((job, dir));
-        }
+        self.close_listing(m, job.0, ix, DirState::Abandoned);
+        self.scanner_abandon(job, dir);
     }
 
     fn under_cut(tree: &Tree, ix: Ix) -> bool {
@@ -175,14 +156,15 @@ impl<B: Backend> Applier<B> {
     /// directories stalled longer than `auto_abandon_ns` (headless mode).
     pub fn tick(&mut self, m: &mut Model, now: u64, auto_abandon_ns: Option<u64>) {
         self.measure_watchdog(m, now);
-        let scan = &self.scan;
-        self.retry_abandon.retain(|(j, d)| !scan.abandon(*j, *d));
+        let mut retry = std::mem::take(&mut self.retry_abandon);
+        retry.retain(|&(j, d)| !self.scanner_try_abandon(j, d));
+        self.retry_abandon = retry;
         // Stalled directories that were cut or removed since they stalled are not wanted.
         let mut unwanted = Vec::new();
         for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
             for &d in j.stalled.keys() {
                 let gone = j
-                    .get(DirId(d))
+                    .live(DirId(d))
                     .and_then(|r| m.tree.resolve(r))
                     .is_none_or(|ix| Self::under_cut(&m.tree, ix));
                 if gone {
@@ -201,7 +183,7 @@ impl<B: Backend> Applier<B> {
             for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
                 for (&d, &since) in &j.stalled {
                     if now.saturating_sub(since) > limit
-                        && let Some(r) = j.get(DirId(d))
+                        && let Some(r) = j.live(DirId(d))
                     {
                         due.push(r);
                     }
@@ -219,11 +201,7 @@ impl<B: Backend> Applier<B> {
             return;
         };
         let cancelled = j.phase == JobPhase::Cancelled;
-        match &self.remote {
-            Some(l) => l.end_job(j.id),
-            None => self.scan.end_job(j.id),
-        }
-        let (kind, root, target, scope) = (j.kind, j.root, j.target, j.scope);
+        let (job, kind, root, target, scope) = (j.id, j.kind, j.root, j.target, j.scope);
         j.phase = if cancelled {
             JobPhase::Cancelled
         } else {
@@ -232,7 +210,7 @@ impl<B: Backend> Applier<B> {
         j.map = Pages::default();
         j.held_close.clear();
         let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
-        let job = j.id;
+        self.scanner_end_job(job);
         for d in stalled {
             self.scanner_abandon(job, d);
         }

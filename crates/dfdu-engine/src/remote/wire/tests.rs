@@ -71,7 +71,7 @@ fn sample() -> Vec<FromAgent> {
                 qgroup: Some((1 << 33, 12)),
             }),
             shares_extents: true,
-            profile: Some(("RAID1C3", 3.0)),
+            profile: Some((dfdu_sys::Profile::Raid1c3, 3.0)),
         })),
         names,
         files: vec![
@@ -212,6 +212,10 @@ fn sample() -> Vec<FromAgent> {
         FromAgent::Rules {
             platform: "linux".into(),
             vars: vec![("HOME".into(), "/home/u".into())],
+            links: vec![(
+                "/home/u/.gradle/caches".into(),
+                "/mnt/data/gradle/caches".into(),
+            )],
             fingerprint: u64::MAX - 3,
             root: class(rule),
         },
@@ -295,6 +299,7 @@ fn plan() -> Plan {
             bytes: 8192,
             inside: Arc::new(inside),
         }],
+        protected: None,
     }
 }
 
@@ -339,6 +344,7 @@ fn messages_round_trip() {
             root: b"/srv/\xffdata".to_vec(),
             cross_mounts: true,
             network: false,
+            enter: vec![(2, 7), (u64::MAX, 1 << 40)],
             class: None,
         },
         ToAgent::StartJob {
@@ -346,6 +352,7 @@ fn messages_round_trip() {
             root: b"/".to_vec(),
             cross_mounts: false,
             network: true,
+            enter: vec![],
             class: Some(class(rule)),
         },
         ToAgent::Delete(DeleterReq::Plan(plan())),
@@ -380,6 +387,7 @@ fn messages_round_trip() {
         root: b"/".to_vec(),
         cross_mounts: false,
         network: false,
+        enter: vec![],
         class: Some(class(rule)),
     };
     assert!(ToAgent::decode(&job.encode(), None).is_err());
@@ -404,8 +412,8 @@ fn native_commands_go_as_their_rule() {
         .rules()
         .iter()
         .position(|r| {
-            r.native
-                .as_ref()
+            r.action
+                .native()
                 .is_some_and(|n| !n.variants.is_empty() && !n.size_command.is_empty())
         })
         .map(|i| RuleIx(u16::try_from(i).unwrap()))
@@ -444,12 +452,16 @@ fn native_commands_go_as_their_rule() {
     let ToAgent::Check(got) = ToAgent::decode(&size.encode(), Some(&set)).unwrap() else {
         panic!("not a check");
     };
-    let n = set.rule(docker).native.as_ref().unwrap();
+    let n = set.rule(docker).action.native().unwrap();
     assert!(
         matches!(&got[..], [CheckReq::NativeSize { rule, check, command }]
         if *rule == docker && *check == n.check && *command == n.size_command)
     );
-    let plain = set.rules().iter().position(|r| r.native.is_none()).unwrap();
+    let plain = set
+        .rules()
+        .iter()
+        .position(|r| r.action.native().is_none())
+        .unwrap();
     let plain = RuleIx(u16::try_from(plain).unwrap());
     let none = ToAgent::Check(vec![CheckReq::NativeSize {
         rule: plain,
@@ -487,6 +499,25 @@ fn class_layout() {
     let safety_at = e.0.len() - 3;
     e.0[safety_at] = u8::try_from(Safety::ALL.len()).unwrap();
     assert!(dec_class(&mut Dec::new(&e.0), Some(&set)).is_err());
+}
+
+/// Kinds go as one byte, the same in metadata and in job answers; an unknown byte is an error.
+#[test]
+fn kind_layout() {
+    let kinds = [Kind::File, Kind::Dir, Kind::Symlink, Kind::Other];
+    let mut e = Enc::default();
+    for k in kinds {
+        e.kind(k);
+    }
+    assert_eq!(e.0, [0, 1, 2, 3]);
+    let mut d = Dec::new(&e.0);
+    for k in kinds {
+        assert_eq!(d.kind().unwrap(), k);
+    }
+    assert!(matches!(
+        Dec::new(&[4]).kind(),
+        Err(WireError::Malformed("kind"))
+    ));
 }
 
 /// Frames carry their payload; a flipped bit is a checksum error, a cut frame an error,

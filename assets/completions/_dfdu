@@ -18,7 +18,7 @@ _dfdu() {
 '(--disks -f --file)--resume-from=[Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done]:FILE:_files' \
 '(--disks)-f+[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
 '(--disks)--file=[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
-'(--disks -f --file --resume-from)--remote=[Browse PATH on this host, scanned there through \`ssh HOST dfdu agent\` (dfdu must be installed there). Read-only; nothing is classified or recorded in the history]:HOST:_default' \
+'(--disks -f --file --resume-from)--remote=[Browse PATH on HOST, scanned there through \`ssh HOST dfdu agent\` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history]:HOST:_default' \
 '--type=[Show only files of these types or extensions, comma-separated\: \`video,audio,.iso\` (\`t\` in the browser changes it)]:TYPES:_default' \
 '--theme=[Colour theme\: auto, dark, light, ansi (the terminal'\''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown]:THEME:_default' \
 '--color=[Colours\: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set]:WHEN:_default' \
@@ -29,7 +29,7 @@ _dfdu() {
 '--mft[Windows, as administrator\: read each NTFS volume'\''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual]' \
 '--no-rules[Do not classify entries\: no categories, no cleanup candidates]' \
 '()--disks[Choose a disk to browse from the mounted filesystems]' \
-'--read-only[Never delete anything (the delete keys are refused)]' \
+'--read-only[Never delete anything\: the browser leaves out its delete keys and runs cleanup commands only as dry runs]' \
 '--no-history[Do not record the scan in the history, nor show what grew since the last one]' \
 '--no-mouse[Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down]' \
 '--debug-stats[Start with the debug panel open, and print its numbers when the browser exits]' \

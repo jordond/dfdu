@@ -10,8 +10,10 @@
 mod blocked;
 #[cfg(target_os = "linux")]
 mod btrfs;
+pub(crate) mod caches;
 mod frames;
 mod matrix;
+mod read_only;
 mod soak;
 
 use std::fmt::Write as _;
@@ -27,7 +29,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::App;
-use crate::snapshot::{EntryData, Mark, Snapshot, test_entry};
+use crate::model::snapshot::{EntryData, Mark, Snapshot, test_entry};
 use crate::theme::Theme;
 use crate::view;
 
@@ -241,7 +243,7 @@ pub(crate) fn shared_model() -> dfdu_engine::Model {
         m.tree.propagate_add(root, &own);
         m.tree.set_measured(f, 400, false);
     }
-    m.tree.add_home(root, 600, false);
+    m.tree.add_shared(root, 600, false);
     m
 }
 

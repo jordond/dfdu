@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
 use super::color::lightness;
-use super::{ColorLevel, Rgb};
+use super::{BuiltinTheme, ColorLevel, Rgb};
 
 /// The detected colour level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,22 +100,26 @@ fn terminal_level(env: &impl Fn(&str) -> Option<OsString>) -> ColorLevel {
 /// The theme to use: the one named explicitly; `mono` without colours; `ansi` at 16 colours or
 /// when the background is unknown; otherwise `dark` or `light` by the background's perceived
 /// lightness.
-pub fn choose_theme(explicit: Option<&str>, level: ColorLevel, background: Option<Rgb>) -> &str {
-    if let Some(name) = explicit {
-        return name;
+pub fn choose_theme(
+    explicit: Option<BuiltinTheme>,
+    level: ColorLevel,
+    background: Option<Rgb>,
+) -> BuiltinTheme {
+    if let Some(b) = explicit {
+        return b;
     }
     match (level, background) {
-        (ColorLevel::None, _) => "mono",
-        (ColorLevel::Ansi16, _) | (_, None) => "ansi",
-        (_, Some(bg)) if lightness(bg) < 0.5 => "dark",
-        _ => "light",
+        (ColorLevel::None, _) => BuiltinTheme::Mono,
+        (ColorLevel::Ansi16, _) | (_, None) => BuiltinTheme::Ansi,
+        (_, Some(bg)) if lightness(bg) < 0.5 => BuiltinTheme::Dark,
+        _ => BuiltinTheme::Light,
     }
 }
 
 /// Whether asking the terminal for its background can change the theme: not when the theme is
 /// named explicitly, with fewer than 256 colours, or on a dumb terminal.
 pub fn should_query_background(
-    explicit: Option<&str>,
+    explicit: Option<BuiltinTheme>,
     level: ColorLevel,
     env: impl Fn(&str) -> Option<OsString>,
 ) -> bool {
@@ -139,6 +143,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use BuiltinTheme::{Ansi, Dark, Light, Mono};
     use ColorLevel::{Ansi16, Ansi256, None as Off, TrueColor};
 
     type Env<'a> = &'a [(&'a str, &'a str)];
@@ -238,32 +243,31 @@ mod tests {
     fn theme_choice_from_background() {
         let black = Some((0, 0, 0));
         let white = Some((255, 255, 255));
-        assert_eq!(choose_theme(None, TrueColor, black), "dark");
-        assert_eq!(choose_theme(None, TrueColor, white), "light");
-        assert_eq!(choose_theme(None, Ansi256, black), "dark");
+        assert_eq!(choose_theme(None, TrueColor, black), Dark);
+        assert_eq!(choose_theme(None, TrueColor, white), Light);
+        assert_eq!(choose_theme(None, Ansi256, black), Dark);
         assert_eq!(
             choose_theme(None, TrueColor, Some((0x76, 0x76, 0x76))),
-            "dark"
+            Dark
         );
         assert_eq!(
             choose_theme(None, TrueColor, Some((0x88, 0x88, 0x88))),
-            "light"
+            Light
         );
         assert_eq!(
             choose_theme(None, TrueColor, Some((0x2e, 0x34, 0x40))),
-            "dark"
+            Dark
         );
         assert_eq!(
             choose_theme(None, TrueColor, Some((0xfd, 0xf6, 0xe3))),
-            "light"
+            Light
         );
-        assert_eq!(choose_theme(None, TrueColor, None), "ansi");
-        assert_eq!(choose_theme(None, Ansi256, None), "ansi");
-        assert_eq!(choose_theme(Some("light"), TrueColor, black), "light");
-        assert_eq!(choose_theme(Some("mine"), Off, None), "mine");
-        assert_eq!(choose_theme(None, Off, white), "mono");
-        assert_eq!(choose_theme(None, Ansi16, white), "ansi");
-        assert_eq!(choose_theme(None, Ansi16, black), "ansi");
+        assert_eq!(choose_theme(None, TrueColor, None), Ansi);
+        assert_eq!(choose_theme(None, Ansi256, None), Ansi);
+        assert_eq!(choose_theme(Some(Light), TrueColor, black), Light);
+        assert_eq!(choose_theme(None, Off, white), Mono);
+        assert_eq!(choose_theme(None, Ansi16, white), Ansi);
+        assert_eq!(choose_theme(None, Ansi16, black), Ansi);
     }
 
     #[test]
@@ -272,11 +276,7 @@ mod tests {
         assert!(should_query_background(None, TrueColor, env(&xterm)));
         assert!(should_query_background(None, Ansi256, env(&[])));
         assert!(!should_query_background(None, Ansi16, env(&[])));
-        assert!(!should_query_background(
-            Some("dark"),
-            TrueColor,
-            env(&xterm)
-        ));
+        assert!(!should_query_background(Some(Dark), TrueColor, env(&xterm)));
         let no_color = [("NO_COLOR", "1"), ("TERM", "xterm-256color")];
         let level = detect_color_level(None, env(&no_color)).level;
         assert!(!should_query_background(None, level, env(&no_color)));

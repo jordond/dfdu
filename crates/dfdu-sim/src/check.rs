@@ -5,16 +5,17 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use dfdu_engine::{CheckMsg, CheckReq, Model};
 use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
-use dfdu_scan::FsClass;
+use dfdu_sys::FsClass;
 use dfdu_tree::{Class, DirState, Ix, Kind, NodeFlags, SEP, Totals, Tree};
 
 use crate::{Fault, ROOT, ROOT_NAME, Rng, Spec, SpecNode};
 
 /// Every node's class in effect and protection against a reference classifier run on the spec,
 /// over every directory whose listing and whose parents' listings completed (a directory left
-/// partial was classified on what was read). Comparing the class in effect, the match highest
-/// above a node, leaves out matches below another match, which the scan makes only when the
-/// match above was decided after its listing's subdirectories were queued (`dfdu_scan::classify`).
+/// partial was classified on what was read). The class in effect is the nearest match, or the
+/// highest one above whose rule stops the descent ([`RuleSet::class_in_effect`]): comparing it
+/// leaves out matches below such a rule's, which the scan makes only when that match was
+/// decided after its listing's subdirectories were queued (`dfdu_scan::classify`).
 /// Returns the number of classified nodes.
 #[expect(
     clippy::too_many_lines,
@@ -118,13 +119,16 @@ pub(crate) fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Resu
                     }
                 }
             }
-            let mut want = above.or(own);
+            // The nearest match, unless the one in effect above stops the descent.
+            let mut want = match above {
+                Some(a) if rules.stops_descent(a.rule) => above,
+                _ => own.or(above),
+            };
             // The classifier pool's flags, and the protection a git-tracked match gets, are not
             // the scan's to decide (`check_pool_flags`).
-            let got = tree
-                .class_in_effect(cix)
-                .map(|(_, c)| Class { flags: 0, ..c });
-            if let (Some(w), Some((_, c))) = (want.as_mut(), tree.class_in_effect(cix))
+            let in_effect = rules.class_in_effect(tree, cix);
+            let got = in_effect.map(|(_, c)| Class { flags: 0, ..c });
+            if let (Some(w), Some((_, c))) = (want.as_mut(), in_effect)
                 && c.has(Class::VCS_TRACKED)
             {
                 w.safety = c.safety;
@@ -455,11 +459,22 @@ fn is_child(p: &[u8], dir: &[u8]) -> bool {
         && !p[dir.len() + 1..].contains(&SEP)
 }
 
+/// Whether spec directory `d` is the root of a mount: by mount id where the spec has them,
+/// else by device.
+fn mount_root(spec: &Spec, d: u32) -> bool {
+    let (n, p) = (
+        &spec.nodes[d as usize].meta,
+        &spec.nodes[spec.parent[d as usize] as usize].meta,
+    );
+    d != ROOT
+        && if n.mount != 0 && p.mount != 0 {
+            n.mount != p.mount
+        } else {
+            n.dev != p.dev
+        }
+}
+
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one walk comparing each directory with the spec, its checks kept together"
-)]
 pub(crate) fn compare(
     spec: &Spec,
     model: &Model,
@@ -475,33 +490,48 @@ pub(crate) fn compare(
         by_path.insert(tree.path(ix), ix);
         stack.extend(tree.children(ix));
     }
-    let state_of = |p: &[u8]| by_path.get(p).and_then(|&ix| tree.dir(ix)).map(|d| d.state);
+    let mut seen = walk_and_check_flags(spec, model, &by_path, block, cross, network)?;
+    let expect = expected_totals(spec, tree, &by_path, &mut seen);
+    let checked = diff_totals(tree, &by_path, &expect)?;
+    Ok((checked, seen.abandoned))
+}
 
-    let mount_root = |d: u32| {
-        let (n, p) = (
-            &spec.nodes[d as usize].meta,
-            &spec.nodes[spec.parent[d as usize] as usize].meta,
-        );
-        d != ROOT
-            && if n.mount != 0 && p.mount != 0 {
-                n.mount != p.mount
-            } else {
-                n.dev != p.dev
-            }
-    };
+/// What the walk over the spec found.
+struct Seen {
+    /// The spec entries the scan saw, with their paths.
+    entries: Vec<(u32, Vec<u8>)>,
+    /// The lowest path of every hard-linked inode.
+    charged: HashMap<(u64, u64), Vec<u8>>,
+    abandoned: u64,
+}
+
+/// Walks the spec along the directories the scan saw, checking each one's mount, class and
+/// subvolume flags and its final state against its fault.
+fn walk_and_check_flags(
+    spec: &Spec,
+    model: &Model,
+    by_path: &HashMap<Vec<u8>, Ix>,
+    block: usize,
+    cross: bool,
+    network: bool,
+) -> Result<Seen, String> {
+    let tree = &model.tree;
+    let state_of = |p: &[u8]| by_path.get(p).and_then(|&ix| tree.dir(ix)).map(|d| d.state);
     // With cross_mounts, how many times each mounted directory was descended into.
     let mut descended: HashMap<(u64, u64), u32> = HashMap::new();
-    // Which spec entries the scan saw, and the lowest path of every hard-linked inode.
-    let mut seen: Vec<(u32, Vec<u8>)> = vec![];
-    let mut charged: HashMap<(u64, u64), Vec<u8>> = HashMap::new();
-    let mut abandoned = 0;
+    let mut seen = Seen {
+        entries: vec![],
+        charged: HashMap::new(),
+        abandoned: 0,
+    };
     let mut stack = vec![(ROOT, ROOT_NAME.as_bytes().to_vec())];
     while let Some((d, path)) = stack.pop() {
         let n = &spec.nodes[d as usize];
-        seen.push((d, path.clone()));
+        seen.entries.push((d, path.clone()));
         if n.meta.kind != Kind::Dir {
             if !n.vanished && n.meta.nlink > 1 {
-                let e = charged
+                let e = seen
+                    .charged
                     .entry((n.meta.dev, n.meta.ino))
                     .or_insert_with(|| path.clone());
                 if path < *e {
@@ -513,65 +543,13 @@ pub(crate) fn compare(
         let ix = *by_path
             .get(&path)
             .ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
-        let flags = tree.flags(ix);
-        if flags.has(NodeFlags::MOUNT_ROOT) != mount_root(d) {
-            return Err(format!(
-                "{}: mount root flag {} for a {}",
-                String::from_utf8_lossy(&path),
-                flags.has(NodeFlags::MOUNT_ROOT),
-                if mount_root(d) { "mount" } else { "directory" }
-            ));
-        }
         check_subvol(spec, model, d, ix, &path)?;
-        // With mount ids the duplicates are known; without, the first mount seen wins.
-        let dup = if n.meta.mount != 0 {
-            n.dup_mount
-        } else {
-            flags.has(NodeFlags::DUP_MOUNT)
-        };
-        // Kernel filesystems are never descended into, network ones only with `network`; the
-        // class is known only for mount roots the backend can name.
-        let class = if mount_root(d) { n.fs_class } else { None };
-        let wanted = match class {
-            Some(FsClass::Kernel) => false,
-            Some(FsClass::Network) => network,
-            _ => cross,
-        };
-        for (flag, c, what) in [
-            (NodeFlags::NETWORK, FsClass::Network, "network"),
-            (NodeFlags::KERNEL, FsClass::Kernel, "kernel"),
-        ] {
-            if flags.has(flag) != (class == Some(c) && !wanted) {
-                return Err(format!(
-                    "{}: {what} flag {} for class {class:?}",
-                    String::from_utf8_lossy(&path),
-                    flags.has(flag)
-                ));
-            }
+        let flags = tree.flags(ix);
+        if !check_mount(spec, d, &path, flags, state_of(&path), cross, network)? {
+            continue;
         }
-        if wanted && mount_root(d) && flags.has(NodeFlags::DUP_MOUNT) != dup {
-            return Err(format!(
-                "{}: duplicate-mount flag {} expected {dup}",
-                String::from_utf8_lossy(&path),
-                flags.has(NodeFlags::DUP_MOUNT)
-            ));
-        }
-        if mount_root(d) {
-            if !wanted || dup {
-                if state_of(&path) != Some(DirState::Skipped) {
-                    return Err(format!(
-                        "{}: mount not skipped",
-                        String::from_utf8_lossy(&path)
-                    ));
-                }
-                continue;
-            }
+        if mount_root(spec, d) {
             *descended.entry((n.meta.dev, n.meta.ino)).or_default() += 1;
-        } else if flags.has(NodeFlags::DUP_MOUNT) {
-            return Err(format!(
-                "{}: marked as a duplicate mount",
-                String::from_utf8_lossy(&path)
-            ));
         }
         let state =
             state_of(&path).ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
@@ -582,7 +560,7 @@ pub(crate) fn compare(
                 String::from_utf8_lossy(&path)
             ));
         }
-        abandoned += u64::from(state == DirState::Abandoned);
+        seen.abandoned += u64::from(state == DirState::Abandoned);
         let live: Vec<u32> = spec.live_children(d).collect();
         let child_path = |c: u32| {
             let mut p = path.clone();
@@ -598,22 +576,99 @@ pub(crate) fn compare(
             stack.push((live[i], child_path(live[i])));
         }
     }
-
     if let Some((k, n)) = descended.iter().find(|&(_, &n)| n > 1) {
         return Err(format!("mount {k:?} descended into {n} times"));
     }
+    Ok(seen)
+}
 
-    let (measured, homes) = expected_homes(spec, &seen, &charged);
+/// Checks the mount root, network, kernel and duplicate-mount flags of spec directory `d`
+/// (`flags` in the tree, final state `state`). Returns whether the scan descends into it; a
+/// mount it must skip is checked to be skipped.
+fn check_mount(
+    spec: &Spec,
+    d: u32,
+    path: &[u8],
+    flags: NodeFlags,
+    state: Option<DirState>,
+    cross: bool,
+    network: bool,
+) -> Result<bool, String> {
+    let n = &spec.nodes[d as usize];
+    let shown = || String::from_utf8_lossy(path);
+    let mount = mount_root(spec, d);
+    if flags.has(NodeFlags::MOUNT_ROOT) != mount {
+        return Err(format!(
+            "{}: mount root flag {} for a {}",
+            shown(),
+            flags.has(NodeFlags::MOUNT_ROOT),
+            if mount { "mount" } else { "directory" }
+        ));
+    }
+    // With mount ids the duplicates are known; without, the first mount seen wins.
+    let dup = if n.meta.mount != 0 {
+        n.dup_mount
+    } else {
+        flags.has(NodeFlags::DUP_MOUNT)
+    };
+    // Kernel filesystems are never descended into, network ones only with `network`; the
+    // class is known only for mount roots the backend can name.
+    let class = if mount { n.fs_class } else { None };
+    let wanted = match class {
+        Some(FsClass::Kernel) => false,
+        Some(FsClass::Network) => network,
+        _ => cross,
+    };
+    for (flag, c, what) in [
+        (NodeFlags::NETWORK, FsClass::Network, "network"),
+        (NodeFlags::KERNEL, FsClass::Kernel, "kernel"),
+    ] {
+        if flags.has(flag) != (class == Some(c) && !wanted) {
+            return Err(format!(
+                "{}: {what} flag {} for class {class:?}",
+                shown(),
+                flags.has(flag)
+            ));
+        }
+    }
+    if !mount {
+        if flags.has(NodeFlags::DUP_MOUNT) {
+            return Err(format!("{}: marked as a duplicate mount", shown()));
+        }
+        return Ok(true);
+    }
+    if wanted && flags.has(NodeFlags::DUP_MOUNT) != dup {
+        return Err(format!(
+            "{}: duplicate-mount flag {} expected {dup}",
+            shown(),
+            flags.has(NodeFlags::DUP_MOUNT)
+        ));
+    }
+    if !wanted || dup {
+        if state != Some(DirState::Skipped) {
+            return Err(format!("{}: mount not skipped", shown()));
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
 
-    // Expected totals bottom-up.
+/// Every seen entry's expected totals, bottom-up. Sorts `seen.entries` deepest first.
+fn expected_totals(
+    spec: &Spec,
+    tree: &Tree,
+    by_path: &HashMap<Vec<u8>, Ix>,
+    seen: &mut Seen,
+) -> HashMap<Vec<u8>, Totals> {
+    let (measured, homes) = expected_homes(spec, &seen.entries, &seen.charged);
     let mut expect: HashMap<Vec<u8>, Totals> = HashMap::new();
-    seen.sort_by_key(|s| std::cmp::Reverse(s.1.len()));
-    for (d, path) in &seen {
+    seen.entries.sort_by_key(|s| std::cmp::Reverse(s.1.len()));
+    for (d, path) in &seen.entries {
         let n = &spec.nodes[*d as usize];
         let mut t = if n.meta.kind == Kind::Dir || !n.vanished {
             let counted = n.meta.kind == Kind::Dir
                 || n.meta.nlink <= 1
-                || charged.get(&(n.meta.dev, n.meta.ino)) == Some(path);
+                || seen.charged.get(&(n.meta.dev, n.meta.ino)) == Some(path);
             let alloc = match measured.get(path) {
                 Some(&excl) => excl,
                 None => n.meta.alloc,
@@ -640,14 +695,11 @@ pub(crate) fn compare(
             t.shared_out += out;
         }
         if n.meta.kind == Kind::Dir {
-            t.mounts = u64::from(mount_root(*d));
+            let ix = by_path.get(path).copied();
+            t.mounts = u64::from(mount_root(spec, *d));
             // Set when the directory was opened; check_subvol verified the flag.
-            t.ro_subvols = u64::from(
-                by_path
-                    .get(path)
-                    .is_some_and(|&ix| tree.flags(ix).has(NodeFlags::RO_SUBVOL)),
-            );
-            if let Some(s) = state_of(path)
+            t.ro_subvols = u64::from(ix.is_some_and(|ix| tree.flags(ix).has(NodeFlags::RO_SUBVOL)));
+            if let Some(s) = ix.and_then(|ix| tree.dir(ix)).map(|d| d.state)
                 && matches!(
                     s,
                     DirState::Failed | DirState::Partial | DirState::Abandoned
@@ -663,9 +715,18 @@ pub(crate) fn compare(
         }
         expect.insert(path.clone(), t);
     }
+    expect
+}
 
+/// Compares the tree's totals with `expect`, deepest first so the reported mismatch is where
+/// the difference starts, and checks the tree has no other entries. Returns the number of
+/// directories checked.
+fn diff_totals(
+    tree: &Tree,
+    by_path: &HashMap<Vec<u8>, Ix>,
+    expect: &HashMap<Vec<u8>, Totals>,
+) -> Result<usize, String> {
     let mut checked = 0;
-    // Deepest first, so the reported mismatch is where the difference starts.
     let mut paths: Vec<&Vec<u8>> = expect.keys().collect();
     paths.sort_by_key(|p| (std::cmp::Reverse(p.len()), (*p).clone()));
     for path in paths {
@@ -675,39 +736,7 @@ pub(crate) fn compare(
             .ok_or_else(|| format!("missing entry {}", String::from_utf8_lossy(path)))?;
         let got = tree.total(ix);
         if got != *t {
-            let in_tree: Vec<String> = tree
-                .children(ix)
-                .map(|c| String::from_utf8_lossy(tree.name(c)).into_owned())
-                .collect();
-            let mut expected: Vec<String> = expect
-                .keys()
-                .filter(|p| is_child(p, path))
-                .map(|p| String::from_utf8_lossy(&p[path.len() + 1..]).into_owned())
-                .collect();
-            expected.sort();
-            let state = tree.dir(ix).map(|d| d.state);
-            if tree.dir(ix).is_none() {
-                let key = tree.dev_ino(ix);
-                let links: Vec<String> = by_path
-                    .iter()
-                    .filter(|&(_, &o)| tree.dir(o).is_none() && tree.dev_ino(o) == key)
-                    .map(|(p, &o)| {
-                        format!(
-                            "{} charged={}",
-                            String::from_utf8_lossy(p),
-                            tree.flags(o).has(NodeFlags::CHARGED)
-                        )
-                    })
-                    .collect();
-                return Err(format!(
-                    "{}: got {got:?} expected {t:?}; links of inode {key:?}: {links:?}",
-                    String::from_utf8_lossy(path)
-                ));
-            }
-            return Err(format!(
-                "{}: got {got:?} expected {t:?}; state {state:?}; children {in_tree:?} expected {expected:?}",
-                String::from_utf8_lossy(path)
-            ));
+            return Err(mismatch(tree, by_path, expect, path, ix, &got, t));
         }
         checked += usize::from(tree.dir(ix).is_some());
     }
@@ -724,5 +753,51 @@ pub(crate) fn compare(
             expect.len()
         ));
     }
-    Ok((checked, abandoned))
+    Ok(checked)
+}
+
+/// Describes a totals mismatch at `path`: for a file, every link of its inode and which one
+/// is charged; for a directory, its state and its children in the tree and in the spec.
+fn mismatch(
+    tree: &Tree,
+    by_path: &HashMap<Vec<u8>, Ix>,
+    expect: &HashMap<Vec<u8>, Totals>,
+    path: &[u8],
+    ix: Ix,
+    got: &Totals,
+    t: &Totals,
+) -> String {
+    if tree.dir(ix).is_none() {
+        let key = tree.dev_ino(ix);
+        let links: Vec<String> = by_path
+            .iter()
+            .filter(|&(_, &o)| tree.dir(o).is_none() && tree.dev_ino(o) == key)
+            .map(|(p, &o)| {
+                format!(
+                    "{} charged={}",
+                    String::from_utf8_lossy(p),
+                    tree.flags(o).has(NodeFlags::CHARGED)
+                )
+            })
+            .collect();
+        return format!(
+            "{}: got {got:?} expected {t:?}; links of inode {key:?}: {links:?}",
+            String::from_utf8_lossy(path)
+        );
+    }
+    let in_tree: Vec<String> = tree
+        .children(ix)
+        .map(|c| String::from_utf8_lossy(tree.name(c)).into_owned())
+        .collect();
+    let mut expected: Vec<String> = expect
+        .keys()
+        .filter(|p| is_child(p, path))
+        .map(|p| String::from_utf8_lossy(&p[path.len() + 1..]).into_owned())
+        .collect();
+    expected.sort();
+    let state = tree.dir(ix).map(|d| d.state);
+    format!(
+        "{}: got {got:?} expected {t:?}; state {state:?}; children {in_tree:?} expected {expected:?}",
+        String::from_utf8_lossy(path)
+    )
 }

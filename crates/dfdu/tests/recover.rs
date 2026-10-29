@@ -58,6 +58,7 @@ fn run_plan(journals: &Path, root: &Path, mode: Mode, paths: &[&Path]) {
             mode,
             scan_root: root.to_path_buf(),
             items,
+            protected: None,
         }))
         .unwrap();
     for m in &rx {

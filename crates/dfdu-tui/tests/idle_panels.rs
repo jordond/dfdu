@@ -109,6 +109,8 @@ fn settled_with_panels(
         home: None,
         history: None,
         types: dfdu_tree::filetype::TypeFilter::default(),
+        local: false,
+        read_only: false,
     };
     thread::scope(|scope| {
         let (tx, rx) = unbounded();

@@ -39,7 +39,7 @@ pub struct Space {
 /// Runs `f` on its own thread; its result arrives on the returned channel. The caller waits
 /// with a timeout, and a call that does not return (a hung network mount does not let go) is
 /// left running.
-fn on_thread<T: Send + 'static>(
+pub(crate) fn on_thread<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Option<mpsc::Receiver<T>> {
     let (tx, rx) = mpsc::channel();
@@ -126,7 +126,7 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
 }
 
 #[cfg(target_os = "linux")]
-fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
+pub(crate) fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
     let s = rustix::fs::statvfs(path).map_err(io::Error::from)?;
     let unit = if s.f_frsize > 0 {
         s.f_frsize

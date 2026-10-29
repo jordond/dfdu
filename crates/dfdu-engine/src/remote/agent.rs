@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{RecvTimeoutError, Sender, bounded, unbounded};
 use parking_lot::Mutex;
 
-use dfdu_clean::{DeleterHandle, DeleterMsg, STAGE_UNDO_WINDOW, spawn_deleter};
+use dfdu_clean::{DeleterHandle, DeleterMsg, DeleterReq, STAGE_UNDO_WINDOW, spawn_deleter};
 use dfdu_rules::{Env, RuleSet, Source};
 
 use super::wire::{FromAgent, ToAgent, VERSION, WireClass, read_frame, write_frame};
@@ -139,20 +139,22 @@ pub fn run<B: dfdu_scan::Backend>(
                 root,
                 cross_mounts,
                 network,
+                enter,
                 class,
             } => {
                 let root = PathBuf::from(dfdu_tree::name_os(&root).into_owned());
-                let opts = JobOptions {
-                    cross_mounts,
-                    network,
-                    // Decoding refuses a class before the rules.
-                    class: class.zip(rules.clone()).map(|(c, r)| c.with(r)),
-                    ..JobOptions::default()
-                };
+                // Decoding refuses a class before the rules.
+                let class = class.zip(rules.clone()).map(|(c, r)| c.with(r));
+                let opts = job_options(cross_mounts, network, enter, class);
                 let seq = shared.start_job(job, &root, opts);
                 out.send(&FromAgent::Started { job, seq });
             }
-            ToAgent::Delete(req) => {
+            ToAgent::Delete(mut req) => {
+                // The protected paths of the rules this host classified with, as for a local
+                // plan; the other side's are for its own environment.
+                if let DeleterReq::Plan(p) = &mut req {
+                    p.protected = rules.as_ref().map(|r| r.protected().clone());
+                }
                 // Created once: the journal directory is the deleter's from then on.
                 let d = deleter.get_or_insert_with(|| start_deleter(&out, journal_dir.take()));
                 let _ = d.reqs.send(req);
@@ -334,9 +336,25 @@ fn start_measurers<W: Write + Send + 'static>(out: &Arc<Out<W>>, n: usize) -> Se
     reqs
 }
 
+/// The options of a job [`ToAgent::StartJob`] asks for.
+fn job_options(
+    cross_mounts: bool,
+    network: bool,
+    enter: Vec<(u64, u64)>,
+    class: Option<ClassOpts>,
+) -> JobOptions {
+    JobOptions {
+        cross_mounts,
+        network,
+        enter,
+        class,
+        ..JobOptions::default()
+    }
+}
+
 /// The rules in `files` built for this host, and the answer to [`ToAgent::Rules`]: this host's
-/// platform and the variables the rules read, their fingerprint, and what `root` classifies
-/// against as a scan root.
+/// platform, the variables the rules read and the links on its disks their paths go through,
+/// their fingerprint, and what `root` classifies against as a scan root.
 fn build_rules(files: &[(Option<String>, String)], root: &[u8]) -> (Arc<RuleSet>, FromAgent) {
     let env = Env::current();
     let sources: Vec<(Source, String)> = files
@@ -356,6 +374,7 @@ fn build_rules(files: &[(Option<String>, String)], root: &[u8]) -> (Arc<RuleSet>
     let answer = FromAgent::Rules {
         platform: env.platform.as_str().into(),
         vars: env.used_by(&texts),
+        links: env.links_followed(),
         fingerprint: set.fingerprint(),
         root: WireClass::of(&ClassOpts::for_root(set.clone(), &root)),
     };

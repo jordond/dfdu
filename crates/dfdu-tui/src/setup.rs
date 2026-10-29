@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::{cursor, execute};
 
-use crate::theme::{self, ColorLevel, Rgb, Theme, ThemeFile};
+use crate::theme::{self, BuiltinTheme, ColorLevel, Rgb, Theme, ThemeFile};
 
 /// Which theme to use.
 #[derive(Clone, Debug, Default)]
@@ -16,8 +16,8 @@ pub enum ThemeChoice {
     /// Chosen from the colour level and the terminal's background colour.
     #[default]
     Auto,
-    /// A built-in theme, one of [`Theme::builtin_names`].
-    Builtin(&'static str),
+    /// A built-in theme.
+    Builtin(BuiltinTheme),
     /// A theme file, already parsed.
     File(ThemeFile),
 }
@@ -29,10 +29,7 @@ impl ThemeChoice {
         if name == "auto" {
             return Some(ThemeChoice::Auto);
         }
-        Theme::builtin_names()
-            .iter()
-            .find(|&&n| n == name)
-            .map(|&n| ThemeChoice::Builtin(n))
+        BuiltinTheme::parse(name).map(ThemeChoice::Builtin)
     }
 }
 
@@ -62,11 +59,10 @@ impl Default for UiSettings {
     }
 }
 
-/// Where theme files are looked up by name: `dfdu/themes` in the configuration directory (XDG
-/// on Linux and macOS, the roaming `AppData` folder on Windows). `None` without a home directory.
+/// Where theme files are looked up by name ([`dfdu_rules::dirs::theme_dir`]).
 #[must_use]
 pub fn theme_dir() -> Option<PathBuf> {
-    Some(dfdu_engine::config_dir()?.join("themes"))
+    dfdu_rules::dirs::theme_dir()
 }
 
 /// The user's home directory with symbolic links resolved, as the scan's paths are.
@@ -98,7 +94,7 @@ pub(crate) fn resolve_theme(
     let detected = theme::detect_color_level(settings.color, &env);
     let explicit = match &settings.theme {
         ThemeChoice::Auto => None,
-        ThemeChoice::Builtin(name) => Some(*name),
+        ThemeChoice::Builtin(b) => Some(*b),
         ThemeChoice::File(file) => Some(file.base()),
     };
     let background = if theme::should_query_background(explicit, detected.level, &env) {
@@ -109,12 +105,8 @@ pub(crate) fn resolve_theme(
     let theme = if let ThemeChoice::File(file) = &settings.theme {
         file.resolve(detected.level, background)
     } else {
-        let name = theme::choose_theme(explicit, detected.level, background);
-        #[expect(
-            clippy::expect_used,
-            reason = "choose_theme returns one of the built-in theme names"
-        )]
-        Theme::named(name, detected.level, background).expect("a built-in theme")
+        let b = theme::choose_theme(explicit, detected.level, background);
+        Theme::builtin(b, detected.level, background)
     };
     Colors {
         theme,
@@ -159,9 +151,9 @@ mod tests {
             ThemeChoice::builtin("auto"),
             Some(ThemeChoice::Auto)
         ));
-        for &name in Theme::builtin_names() {
+        for b in BuiltinTheme::ALL {
             assert!(
-                matches!(ThemeChoice::builtin(name), Some(ThemeChoice::Builtin(n)) if n == name)
+                matches!(ThemeChoice::builtin(b.name()), Some(ThemeChoice::Builtin(n)) if n == b)
             );
         }
         assert!(ThemeChoice::builtin("solarized").is_none());
@@ -189,7 +181,7 @@ mod tests {
             Some((0, 0, 0))
         };
         let settings = UiSettings {
-            theme: ThemeChoice::Builtin("light"),
+            theme: ThemeChoice::Builtin(BuiltinTheme::Light),
             ..UiSettings::default()
         };
         let theme = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), query).theme;
@@ -233,7 +225,7 @@ mod tests {
     #[test]
     fn mono_keeps_the_terminal_color_level() {
         let settings = UiSettings {
-            theme: ThemeChoice::Builtin("mono"),
+            theme: ThemeChoice::Builtin(BuiltinTheme::Mono),
             ..UiSettings::default()
         };
         let colors = resolve_theme(&settings, env(&[("COLORTERM", "truecolor")]), || None);

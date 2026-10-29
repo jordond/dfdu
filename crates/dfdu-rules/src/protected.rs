@@ -247,6 +247,8 @@ pub struct Protected {
     paths: Set,
     /// Paths (and what is below them) that `paths` does not protect after all.
     except: Set,
+    /// The home directory, with `/` separators ([`Env::home`]).
+    home: Option<String>,
 }
 
 impl Protected {
@@ -281,10 +283,12 @@ impl Protected {
                 fold,
                 ..Set::default()
             },
+            home: env.home(),
         };
         let expand = |list: &[&str]| -> Vec<String> {
             list.iter()
                 .flat_map(|s| env.expand(s).expect("protected path variables"))
+                .flat_map(|s| env.link_targets(s))
                 .collect()
         };
         let glob = |s: &str| Glob::new(s, fold).expect("protected path glob");
@@ -302,6 +306,12 @@ impl Protected {
             p.except.add(glob(&path));
         }
         p
+    }
+
+    /// The home directory of the environment the paths are for, with `/` separators.
+    #[must_use]
+    pub fn home(&self) -> Option<&str> {
+        self.home.as_deref()
     }
 
     /// What can protect the entries of the directory `dir` (its path with a `/` at the end):

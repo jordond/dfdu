@@ -86,6 +86,7 @@ impl Event {
         Event::Command(match cmd {
             Command::Scan { .. } => "Scan",
             Command::Rescan { .. } => "Rescan",
+            Command::Enter { .. } => "Enter",
             Command::Resume { .. } => "Resume",
             Command::Cancel { .. } => "Cancel",
             Command::CancelAll => "CancelAll",

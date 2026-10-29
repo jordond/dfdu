@@ -11,8 +11,10 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{JobOptions, PortableBackend};
 
 mod common;
+use common::node;
 use common::remote::{opts, remote, remote_with};
-use common::{node, wait_for};
+#[cfg(unix)]
+use common::wait_for;
 
 /// Deletes through the agent: verified and journalled on its side, the tree updated here, and
 /// a staged item put back by an undo.

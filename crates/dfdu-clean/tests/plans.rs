@@ -245,6 +245,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
         mode,
         scan_root: c.root.clone(),
         items: items.clone(),
+        protected: None,
     };
     let results = run(&rx, &h, plan);
     drop(h);

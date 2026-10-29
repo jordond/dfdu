@@ -1,0 +1,28 @@
+---
+source: crates/dfdu-tui/src/features/treemap/tests.rs
+expression: frame
+---
+ dfdu  /r                                                                                                 done in 00:00
+ 12 items · 95.7 KiB                                                                           sort: size ↓  disk usage
+    58.6 KiB  ████████████████   61.2%       6  build       big/                ╭ big/ ────────────────────────────────╮
+    24.4 KiB  ██████▋            25.5%       5              mid/                │ /r/big                               │
+     8.8 KiB  ██▍                 9.2%       1              small               │ directory · complete                 │
+     3.9 KiB  █▏                  4.1%       1              .hid                │ 58.6 KiB on disk · 6 items           │
+                                                                                │ 58.6 KiB apparent · 58.6 KiB like du │
+                                                                                │ Project build output · regenerable   │
+                                                                                │ Rust build output (target/)          │
+                                                                                │ Build output of a Cargo project.     │
+                                                                                │ Cargo writes CACHEDIR.TAG into the   │
+                                                                                │ default target directory.            │
+                                                                                │ lost: All compiled artifacts; the    │
+                                                                                │ next build recompiles every crate.   │
+                                                                                │ largest by disk usage                │
+                                                                                │ █████▍     39.1 KiB  a/              │
+                                                                                │ ██▋        19.5 KiB  b               │
+                                                                                │ modified 1970-01-01 00:00 UTC        │
+                                                                                │ device 1 · inode 2                   │
+                                                                                │                                      │
+                                                                                │                                      │
+                                                                                ╰──────────────────────────────────────╯
+
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  : commands  ? help  q quit

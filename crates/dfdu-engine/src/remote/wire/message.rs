@@ -34,15 +34,18 @@ impl FromAgent {
             FromAgent::Rules {
                 platform,
                 vars,
+                links,
                 fingerprint,
                 root,
             } => {
                 e.u8(6);
                 e.bytes(platform.as_bytes());
-                e.var(vars.len() as u64);
-                for (k, v) in vars {
-                    e.bytes(k.as_bytes());
-                    e.bytes(v.as_bytes());
+                for list in [vars, links] {
+                    e.var(list.len() as u64);
+                    for (k, v) in list {
+                        e.bytes(k.as_bytes());
+                        e.bytes(v.as_bytes());
+                    }
                 }
                 e.var(*fingerprint);
                 enc_wclass(&mut e, root);
@@ -150,14 +153,19 @@ impl FromAgent {
             }
             6 => {
                 let platform = d.text()?;
-                let n = d.count(2)?;
-                let mut vars = Vec::with_capacity(n);
-                for _ in 0..n {
-                    vars.push((d.text()?, d.text()?));
-                }
+                let mut pairs = || -> R<Vec<(String, String)>> {
+                    let n = d.count(2)?;
+                    let mut out = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        out.push((d.text()?, d.text()?));
+                    }
+                    Ok(out)
+                };
+                let (vars, links) = (pairs()?, pairs()?);
                 FromAgent::Rules {
                     platform,
                     vars,
+                    links,
                     fingerprint: d.var()?,
                     root: dec_wclass(&mut d, None)?,
                 }
@@ -198,6 +206,7 @@ impl ToAgent {
                 root,
                 cross_mounts,
                 network,
+                enter,
                 class,
             } => {
                 e.u8(1);
@@ -205,6 +214,11 @@ impl ToAgent {
                 e.bytes(root);
                 e.bool(*cross_mounts);
                 e.bool(*network);
+                e.var(enter.len() as u64);
+                for &(dev, ino) in enter {
+                    e.var(dev);
+                    e.var(ino);
+                }
                 match class {
                     Some(c) => {
                         e.u8(1);
@@ -269,6 +283,14 @@ impl ToAgent {
                 root: d.bytes()?.to_vec(),
                 cross_mounts: d.bool()?,
                 network: d.bool()?,
+                enter: {
+                    let n = d.count(2)?;
+                    let mut out = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        out.push((d.var()?, d.var()?));
+                    }
+                    out
+                },
                 class: match d.u8()? {
                     0 => None,
                     1 if rules.is_some() => Some(dec_wclass(&mut d, rules)?),

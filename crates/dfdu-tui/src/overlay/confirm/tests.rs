@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use super::*;
-use crate::snapshot::{Snapshot, test_entry};
+use crate::model::snapshot::{Snapshot, test_entry};
 use crate::tests::{press, render, snap_without_totals};
 use crate::theme::Theme;
 
@@ -305,7 +305,7 @@ fn trash_delete_while_scanning_needs_typing() {
     assert!(out.contains("Move 2 entries to the Trash?"), "{out}");
     assert!(out.contains("Still scanning, may be"), "{out}");
     app.key(press(KeyCode::Esc), t);
-    crate::marks::clear(&mut app);
+    crate::state::marks::clear(&mut app);
     app.key(press(KeyCode::Char('d')), t);
     assert!(!dialog(&app).typing);
 }

@@ -404,11 +404,11 @@ impl ExtentTable {
             }
         }
         for (&ix, &bytes) in &expect {
-            if tree.home(ix) != bytes {
+            if tree.shared_here(ix) != bytes {
                 return Err(format!(
                     "{}: home {} bytes, table {bytes}",
                     String::from_utf8_lossy(&tree.path(ix)),
-                    tree.home(ix)
+                    tree.shared_here(ix)
                 ));
             }
         }
@@ -490,10 +490,10 @@ fn move_home(
         return;
     }
     if let Some(o) = home.and_then(|h| tree.resolve(h)) {
-        tree.sub_home(o, old_len, *out);
+        tree.sub_shared(o, old_len, *out);
     }
     if let Some(n) = new.and_then(|h| tree.resolve(h)) {
-        tree.add_home(n, new_len, new_out);
+        tree.add_shared(n, new_len, new_out);
     }
     *home = new;
     *out = new_out && new.is_some();
@@ -656,8 +656,8 @@ mod tests {
         let a = t.parent(x).unwrap();
         let b = t.parent(z).unwrap();
         // [0, 40) x+y -> a; [40, 60) x+y+z -> r; [60, 100) x+z -> r.
-        assert_eq!(t.home(a), 40);
-        assert_eq!(t.home(r), 60);
+        assert_eq!(t.shared_here(a), 40);
+        assert_eq!(t.shared_here(r), 60);
         assert_eq!((alloc(&t, x), alloc(&t, y), alloc(&t, z)), (0, 40, 40));
         assert_eq!(alloc(&t, a), 80);
         assert_eq!(alloc(&t, b), 40);
@@ -677,8 +677,8 @@ mod tests {
             e.remove(&mut t, i);
         }
         // [40, 60) x+y -> a; [60, 100) x alone.
-        assert_eq!(t.home(a), 60);
-        assert_eq!(t.home(r), 0);
+        assert_eq!(t.shared_here(a), 60);
+        assert_eq!(t.shared_here(r), 0);
         assert_eq!(alloc(&t, x), 40);
         assert_eq!(alloc(&t, r), 140);
         e.check(&t).unwrap();
@@ -735,12 +735,12 @@ mod tests {
         e.measure(&mut t, (1, 10), n, c(128));
         let n = t.node_ref(z);
         e.measure(&mut t, (1, 12), n, c(64));
-        assert_eq!(t.home(r), 128);
+        assert_eq!(t.shared_here(r), 128);
         // The compressed extent once, plus y, which is not measured.
         assert_eq!(alloc(&t, r), 128 + 100);
         e.remove(&mut t, (1, 10));
-        assert_eq!(t.home(r), 0);
-        assert_eq!(t.home(z), 64);
+        assert_eq!(t.shared_here(r), 0);
+        assert_eq!(t.shared_here(z), 64);
         e.check(&t).unwrap();
         t.check(&[]).unwrap();
     }

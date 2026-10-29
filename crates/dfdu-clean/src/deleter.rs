@@ -130,8 +130,11 @@ pub fn spawn_deleter(
                     Some(DeleterReq::Commit) => st.commit(None),
                 }
             }
-            if let Some(j) = st.journal.as_mut() {
-                let _ = j.sync();
+            if let Some(j) = st.journal.as_mut()
+                && let Err(e) = j.sync()
+            {
+                let note = journal_note(j, &e);
+                st.note(vec![note]);
             }
         })
         .expect("spawn deleter");
@@ -179,9 +182,20 @@ impl State {
         }
     }
 
+    /// Sends notes on journal records that could not be written, if there are any.
+    fn note(&self, notes: Vec<String>) {
+        if !notes.is_empty() {
+            let _ = self.out.send(DeleterMsg::Unfinished {
+                items: vec![],
+                notes,
+            });
+        }
+    }
+
     fn run_plan(&mut self, plan: &Plan, ab: &AtomicBool) {
         self.open_journal();
         let mut btrfs = false;
+        let mut notes = Vec::new();
         for item in &plan.items {
             let result = if ab.load(SeqCst) {
                 DeleteResult::Aborted
@@ -189,7 +203,7 @@ impl State {
                 match (self.journal.as_mut(), self.stager.as_mut()) {
                     (Some(j), Some(s)) => {
                         let at = dfdu_tree::now_secs();
-                        let (r, staged) = run_item(j, s, plan, item);
+                        let (r, staged) = run_item(j, s, plan, item, &mut notes);
                         if r == DeleteResult::Deleted && plan.mode.undoable() {
                             self.kept.push(Kept {
                                 plan: plan.id,
@@ -212,9 +226,12 @@ impl State {
                 result,
             });
         }
-        if let Some(j) = self.journal.as_mut() {
-            let _ = j.sync();
+        if let Some(j) = self.journal.as_mut()
+            && let Err(e) = j.sync()
+        {
+            notes.push(journal_note(j, &e));
         }
+        self.note(notes);
         let _ = self.out.send(DeleterMsg::Done {
             plan: plan.id,
             btrfs,
@@ -224,6 +241,7 @@ impl State {
     /// Runs a native command. The real one is journalled like a delete: nothing runs without
     /// its record.
     fn run_native(&mut self, req: &crate::NativeReq, ab: &AtomicBool) {
+        let mut notes = Vec::new();
         let result = if req.dry_run {
             crate::native::run(req, ab, &self.out)
         } else {
@@ -235,12 +253,19 @@ impl State {
                         Err(format!("journal: {e}"))
                     } else {
                         let r = crate::native::run(req, ab, &self.out);
-                        let _ = j.native_done(req.id, &r);
+                        // The command ran either way; recovery lists it as unfinished.
+                        if let Err(e) = j.native_done(req.id, &r) {
+                            notes.push(format!(
+                                "`{}`: the journal could not record how it ended: {e}",
+                                crate::shown_argv(&req.command)
+                            ));
+                        }
                         r
                     }
                 }
             }
         };
+        self.note(notes);
         let _ = self.out.send(DeleterMsg::NativeDone { id: req.id, result });
     }
 
@@ -333,21 +358,35 @@ fn on_btrfs(_path: &Path) -> bool {
     false
 }
 
+/// Verifies and deletes one item, journalling it. A result record that cannot be written
+/// leaves its intent without a result, which recovery lists as unfinished; the outcome stands
+/// and `notes` says why.
 fn run_item(
     journal: &mut Journal,
     stager: &mut Stager,
     plan: &Plan,
     item: &PlanItem,
+    notes: &mut Vec<String>,
 ) -> (DeleteResult, Option<PathBuf>) {
-    let checked = verify(item, &plan.scan_root, plan.mode).and_then(|()| {
-        if item.identity.kind == Kind::Dir {
-            crate::inside::compare(&item.path, &item.inside).map_err(DeleteResult::Stale)
-        } else {
-            Ok(())
+    let mut record = |journal: &mut Journal, r: &DeleteResult| {
+        if let Err(e) = journal.result(plan.id, item, r) {
+            notes.push(format!(
+                "{}: the journal could not record the result ({r}): {e}",
+                item.path.display()
+            ));
         }
-    });
+    };
+    let checked = verify(item, plan)
+        .map_err(DeleteResult::from)
+        .and_then(|()| {
+            if item.identity.kind == Kind::Dir {
+                crate::inside::compare(&item.path, &item.inside).map_err(DeleteResult::Stale)
+            } else {
+                Ok(())
+            }
+        });
     if let Err(r) = checked {
-        let _ = journal.result(plan.id, item, &r);
+        record(journal, &r);
         return (r, None);
     }
     let stage = if plan.mode == Mode::Stage {
@@ -359,7 +398,7 @@ fn run_item(
                     err: ErrKind::from(&e),
                     msg: e.to_string(),
                 };
-                let _ = journal.result(plan.id, item, &r);
+                record(journal, &r);
                 return (r, None);
             }
         }
@@ -377,8 +416,16 @@ fn run_item(
         );
     }
     let result = execute(&item.path, &item.identity, plan.mode, stage.as_deref());
-    let _ = journal.result(plan.id, item, &result);
+    record(journal, &result);
     (result, stage)
+}
+
+/// A note for a journal that could not be synced.
+fn journal_note(j: &Journal, e: &std::io::Error) -> String {
+    format!(
+        "{}: the deletion journal could not be synced: {e}",
+        j.path().display()
+    )
 }
 
 fn execute(path: &Path, id: &Identity, mode: Mode, stage: Option<&Path>) -> DeleteResult {
@@ -464,8 +511,9 @@ mod tests {
                     mtime: 0,
                 },
                 bytes: 1,
-                inside: std::sync::Arc::default(),
+                inside: Arc::default(),
             }],
+            protected: None,
         }
     }
 
@@ -529,5 +577,82 @@ mod tests {
             "{msg}"
         );
         assert!(victim.exists());
+    }
+
+    /// A result the journal cannot take is reported as a note; the item's own result stands.
+    #[test]
+    fn a_result_the_journal_cannot_record_is_noted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
+        let path = root.join("session.jsonl");
+        fs::write(&path, b"").unwrap();
+        // Opened for reading only, so every write fails.
+        let file = fs::File::open(&path).unwrap();
+        let mut journal = Journal::resume(file, path);
+        let mut stager = Stager::new(journal.session(), None);
+        // Outside the scan root: refused before any intent, then its result is written.
+        let plan = plan_of(root.join("victim"), root.join("scanned"));
+        let mut notes = vec![];
+        let (r, staged_at) = run_item(&mut journal, &mut stager, &plan, &plan.items[0], &mut notes);
+        assert_eq!(r, DeleteResult::Refused(Refusal::OutsideScanRoot));
+        assert_eq!(staged_at, None);
+        let [note] = &notes[..] else {
+            panic!("{notes:?}");
+        };
+        assert!(
+            note.contains("victim: the journal could not record the result"),
+            "{note}"
+        );
+    }
+
+    /// The protected paths a plan carries (its rule set's) are refused on top of this
+    /// process's: a file only they protect, and the home directory they are for, are kept,
+    /// and the same file is deleted by a plan without them.
+    #[cfg(unix)]
+    #[test]
+    fn the_plans_protected_paths_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
+        let home = root.join("home");
+        let settings = home.join(".m2/settings.xml");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, b"x").unwrap();
+        let env = dfdu_rules::Env::with(
+            dfdu_rules::Platform::Linux,
+            &[("HOME", home.to_str().unwrap())],
+        );
+        let protected = Arc::new(dfdu_rules::protected::Protected::new(&env));
+        let m = dfdu_tree::Meta::from_metadata(&fs::symlink_metadata(&settings).unwrap());
+        let real = |path: &Path| {
+            let mut plan = plan_of(path.to_path_buf(), root.clone());
+            plan.items[0].identity = Identity {
+                dev: m.dev,
+                ino: m.ino,
+                kind: m.kind,
+                apparent: m.apparent,
+                mtime: m.mtime,
+            };
+            plan
+        };
+
+        let (tx, rx) = unbounded();
+        let h = spawn_deleter(Some(root.join("journals")), Duration::from_secs(60), tx);
+        for p in [&settings, &home] {
+            let plan = Plan {
+                protected: Some(protected.clone()),
+                ..real(p)
+            };
+            let (results, _) = run(&rx, &h, plan);
+            assert_eq!(
+                results,
+                [DeleteResult::Refused(Refusal::Protected)],
+                "{}",
+                p.display()
+            );
+        }
+        assert!(settings.exists());
+        let (results, _) = run(&rx, &h, real(&settings));
+        assert_eq!(results, [DeleteResult::Deleted]);
+        assert!(!settings.exists());
     }
 }

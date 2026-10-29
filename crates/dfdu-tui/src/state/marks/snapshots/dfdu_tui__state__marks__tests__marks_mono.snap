@@ -1,0 +1,14 @@
+---
+source: crates/dfdu-tui/src/state/marks/tests.rs
+expression: out
+---
+ dfdu  /home/jo                                                                    ⠋ scanning 00:14
+ 3.0k items · 241.6 GiB                                                    sort: size ↓  disk usage
+●⠋ 112.0 GiB  ████████████████████████   46.4%    1.0k  Library/
+    78.0 GiB  ████████████████▊          32.3%    1.0k  dev/
+●   51.0 GiB  ██████████▉                21.1%    1.0k  .android/
+   625.0 MiB  ▏                           0.3%       1  notes.sqlite
+
+
+                                                                    ● 2 marked (at least 163.0 GiB)
+ ↑↓ move  → open  ← up  Space mark  d trash marked  D delete marked  / filter  ? help  q quit

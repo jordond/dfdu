@@ -8,9 +8,11 @@ use dfdu_engine::{Command, Mode, SizeMode};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Effect, Overlay};
-use crate::order::{SortKey, SortSpec};
+use crate::features::{debug, details, treemap};
+use crate::model::snapshot::Mark;
 use crate::overlay::{confirm, help, palette, type_filter};
-use crate::{debug, details, filter, marks, treemap};
+use crate::state::order::{SortKey, SortSpec};
+use crate::state::{filter, marks};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -32,6 +34,7 @@ pub enum Action {
     ToggleReferenced,
     ToggleHidden,
     Rescan,
+    EnterMount,
     SkipStalled,
     Trash,
     DeletePermanent,
@@ -55,6 +58,16 @@ pub enum Action {
     TreemapShallower,
     TreemapColor,
 }
+
+impl Action {
+    /// Deletes, or puts back what was deleted: left out of a read-only browser.
+    pub fn deletes(self) -> bool {
+        matches!(self, Action::Trash | Action::DeletePermanent | Action::Undo)
+    }
+}
+
+/// The status line after a key that deletes, in a read-only browser.
+pub const READ_ONLY: &str = "read-only: nothing is deleted";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Group {
@@ -181,6 +194,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Act,
     ),
     row(
+        Action::EnterMount,
+        "m",
+        "scan into the selected mount (another filesystem)",
+        Group::Act,
+    ),
+    row(
         Action::SkipStalled,
         "x",
         "skip directories that are not responding",
@@ -284,6 +303,14 @@ fn parse(key: &str) -> Option<(KeyCode, bool)> {
     Some((code, false))
 }
 
+/// The actions of [`ACTIONS`] the browser offers: all of them, less those that delete when it is
+/// `read_only`.
+pub fn offered(read_only: bool) -> impl Iterator<Item = &'static ActionInfo> {
+    ACTIONS
+        .iter()
+        .filter(move |info| !(read_only && info.action.deletes()))
+}
+
 /// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
 pub fn first_key(a: Action) -> &'static str {
     ACTIONS
@@ -312,9 +339,14 @@ pub fn action_for(k: &KeyEvent) -> Option<Action> {
     bound(false)
 }
 
-/// Carries out `a` on the list (no overlay open) and returns the effects for the run loop.
+/// Carries out `a` on the list (no overlay open) and returns the effects for the run loop. In a
+/// read-only browser an action that deletes only says so.
 pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
     let mut fx = Vec::new();
+    if app.read_only && a.deletes() {
+        app.status = Some(READ_ONLY.into());
+        return fx;
+    }
     let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
     match a {
         Action::Quit => app.quit = true,
@@ -351,6 +383,7 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
                 app.status = Some("rescan requested".into());
             }
         }
+        Action::EnterMount => fx.extend(enter_mount(app)),
         Action::SkipStalled => {
             if app.snap.stalled > 0 {
                 fx.push(Effect::Send(Command::AbandonAllStalled));
@@ -387,20 +420,20 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
         Action::ViewList => {
-            crate::dupes::show(app, false);
-            crate::cleanup::show(app, false);
+            crate::features::dupes::show(app, false);
+            crate::features::cleanup::show(app, false);
             treemap::show(app, false);
         }
         Action::ViewTreemap => {
-            crate::dupes::show(app, false);
-            crate::cleanup::show(app, false);
+            crate::features::dupes::show(app, false);
+            crate::features::cleanup::show(app, false);
             treemap::show(app, true);
         }
         Action::ViewCleanup => {
-            crate::dupes::show(app, false);
-            fx.extend(crate::cleanup::show(app, true));
+            crate::features::dupes::show(app, false);
+            fx.extend(crate::features::cleanup::show(app, true));
         }
-        Action::ViewDupes => fx.extend(crate::dupes::show(app, true)),
+        Action::ViewDupes => fx.extend(crate::features::dupes::show(app, true)),
         Action::TreemapDeeper => treemap::deeper(app, 1),
         Action::TreemapShallower => treemap::deeper(app, -1),
         Action::TreemapColor => treemap::cycle_color(app),
@@ -422,6 +455,22 @@ fn sort_by(app: &mut App, key: SortKey) {
 }
 
 /// Switches to `mode`, or back to disk usage if `mode` is shown already.
+/// Asks the engine to scan into the selected mount the scan stayed out of.
+fn enter_mount(app: &mut App) -> Option<Effect> {
+    match app.selected_entry() {
+        Some(e) if matches!(e.mark, Mark::OtherFs | Mark::Network) => {
+            let name = String::from_utf8_lossy(&e.name).into_owned();
+            let node = e.node;
+            app.status = Some(format!("scanning {name}/ on its own filesystem…"));
+            Some(Effect::Send(Command::Enter { node }))
+        }
+        _ => {
+            app.status = Some("m scans a mount the scan stayed out of; select one first".into());
+            None
+        }
+    }
+}
+
 fn toggle_size(app: &mut App, mode: SizeMode) {
     app.size_mode = if app.size_mode == mode {
         SizeMode::Disk
@@ -438,7 +487,7 @@ mod tests {
     use super::*;
     use crate::tests::press;
 
-    const ALL: [Action; 40] = [
+    const ALL: [Action; 41] = [
         Action::Quit,
         Action::Up,
         Action::Down,
@@ -457,6 +506,7 @@ mod tests {
         Action::ToggleReferenced,
         Action::ToggleHidden,
         Action::Rescan,
+        Action::EnterMount,
         Action::SkipStalled,
         Action::Trash,
         Action::DeletePermanent,
@@ -539,6 +589,7 @@ mod tests {
             (c('u'), Action::ToggleReferenced),
             (c('e'), Action::ToggleHidden),
             (c('r'), Action::Rescan),
+            (c('m'), Action::EnterMount),
             (c('x'), Action::SkipStalled),
             (c('d'), Action::Trash),
             (c('D'), Action::DeletePermanent),

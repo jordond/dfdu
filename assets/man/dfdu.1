@@ -34,10 +34,10 @@ Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan i
 Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu \-O`; `\-` for stdin), read\-only
 .TP
 \fB\-\-read\-only\fR
-Never delete anything (the delete keys are refused)
+Never delete anything: the browser leaves out its delete keys and runs cleanup commands only as dry runs
 .TP
 \fB\-\-remote\fR \fI<HOST>\fR
-Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there). Read\-only; nothing is classified or recorded in the history
+Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless \-\-read\-only; nothing is recorded in the history
 .TP
 \fB\-\-type\fR \fI<TYPES>\fR
 Show only files of these types or extensions, comma\-separated: `video,audio,.iso` (`t` in the browser changes it)

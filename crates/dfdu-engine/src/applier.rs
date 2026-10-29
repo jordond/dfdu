@@ -3,16 +3,17 @@
 //! drive it. One `Applier`, its `impl` split by concern over the submodules; this module holds
 //! the state, the commands and their dispatch.
 
-mod check;
-mod checks;
 mod delete;
 mod estimate;
+mod guards;
+mod invariants;
 mod jobs;
 mod measure;
 mod messages;
 mod model;
 mod native;
 mod rescan;
+mod scanner;
 mod undo;
 mod work;
 
@@ -55,6 +56,12 @@ pub enum Command {
     },
     /// Rescan a visible directory.
     Rescan {
+        node: NodeRef,
+    },
+    /// Scan a mount the scan listed but did not enter (another filesystem, or a network one),
+    /// in place, with the options of the job that listed it: the mount is entered, mounts
+    /// below it are treated as before. Rescans enter it again until the session ends.
+    Enter {
         node: NodeRef,
     },
     /// Rescan the root of a tree loaded from a file ([`Engine::load`](crate::Engine::load))
@@ -145,7 +152,8 @@ impl Job {
     fn slot(&self, d: DirId) -> Slot {
         self.map.get(d.0 as usize).copied().unwrap_or(Slot::Unknown)
     }
-    fn get(&self, d: DirId) -> Option<NodeRef> {
+    /// The node of `d`, when it has one.
+    fn live(&self, d: DirId) -> Option<NodeRef> {
         match self.slot(d) {
             Slot::Live(r) => Some(r),
             _ => None,
@@ -158,7 +166,7 @@ impl Job {
         }
         self.map[i] = s;
     }
-    fn set(&mut self, d: DirId, r: NodeRef) {
+    fn set_live(&mut self, d: DirId, r: NodeRef) {
         self.put(d, Slot::Live(r));
     }
 }
@@ -168,12 +176,17 @@ impl Job {
     reason = "independent settings of the session, not the states of one machine"
 )]
 pub struct Applier<B: Backend> {
+    /// The local scanner. Its backend serves local reads; its jobs run only when `remote` is
+    /// unset, and are steered through the `scanner_*` methods, which pick one of the two.
     pub scan: Arc<Shared<B>>,
-    /// Set for a remote scan: scanner calls go to the agent instead of `scan`.
+    /// Set for a remote scan: the agent that runs its jobs.
     pub(crate) remote: Option<Arc<crate::remote::Link>>,
     jobs: BTreeMap<u32, Job>,
     /// Options of finished jobs dropped from `jobs`, for rescans of what they scanned.
     retired: HashMap<u32, JobOptions>,
+    /// Mounts the user entered this session ([`Command::Enter`]), by the device and inode of
+    /// their roots: every rescan enters them again.
+    entered: Vec<(u64, u64)>,
     next_job: u32,
     links: LinkTable,
     work: VecDeque<Work>,
@@ -191,10 +204,10 @@ pub struct Applier<B: Backend> {
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
-    /// Refuse every delete request.
+    /// Refuse every delete request and native command (dry runs aside).
     pub read_only: bool,
-    /// The tree was loaded from a file: refuse what would touch the filesystem.
-    pub imported: bool,
+    /// The tree was loaded from a file: refuse everything that would touch the filesystem.
+    pub(crate) imported: bool,
     /// Measure extents after each job.
     pub measure: bool,
     /// Files allocating less are not measured (`MEASURE_MIN` in the engine).
@@ -250,6 +263,7 @@ impl<B: Backend> Applier<B> {
             scan,
             jobs: BTreeMap::new(),
             retired: HashMap::new(),
+            entered: Vec::new(),
             remote: None,
             next_job: 1,
             links: LinkTable::default(),
@@ -310,7 +324,7 @@ impl<B: Backend> Applier<B> {
         let mut stalled = Vec::new();
         for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
             for (&d, &since) in &j.stalled {
-                if let Some(r) = j.get(DirId(d)) {
+                if let Some(r) = j.live(DirId(d)) {
                     stalled.push(StalledInfo {
                         node: r,
                         since_ns: since,
@@ -354,41 +368,20 @@ impl<B: Backend> Applier<B> {
     /// an applier panic.
     pub fn apply_command(&mut self, m: &mut Model, cmd: Command) {
         m.recent.push(Event::of_command(&cmd));
-        if self.imported
-            && matches!(
-                cmd,
-                Command::Scan { .. }
-                    | Command::Rescan { .. }
-                    | Command::Resume { .. }
-                    | Command::Delete { .. }
-                    | Command::RunNative { .. }
-                    | Command::NativeSizes
-            )
-        {
-            m.status
-                .notice("an imported scan is read-only: nothing is scanned or deleted".into());
-            m.status.commands_applied += 1;
-            return;
-        }
-        if m.status.disconnected.is_some()
-            && matches!(
-                cmd,
-                Command::Scan { .. } | Command::Rescan { .. } | Command::Resume { .. }
-            )
-        {
-            m.status
-                .notice("the link to the agent is gone: nothing more is scanned".into());
+        if let Some(why) = self.refusal(m, &cmd) {
+            m.status.notice(why.into());
             m.status.commands_applied += 1;
             return;
         }
         match cmd {
             Command::Scan { path, opts } => self.start_scan(m, path, opts),
-            Command::Rescan { node } => self.rescan(m, node, None),
+            Command::Rescan { node } => self.rescan(m, node, None, false),
+            Command::Enter { node } => self.rescan(m, node, None, true),
             Command::Resume {
                 node,
                 opts,
                 changed: None,
-            } => self.rescan(m, node, Some(opts)),
+            } => self.rescan(m, node, Some(opts), false),
             Command::Resume {
                 node,
                 opts,
@@ -440,6 +433,41 @@ impl<B: Backend> Applier<B> {
         }
         m.status.commands_applied += 1;
         self.refresh_status(m);
+    }
+
+    /// Why `cmd` is refused, if it is. The one place that decides what read-only mode, an
+    /// imported tree and a lost agent allow: the commands themselves do not check again.
+    fn refusal(&self, m: &Model, cmd: &Command) -> Option<&'static str> {
+        let scans = matches!(
+            cmd,
+            Command::Scan { .. }
+                | Command::Rescan { .. }
+                | Command::Enter { .. }
+                | Command::Resume { .. }
+        );
+        if self.imported
+            && (scans
+                || matches!(
+                    cmd,
+                    Command::Delete { .. } | Command::RunNative { .. } | Command::NativeSizes
+                ))
+        {
+            // A native command's dry run is refused too: it would run on this host.
+            return Some("an imported scan is read-only: nothing is scanned or deleted");
+        }
+        if self.read_only {
+            match cmd {
+                Command::Delete { .. } => return Some("delete: read-only mode"),
+                Command::RunNative { dry_run: false, .. } => {
+                    return Some("native command: read-only mode");
+                }
+                _ => {}
+            }
+        }
+        if scans && m.status.disconnected.is_some() {
+            return Some("the link to the agent is gone: nothing more is scanned");
+        }
+        None
     }
 
     fn is_ancestor(tree: &Tree, a: Ix, mut b: Ix) -> bool {

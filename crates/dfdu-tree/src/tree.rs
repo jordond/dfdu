@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use fixedbitset::FixedBitSet;
 
 use crate::pages::{KidArena, Kids, NameArena, Pages};
-use crate::{Class, ErrKind, Kind, Meta, Totals, name_os};
+use crate::{Class, DirId, ErrKind, JobId, Kind, Meta, Totals, name_os};
 
 const NONE: u32 = u32::MAX;
 
@@ -127,8 +127,8 @@ pub struct DirRec {
     pub state: DirState,
     /// State taken when `pending` reaches zero, set when the listing closes.
     pub outcome: DirState,
-    pub job: u32,
-    pub dir_id: u32,
+    pub job: JobId,
+    pub dir_id: DirId,
     pub pending: u32,
     pub listing_closed: bool,
     pub reported: bool,
@@ -151,8 +151,8 @@ impl DirRec {
             total: Totals::default(),
             state: DirState::Pending,
             outcome: DirState::Complete,
-            job: 0,
-            dir_id: 0,
+            job: JobId(0),
+            dir_id: DirId::ROOT,
             pending: 1,
             listing_closed: false,
             reported: false,
@@ -261,10 +261,10 @@ struct Extents {
     excl: u64,
     /// Shared bytes counted at this node: data whose references in the scan are all below it
     /// and not all below one child.
-    home: u64,
-    /// The part of `home` that no other file in the scan references: something outside the
+    shared: u64,
+    /// The part of `shared` that no other file in the scan references: something outside the
     /// scan does, so deleting this node does not free it.
-    home_out: u64,
+    shared_out: u64,
 }
 
 /// Error codes in [`Node::error`]. OS error numbers are stored above `ERR_OS`; those that do
@@ -668,9 +668,9 @@ impl Tree {
         };
         Totals {
             apparent: if counted { n.apparent } else { 0 },
-            alloc: if counted { base } else { 0 } + x.home,
+            alloc: if counted { base } else { 0 } + x.shared,
             referenced: if counted { alloc } else { 0 },
-            shared_out: x.home_out,
+            shared_out: x.shared_out,
             items: 1,
             errors: u64::from(n.error != 0),
             mounts: u64::from(n.flags.has(NodeFlags::MOUNT_ROOT)),
@@ -1017,22 +1017,44 @@ impl Tree {
         false
     }
 
-    /// The class that applies to node `ix`: that of the highest classified node at or above
-    /// it, since a match covers everything below it, and the node it is on.
+    /// The class that applies to node `ix`, and the node it is on: [`Tree::class_below`] taken
+    /// down from the root. The nearest classified node at or above `ix` wins, so a match inside
+    /// another (pip's cache in the user caches) is what it is; but a match whose rule stops the
+    /// descent (`stops`) covers everything below it, so the highest such node wins over any
+    /// below it. Those exist when the rule above was decided only after its listing's
+    /// subdirectories were queued (`dfdu_scan::classify`).
     #[must_use]
-    pub fn class_in_effect(&self, ix: Ix) -> Option<(Ix, Class)> {
+    pub fn class_in_effect(&self, ix: Ix, stops: impl Fn(&Class) -> bool) -> Option<(Ix, Class)> {
         if self.classes.is_empty() {
             return None;
         }
-        let mut found = None;
+        let mut chain = Vec::new();
         let mut cur = Some(ix);
         while let Some(i) = cur {
-            if let Some(c) = self.classes.get(&i.0) {
-                found = Some((i, *c));
-            }
+            chain.push(i);
             cur = self.parent(i);
         }
-        found
+        chain
+            .into_iter()
+            .rev()
+            .fold(None, |above, i| self.class_below(above, i, &stops))
+    }
+
+    /// The class in effect at node `ix` given `above`, the class in effect at its parent: that
+    /// one when its rule stops the descent (`stops`), otherwise `ix`'s own class if it has one,
+    /// otherwise still `above`. The one step [`Tree::class_in_effect`] is made of, for walks
+    /// that go down the tree anyway.
+    #[must_use]
+    pub fn class_below(
+        &self,
+        above: Option<(Ix, Class)>,
+        ix: Ix,
+        stops: impl Fn(&Class) -> bool,
+    ) -> Option<(Ix, Class)> {
+        match above {
+            Some((_, c)) if stops(&c) => above,
+            _ => self.class(ix).map(|c| (ix, c)).or(above),
+        }
     }
 
     /// Records a file's measured unshared bytes ([`NodeFlags::MEASURED`]).
@@ -1053,32 +1075,32 @@ impl Tree {
 
     /// Shared bytes counted at this node.
     #[must_use]
-    pub fn home(&self, ix: Ix) -> u64 {
-        self.ext(ix.0).home
+    pub fn shared_here(&self, ix: Ix) -> u64 {
+        self.ext(ix.0).shared
     }
 
     /// Adds shared bytes counted at this node; `out` when nothing else in the scan
     /// references them.
-    pub fn add_home(&mut self, ix: Ix, bytes: u64, out: bool) {
+    pub fn add_shared(&mut self, ix: Ix, bytes: u64, out: bool) {
         self.restate(ix, |t| {
             let x = t.ext_mut(ix.0);
-            x.home += bytes;
+            x.shared += bytes;
             if out {
-                x.home_out += bytes;
+                x.shared_out += bytes;
             }
         });
     }
 
-    pub fn sub_home(&mut self, ix: Ix, bytes: u64, out: bool) {
+    pub fn sub_shared(&mut self, ix: Ix, bytes: u64, out: bool) {
         self.restate(ix, |t| {
             let x = t.ext_mut(ix.0);
             debug_assert!(
-                x.home >= bytes && (!out || x.home_out >= bytes),
-                "home underflow"
+                x.shared >= bytes && (!out || x.shared_out >= bytes),
+                "shared bytes underflow"
             );
-            x.home = x.home.saturating_sub(bytes);
+            x.shared = x.shared.saturating_sub(bytes);
             if out {
-                x.home_out = x.home_out.saturating_sub(bytes);
+                x.shared_out = x.shared_out.saturating_sub(bytes);
             }
         });
     }

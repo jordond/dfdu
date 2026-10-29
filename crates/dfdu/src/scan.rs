@@ -14,7 +14,9 @@ use crate::launch::{self, Local};
 use crate::table::{
     notes, print_by_type, print_debug_stats, print_errors, print_footer, print_tree, shown_total,
 };
-use crate::{EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, remote, transfer, written};
+use crate::{
+    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, outside, remote, transfer, written,
+};
 
 #[derive(Args)]
 #[expect(
@@ -134,17 +136,9 @@ pub fn run(args: ScanArgs) -> ExitCode {
     if let Some(n) = args.measure_workers {
         opts.measure_workers = n;
     }
-    let key = history::options_key(&args.mounts.job(), opts.measure_workers > 0);
-    let local = match args.remote {
-        Some(_) => None,
-        None => Some(Local::new(&args.path, args.mounts, args.threads, None)),
-    };
-    let (storage, opts) = launch::for_storage(&args.path, args.threads, opts);
-    if args.debug_stats {
-        eprintln!("storage: {storage:?}, {} workers", opts.workers);
-    }
-    let Some(mut local) = local else {
-        let host = args.remote.as_deref().unwrap_or_default();
+    let key = dfdu_store::history::options_key(&args.mounts.job(), opts.measure_workers > 0);
+    // The agent scans with its own workers; the path is on its host, not this one.
+    if let Some(host) = args.remote.as_deref() {
         return match remote::engine(host, opts, args.rules.remote(&args.path)) {
             Ok((e, class)) => {
                 let job = JobOptions {
@@ -155,8 +149,12 @@ pub fn run(args: ScanArgs) -> ExitCode {
             }
             Err(code) => code,
         };
-    };
-    local.rules = args.rules.load();
+    }
+    let local = Local::new(&args.path, args.mounts, args.threads, args.rules.load());
+    let (storage, opts) = launch::for_storage(&args.path, args.threads, opts);
+    if args.debug_stats {
+        eprintln!("storage: {storage:?}, {} workers", opts.workers);
+    }
     let job = local.job(&args.path);
     match args.backend {
         BackendArg::Native if inject::requested() => scan_with(
@@ -226,12 +224,17 @@ fn scan_with<B: Backend>(
         if bytes {
             outln!("{}", mode.of(&shown_total(&m.tree, root, filter)));
         } else if format != Format::Table {
+            let left_out = match format {
+                Format::Json | Format::Ndjson => Some(outside::gather(m, root, remote.is_none())),
+                _ => None,
+            };
             let out = json::ScanOut {
                 mode,
                 depth,
                 top,
                 elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
                 note: &|ix| notes(m, ix),
+                outside: left_out.as_ref(),
             };
             let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
             let r = match format {
@@ -255,6 +258,7 @@ fn scan_with<B: Backend>(
                 print_errors(m, root);
             }
             print_footer(m, root, elapsed, list_errors);
+            outside::footer(m, root, remote.is_none());
         }
         if debug_stats {
             print_debug_stats(m);

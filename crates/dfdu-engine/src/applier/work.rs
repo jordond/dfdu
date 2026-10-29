@@ -165,7 +165,7 @@ impl<B: Backend> Applier<B> {
             let Some(rec) = m.tree.dir_mut(ix) else {
                 continue;
             };
-            if rec.job != job || rec.cut {
+            if rec.job.0 != job || rec.cut {
                 continue;
             }
             if rec.state == DirState::Pending {
@@ -202,7 +202,7 @@ impl<B: Backend> Applier<B> {
                 continue;
             };
             let Some(rec) = m.tree.dir(ix) else { continue };
-            if rec.job != job || rec.cut || rec.state.is_terminal() {
+            if rec.job.0 != job || rec.cut || rec.state.is_terminal() {
                 continue;
             }
             let kids: Vec<NodeRef> = m

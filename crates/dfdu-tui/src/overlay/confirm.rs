@@ -15,8 +15,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Overlay};
-use crate::input::{Edit, LineInput};
-use crate::snapshot::{EntryData, Mark};
+use crate::input::line::{Edit, LineInput};
+use crate::model::snapshot::{EntryData, Mark};
 use crate::theme::{Theme, count, human};
 use crate::view::cells;
 

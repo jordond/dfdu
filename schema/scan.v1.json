@@ -16,7 +16,9 @@
     "totals": { "$ref": "#/$defs/totals" },
     "tree": { "$ref": "#/$defs/entry" },
     "errors": { "type": "array", "items": { "$ref": "#/$defs/error" } },
-    "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } }
+    "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
+    "not_entered": { "type": "array", "items": { "$ref": "#/$defs/not_entered" }, "description": "Present when the scan stayed out of mounts below the root (other filesystems without --cross-mounts, network ones without --network); kernel filesystems and second mounts are left out." },
+    "links_outside": { "type": "array", "items": { "$ref": "#/$defs/link_outside" }, "description": "Present when a rule location below the root is reached through a symbolic link that leads out of the scan, which the scan does not follow." }
   },
   "$defs": {
     "count": { "type": "integer", "minimum": 0 },
@@ -97,6 +99,29 @@
         "path": { "type": "string" },
         "path_bytes_b64": { "$ref": "#/$defs/b64" },
         "reason": { "enum": ["other-filesystem", "network-filesystem", "kernel-filesystem", "mounted-again"] }
+      }
+    },
+    "not_entered": {
+      "type": "object",
+      "required": ["path", "network", "option"],
+      "properties": {
+        "path": { "type": "string", "description": "The mount point." },
+        "path_bytes_b64": { "$ref": "#/$defs/b64" },
+        "network": { "type": "boolean" },
+        "option": { "enum": ["--cross-mounts", "--network"], "description": "The option that enters it." },
+        "fstype": { "type": "string", "description": "Filesystem type from the mount table, when it lists the mount." },
+        "used": { "$ref": "#/$defs/count", "description": "Bytes in use on that filesystem, not part of any total here. Never asked of network filesystems; absent when it did not answer in time." }
+      }
+    },
+    "link_outside": {
+      "type": "object",
+      "required": ["link", "target", "rules"],
+      "properties": {
+        "link": { "type": "string", "description": "The symbolic link, below the root." },
+        "link_bytes_b64": { "$ref": "#/$defs/b64" },
+        "target": { "type": "string", "description": "Where it leads, outside the scan; scan it for these rules' matches." },
+        "target_bytes_b64": { "$ref": "#/$defs/b64" },
+        "rules": { "type": "array", "items": { "type": "string" }, "description": "Ids of the rules with locations through it." }
       }
     }
   }

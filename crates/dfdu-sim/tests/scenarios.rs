@@ -44,7 +44,7 @@ fn find(sim: &Sim, path: &str) -> Ix {
 /// The scan ids of the directory at `path`.
 fn ids(sim: &Sim, path: &str) -> (JobId, DirId) {
     let d = sim.model.tree.dir(find(sim, path)).expect("directory");
-    (JobId(d.job), DirId(d.dir_id))
+    (d.job, d.dir_id)
 }
 
 fn state(sim: &Sim, path: &str) -> DirState {

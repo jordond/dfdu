@@ -26,7 +26,7 @@ end
 
 complete -c dfdu -n "__fish_dfdu_needs_command" -l resume-from -d 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done' -r -F
 complete -c dfdu -n "__fish_dfdu_needs_command" -s f -l file -d 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only' -r -F
-complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there). Read-only; nothing is classified or recorded in the history' -r
+complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l type -d 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l theme -d 'Colour theme: auto, dark, light, ansi (the terminal\'s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l color -d 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set' -r
@@ -36,7 +36,7 @@ complete -c dfdu -n "__fish_dfdu_needs_command" -l network -d 'Descend into netw
 complete -c dfdu -n "__fish_dfdu_needs_command" -l mft -d 'Windows, as administrator: read each NTFS volume\'s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l no-rules -d 'Do not classify entries: no categories, no cleanup candidates'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l disks -d 'Choose a disk to browse from the mounted filesystems'
-complete -c dfdu -n "__fish_dfdu_needs_command" -l read-only -d 'Never delete anything (the delete keys are refused)'
+complete -c dfdu -n "__fish_dfdu_needs_command" -l read-only -d 'Never delete anything: the browser leaves out its delete keys and runs cleanup commands only as dry runs'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l no-history -d 'Do not record the scan in the history, nor show what grew since the last one'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l no-mouse -d 'Do not capture the mouse (click to select, double-click to open, wheel to scroll). While it is captured, most terminals select text with Shift held down'
 complete -c dfdu -n "__fish_dfdu_needs_command" -l debug-stats -d 'Start with the debug panel open, and print its numbers when the browser exits'

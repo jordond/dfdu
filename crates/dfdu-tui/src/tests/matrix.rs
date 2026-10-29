@@ -15,10 +15,12 @@ use super::{
     assert_cue, mid_scan_app, press, render_buffer, shared_model, style_at, styled, text, typed,
 };
 use crate::app::{App, Effect, Overlay};
-use crate::debug::Counters;
-use crate::snapshot::{self, EntryData, Mark, Target, test_entry};
-use crate::theme::{ColorLevel, Theme, choose_theme, detect_color_level, spinner};
-use crate::{details, extras, filter};
+use crate::features::debug::Counters;
+use crate::features::details;
+use crate::model::extras;
+use crate::model::snapshot::{self, EntryData, Mark, Target, test_entry};
+use crate::state::filter;
+use crate::theme::{BuiltinTheme, ColorLevel, Theme, choose_theme, detect_color_level, spinner};
 
 /// The built-in themes `auto` picks for a dark or light truecolor terminal, a 16-colour one
 /// and `NO_COLOR`, each at that colour level.
@@ -225,8 +227,8 @@ fn mono_frames_have_no_colors() {
     let detected = detect_color_level(None, |k| (k == "NO_COLOR").then(|| "1".into()));
     assert_eq!(detected.level, ColorLevel::None);
     let chosen = choose_theme(None, detected.level, None);
-    assert_eq!(chosen, "mono", "NO_COLOR selects mono");
-    assert_eq!(theme(chosen, detected.level), mono());
+    assert_eq!(chosen, BuiltinTheme::Mono, "NO_COLOR selects mono");
+    assert_eq!(Theme::builtin(chosen, detected.level, None), mono());
     for state in State::ALL {
         let buf = frame(state, mono());
         for (i, cell) in buf.content.iter().enumerate() {
@@ -251,10 +253,10 @@ fn cue(mark: Mark) -> (&'static [char], &'static str) {
         Mark::Stalled => (&['~'], "not responding"),
         Mark::Rescanning => (&SPINNER, "rescanning"),
         Mark::Error => (&['!'], "incomplete"),
-        Mark::OtherFs => (&['>'], "other filesystem"),
+        Mark::OtherFs => (&['>'], "other filesystem: m scans it"),
         Mark::DupMount => (&['='], "mounted again: counted at its other mount"),
         Mark::ErrorsInside => (&['.'], "2 errors inside"),
-        Mark::Network => (&['>'], "network filesystem: start with --network to scan"),
+        Mark::Network => (&['>'], "network filesystem: m scans it"),
         Mark::Kernel => (&['>'], "kernel filesystem"),
         Mark::Deleting => (&['x'], "deleting"),
         Mark::Incomplete => (&['?'], "incomplete: r to rescan"),

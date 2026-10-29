@@ -13,6 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use dfdu_scan::JobOptions;
 use dfdu_tree::{Ix, Totals, Tree};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -146,10 +147,16 @@ fn path_of(b: Vec<u8>) -> PathBuf {
     }
 }
 
-/// The key under which scans are compared: scans that count other data (other mounts, shared
-/// extents measured or not) are never compared with each other.
+/// The key under which scans made with `job` are compared, `measured` when shared extents
+/// were measured: scans that count other data (other mounts, shared extents measured or not)
+/// are never compared with each other.
 #[must_use]
-pub fn options_key(cross_mounts: bool, network: bool, measured: bool) -> String {
+pub fn options_key(job: &JobOptions, measured: bool) -> String {
+    let JobOptions {
+        cross_mounts,
+        network,
+        ..
+    } = job;
     format!("cross_mounts={cross_mounts} network={network} measured={measured}")
 }
 
@@ -231,17 +238,10 @@ impl Growth {
     }
 }
 
-/// `$DFDU_STATE_DIR/history.sqlite3`, else `history.sqlite3` in dfdu's directory in the
-/// platform state directory (the data directory on Windows).
+/// `history.sqlite3` in the state directory ([`dfdu_rules::dirs`]).
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    use etcetera::BaseStrategy;
-    if let Some(d) = std::env::var_os("DFDU_STATE_DIR") {
-        return Some(PathBuf::from(d).join("history.sqlite3"));
-    }
-    let dirs = etcetera::choose_base_strategy().ok()?;
-    let base = dirs.state_dir().unwrap_or_else(|| dirs.data_dir());
-    Some(base.join("dfdu").join("history.sqlite3"))
+    dfdu_rules::dirs::history_path()
 }
 
 impl History {
@@ -702,6 +702,19 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// Keys already in a database keep matching: the format must not change.
+    #[test]
+    fn options_key_names_the_mount_options_and_measuring() {
+        let job = JobOptions {
+            network: true,
+            ..JobOptions::default()
+        };
+        assert_eq!(
+            options_key(&job, false),
+            "cross_mounts=false network=true measured=false"
+        );
     }
 
     /// Connections that open a new database and record at the same time all succeed: each

@@ -18,7 +18,7 @@ use super::{
     text,
 };
 use crate::app::App;
-use crate::snapshot::{self, Mark, Target, test_entry};
+use crate::model::snapshot::{self, Mark, Target, test_entry};
 use crate::theme::Theme;
 
 /// A scan of a home directory 14 s in, with entries that are scanning, stalled and unreadable,
@@ -394,7 +394,7 @@ fn disk_picker() {
     ]);
     let theme = Theme::no_color();
     let mut term = Terminal::new(TestBackend::new(110, 8)).expect("terminal");
-    term.draw(|f| crate::picker::draw(f, &p, &theme))
+    term.draw(|f| crate::features::picker::draw(f, &p, &theme))
         .expect("draw");
     let out = text(term.backend().buffer());
     insta::assert_snapshot!("disk_picker", out);

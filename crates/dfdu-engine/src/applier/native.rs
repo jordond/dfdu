@@ -22,10 +22,6 @@ impl<B: Backend> Applier<B> {
         variant: Option<usize>,
         dry_run: bool,
     ) {
-        if self.read_only && !dry_run {
-            m.status.notice("native command: read-only mode".into());
-            return;
-        }
         let (Some(rules), Some(ix)) = (m.rules.clone(), m.tree.resolve_visible(node)) else {
             return;
         };
@@ -73,7 +69,7 @@ pub(crate) fn native_req(
     dry_run: bool,
     id: u64,
 ) -> Option<dfdu_clean::NativeReq> {
-    let def = rules.rules().get(usize::from(rule.0))?.native.as_ref()?;
+    let def = rules.rules().get(usize::from(rule.0))?.action.native()?;
     let (command, dry) = match variant {
         None => (&def.command, &def.dry_run),
         Some(v) => {

@@ -19,11 +19,8 @@ pub struct File {
 pub enum PerOs<T> {
     All(T),
     Each {
-        #[serde(default)]
         macos: Option<T>,
-        #[serde(default)]
         linux: Option<T>,
-        #[serde(default)]
         windows: Option<T>,
     },
 }
@@ -57,44 +54,30 @@ impl<T: Default + Clone> PerOs<T> {
 #[serde(deny_unknown_fields)]
 pub struct RuleDef {
     pub id: String,
-    #[serde(default)]
     pub enabled: Option<bool>,
     /// Required unless the entry only disables or overrides `enabled` of a built-in rule.
-    #[serde(default)]
     pub category: Option<String>,
-    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
     pub platforms: Option<Vec<String>>,
     /// Built-in rules only: the platforms whose paths were checked on a real machine. The
     /// rule is enabled by default only there (`docs/rules.md`).
-    #[serde(default)]
     pub verified: Option<Vec<String>>,
-    #[serde(default)]
     pub safety: Option<String>,
-    #[serde(default)]
     pub action: Option<String>,
-    #[serde(default)]
     pub explanation: Option<String>,
-    #[serde(default)]
     pub lost: Option<String>,
-    #[serde(default)]
     pub min_size: Option<String>,
-    #[serde(default)]
     pub min_age_days: Option<u32>,
-    #[serde(default)]
     pub priority: Option<i32>,
-    #[serde(default)]
     pub requires_admin: Option<bool>,
     #[serde(default)]
     pub references: Vec<String>,
-    #[serde(default, rename = "match")]
+    #[serde(rename = "match")]
     pub matching: Option<MatchDef>,
     #[serde(default)]
     pub guard: GuardDef,
     #[serde(default)]
     pub degrade: DegradeDef,
-    #[serde(default)]
     pub native: Option<NativeDef>,
 }
 
@@ -105,7 +88,6 @@ pub struct RuleDef {
     reason = "mirrors the independent flags of a rule file's `[rule.match]` table"
 )]
 pub struct MatchDef {
-    #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
     pub names: PerOs<Vec<String>>,
@@ -124,10 +106,8 @@ pub struct MatchDef {
     #[serde(default)]
     pub marker: Vec<MarkerDef>,
     /// Files only: matches a file using more disk than this (`1 GiB`).
-    #[serde(default)]
     pub larger_than: Option<String>,
     /// Files only: matches a file not modified for this many days.
-    #[serde(default)]
     pub not_modified_days: Option<u32>,
     /// Directories only: matches a directory with nothing in it.
     #[serde(default)]
@@ -147,7 +127,6 @@ pub struct AnyOf {
 #[serde(deny_unknown_fields)]
 pub struct MarkerDef {
     pub file: String,
-    #[serde(default)]
     pub prefix: Option<String>,
     #[serde(default)]
     pub required: bool,
@@ -162,10 +141,6 @@ pub struct GuardDef {
     pub not_vcs_tracked: bool,
     #[serde(default)]
     pub not_inside: Vec<String>,
-    #[serde(default)]
-    pub keep_newest: u32,
-    #[serde(default)]
-    pub group_by: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -193,7 +168,6 @@ pub struct NativeDef {
     pub pre: Vec<Vec<String>>,
     #[serde(default)]
     pub command: Vec<String>,
-    #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
     pub size_command: Vec<String>,

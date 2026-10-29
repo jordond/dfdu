@@ -170,8 +170,11 @@ fn subtree(
                 }),
             );
         }
-        if m.tree.home(ix) > 0 {
-            o.insert("shared_between_entries".into(), m.tree.home(ix).into());
+        if m.tree.shared_here(ix) > 0 {
+            o.insert(
+                "shared_between_entries".into(),
+                m.tree.shared_here(ix).into(),
+            );
         }
     }
     Value::Object(o)
@@ -231,6 +234,9 @@ pub struct ScanOut<'a> {
     pub top: Option<usize>,
     pub elapsed_ms: u64,
     pub note: &'a dyn Fn(Ix) -> String,
+    /// What the scan did not enter, for `not_entered` and `links_outside`: fields of the JSON
+    /// document, and of the NDJSON summary record.
+    pub outside: Option<&'a crate::outside::Outside>,
 }
 
 /// `scan --format json`: one document.
@@ -251,6 +257,9 @@ pub fn scan(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<(
     doc.insert("tree".into(), tree);
     doc.insert("errors".into(), errors(m, root).into());
     doc.insert("skipped".into(), skipped(m, root).into());
+    if let Some(left_out) = o.outside {
+        crate::outside::put_json(&mut doc, left_out, m.rules.as_deref());
+    }
     serde_json::to_writer_pretty(&mut *w, &Value::Object(doc))?;
     writeln!(w)
 }
@@ -295,6 +304,9 @@ pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::R
     summary.insert("complete".into(), m.complete(root).into());
     summary.insert("elapsed_ms".into(), o.elapsed_ms.into());
     summary.insert("totals".into(), totals(&t.total(root)));
+    if let Some(left_out) = o.outside {
+        crate::outside::put_json(&mut summary, left_out, m.rules.as_deref());
+    }
     line(w, "summary", summary)
 }
 

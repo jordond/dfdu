@@ -11,7 +11,7 @@ use clap::Args;
 use dfdu_engine::{Engine, Model};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef, now_secs};
+use dfdu_tree::{Class, Kind, NodeRef, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
@@ -125,36 +125,46 @@ pub struct Item {
     pub mtime: i64,
     pub scanning: bool,
     pub recommended: bool,
+    /// How many matches inside it are listed on their own: its sizes leave them out.
+    pub matches_inside: usize,
+    /// With matches inside it, what cleaning it up deletes instead of the whole of it
+    /// ([`dfdu_engine::Listed::rest`]).
+    pub rest: Vec<NodeRef>,
 }
 
 impl Item {
     pub fn safety(&self) -> Safety {
         self.class.safety
     }
+
+    /// What deleting it deletes: the node, or the rest of it when matches inside it are
+    /// listed on their own.
+    pub fn targets(&self) -> Vec<NodeRef> {
+        if self.rest.is_empty() {
+            vec![self.node]
+        } else {
+            self.rest.clone()
+        }
+    }
 }
 
-/// Every match not inside another, largest first, that passes `f`.
+/// The listed matches ([`dfdu_engine::listed`]), largest first, that pass `f`: a match inside
+/// one that does not stop the descent is listed on its own, and left out of that one.
 pub fn items(m: &Model, rules: &RuleSet, f: &Filter, now: i64) -> Vec<Item> {
-    let t = &m.tree;
-    let mut out: Vec<Item> = t
-        .classes()
-        .filter(|&(ix, _)| t.is_visible(ix))
-        .filter(|&(ix, _)| t.parent(ix).is_none_or(|p| t.class_in_effect(p).is_none()))
-        .map(|(ix, class)| item(m, rules, ix, class, now))
+    dfdu_engine::listed(&m.tree, rules)
+        .into_iter()
+        .map(|l| item(m, rules, l, now))
         .filter(|it| keep(rules, f, it, now))
-        .collect();
-    out.sort_by(|a, b| b.disk.cmp(&a.disk).then_with(|| a.path.cmp(&b.path)));
-    out
+        .collect()
 }
 
-fn item(m: &Model, rules: &RuleSet, ix: Ix, class: Class, now: i64) -> Item {
+fn item(m: &Model, rules: &RuleSet, l: dfdu_engine::Listed, now: i64) -> Item {
     let t = &m.tree;
-    let tot = t.total(ix);
-    let scanning = t.dir(ix).is_some_and(|d| d.state == DirState::Pending);
+    let (ix, class, tot, scanning) = (l.ix, l.class, l.total, l.scanning);
     let mtime = t.mtime(ix);
     Item {
         node: t.node_ref(ix),
-        path: t.path_buf(ix),
+        path: l.path,
         kind: t.kind(ix),
         class,
         disk: tot.alloc,
@@ -171,6 +181,8 @@ fn item(m: &Model, rules: &RuleSet, ix: Ix, class: Class, now: i64) -> Item {
             scanning,
             now,
         ),
+        matches_inside: l.inner.len(),
+        rest: l.rest.iter().map(|&r| t.node_ref(r)).collect(),
     }
 }
 
@@ -229,26 +241,14 @@ fn age_days(now: i64, mtime: i64) -> i64 {
 /// How a match is cleaned up, in words for the table.
 fn how(rules: &RuleSet, it: &Item) -> String {
     let r = rules.rule(it.class.rule);
-    match r.action {
+    match &r.action {
         _ if it.safety() == Safety::Protected => "keep".into(),
-        Action::Native => match &r.native {
-            Some(n) if !n.command.is_empty() => format!(
-                "run `{}`",
-                dfdu_engine::shown_argv(&dfdu_engine::native_argv(&n.command, &it.path))
-            ),
-            _ => "use its tool".into(),
-        },
+        Action::Native(n) => format!(
+            "run `{}`",
+            dfdu_engine::shown_argv(&dfdu_engine::native_argv(&n.command, &it.path))
+        ),
         Action::Report => "report only".into(),
         Action::Delete | Action::Trash => "delete".into(),
-    }
-}
-
-fn action_name(a: Action) -> &'static str {
-    match a {
-        Action::Delete => "delete",
-        Action::Trash => "trash",
-        Action::Native => "native",
-        Action::Report => "report",
     }
 }
 
@@ -267,8 +267,8 @@ pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
     o.insert("category".into(), r.category().id.into());
     o.insert("category_name".into(), r.category().name.into());
     o.insert("safety".into(), it.safety().as_str().into());
-    o.insert("action".into(), action_name(r.action).into());
-    if let Some(n) = r.native.as_ref().filter(|n| !n.command.is_empty()) {
+    o.insert("action".into(), r.action.as_str().into());
+    if let Some(n) = r.action.native() {
         let argv = dfdu_engine::native_argv(&n.command, &it.path);
         o.insert("native_command".into(), argv.into());
     }
@@ -283,6 +283,9 @@ pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
     o.insert("in_use".into(), c.has(Class::IN_USE).into());
     o.insert("vcs_tracked".into(), c.has(Class::VCS_TRACKED).into());
     o.insert("scanning".into(), it.scanning.into());
+    if it.matches_inside > 0 {
+        o.insert("matches_inside".into(), it.matches_inside.into());
+    }
     if let Some(d) = c.degraded {
         o.insert(
             "degraded".into(),
@@ -342,6 +345,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
             .collect();
         let total = reclaimable(&list);
         let exceeded = args.fail_above.is_some_and(|t| total > t);
+        let left_out = crate::outside::gather(m, root, true);
         let r = if args.format == ReportFormat::Json {
             let mut doc = js::document(&m.tree.path_buf(root));
             doc.insert("generated_at".into(), now.into());
@@ -360,6 +364,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
                     .into(),
             );
             doc.insert("summary".into(), summary(&list));
+            crate::outside::put_json(&mut doc, &left_out, Some(rules));
             if let Some(t) = args.fail_above {
                 doc.insert(
                     "threshold".into(),
@@ -368,7 +373,9 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
             }
             js::print(doc)
         } else {
+            let lines = crate::outside::lines(&left_out, Some(rules), "dfdu report");
             table(rules, &list, now, args.fail_above, exceeded)
+                .and_then(|()| crate::outside::print(&mut std::io::stdout().lock(), &lines))
         };
         if let Err(code) = written(r) {
             return code;
@@ -420,6 +427,13 @@ fn table(
         }
         if let Some(d) = it.class.degraded {
             flags.push(r.degrade[d as usize].reason.clone());
+        }
+        if it.matches_inside > 0 {
+            let n = it.matches_inside;
+            flags.push(format!(
+                "without the {n} match{} inside",
+                if n == 1 { "" } else { "es" }
+            ));
         }
         flags.push(how(rules, it));
         writeln!(
@@ -500,5 +514,77 @@ mod tests {
         assert!(age_arg("3y").is_err() && age_arg("d").is_err());
         assert!(category_arg("dev").is_ok() && category_arg("dev.build").is_ok());
         assert!(category_arg("de").is_err() && category_arg("build-cache").is_err());
+    }
+
+    /// The user caches with pip's cache (300 bytes) and other things (1000 bytes) in them: pip
+    /// is listed on its own, the user caches for the rest, and the total counts each once.
+    #[test]
+    fn caches_inside_the_user_caches_are_listed_on_their_own() {
+        use dfdu_tree::Meta;
+        let env = dfdu_rules::Env::with(dfdu_rules::Platform::MacOs, &[("HOME", "/Users/u")]);
+        let rules = dfdu_rules::builtin(&env).0;
+        let mut m = Model::default();
+        let t = &mut m.tree;
+        let meta = |kind, size, ino| Meta {
+            kind,
+            apparent: size,
+            alloc: size,
+            mtime: 0,
+            dev: 1,
+            ino,
+            nlink: 1,
+            mount: 0,
+        };
+        let root = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+        let mut ino = 1;
+        let mut dir = |t: &mut dfdu_tree::Tree, parent, name: &str, file: u64| {
+            ino += 2;
+            let d = t.add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
+            let own = t.own(d);
+            t.propagate_add(d, &own);
+            let f = t.add_file(d, b"f", &meta(Kind::File, file, ino + 1), false, None);
+            let own = t.own(f);
+            t.propagate_add(d, &own);
+            d
+        };
+        let cache = dir(t, root, "Caches", 1000);
+        let pip = dir(t, cache, "pip", 300);
+        for (ix, id) in [(cache, "sys.user-caches"), (pip, "pip.cache")] {
+            let class = Class {
+                rule: rules.index(id).expect(id),
+                safety: Safety::Safe,
+                degraded: None,
+                flags: 0,
+            };
+            t.set_class(ix, Some(class));
+        }
+        let pip_ref = t.node_ref(pip);
+        let all = Filter {
+            min_size: None,
+            category: vec![],
+            older_than: None,
+        };
+        let list = items(&m, &rules, &all, 0);
+        let paths: Vec<_> = list.iter().map(|i| i.path.clone()).collect();
+        assert_eq!(paths, [PathBuf::from("/r/Caches"), "/r/Caches/pip".into()]);
+        let (caches, pip_item) = (&list[0], &list[1]);
+        assert_eq!((caches.disk, caches.matches_inside), (1000, 1));
+        assert_eq!(pip_item.disk, 300);
+        assert_eq!(reclaimable(&list), m.tree.total(cache).alloc);
+        // Cleaning the user caches up deletes their rest, not pip's cache.
+        let rest = caches.targets();
+        assert_eq!(rest.len(), 1);
+        assert!(!rest.contains(&pip_ref) && !rest.contains(&caches.node));
+        assert_eq!(pip_item.targets(), [pip_ref]);
+        // Left out by a filter, pip's cache still is not counted with the user caches.
+        let sys = Filter {
+            category: vec!["sys".into()],
+            ..all
+        };
+        let list = items(&m, &rules, &sys, 0);
+        assert_eq!(list.len(), 1);
+        assert_eq!(reclaimable(&list), 1000);
+        let json = item_json(&m, &rules, &list[0], 0);
+        assert_eq!(json["matches_inside"], 1);
     }
 }

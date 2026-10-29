@@ -142,12 +142,10 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
         "its checks (git tracking, running processes) did not finish".into()
     } else if it.scanning {
         "still being scanned".into()
-    } else if r.action == Action::Report {
+    } else if matches!(r.action, Action::Report) {
         "reported only: the rule never deletes it".into()
-    } else if r.action == Action::Native && !args.allow_commands {
+    } else if matches!(r.action, Action::Native(_)) && !args.allow_commands {
         "cleaned up by its tool's command: --allow-commands runs it".into()
-    } else if r.action == Action::Native && r.native.as_ref().is_none_or(|n| n.command.is_empty()) {
-        "its rule has no command".into()
     } else if !args.all && !it.recommended {
         "not recommended (--all includes it)".into()
     } else {
@@ -282,7 +280,7 @@ fn execute<B: Backend>(
     mode: Mode,
 ) {
     let planned = |i: usize| outcomes[i] == Outcome::Planned;
-    let native = |it: &Item| rules.rule(it.class.rule).action == Action::Native;
+    let native = |it: &Item| matches!(rules.rule(it.class.rule).action, Action::Native(_));
     let deletes: Vec<usize> = (0..items.len())
         .filter(|&i| planned(i) && !native(&items[i]))
         .collect();
@@ -292,7 +290,7 @@ fn execute<B: Backend>(
     if !deletes.is_empty() {
         let before = engine.read(|m| m.status.last_delete.as_ref().map(|d| d.plan));
         engine.send(Command::Delete {
-            items: deletes.iter().map(|&i| items[i].node).collect(),
+            items: deletes.iter().flat_map(|&i| items[i].targets()).collect(),
             mode,
         });
         let summary = loop {
@@ -308,10 +306,12 @@ fn execute<B: Backend>(
             .unwrap_or_default();
         engine.read(|m| {
             for &i in &deletes {
-                let node = items[i].node;
-                outcomes[i] = match problems.get(&node) {
+                let targets = items[i].targets();
+                outcomes[i] = match targets.iter().find_map(|n| problems.get(n)) {
                     Some(why) => Outcome::Failed(why.clone()),
-                    None if m.tree.resolve_visible(node).is_none() => Outcome::Deleted,
+                    None if targets.iter().all(|&n| m.tree.resolve_visible(n).is_none()) => {
+                        Outcome::Deleted
+                    }
                     None => Outcome::Failed("not deleted".into()),
                 };
             }
@@ -379,7 +379,7 @@ fn print_table(
     for (it, o) in items.iter().zip(outcomes) {
         let what = match o {
             Outcome::Planned => "would delete".to_string(),
-            Outcome::Deleted if rules.rule(it.class.rule).action == Action::Native => {
+            Outcome::Deleted if matches!(rules.rule(it.class.rule).action, Action::Native(_)) => {
                 "ran its command".into()
             }
             Outcome::Deleted => verb(args.mode).into(),
@@ -387,12 +387,12 @@ fn print_table(
             Outcome::Failed(_) => "FAILED".into(),
         };
         let why = o.reason().map(|r| format!("  ({r})")).unwrap_or_default();
-        let how = match rules.rule(it.class.rule).native.as_ref() {
-            Some(n) if rules.rule(it.class.rule).action == Action::Native => {
+        let how = match rules.rule(it.class.rule).action.native() {
+            Some(n) => {
                 let command = dfdu_engine::native_argv(&n.command, &it.path);
                 format!("  `{}`", dfdu_engine::shown_argv(&command))
             }
-            _ => String::new(),
+            None => String::new(),
         };
         writeln!(
             w,

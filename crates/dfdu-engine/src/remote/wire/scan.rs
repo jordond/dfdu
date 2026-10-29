@@ -2,7 +2,7 @@
 
 use dfdu_rules::protected::State;
 use dfdu_rules::{Hit, Inside, RuleSet};
-use dfdu_tree::{Class, ErrKind, Kind, Meta, Subvol};
+use dfdu_tree::{Class, ErrKind, Meta, Subvol};
 
 use dfdu_scan::{
     Chunk, ChunkStatus, DirId, Entry, EntryError, FileRec, JobId, ListingStatus, Mark, NameSpan,
@@ -10,15 +10,10 @@ use dfdu_scan::{
 };
 
 use super::codec::{Dec, Enc, R, bad};
-use super::{PROFILES, WireClass, WireError, known};
+use super::{WireClass, WireError, known};
 
 fn enc_meta(e: &mut Enc, m: &Meta) {
-    e.u8(match m.kind {
-        Kind::File => 0,
-        Kind::Dir => 1,
-        Kind::Symlink => 2,
-        Kind::Other => 3,
-    });
+    e.kind(m.kind);
     e.var(m.apparent);
     e.var(m.alloc);
     e.zig(m.mtime);
@@ -30,13 +25,7 @@ fn enc_meta(e: &mut Enc, m: &Meta) {
 
 fn dec_meta(d: &mut Dec) -> R<Meta> {
     Ok(Meta {
-        kind: match d.u8()? {
-            0 => Kind::File,
-            1 => Kind::Dir,
-            2 => Kind::Symlink,
-            3 => Kind::Other,
-            _ => return bad("kind"),
-        },
+        kind: d.kind()?,
         apparent: d.var()?,
         alloc: d.var()?,
         mtime: d.zig()?,
@@ -220,10 +209,9 @@ fn enc_probe(e: &mut Enc, p: &Probe) {
     }
     e.bool(p.shares_extents);
     match p.profile {
-        Some((name, ratio)) => {
+        Some((profile, ratio)) => {
             e.u8(1);
-            let profile = PROFILES.iter().position(|p| *p == name);
-            e.u8(profile.and_then(|i| u8::try_from(i).ok()).unwrap_or(0));
+            e.u8(profile as u8);
             e.0.extend_from_slice(&ratio.to_le_bytes());
         }
         None => e.u8(0),
@@ -262,9 +250,8 @@ fn dec_probe(d: &mut Dec) -> R<Probe> {
     let profile = match d.u8()? {
         0 => None,
         1 => {
-            let name = *PROFILES
-                .get(d.u8()? as usize)
-                .ok_or(WireError::Malformed("profile"))?;
+            let profile =
+                dfdu_sys::Profile::from_u8(d.u8()?).ok_or(WireError::Malformed("profile"))?;
             let mut f = [0u8; 8];
             for b in &mut f {
                 *b = d.u8()?;
@@ -273,7 +260,7 @@ fn dec_probe(d: &mut Dec) -> R<Probe> {
             if !(ratio.is_finite() && ratio > 0.0) {
                 return bad("profile ratio");
             }
-            Some((name, ratio))
+            Some((profile, ratio))
         }
         _ => return bad("profile"),
     };

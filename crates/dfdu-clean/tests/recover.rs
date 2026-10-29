@@ -34,6 +34,7 @@ fn plan(root: &Path, n: usize) -> Plan {
         mode: Mode::Stage,
         scan_root: root.to_path_buf(),
         items: vec![common::item(&mut Tree::new(), junk, identity)],
+        protected: None,
     }
 }
 

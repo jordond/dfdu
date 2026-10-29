@@ -11,8 +11,8 @@ use ratatui::widgets::Paragraph;
 
 use super::{cells, mmss, spread};
 use crate::app::App;
-use crate::mouse::Crumb;
-use crate::order::SortKey;
+use crate::input::mouse::Crumb;
+use crate::state::order::SortKey;
 use crate::theme::{Theme, count, human, spinner};
 
 /// Between two breadcrumbs.
@@ -98,20 +98,33 @@ fn breadcrumbs(
     (spans, hits)
 }
 
-/// Draws the header in `area` and records where each breadcrumb went, for the mouse.
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
-    let t = &app.theme;
-    let s = &app.snap;
+/// The right of the first line: whether the browser is read-only, and the scan's state.
+fn scan_state(app: &App, now: Instant, frame: u64) -> Vec<Span<'static>> {
     let state = match app.done_at {
-        Some(done) if !s.busy => format!("done in {}", mmss(done.duration_since(app.started))),
+        Some(done) if !app.snap.busy => {
+            format!("done in {}", mmss(done.duration_since(app.started)))
+        }
         _ => format!(
             "{} scanning {}",
             spinner(frame),
             mmss(now.duration_since(app.started))
         ),
     };
+    let mut spans = Vec::new();
+    if app.read_only {
+        spans.push(Span::styled("read-only", app.theme.status_warn));
+        spans.push(Span::raw(" · "));
+    }
+    spans.extend([Span::raw(state), Span::raw(" ")]);
+    spans
+}
+
+/// Draws the header in `area` and records where each breadcrumb went, for the mouse.
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) {
+    let t = &app.theme;
+    let s = &app.snap;
     let mut left = vec![Span::styled(" dfdu ", t.title), Span::raw(" ")];
-    let right = vec![Span::raw(state), Span::raw(" ")];
+    let right = scan_state(app, now, frame);
     let start: usize = left.iter().map(Span::width).sum();
     let end: usize = right.iter().map(Span::width).sum();
     // One cell stays free between the breadcrumbs and the scan state.
@@ -166,11 +179,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
             t.status_warn,
         ));
     }
-    if let Some((name, ratio)) = s.profile
+    if let Some((profile, ratio)) = s.profile
         && (ratio - 1.0).abs() > f64::EPSILON
     {
         info.push(Span::styled(
-            format!(" · data stored {ratio:.1}× ({name})"),
+            format!(" · data stored {ratio:.1}× ({})", profile.name()),
             t.fg_dim,
         ));
     }
@@ -209,7 +222,7 @@ mod tests {
     use ratatui::buffer::Buffer;
 
     use super::*;
-    use crate::snapshot::Snapshot;
+    use crate::model::snapshot::Snapshot;
     use crate::tests::{render_buffer, snap_without_totals, style_at, text};
 
     fn texts(dir: &str, root: &str, home: Option<&str>) -> Vec<String> {

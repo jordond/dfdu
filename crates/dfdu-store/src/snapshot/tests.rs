@@ -12,7 +12,7 @@ fn header() -> Header {
         written: 1_793_000_000,
         cross_mounts: true,
         network: false,
-        journal: Some(Journal {
+        journal: Some(JournalPosition {
             volume: [9; 16],
             event_id: 123_456_789,
             time: 1_792_999_000,

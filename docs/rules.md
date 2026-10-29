@@ -363,7 +363,7 @@ command = ["docker", "system", "prune", "--all", "--force"]
 | `[rule.match]`   | yes           | See [Matching](#matching).                                                                                                 |
 | `[rule.guard]`   |               | See [Safety checks](#safety-checks).                                                                                       |
 | `[rule.degrade]` |               | See [Safety checks](#safety-checks).                                                                                       |
-| `[rule.native]`  | with `native` | See [Native cleanup commands](#native-cleanup-commands).                                                                   |
+| `[rule.native]`  | with `native` | See [Native cleanup commands](#native-cleanup-commands). Only for `action = "native"`.                                     |
 
 ### Categories
 

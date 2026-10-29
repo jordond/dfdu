@@ -12,30 +12,29 @@ L2 0-11 dim reversed | 12-45 reversed | 46-53 dim reversed | 54-63 bold reversed
 L3 0-11 dim | 46-53 dim | 54-59 bold
     51.0 GiB  ██████████▉                21.1%     214  .android/
 L4 46-53 dim | 54-64 bold
-   625.0 MiB  ▏                           0.3%       1  notes.sqlite
-L5 46-53 dim
- !       0 B┌ Commands 10/44 ──────────────────────────────────────────────────────────┐
-L6 0-1 bold | 2-11 dim
- ~       0 B│ : sort▌                                                                  │
-L7 0-1 bold | 2-11 dim | 13-14 bold | 20-20 bold
-            │ sort by size (again: reverse)                                    sort  s │
-L8 13-13 reversed | 14-17 underlined reversed | 18-78 reversed | 79-82 dim reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
+   625.0 MiB┌ Commands 11/45 ──────────────────────────────────────────────────────────┐
+ !       0 B│ : sort▌                                                                  │
+L6 0-1 bold | 2-11 dim | 13-14 bold | 20-20 bold
+ ~       0 B│ sort by size (again: reverse)                                    sort  s │
+L7 0-1 bold | 2-11 dim | 13-13 reversed | 14-17 underlined reversed | 18-78 reversed | 79-82 dim reversed | 83-84 reversed | 85-85 bold reversed | 86-86 reversed
             │ sort by name (again: reverse)                                    sort  n │
-L9 14-17 underlined | 79-82 dim | 85-85 bold
+L8 14-17 underlined | 79-82 dim | 85-85 bold
             │ sort by items (again: reverse)                                   sort  C │
-L10 14-17 underlined | 79-82 dim | 85-85 bold
+L9 14-17 underlined | 79-82 dim | 85-85 bold
             │ sort by modification time (again: reverse)                       sort  M │
-L11 14-17 underlined | 79-82 dim | 85-85 bold
+L10 14-17 underlined | 79-82 dim | 85-85 bold
             │ re-sort now                                                      sort  S │
-L12 17-20 underlined | 79-82 dim | 85-85 bold
+L11 17-20 underlined | 79-82 dim | 85-85 bold
             │ skip directories that are not responding                          act  x │
-L13 14-14 underlined | 25-26 underlined | 31-31 underlined | 80-82 dim | 85-85 bold
+L12 14-14 underlined | 25-26 underlined | 31-31 underlined | 80-82 dim | 85-85 bold
             │ put back what was last moved to the Trash or staged               act  U │
-L14 53-53 underlined | 56-57 underlined | 60-60 underlined | 80-82 dim | 85-85 bold
+L13 53-53 underlined | 56-57 underlined | 60-60 underlined | 80-82 dim | 85-85 bold
             │ close the overlay, or clear the filter                       global  Esc │
-L15 17-17 underlined | 33-34 underlined | 42-42 underlined | 75-80 dim | 83-85 bold
+L14 17-17 underlined | 33-34 underlined | 42-42 underlined | 75-80 dim | 83-85 bold
             │ duplicate files (compares the scanned files)                  display  4 │
-L16 28-28 underlined | 32-32 underlined | 36-36 underlined | 40-40 underlined | 76-82 dim | 85-85 bold
+L15 28-28 underlined | 32-32 underlined | 36-36 underlined | 40-40 underlined | 76-82 dim | 85-85 bold
+            │ scan into the selected mount (another filesystem)                 act  m │
+L16 28-28 underlined | 38-38 underlined | 50-50 underlined | 59-59 underlined | 80-82 dim | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
 L17 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘

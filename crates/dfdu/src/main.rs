@@ -50,6 +50,7 @@ mod history;
 mod inject;
 mod json;
 mod launch;
+mod outside;
 mod recover;
 mod remote;
 mod report;
@@ -98,11 +99,13 @@ struct Cli {
     /// binary export from `ncdu -O`; `-` for stdin), read-only.
     #[arg(short = 'f', long = "file", value_name = "FILE", conflicts_with_all = ["path", "disks"])]
     import: Option<PathBuf>,
-    /// Never delete anything (the delete keys are refused).
+    /// Never delete anything: the browser leaves out its delete keys and runs cleanup commands
+    /// only as dry runs.
     #[arg(long)]
     read_only: bool,
-    /// Browse PATH on this host, scanned there through `ssh HOST dfdu agent` (dfdu must be
-    /// installed there). Read-only; nothing is classified or recorded in the history.
+    /// Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be
+    /// installed there) and classified with the rules of this host. The delete keys delete on
+    /// HOST, unless --read-only; nothing is recorded in the history.
     #[arg(long, value_name = "HOST", conflicts_with_all = ["disks", "import", "resume_from"])]
     remote: Option<String>,
     /// Show only files of these types or extensions, comma-separated: `video,audio,.iso`
@@ -283,7 +286,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_engine::rules_dir();
+        let dir = dfdu_rules::dirs::rules_dir();
         let (set, errors) = dfdu_rules::load(&dfdu_rules::Env::current(), dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");
@@ -297,7 +300,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_engine::rules_dir();
+        let dir = dfdu_rules::dirs::rules_dir();
         let (files, errors) = dfdu_rules::sources(dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");

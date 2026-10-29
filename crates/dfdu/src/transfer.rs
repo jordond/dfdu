@@ -68,21 +68,6 @@ pub struct ImportArgs {
     pub bytes: bool,
 }
 
-/// Where the change journal of `path`'s volume stands (`FSEvents` on macOS, the USN journal on
-/// Windows, the btrfs subvolume's generation on Linux as root); `None` where there is none.
-fn journal_position(path: &Path) -> Option<dfdu_store::snapshot::Journal> {
-    // Read before the position, so that whatever changes after it has a ctime no older.
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let (volume, event_id) = dfdu_engine::journal_position(path)?;
-    Some(dfdu_store::snapshot::Journal {
-        volume,
-        event_id,
-        time,
-    })
-}
-
 /// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
 pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
     let limits = dfdu_store::ncdu::Limits::default();
@@ -173,38 +158,33 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     };
     let opts = launch::headless(false);
     let (engine, job) = if let Some(host) = &args.remote {
-        let (_, opts) = launch::for_storage(&path, args.threads, opts);
         match remote::engine(host, opts, None) {
             Ok((e, _)) => (e, job),
             Err(code) => return code,
         }
     } else {
-        let mut local = Local::new(&path, args.mounts, args.threads, None);
-        local.job = job;
+        let local = Local {
+            mft: args.mounts.use_mft(&path),
+            threads: args.threads,
+            job,
+            rules: None,
+        };
         local.start(&path, opts)
     };
     // Taken before the scan, so that what changes during it is replayed on resume.
-    let journal = journal_position(&path).filter(|_| args.remote.is_none());
-    let cmd = match resumed {
-        Some(l) => {
-            let changed = l
-                .header
-                .journal
-                .and_then(|j| dfdu_engine::changed_since(&path, j.volume, j.event_id, j.time));
-            let node = l.tree.node_ref(l.root);
-            engine.load(l.tree);
-            Command::Resume {
-                node,
-                opts: job.clone(),
-                changed,
-            }
-        }
-        None => Command::Scan {
+    let journal = if args.remote.is_none() {
+        dfdu_engine::journal_position(&path)
+    } else {
+        None
+    };
+    match resumed {
+        Some(l) => engine.resume(l.tree, l.header.journal, job.clone()),
+        None => engine.send(Command::Scan {
             path: path.clone(),
             opts: job.clone(),
-        },
-    };
-    let engine = match launch::run_scan(engine, cmd) {
+        }),
+    }
+    let engine = match launch::wait_scan(engine) {
         Ok(e) => e,
         Err(code) => return code,
     };

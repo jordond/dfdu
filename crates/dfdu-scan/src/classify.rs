@@ -21,7 +21,8 @@
 //! The directories below a match are classified with the rules decided above them, so a
 //! `stop_descent` rule skips them. A rule decided only when a listing ends comes too late for
 //! the tasks of that listing's subdirectories; what they match then is covered by the match
-//! above them, which [`dfdu_tree::Tree::class_in_effect`] picks.
+//! above them when its rule stops the descent, which [`dfdu_tree::Tree::class_in_effect`]
+//! picks over the nearer match.
 
 use std::cell::OnceCell;
 use std::sync::Arc;
@@ -238,6 +239,20 @@ pub struct Listing {
     state: Mutex<ListState>,
 }
 
+/// A block's entries as the worker holds them, borrowed for [`Listing::block`].
+#[derive(Copy, Clone)]
+pub struct BlockParts<'a> {
+    pub names: &'a [u8],
+    pub files: &'a [FileRec],
+    pub subdirs: &'a [SubdirRec],
+    /// Entries that could not be stat'ed: names only, to the rules.
+    pub others: &'a [NameSpan],
+    /// Id of the block's first subdirectory.
+    pub first_subdir: DirId,
+    /// The block is the directory's whole listing.
+    pub whole: bool,
+}
+
 /// Reads the first bytes of a file in the directory being listed (`Backend::read_prefix`).
 pub type ReadPrefix<'a> = &'a dyn Fn(&[u8], usize) -> Option<Vec<u8>>;
 
@@ -288,12 +303,7 @@ impl Listing {
         }
     }
 
-    /// Classifies one block. `whole` is set when the block is the directory's whole listing;
-    /// `first_subdir` is the id of the block's first subdirectory.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the parts of a block as the worker holds them, borrowed for the call"
-    )]
+    /// Classifies one block.
     #[expect(
         clippy::too_many_lines,
         reason = "files, then subdirectories, against one locked state and one set of closures"
@@ -304,15 +314,18 @@ impl Listing {
     )]
     pub fn block(
         &self,
-        names: &[u8],
-        files: &[FileRec],
-        subdirs: &[SubdirRec],
-        others: &[NameSpan],
-        first_subdir: DirId,
-        whole: bool,
+        parts: &BlockParts,
         read: ReadPrefix,
         missing: TargetMissing,
     ) -> BlockClass {
+        let BlockParts {
+            names,
+            files,
+            subdirs,
+            others,
+            first_subdir,
+            whole,
+        } = *parts;
         let name = |s: NameSpan| &names[s.off as usize..s.off as usize + s.len as usize];
         let all = || {
             files

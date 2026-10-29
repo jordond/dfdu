@@ -20,29 +20,72 @@ use super::Token::{
 };
 use super::{ColorSpec, Palette, Spec, Token};
 
-pub const NAMES: [&str; 5] = ["dark", "light", "ansi", "mono", "high-contrast"];
+/// A built-in theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BuiltinTheme {
+    Dark,
+    Light,
+    Ansi,
+    Mono,
+    HighContrast,
+}
+
+impl BuiltinTheme {
+    pub const ALL: [BuiltinTheme; 5] = [
+        BuiltinTheme::Dark,
+        BuiltinTheme::Light,
+        BuiltinTheme::Ansi,
+        BuiltinTheme::Mono,
+        BuiltinTheme::HighContrast,
+    ];
+
+    /// Its name in `--theme`, theme files and the palette.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            BuiltinTheme::Dark => "dark",
+            BuiltinTheme::Light => "light",
+            BuiltinTheme::Ansi => "ansi",
+            BuiltinTheme::Mono => "mono",
+            BuiltinTheme::HighContrast => "high-contrast",
+        }
+    }
+
+    /// The built-in theme called `name`.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<BuiltinTheme> {
+        Self::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    /// Its palette.
+    pub(crate) fn palette(self) -> Palette {
+        let mut p: Palette = [Spec::NONE; Token::COUNT];
+        for (t, spec) in entries(self) {
+            p[t as usize] = spec;
+        }
+        p
+    }
+}
+
+/// The names of [`BuiltinTheme::ALL`].
+pub const NAMES: [&str; 5] = [
+    BuiltinTheme::Dark.name(),
+    BuiltinTheme::Light.name(),
+    BuiltinTheme::Ansi.name(),
+    BuiltinTheme::Mono.name(),
+    BuiltinTheme::HighContrast.name(),
+];
 
 const BOLD: Modifier = Modifier::BOLD;
 
-/// The palette of built-in theme `name`.
-pub fn palette(name: &str) -> Option<Palette> {
-    let entries = entries(name)?;
-    let mut p: Palette = [Spec::NONE; Token::COUNT];
-    for (t, spec) in entries {
-        p[t as usize] = spec;
+fn entries(theme: BuiltinTheme) -> [(Token, Spec); Token::COUNT] {
+    match theme {
+        BuiltinTheme::Dark => dark(),
+        BuiltinTheme::Light => light(),
+        BuiltinTheme::Ansi => ansi(),
+        BuiltinTheme::Mono => mono(),
+        BuiltinTheme::HighContrast => high_contrast(),
     }
-    Some(p)
-}
-
-fn entries(name: &str) -> Option<[(Token, Spec); Token::COUNT]> {
-    Some(match name {
-        "dark" => dark(),
-        "light" => light(),
-        "ansi" => ansi(),
-        "mono" => mono(),
-        "high-contrast" => high_contrast(),
-        _ => return None,
-    })
 }
 
 /// A truecolor value with its 16-colour fallback.
@@ -259,11 +302,12 @@ mod tests {
 
     #[test]
     fn builtin_palettes_set_every_token_once() {
-        for name in NAMES {
-            let tokens: HashSet<Token> = entries(name).expect(name).map(|(t, _)| t).into();
-            assert_eq!(tokens.len(), Token::COUNT, "{name}");
+        for b in BuiltinTheme::ALL {
+            let tokens: HashSet<Token> = entries(b).map(|(t, _)| t).into();
+            assert_eq!(tokens.len(), Token::COUNT, "{b:?}");
+            assert_eq!(BuiltinTheme::parse(b.name()), Some(b));
         }
-        assert!(entries("solarized").is_none());
+        assert_eq!(BuiltinTheme::parse("solarized"), None);
     }
 
     #[test]

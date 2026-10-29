@@ -2,6 +2,7 @@
 //! varint length and the bytes.
 
 use dfdu_rules::{RuleIx, Safety};
+use dfdu_tree::Kind;
 
 use super::WireError;
 
@@ -35,6 +36,14 @@ impl Enc {
     }
     pub(super) fn safety(&mut self, s: Safety) {
         self.u8(s as u8);
+    }
+    pub(super) fn kind(&mut self, k: Kind) {
+        self.u8(match k {
+            Kind::File => 0,
+            Kind::Dir => 1,
+            Kind::Symlink => 2,
+            Kind::Other => 3,
+        });
     }
 }
 
@@ -88,6 +97,15 @@ impl<'a> Dec<'a> {
     }
     pub(super) fn safety(&mut self) -> R<Safety> {
         Safety::from_u8(self.u8()?).ok_or(WireError::Malformed("safety"))
+    }
+    pub(super) fn kind(&mut self) -> R<Kind> {
+        Ok(match self.u8()? {
+            0 => Kind::File,
+            1 => Kind::Dir,
+            2 => Kind::Symlink,
+            3 => Kind::Other,
+            _ => return bad("kind"),
+        })
     }
     pub(super) fn zig(&mut self) -> R<i64> {
         let v = self.var()?;

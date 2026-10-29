@@ -8,8 +8,7 @@ expression: frame
    625.0 MiB  ████▉                      16.9%       1  notes.sqlite
 
 
-
-            ┌ Commands 44/44 ──────────────────────────────────────────────────────────┐
+            ┌ Commands 45/45 ──────────────────────────────────────────────────────────┐
             │ : ▌                                                                      │
             │ move up                                                    navigate  ↑ k │
             │ move down                                                  navigate  ↓ j │
@@ -35,6 +34,7 @@ expression: frame
             │ toggle disk usage like du (shared data once per file)         display  u │
             │ hide or show hidden files                                     display  e │
             │ rescan the selected directory                                     act  r │
+            │ scan into the selected mount (another filesystem)                 act  m │
             │ skip directories that are not responding                          act  x │
             │ mark or unmark, then move down                                act  Space │
             │ clear all marks                                                      act │

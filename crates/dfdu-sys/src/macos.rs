@@ -251,6 +251,69 @@ pub fn shares_extents(path: &std::path::Path) -> io::Result<bool> {
     Ok(name == b"apfs")
 }
 
+/// The text of a NUL-terminated `statfs` name field.
+fn field(chars: &[libc::c_char]) -> Vec<u8> {
+    chars
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c.cast_unsigned())
+        .collect()
+}
+
+/// The mounted filesystems as the kernel last recorded them (`getfsstat` with `MNT_NOWAIT`):
+/// mount point and type, in mount order. No filesystem is asked, so a network mount that does
+/// not answer is listed like any other.
+#[allow(unsafe_code)]
+pub(crate) fn mounted() -> io::Result<Vec<(std::path::PathBuf, String)>> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: a null buffer only asks for the number of mounted filesystems.
+    let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let too_many = || io::Error::other("too many mounted filesystems");
+    // Room for a few mounted in between.
+    let cap = usize::try_from(n).map_err(|_| too_many())? + 8;
+    let mut buf: Vec<libc::statfs> = Vec::with_capacity(cap);
+    let bytes =
+        libc::c_int::try_from(cap * std::mem::size_of::<libc::statfs>()).map_err(|_| too_many())?;
+    // SAFETY: `buf` has room for `cap` records, `bytes` in all; getfsstat writes at most that
+    // and returns how many records it wrote.
+    let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+    let Ok(got) = usize::try_from(got) else {
+        return Err(io::Error::last_os_error());
+    };
+    // SAFETY: the first `got` records (at most `cap`) were written.
+    unsafe { buf.set_len(got.min(cap)) };
+    Ok(buf
+        .iter()
+        .map(|s| {
+            let at = std::ffi::OsStr::from_bytes(&field(&s.f_mntonname)).to_owned();
+            let fstype = String::from_utf8_lossy(&field(&s.f_fstypename)).into_owned();
+            (at.into(), fstype)
+        })
+        .collect())
+}
+
+/// Size and use of the filesystem at `path` (`statfs`).
+#[allow(unsafe_code)]
+pub(crate) fn statfs_space(path: &std::path::Path) -> io::Result<crate::Space> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: `statfs` is plain data, valid when zeroed.
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `c` is NUL-terminated and `st` is valid for writes of a `statfs`.
+    if unsafe { libc::statfs(c.as_ptr(), &raw mut st) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let unit = u64::from(st.f_bsize);
+    Ok(crate::Space {
+        total: st.f_blocks.saturating_mul(unit),
+        used: st.f_blocks.saturating_sub(st.f_bfree).saturating_mul(unit),
+        available: st.f_bavail.saturating_mul(unit),
+    })
+}
+
 /// Reads [`clone_info`]'s buffer: both attributes must have been returned.
 fn parse_clone_info(buf: &[u8]) -> Option<CloneInfo> {
     // attribute_set_t: commonattr, volattr, dirattr, fileattr, forkattr.

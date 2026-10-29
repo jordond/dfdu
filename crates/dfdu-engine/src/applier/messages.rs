@@ -110,10 +110,7 @@ impl<B: Backend> Applier<B> {
         for &d in &stop[1..] {
             j.put(d, Slot::Dead);
         }
-        match &self.remote {
-            Some(l) => l.stop_dirs(job, stop.into_iter().collect()),
-            None => self.scan.stop_dirs(job, stop),
-        }
+        self.scanner_stop_dirs(job, stop);
         None
     }
 
@@ -133,10 +130,7 @@ impl<B: Backend> Applier<B> {
             for &d in &ids {
                 j.put(d, Slot::Dead);
             }
-            match &self.remote {
-                Some(l) => l.stop_dirs(c.job, ids),
-                None => self.scan.stop_dirs(c.job, ids),
-            }
+            self.scanner_stop_dirs(c.job, ids);
             return;
         }
         if !rec.mark_seq(c.seq) {
@@ -275,7 +269,7 @@ impl<B: Backend> Applier<B> {
         // Every chunk is in, so the subdirectories the classes name have nodes.
         if let Some(j) = self.jobs.get(&job) {
             for (d, c) in classes {
-                if let Some(cx) = j.get(d).and_then(|r| m.tree.resolve(r)) {
+                if let Some(cx) = j.live(d).and_then(|r| m.tree.resolve(r)) {
                     m.tree.set_class(cx, Some(c));
                 }
             }
@@ -308,7 +302,7 @@ impl<B: Backend> Applier<B> {
         let rec = dir_rec(&mut m.tree, ix);
         debug_assert!(!rec.listing_closed);
         rec.close(outcome);
-        let dir = rec.dir_id;
+        let dir = rec.dir_id.0;
         if rec.stalled {
             rec.stalled = false;
             if let Some(j) = self.jobs.get_mut(&job) {
@@ -348,7 +342,7 @@ impl<B: Backend> Applier<B> {
         }
         let Some(p) = m.tree.parent(ix) else { return };
         let Some(prec) = m.tree.dir(p) else { return };
-        if prec.job != job || prec.cut || prec.reported {
+        if prec.job.0 != job || prec.cut || prec.reported {
             return;
         }
         self.dec_pending(m, job, p);
@@ -407,10 +401,10 @@ fn add_subdirs(
         if marked {
             subdir_ix.push(cx);
         }
-        j.set(id, tree.node_ref(cx));
+        j.set_live(id, tree.node_ref(cx));
         let crec = dir_rec(tree, cx);
-        crec.job = c.job.0;
-        crec.dir_id = id.0;
+        crec.job = c.job;
+        crec.dir_id = id;
         if s.skip.is_some() {
             crec.state = DirState::Skipped;
             crec.close(DirState::Skipped);

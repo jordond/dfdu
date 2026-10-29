@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
+dfdu-sys.workspace = true
 dfdu-scan.workspace = true
 dfdu-rules.workspace = true
 dfdu-engine.workspace = true

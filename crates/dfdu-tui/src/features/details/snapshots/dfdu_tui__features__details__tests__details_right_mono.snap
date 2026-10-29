@@ -1,0 +1,24 @@
+---
+source: crates/dfdu-tui/src/features/details/tests.rs
+expression: out
+---
+ dfdu  /r                                                                                                 done in 00:00
+ 13 items · 80.6 KiB · 2 errors                                                                sort: size ↓  disk usage
+ !  78.6 KiB  ████████████████   97.6%      11  proj/  partly read: could not be╭ proj/ ───────────────────────────────╮
+     2.0 KiB  ▍                   2.4%       1  notes.txt                       │ /r/proj                              │
+                                                                                │ directory · incomplete               │
+                                                                                │ 78.6 KiB on disk · 11 items          │
+                                                                                │ 72.8 KiB apparent · 72.8 KiB like du │
+                                                                                │ 5.9 KiB also used outside the scan:  │
+                                                                                │ deleting it frees less               │
+                                                                                │ partly read: could not be read       │
+                                                                                │ 1 error below                        │
+                                                                                │ largest by disk usage                │
+                                                                                │ █████      48.8 KiB  big.iso         │
+                                                                                │ █▎         11.7 KiB  a.o             │
+                                                                                │ ▊           7.8 KiB  b.o             │
+                                                                                │ ▎           2.9 KiB  c.txt           │
+                                                                                │ ▏            1000 B  d.txt           │
+                                                                                ╰────────────────────────────── ↓ more ╯
+
+ ↑↓ move  → open  ← up  s n C M sort  Space mark  / filter  i details  ! errors  ? help  q quit

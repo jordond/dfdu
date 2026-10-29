@@ -17,8 +17,9 @@ use dfdu_engine::{
 use dfdu_rules::RuleSet;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
-    Backend, Budget, Clock, JobOptions, Limits, ScanMsg, Shared, Sink, StepResult, Storage, Worker,
+    Backend, Budget, Clock, JobOptions, Limits, ScanMsg, Shared, Sink, StepResult, Worker,
 };
+use dfdu_sys::Storage;
 use dfdu_tree::{ErrKind, Kind, NodeFlags, Tree};
 use parking_lot::Mutex;
 

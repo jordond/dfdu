@@ -13,10 +13,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use crate::app::keys::{self, ACTIONS, Action, Group};
+use crate::app::keys::{self, Action, Group};
 use crate::app::{App, Effect, Overlay};
-use crate::fuzzy::{Fuzzy, char_pos};
-use crate::input::{Edit, LineInput};
+use crate::input::fuzzy::{Fuzzy, char_pos};
+use crate::input::line::{Edit, LineInput};
 use crate::theme::Theme;
 
 /// State of the open palette, held in `Overlay::Palette`.
@@ -50,10 +50,10 @@ enum Run {
 }
 
 impl Palette {
-    /// Lists the actions and the themes that exist now.
-    fn new() -> Self {
-        let actions = ACTIONS
-            .iter()
+    /// Lists the actions the browser offers (less those that delete when it is `read_only`) and
+    /// the themes that exist now.
+    fn new(read_only: bool) -> Self {
+        let actions = keys::offered(read_only)
             .filter(|info| info.action != Action::Palette)
             .map(|info| Entry {
                 label: info.label.to_owned(),
@@ -117,7 +117,7 @@ fn group_name(g: Group) -> &'static str {
 
 /// Opens the palette with an empty query.
 pub fn open(app: &mut App) {
-    app.overlay = Overlay::Palette(Palette::new());
+    app.overlay = Overlay::Palette(Palette::new(app.read_only));
 }
 
 /// Typing searches; `↑`/`↓`/`PgUp`/`PgDn` move, `Enter` closes the palette and runs the entry,
@@ -248,6 +248,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     use super::*;
+    use crate::app::keys::ACTIONS;
     use crate::tests::{library_snap, press, render, render_buffer, style_at, text, typed};
     use crate::theme::ColorLevel;
     use dfdu_engine::SizeMode;
@@ -365,7 +366,7 @@ mod tests {
         app.key(press(KeyCode::Down), t0);
         assert_eq!(labels(&app)[1], "sort by name (again: reverse)");
         app.key(press(KeyCode::Enter), t0);
-        assert_eq!(app.sort.key, crate::order::SortKey::Name);
+        assert_eq!(app.sort.key, crate::state::order::SortKey::Name);
 
         // Rescan returns its effect to the run loop.
         app.key(press(KeyCode::Char(':')), t0);

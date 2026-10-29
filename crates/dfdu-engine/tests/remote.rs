@@ -422,3 +422,69 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
     // The agent ends once its output is gone.
     let _ = agent.join().unwrap();
 }
+
+/// A rule path that reaches its folder only through a link on the agent's disks
+/// (`home/.tool` leading to `data/tool`) matches where the link leads. The local side builds
+/// the rules from the agent's record of that link, never from its own disks, so the match is
+/// kept when the folder is rescanned, which classifies its root on the local side.
+#[cfg(unix)]
+#[test]
+fn a_rescan_keeps_a_match_made_through_a_link_on_the_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let top = dunce::canonicalize(tmp.path()).unwrap();
+    let data = top.join("data/tool");
+    fs::create_dir_all(data.join("cache/v1")).unwrap();
+    fs::write(data.join("cache/v1/blob"), [3u8; 3000]).unwrap();
+    fs::create_dir_all(top.join("home")).unwrap();
+    std::os::unix::fs::symlink(&data, top.join("home/.tool")).unwrap();
+    let at = top.join("home/.tool/cache");
+    let text = format!(
+        "schema_version = 1\n[[rule]]\nid = \"test.tool-cache\"\ncategory = \"dev.pkgcache\"\n\
+         name = \"Tool caches\"\nsafety = \"safe\"\nexplanation = \"x\"\nlost = \"y\"\n\
+         [rule.match]\nkind = \"dir\"\npaths = [\"{}\"]\n",
+        at.display()
+    );
+    let files = vec![(dfdu_rules::Source::File("/rules/tool.toml".into()), text)];
+    let (e, agent, class) = remote_with(
+        Some(RemoteRules {
+            files,
+            root: data.clone(),
+        }),
+        None,
+    );
+    let rules = class.as_ref().expect("rules agreed").rules.clone();
+    // Patterns are in lower case where paths compare ignoring it (macOS).
+    let there = data.join("cache").to_str().unwrap().to_owned();
+    let pats: Vec<String> = (rules.rules()[0].paths.iter())
+        .map(|g| String::from_utf8_lossy(g.pattern()).into_owned())
+        .collect();
+    assert!(
+        pats.iter().any(|p| p.eq_ignore_ascii_case(&there)),
+        "the local set follows the agent's link: {pats:?}"
+    );
+    e.send(Command::Scan {
+        path: data.clone(),
+        opts: JobOptions {
+            class,
+            ..JobOptions::default()
+        },
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
+    let cache = |e: &Engine<PortableBackend>| {
+        e.read(|m| {
+            let r = m.tree.roots().next().unwrap();
+            let c = m.tree.children(r).find(|&c| m.tree.name(c) == b"cache");
+            let c = c.expect("cache");
+            let id = m.tree.class(c).map(|k| rules.rule(k.rule).id.clone());
+            (m.tree.node_ref(c), id)
+        })
+    };
+    let (node, id) = cache(&e);
+    assert_eq!(id.as_deref(), Some("test.tool-cache"));
+    e.send(Command::Rescan { node });
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
+    assert_eq!(e.read(|m| m.status.fatal.clone()), None);
+    assert_eq!(cache(&e).1.as_deref(), Some("test.tool-cache"));
+    e.shutdown(Duration::from_secs(1));
+    agent.join().unwrap().unwrap();
+}

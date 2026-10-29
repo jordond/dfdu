@@ -17,8 +17,9 @@ use std::sync::atomic::{AtomicU64 as StdAtomicU64, AtomicUsize as StdAtomicUsize
 use dfdu_scan::sync::Sleepers;
 use dfdu_scan::{
     Backend, Batch, Block, Budget, Clock, DirId, DirStream, JobId, JobOptions, Limits,
-    ListingStatus, Raw, RawBlock, ScanMsg, Shared, Sink, StepResult, Storage, Worker,
+    ListingStatus, Raw, RawBlock, ScanMsg, Shared, Sink, StepResult, Worker,
 };
+use dfdu_sys::Storage;
 use dfdu_tree::{Kind, Meta};
 use loom::thread;
 

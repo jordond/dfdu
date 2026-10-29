@@ -174,7 +174,7 @@ fn a_reused_slot_has_no_class_or_protection() {
     t.set_class(d, Some(class));
     t.set_protection(root, true, false);
     t.set_protection(d, false, true);
-    assert_eq!(t.class_in_effect(f), Some((d, class)));
+    assert_eq!(t.class_in_effect(f, |_| false), Some((d, class)));
     assert!(t.is_protected(root) && !t.is_protected(f));
     t.detach(d);
     t.free_step(usize::MAX, |_| {});
@@ -276,9 +276,9 @@ fn errors_and_shared_bytes_survive_packing_and_slot_reuse() {
         );
         assert_eq!(t.raw_size(f), (1, a));
     }
-    t.add_home(files[0], 70, true);
+    t.add_shared(files[0], 70, true);
     t.set_measured(files[1], 9, false);
-    assert_eq!((t.home(files[0]), t.excl(files[1])), (70, 9));
+    assert_eq!((t.shared_here(files[0]), t.excl(files[1])), (70, 9));
     assert_eq!(t.own(files[0]).shared_out, 70);
     // Reused slots start clean.
     for &f in &files {
@@ -286,7 +286,7 @@ fn errors_and_shared_bytes_survive_packing_and_slot_reuse() {
     }
     t.free_step(usize::MAX, |_| {});
     let g = add_file(&mut t, root, "g", 1);
-    assert_eq!((t.error(g), t.home(g), t.excl(g)), (None, 0, 0));
+    assert_eq!((t.error(g), t.shared_here(g), t.excl(g)), (None, 0, 0));
     let h = add_file(&mut t, root, "h", 1);
     assert_eq!(
         t.raw_size(h),
@@ -314,4 +314,41 @@ fn hardlink_charging() {
     t.set_charged(b, true);
     assert_eq!(t.total(root).apparent, 10 + 100);
     t.check(&[]).unwrap();
+}
+
+/// The nearest match covers a node, unless a match above it stops the descent: then the
+/// highest such match does.
+#[test]
+fn the_nearest_match_is_in_effect_unless_one_above_stops_the_descent() {
+    let mut t = Tree::new();
+    let root = t.new_root(b"/r", &dir_meta(), true);
+    let outer = add_dir(&mut t, root, "outer");
+    let mid = add_dir(&mut t, outer, "mid");
+    let inner = add_dir(&mut t, mid, "inner");
+    let f = add_file(&mut t, inner, "f", 1);
+    let class = |rule| Class {
+        rule: crate::RuleIx(rule),
+        safety: crate::Safety::Safe,
+        degraded: None,
+        flags: 0,
+    };
+    t.set_class(outer, Some(class(1)));
+    t.set_class(inner, Some(class(2)));
+    let none = |_: &Class| false;
+    assert_eq!(t.class_in_effect(f, none), Some((inner, class(2))));
+    assert_eq!(t.class_in_effect(mid, none), Some((outer, class(1))));
+    assert_eq!(t.class_in_effect(root, none), None);
+    // Rule 1 stops the descent: it covers what is inside it, the nearer match too.
+    let one = |c: &Class| c.rule.0 == 1;
+    assert_eq!(t.class_in_effect(f, one), Some((outer, class(1))));
+    // Both stop it: the highest wins.
+    let all = |_: &Class| true;
+    assert_eq!(t.class_in_effect(f, all), Some((outer, class(1))));
+    // A match below that stops the descent does not lift one above that does not.
+    let two = |c: &Class| c.rule.0 == 2;
+    assert_eq!(t.class_in_effect(f, two), Some((inner, class(2))));
+    // One step down at a time gives the same.
+    let below = t.class_below(t.class_in_effect(mid, one), inner, one);
+    assert_eq!(below, Some((outer, class(1))));
+    assert_eq!(t.class_below(None, inner, one), Some((inner, class(2))));
 }

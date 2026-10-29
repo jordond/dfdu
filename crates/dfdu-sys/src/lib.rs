@@ -4,11 +4,17 @@
 //! `getattrlistbulk` argument struct is checked against the kernel's size or `libc`'s
 //! definitions.
 //!
-//! On other systems the functions report "not available" (`Ok(None)` or `Unsupported`).
+//! On other systems the functions report "not available": `Ok(None)` for lookups (`mount_id`,
+//! `subvol_info`), `Ok(false)` for yes/no questions (`is_btrfs`, `shares_extents`), and
+//! `Unsupported` where no answer can be given (`mount_table`).
 
 mod disks;
+mod mounted;
+mod profile;
 mod storage;
 pub use disks::{DISK_TIMEOUT, Disk, Space, disks};
+pub use mounted::{MountInfo, mounts_at};
+pub use profile::Profile;
 pub use storage::{Storage, storage, storage_in, storage_of_mount};
 
 #[cfg(target_os = "linux")]

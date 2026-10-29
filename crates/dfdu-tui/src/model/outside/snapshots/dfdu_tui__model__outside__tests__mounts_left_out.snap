@@ -1,0 +1,14 @@
+---
+source: crates/dfdu-tui/src/model/outside/tests.rs
+expression: frame
+---
+ dfdu  /r                                                                                                                  ⠋ scanning 00:00
+ 5 items · 1.0 MiB                                                                                                 sort: size ↓  disk usage
+     1.0 MiB  ████████████████████████   98.8%       1  src/
+ >   4.0 KiB  ▏                           0.4%       1  data/  other filesystem (zfs, 1.3 TiB used, not counted): m scans it
+ >   4.0 KiB  ▏                           0.4%       1  nas/  network filesystem (nfs4): m scans it
+ >   4.0 KiB  ▏                           0.4%       1  usb/  other filesystem: m scans it
+
+
+
+ ↑↓ move  → open  ← up  s n C M sort  S re-sort  Space mark  / filter  i details  ? help  q quit

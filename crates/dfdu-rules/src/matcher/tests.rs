@@ -303,11 +303,7 @@ fn path_rules_on_macos() {
             "homebrew.cache safe",
         ),
         ("/Users/u/.npm", "_cacache/", "npm.cache safe"),
-        (
-            "/Users/u/.cargo/registry",
-            "cache/",
-            "cargo.registry regenerable",
-        ),
+        ("/Users/u/.cargo", "registry/", "cargo.registry regenerable"),
         (
             "/Users/u/.gradle",
             "caches/",
@@ -514,6 +510,23 @@ fn unverified_path_rules_are_off_on_linux_but_name_rules_are_on() {
         "not verified anywhere yet"
     );
     assert!(mac.get("pip.cache").is_some());
+}
+
+/// Sets that match other paths have other fingerprints, though they number their rules alike:
+/// another home, or a link followed on one side only.
+#[test]
+fn fingerprints_cover_the_path_patterns() {
+    let home = |h: &str| builtin(&Env::with(Platform::Linux, &[("HOME", h)])).0;
+    assert_eq!(home("/home/u").fingerprint(), linux().fingerprint());
+    assert_ne!(home("/home/v").fingerprint(), linux().fingerprint());
+    let env = Env::with(Platform::Linux, &[("HOME", "/home/u")]);
+    let followed = [(
+        "/home/u/.cargo/registry".to_owned(),
+        "/mnt/data/cargo/registry".to_owned(),
+    )];
+    let linked = builtin(&env.clone().with_links(&followed)).0;
+    assert_eq!(linked.rules().len(), linux().rules().len());
+    assert_ne!(linked.fingerprint(), linux().fingerprint());
 }
 
 #[test]
@@ -747,4 +760,78 @@ broken_link = true
 fn more_rules_than_indices_panics() {
     let one = linux().rules()[0].clone();
     let _ = RuleSet::new(vec![one; MAX_RULES + 1], &Env::with(Platform::Linux, &[]));
+}
+
+/// Cargo tags `registry/` and `git/` with a CACHEDIR.TAG: the cargo rule matches those folders
+/// themselves and outranks the tag's rule there, which would otherwise stop the descent above
+/// anything deeper the cargo rule could match.
+#[test]
+fn cargo_registry_outranks_its_cachedir_tag() {
+    let set = mac();
+    let l = Listing {
+        path: "/Users/u/.cargo",
+        names: &["bin/", "registry/", "git/", "config.toml"],
+    };
+    for name in ["registry", "git"] {
+        assert_eq!(
+            hits(&set, &l, name, &[]),
+            ["cargo.registry regenerable", "generic.cachedir-tag safe"],
+            "{name}"
+        );
+    }
+    assert_eq!(hits(&set, &l, "bin", &[]), ["protected"]);
+    let (custom, _) = builtin(&Env::with(
+        Platform::MacOs,
+        &[("HOME", "/Users/u"), ("CARGO_HOME", "/opt/cargo")],
+    ));
+    let l = Listing {
+        path: "/opt/cargo",
+        names: &["registry/"],
+    };
+    assert_eq!(
+        classify(&custom, &l, "registry", &[]),
+        ["cargo.registry regenerable"]
+    );
+}
+
+/// npm's own dependencies, bundled with a Node.js distribution, are not a project's.
+#[test]
+fn node_modules_inside_a_global_install_are_not_offered() {
+    let set = linux();
+    for path in [
+        "/home/u/dot-gradle/nodejs/node-v24.16.0-linux-x64/lib/node_modules/npm",
+        "/home/u/.local/lib/node_modules/typescript/node_modules/x",
+    ] {
+        let l = Listing {
+            path,
+            names: &["package.json", "package-lock.json", "node_modules/"],
+        };
+        assert!(classify(&set, &l, "node_modules", &[]).is_empty(), "{path}");
+    }
+    // A project with `lib` in its path is still one.
+    let l = Listing {
+        path: "/home/u/dev/lib/site",
+        names: &["package.json", "package-lock.json", "node_modules/"],
+    };
+    assert_eq!(
+        classify(&set, &l, "node_modules", &[]),
+        ["node.node_modules regenerable"]
+    );
+}
+
+/// `JetBrains` Toolbox keeps its app next to the IDEs' cache folders.
+#[test]
+fn jetbrains_caches_leave_the_toolbox_alone() {
+    let set = mac();
+    let l = Listing {
+        path: "/Users/u/Library/Caches/JetBrains",
+        names: &["IntelliJIdea2025.2/", "Toolbox/", "Toolbox-CLI-dist/"],
+    };
+    assert_eq!(
+        classify(&set, &l, "IntelliJIdea2025.2", &[]),
+        ["jetbrains.caches regenerable"]
+    );
+    for name in ["Toolbox", "Toolbox-CLI-dist"] {
+        assert!(classify(&set, &l, name, &[]).is_empty(), "{name}");
+    }
 }

@@ -13,16 +13,18 @@ mod stage;
 mod verify;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use dfdu_rules::protected::Protected;
 use dfdu_tree::{ErrKind, Kind, NodeRef};
 use serde::{Deserialize, Serialize};
 
 pub use deleter::{DeleterHandle, STAGE_UNDO_WINDOW, spawn_deleter};
 pub use journal::{Journal, check_line, default_journal_dir};
-pub use native::{NativeReq, NativeRule, shown as shown_argv};
+pub use native::{NativeReq, NativeRule, shown_argv};
 pub use remove::{remove, remove_verified};
 pub use stage::rename_noreplace;
-pub use verify::{is_protected, verify};
+pub use verify::{Rejection, is_protected, verify};
 
 /// What the scan recorded about an item; deletion proceeds only if the filesystem still agrees.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -85,7 +87,7 @@ pub struct PlanItem {
     /// Disk usage of the item as scanned, for progress and reporting.
     pub bytes: u64,
     /// For a directory, what the scan saw in it, compared before it is deleted.
-    pub inside: std::sync::Arc<inside::Listings>,
+    pub inside: Arc<inside::Listings>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +97,9 @@ pub struct Plan {
     /// Items must be strictly inside this directory.
     pub scan_root: PathBuf,
     pub items: Vec<PlanItem>,
+    /// The protected paths of the rule set the tree was classified with, refused on top of
+    /// this process's own ([`is_protected`]). Not sent to an agent, which uses its own.
+    pub protected: Option<Arc<Protected>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,7 +110,6 @@ pub enum Refusal {
     MountPoint,
     /// A filesystem is mounted inside the directory; moving it would move the mount.
     ContainsMount(PathBuf),
-    ReadOnly,
     /// Moving to the trash would copy the item to another filesystem (Linux home trash).
     TrashCrossesFilesystems,
     /// The item is in another btrfs subvolume than the trash; a rename between subvolumes is
@@ -193,7 +197,6 @@ impl std::fmt::Display for Refusal {
             Refusal::ContainsMount(m) => {
                 return write!(f, "refused: a filesystem is mounted at {}", m.display());
             }
-            Refusal::ReadOnly => "refused: read-only mode",
             Refusal::TrashCrossesFilesystems => {
                 "refused for trash: the trash is on another filesystem (it would be copied)"
             }

@@ -6,18 +6,12 @@ use std::process::ExitCode;
 
 use clap::Args;
 use dfdu_engine::{EngineOptions, Model};
-use dfdu_scan::JobOptions;
 use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
 use dfdu_tree::{Ix, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::report::{ReportFormat, age_arg, size_arg};
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
-
-/// The key under which scans are compared ([`history::options_key`]).
-pub fn options_key(job: &JobOptions, measured: bool) -> String {
-    history::options_key(job.cross_mounts, job.network, measured)
-}
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.
 pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
@@ -41,11 +35,6 @@ fn open() -> Result<History, ExitCode> {
         eprintln!("dfdu: history {}: {e}", path.display());
         ExitCode::from(1)
     })
-}
-
-/// `YYYY-MM-DD HH:MM UTC`.
-pub fn date(secs: i64) -> String {
-    dfdu_store::history::date_time(secs)
 }
 
 #[derive(Args)]
@@ -84,7 +73,7 @@ pub fn list(args: HistoryArgs) -> ExitCode {
             writeln!(
                 w,
                 "{}  {:>10}  {:>9} entries{}  {}",
-                date(s.finished_at),
+                history::date_time(s.finished_at),
                 dfdu_engine::human(s.total.disk),
                 s.total.entries,
                 if s.complete { "" } else { " (partial)" },
@@ -211,7 +200,7 @@ fn scan_and_base(args: &DiffArgs) -> Result<(Side, Side, PathBuf, usize, bool), 
         .cloned()
         .unwrap_or_else(|| PathBuf::from("."));
     let h = open()?;
-    let key = options_key(
+    let key = history::options_key(
         &args.mounts.job(),
         EngineOptions::default().measure_workers > 0,
     );
@@ -290,7 +279,7 @@ fn shown_path(root: &Path, rel: &[u8]) -> String {
 
 fn label(s: &Side) -> String {
     match s.at {
-        Some(at) => format!("{} of {}", s.source, date(at)),
+        Some(at) => format!("{} of {}", s.source, history::date_time(at)),
         None => s.source.clone(),
     }
 }
@@ -396,17 +385,4 @@ fn print_json(
             .into(),
     );
     js::print(doc)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dates_are_utc() {
-        assert_eq!(date(0), "1970-01-01 00:00 UTC");
-        assert_eq!(date(1_793_157_288), "2026-10-28 03:14 UTC");
-        assert_eq!(date(951_782_400), "2000-02-29 00:00 UTC");
-        assert_eq!(date(-86_400), "1969-12-31 00:00 UTC");
-    }
 }

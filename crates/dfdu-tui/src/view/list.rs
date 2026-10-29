@@ -9,9 +9,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
-use crate::snapshot::{EntryData, Mark};
+use crate::model::snapshot::{EntryData, Mark};
+use crate::model::{growth, outside};
+use crate::state::{filter, marks, motion};
 use crate::theme::{Theme, bar, count, human, percent, ratio, spinner};
-use crate::{filter, growth, marks, motion};
 
 fn bar_width(width: u16) -> usize {
     match width {
@@ -100,20 +101,18 @@ fn mark_glyph(e: &EntryData, t: &Theme, frame: u64) -> (char, Style) {
     }
 }
 
-/// What the row says about `mark` after the name, if anything.
-fn mark_note(mark: Mark, t: &Theme) -> Option<(&'static str, Style)> {
-    match mark {
-        Mark::Stalled => Some(("  not responding", t.status_warn)),
-        Mark::Rescanning => Some(("  rescanning", t.fg_dim)),
-        Mark::OtherFs => Some(("  other filesystem", t.fg_dim)),
-        Mark::DupMount => Some(("  mounted again: counted at its other mount", t.fg_dim)),
-        Mark::Network => Some((
-            "  network filesystem: start with --network to scan",
-            t.fg_dim,
-        )),
-        Mark::Kernel => Some(("  kernel filesystem", t.fg_dim)),
-        Mark::Incomplete => Some(("  incomplete: r to rescan", t.status_warn)),
-        Mark::Deleting => Some(("  deleting", t.status_warn)),
+/// What the row says about its mark after the name, if anything.
+fn mark_note(app: &App, e: &EntryData, t: &Theme) -> Option<(String, Style)> {
+    let note = |s: &str, style| Some((s.to_owned(), style));
+    match e.mark {
+        Mark::Stalled => note("  not responding", t.status_warn),
+        Mark::Rescanning => note("  rescanning", t.fg_dim),
+        // Its type and used space; what it uses is not part of the sizes here.
+        Mark::OtherFs | Mark::Network => Some((outside::row_note(app, e), t.fg_dim)),
+        Mark::DupMount => note("  mounted again: counted at its other mount", t.fg_dim),
+        Mark::Kernel => note("  kernel filesystem", t.fg_dim),
+        Mark::Incomplete => note("  incomplete: r to rescan", t.status_warn),
+        Mark::Deleting => note("  deleting", t.status_warn),
         _ => None,
     }
 }
@@ -179,7 +178,7 @@ fn entry_line(
     if let Some(r) = motion::rank(app, e) {
         spans.push(r);
     }
-    let note = mark_note(e.mark, t);
+    let note = mark_note(app, e, t);
     if let Some(p) = &e.problem {
         spans.push(Span::styled(format!("  {p}"), t.status_error));
     } else if e.mark == Mark::Error {
@@ -242,7 +241,7 @@ mod tests {
 
     use super::*;
     use crate::app::Overlay;
-    use crate::snapshot::{EntryData, Snapshot, test_entry};
+    use crate::model::snapshot::{EntryData, Snapshot, test_entry};
     use crate::tests::{press, snap_without_totals};
     use crate::theme::Theme;
 

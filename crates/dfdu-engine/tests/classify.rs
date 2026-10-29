@@ -158,12 +158,12 @@ fn check_project(m: &Model) {
     let classified = m.tree.classes().count();
     assert_eq!(classified, 5, "{classified} classified nodes");
     // What a node inside a match counts as.
-    let (top, c) = m
-        .tree
-        .class_in_effect(find(m, "rust/target/debug/app"))
+    let rules = m.rules.as_ref().expect("rules");
+    let (top, c) = rules
+        .class_in_effect(&m.tree, find(m, "rust/target/debug/app"))
         .expect("in effect");
     assert_eq!(top, find(m, "rust/target"));
-    assert_eq!(m.rules.as_ref().unwrap().rule(c.rule).id, "rust.target");
+    assert_eq!(rules.rule(c.rule).id, "rust.target");
 }
 
 #[test]

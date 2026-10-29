@@ -59,10 +59,10 @@ pub fn print_tree(
             continue;
         }
         // Data the entries share is counted at the directory.
-        if mode == SizeMode::Disk && filter.is_none() && tree.home(ix) > 0 {
+        if mode == SizeMode::Disk && filter.is_none() && tree.shared_here(ix) > 0 {
             outln!(
                 "{:>10}  {}(shared between entries)",
-                dfdu_engine::human(tree.home(ix)),
+                dfdu_engine::human(tree.shared_here(ix)),
                 "  ".repeat(d + 1)
             );
         }
@@ -230,9 +230,10 @@ pub fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
             dfdu_engine::human(t.referenced)
         );
     }
-    if let Some((name, ratio)) = m.status.profile
+    if let Some((profile, ratio)) = m.status.profile
         && (ratio - 1.0).abs() > f64::EPSILON
     {
+        let name = profile.name();
         eprintln!("btrfs data profile {name}: each byte is stored {ratio:.1} times");
     }
     if m.status.compressed_upper_bound {

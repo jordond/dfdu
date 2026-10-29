@@ -22,6 +22,7 @@
 use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Write};
 
+use dfdu_scan::journal::JournalPosition;
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
 use crate::ImportError;
@@ -59,24 +60,8 @@ pub struct Header {
     pub cross_mounts: bool,
     pub network: bool,
     /// Where the change journal of the root's volume stood when the scan started, so a resume
-    /// can rescan only what changed since.
-    pub journal: Option<Journal>,
-}
-
-/// A position in a volume's change journal (`FSEvents` on macOS, the USN journal on Windows,
-/// a btrfs subvolume's generation on Linux).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Journal {
-    /// The journal's identity (the `FSEvents` store UUID; the USN journal id and volume serial;
-    /// the btrfs subvolume uuid):
-    /// positions in another are meaningless.
-    pub volume: [u8; 16],
-    /// The last event before the scan (on btrfs, the subvolume's generation).
-    pub event_id: u64,
-    /// Seconds since the Unix epoch when the position was read, 0 when not known (format 2).
-    /// btrfs resumes count an inode as changed only if its ctime is not older, so atime
-    /// updates (the scan's own among them) do not.
-    pub time: u64,
+    /// can rescan only what changed since. Its `time` is 0 in formats 1 and 2.
+    pub journal: Option<JournalPosition>,
 }
 
 const OPT_JOURNAL: u64 = 4;
@@ -630,7 +615,7 @@ fn read_header(
     let opts = rec.u()?;
     let journal = if version != VERSION_1 && opts & OPT_JOURNAL != 0 {
         let volume = rec.bytes(16)?;
-        Some(Journal {
+        Some(JournalPosition {
             volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
             event_id: rec.u()?,
             time: if version == VERSION { rec.u()? } else { 0 },

@@ -12,14 +12,13 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
+dfdu-rules.workspace = true
+dfdu-scan.workspace = true
 ruzstd.workspace = true
 crc32c.workspace = true
 rusqlite.workspace = true
-etcetera.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 dfdu-engine.workspace = true
-dfdu-scan.workspace = true
 dunce.workspace = true
-dfdu-rules.workspace = true

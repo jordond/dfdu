@@ -7,8 +7,10 @@
 //! (`child`, `marker`) are checked when its listing arrives ([`RuleSet::check_inside`]).
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
 
+pub mod dirs;
 mod glob;
 pub mod hash;
+pub mod linked;
 pub mod load;
 mod matcher;
 pub mod protected;
@@ -17,6 +19,7 @@ pub mod vars;
 
 pub use dfdu_tree::{RuleIx, Safety};
 pub use glob::{Glob, GlobError};
+pub use linked::{Linked, linked_outside};
 pub use load::{LoadError, builtin, load, load_from, sources};
 pub use matcher::{
     Candidate, Dir, Hit, Inside, MAX_RULES, Reach, ReadMarker, RuleSet, Stat, Verdict, stem,
@@ -63,26 +66,36 @@ impl Platform {
 }
 
 /// How a match is cleaned up.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug)]
 pub enum Action {
     Delete,
     Trash,
-    /// The owning tool's own command (`rule.native`).
-    Native,
+    /// The owning tool's own commands (`rule.native`); loading checks that `command` is not
+    /// empty.
+    Native(Box<schema::NativeDef>),
     /// Reported with its size only.
     Report,
 }
 
 impl Action {
+    /// Its name in rule files.
     #[must_use]
-    pub fn parse(s: &str) -> Option<Action> {
-        Some(match s {
-            "delete" => Action::Delete,
-            "trash" => Action::Trash,
-            "native" => Action::Native,
-            "report" => Action::Report,
-            _ => return None,
-        })
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Action::Delete => "delete",
+            Action::Trash => "trash",
+            Action::Native(_) => "native",
+            Action::Report => "report",
+        }
+    }
+
+    /// The native commands of a `native` action.
+    #[must_use]
+    pub fn native(&self) -> Option<&schema::NativeDef> {
+        match self {
+            Action::Native(n) => Some(n),
+            _ => None,
+        }
     }
 }
 
@@ -233,8 +246,6 @@ pub struct Degrade {
 pub struct Guard {
     pub not_running: Vec<String>,
     pub not_vcs_tracked: bool,
-    pub keep_newest: u32,
-    pub group_by: String,
 }
 
 /// Where a rule came from.
@@ -286,7 +297,6 @@ pub struct Rule {
     pub broken_link: bool,
     pub guard: Guard,
     pub degrade: Vec<Degrade>,
-    pub native: Option<schema::NativeDef>,
     pub source: Source,
 }
 

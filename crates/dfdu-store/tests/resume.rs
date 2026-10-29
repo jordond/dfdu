@@ -367,11 +367,7 @@ fn btrfs_generations_tell_what_changed() {
     assert!(st.success());
     // Everything above has a ctime more than a second before the position's time.
     std::thread::sleep(Duration::from_millis(2100));
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let Some((uuid, generation)) = dfdu_engine::journal_position(&root) else {
+    let Some(at) = dfdu_engine::journal_position(&root) else {
         // Not root: no position.
         btrfs(&["subvolume", "delete", sv.to_str().unwrap()]);
         fs::remove_dir_all(&root).unwrap();
@@ -389,15 +385,12 @@ fn btrfs_generations_tell_what_changed() {
     drop(grow);
     fs::write(sv.join("added"), vec![1u8; 30_000]).unwrap();
 
-    let changed = dfdu_engine::changed_since(&root, uuid, generation, time).expect("can tell");
+    let changed = dfdu_engine::changed_since(&root, at).expect("can tell");
     let want: Vec<PathBuf> = vec!["a".into(), "a/b".into()];
     assert_eq!(changed, want);
-    let mut other = uuid;
-    other[0] ^= 0xff;
-    assert_eq!(
-        dfdu_engine::changed_since(&root, other, generation, time),
-        None
-    );
+    let mut other = at;
+    other.volume[0] ^= 0xff;
+    assert_eq!(dfdu_engine::changed_since(&root, other), None);
 
     let loaded = snapshot::read(&snap[..], &Limits::default()).unwrap();
     let e = engine();

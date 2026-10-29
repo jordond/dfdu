@@ -4,7 +4,8 @@
 //! `{program_files}` has two values on Linux and Windows; a pattern with it expands to one
 //! pattern per value.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 
 use crate::Platform;
 
@@ -33,6 +34,22 @@ impl std::error::Error for ExpandError {}
 pub struct Env {
     pub platform: Platform,
     vars: HashMap<String, String>,
+    /// Whether path patterns also match where a symbolic link in their fixed part leads
+    /// ([`Env::link_targets`]).
+    links: Links,
+}
+
+/// Where [`Env::link_targets`] learns where links lead.
+#[derive(Clone, Debug)]
+enum Links {
+    /// Patterns are taken as they are.
+    Off,
+    /// From this machine's disks; every pattern that leads elsewhere is recorded, by
+    /// pattern, for [`Env::links_followed`].
+    Resolve(Arc<Mutex<BTreeMap<String, String>>>),
+    /// From another machine's record of them ([`Env::with_links`]), never from this one's
+    /// disks.
+    Given(Arc<BTreeMap<String, String>>),
 }
 
 impl Env {
@@ -52,6 +69,11 @@ impl Env {
         Env {
             platform: Platform::current(),
             vars,
+            links: if cfg!(unix) {
+                Links::Resolve(Arc::default())
+            } else {
+                Links::Off
+            },
         }
     }
 
@@ -64,7 +86,86 @@ impl Env {
                 .iter()
                 .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect(),
+            links: Links::Off,
         }
+    }
+
+    /// This environment with path patterns following the links on this machine's disks, as
+    /// [`Env::current`] does.
+    #[must_use]
+    pub fn resolving_links(mut self) -> Env {
+        self.links = Links::Resolve(Arc::default());
+        self
+    }
+
+    /// This environment with path patterns leading where `followed` (another machine's
+    /// [`Env::links_followed`]) says, and nowhere else: links on this machine's disks are
+    /// never looked at. A remote agent's rules, rebuilt on the local side, so match alike.
+    #[must_use]
+    pub fn with_links(mut self, followed: &[(String, String)]) -> Env {
+        self.links = Links::Given(Arc::new(followed.iter().cloned().collect()));
+        self
+    }
+
+    /// The path patterns that led elsewhere through a link so far, with where they lead, in
+    /// pattern order: what [`Env::with_links`] takes to expand them the same way.
+    #[must_use]
+    pub fn links_followed(&self) -> Vec<(String, String)> {
+        match &self.links {
+            Links::Off => Vec::new(),
+            Links::Resolve(seen) => seen
+                .lock()
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default(),
+            Links::Given(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        }
+    }
+
+    /// The expanded path pattern `pattern`, and, when a symbolic link in its fixed leading
+    /// part (before the first wildcard) leads elsewhere, the pattern there. The scan does not
+    /// follow links, so a tool's folder that is one (`~/.gradle` to `/mnt/data/gradle`) is
+    /// only seen by scanning where it leads, and is matched there.
+    #[must_use]
+    pub fn link_targets(&self, pattern: String) -> Vec<String> {
+        let seen = match &self.links {
+            Links::Off => return vec![pattern],
+            Links::Given(m) => {
+                let there = m.get(&pattern).cloned();
+                return std::iter::once(pattern).chain(there).collect();
+            }
+            Links::Resolve(seen) => seen,
+        };
+        if !pattern.starts_with('/') {
+            return vec![pattern];
+        }
+        let fixed = match pattern.find(['*', '?']) {
+            Some(w) => &pattern[..pattern[..w].rfind('/').unwrap_or(0)],
+            None => pattern.as_str(),
+        };
+        // The longest part of it that is there.
+        let mut have = fixed;
+        let real = loop {
+            if have.is_empty() {
+                return vec![pattern];
+            }
+            if let Ok(p) = std::fs::canonicalize(have) {
+                break slashes(&p.to_string_lossy());
+            }
+            have = &have[..have.rfind('/').unwrap_or(0)];
+        };
+        let same = if crate::glob::platform_folds_case(self.platform) {
+            real.eq_ignore_ascii_case(have)
+        } else {
+            real == have
+        };
+        if same || real.is_empty() {
+            return vec![pattern];
+        }
+        let there = format!("{real}{}", &pattern[have.len()..]);
+        if let Ok(mut seen) = seen.lock() {
+            seen.insert(pattern.clone(), there.clone());
+        }
+        vec![pattern, there]
     }
 
     /// The variables rules written as `texts` can read here: the ones behind the named
@@ -334,5 +435,62 @@ mod tests {
             Env::with(Platform::Linux, &[]).expand("{home}/x").unwrap(),
             NOTHING
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_targets_follow_links_in_the_fixed_part() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let r = root.to_str().unwrap();
+        std::fs::create_dir_all(root.join("data/avd")).unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        std::os::unix::fs::symlink(root.join("data"), root.join("home/.android")).unwrap();
+        let e = Env::with(Platform::Linux, &[]).resolving_links();
+        // Through the link, also when what follows it is not there (yet).
+        let p = format!("{r}/home/.android/avd/*.avd");
+        assert_eq!(
+            e.link_targets(p.clone()),
+            [p, format!("{r}/data/avd/*.avd")]
+        );
+        let p = format!("{r}/home/.android/nope/x");
+        assert_eq!(e.link_targets(p.clone()), [p, format!("{r}/data/nope/x")]);
+        // No link, a pattern that is not anchored, or links not followed: as it is.
+        let p = format!("{r}/home/x/**");
+        assert_eq!(e.link_targets(p.clone()), [p]);
+        assert_eq!(e.link_targets("**/lib".into()), ["**/lib"]);
+        let p = format!("{r}/home/.android/avd");
+        assert_eq!(Env::with(Platform::Linux, &[]).link_targets(p.clone()), [p]);
+    }
+
+    /// What one machine followed, another expands alike without looking at its own disks.
+    #[cfg(unix)]
+    #[test]
+    fn links_followed_expand_alike_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let r = root.to_str().unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::os::unix::fs::symlink(root.join("data"), root.join("tool")).unwrap();
+        let here = Env::with(Platform::Linux, &[]).resolving_links();
+        let p = format!("{r}/tool/cache");
+        let both = here.link_targets(p.clone());
+        assert_eq!(both, [p.clone(), format!("{r}/data/cache")]);
+        assert_eq!(
+            here.link_targets(format!("{r}/plain")),
+            [format!("{r}/plain")]
+        );
+        let followed = here.links_followed();
+        assert_eq!(followed, [(p.clone(), format!("{r}/data/cache"))]);
+        // The link is gone; the record still leads where it did.
+        std::fs::remove_file(root.join("tool")).unwrap();
+        let there = Env::with(Platform::Linux, &[]).with_links(&followed);
+        assert_eq!(there.link_targets(p.clone()), both);
+        assert_eq!(
+            there.link_targets(format!("{r}/plain")),
+            [format!("{r}/plain")]
+        );
+        assert_eq!(there.links_followed(), followed);
+        assert_eq!(Env::with(Platform::Linux, &[]).links_followed(), []);
     }
 }

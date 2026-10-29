@@ -4,7 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
-use dfdu_scan::{FsClass, Storage};
+use dfdu_sys::{FsClass, Storage};
 use dfdu_tree::{Kind, Meta, Subvol};
 use rand::rngs::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
@@ -90,6 +90,27 @@ pub struct SpecNode {
     pub unmeasurable: bool,
     /// What reading the file gives (rule markers such as CACHEDIR.TAG).
     pub content: Vec<u8>,
+}
+
+impl SpecNode {
+    /// An entry with no children, faults, mounts or contents, on unknown storage.
+    #[must_use]
+    pub fn new(name: Vec<u8>, meta: Meta) -> SpecNode {
+        SpecNode {
+            name,
+            meta,
+            children: vec![],
+            fault: Fault::None,
+            vanished: false,
+            subvol: None,
+            dup_mount: false,
+            fs_class: None,
+            storage: Storage::Unknown,
+            pieces: vec![],
+            unmeasurable: false,
+            content: vec![],
+        }
+    }
 }
 
 /// One extent of a simulated file. Compressed extents are identified by
@@ -247,33 +268,24 @@ impl Spec {
         // The root filesystem shares extents in most runs; other mounts in some.
         let mut dev_fs: HashMap<u64, (u32, bool)> =
             HashMap::from([(1, (0, cfg.extents && rng.chance(800)))]);
+        let root = Meta {
+            kind: Kind::Dir,
+            apparent: 4096,
+            alloc: 4096,
+            mtime: 1,
+            dev: 1,
+            ino,
+            nlink: 2,
+            mount: u64::from(cfg.mount_ids),
+        };
         let mut nodes = vec![SpecNode {
-            name: ROOT_NAME.as_bytes().to_vec(),
-            meta: Meta {
-                kind: Kind::Dir,
-                apparent: 4096,
-                alloc: 4096,
-                mtime: 1,
-                dev: 1,
-                ino,
-                nlink: 2,
-                mount: u64::from(cfg.mount_ids),
-            },
-            children: vec![],
-            fault: Fault::None,
-            vanished: false,
-            subvol: None,
-            dup_mount: false,
-            fs_class: None,
             storage: [
                 Storage::Solid,
                 Storage::Rotational,
                 Storage::Network,
                 Storage::Unknown,
             ][rng.index(4)],
-            pieces: vec![],
-            unmeasurable: false,
-            content: vec![],
+            ..SpecNode::new(ROOT_NAME.as_bytes().to_vec(), root)
         }];
         let mut queue = VecDeque::from([(ROOT, 0u32)]);
         while let Some((d, depth)) = queue.pop_front() {
@@ -330,28 +342,21 @@ impl Spec {
                 };
                 let id = id32(nodes.len());
                 kids.push(id);
+                let meta = Meta {
+                    kind: Kind::Dir,
+                    apparent: 4096,
+                    alloc: 4096,
+                    mtime: 1,
+                    dev: cdev,
+                    ino: cino,
+                    nlink: 2,
+                    mount: cmount,
+                };
                 nodes.push(SpecNode {
-                    name: pick_name(rng, cfg, DIR_NAMES, "d", i),
-                    meta: Meta {
-                        kind: Kind::Dir,
-                        apparent: 4096,
-                        alloc: 4096,
-                        mtime: 1,
-                        dev: cdev,
-                        ino: cino,
-                        nlink: 2,
-                        mount: cmount,
-                    },
-                    children: vec![],
-                    fault: Fault::None,
-                    vanished: false,
                     subvol,
-                    dup_mount: false,
                     fs_class,
                     storage,
-                    pieces: vec![],
-                    unmeasurable: false,
-                    content: vec![],
+                    ..SpecNode::new(pick_name(rng, cfg, DIR_NAMES, "d", i), meta)
                 });
                 queue.push_back((id, depth + 1));
             }
@@ -370,28 +375,22 @@ impl Spec {
                     b"CACHEDIR.TAG" => b"Signature: not this one".to_vec(),
                     _ => vec![],
                 };
+                let meta = Meta {
+                    kind: Kind::File,
+                    apparent: size,
+                    alloc,
+                    mtime: 1,
+                    dev,
+                    ino,
+                    nlink: 1,
+                    mount: 0,
+                };
+                // Fields are evaluated in the order written: `vanished` draws first.
                 nodes.push(SpecNode {
-                    name,
-                    meta: Meta {
-                        kind: Kind::File,
-                        apparent: size,
-                        alloc,
-                        mtime: 1,
-                        dev,
-                        ino,
-                        nlink: 1,
-                        mount: 0,
-                    },
-                    children: vec![],
-                    fault: Fault::None,
                     vanished: cfg.faults && rng.chance(30),
-                    subvol: None,
-                    dup_mount: false,
-                    fs_class: None,
-                    storage: Storage::Unknown,
-                    pieces: vec![],
                     unmeasurable: cfg.faults && rng.chance(30),
                     content,
+                    ..SpecNode::new(name, meta)
                 });
             }
             nodes[d as usize].children = kids;
@@ -539,29 +538,18 @@ impl SpecBuilder {
 
     fn push(&mut self, name: &str, kind: Kind, size: u64) -> u32 {
         self.ino += 1;
-        self.nodes.push(SpecNode {
-            name: name.as_bytes().to_vec(),
-            meta: Meta {
-                kind,
-                apparent: size,
-                alloc: size.div_ceil(4096) * 4096,
-                mtime: 1,
-                dev: 1,
-                ino: self.ino,
-                nlink: if kind == Kind::Dir { 2 } else { 1 },
-                mount: 1,
-            },
-            children: vec![],
-            fault: Fault::None,
-            vanished: false,
-            subvol: None,
-            dup_mount: false,
-            fs_class: None,
-            storage: Storage::Unknown,
-            pieces: vec![],
-            unmeasurable: false,
-            content: vec![],
-        });
+        let meta = Meta {
+            kind,
+            apparent: size,
+            alloc: size.div_ceil(4096) * 4096,
+            mtime: 1,
+            dev: 1,
+            ino: self.ino,
+            nlink: if kind == Kind::Dir { 2 } else { 1 },
+            mount: 1,
+        };
+        self.nodes
+            .push(SpecNode::new(name.as_bytes().to_vec(), meta));
         id32(self.nodes.len() - 1)
     }
 

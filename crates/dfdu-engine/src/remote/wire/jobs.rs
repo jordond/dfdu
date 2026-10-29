@@ -10,7 +10,7 @@ use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use dfdu_clean::inside::{Listing, Listings};
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal};
 use dfdu_rules::RuleSet;
-use dfdu_tree::{Kind, NodeRef};
+use dfdu_tree::NodeRef;
 
 use super::codec::{Dec, Enc, R, bad};
 use super::scan::{dec_err, enc_err};
@@ -66,7 +66,7 @@ pub(super) fn dec_check_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<CheckReq>
             let rule = d.rule()?;
             match rules
                 .and_then(|r| r.rules().get(usize::from(rule.0)))
-                .and_then(|r| r.native.as_ref())
+                .and_then(|r| r.action.native())
                 .filter(|n| !n.size_command.is_empty())
             {
                 Some(n) => Ok(CheckReq::NativeSize {
@@ -259,25 +259,6 @@ fn dec_path(d: &mut Dec) -> R<PathBuf> {
     Ok(PathBuf::from(dfdu_tree::name_os(d.bytes()?).into_owned()))
 }
 
-fn enc_kind(e: &mut Enc, k: Kind) {
-    e.u8(match k {
-        Kind::File => 0,
-        Kind::Dir => 1,
-        Kind::Symlink => 2,
-        Kind::Other => 3,
-    });
-}
-
-fn dec_kind(d: &mut Dec) -> R<Kind> {
-    Ok(match d.u8()? {
-        0 => Kind::File,
-        1 => Kind::Dir,
-        2 => Kind::Symlink,
-        3 => Kind::Other,
-        _ => return bad("kind"),
-    })
-}
-
 fn enc_result<T>(e: &mut Enc, r: &Result<T, String>, ok: impl FnOnce(&mut Enc, &T)) {
     match r {
         Ok(v) => {
@@ -317,7 +298,7 @@ pub(super) fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
                 let id = &it.identity;
                 e.var(id.dev);
                 e.var(id.ino);
-                enc_kind(e, id.kind);
+                e.kind(id.kind);
                 e.var(id.apparent);
                 e.zig(id.mtime);
                 e.var(it.bytes);
@@ -332,7 +313,7 @@ pub(super) fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
                     for &(h, ino, k) in &l.entries {
                         e.0.extend_from_slice(&h.to_le_bytes());
                         e.var(ino);
-                        enc_kind(e, k);
+                        e.kind(k);
                     }
                 }
             }
@@ -382,7 +363,7 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
                 let identity = Identity {
                     dev: d.var()?,
                     ino: d.var()?,
-                    kind: dec_kind(d)?,
+                    kind: d.kind()?,
                     apparent: d.var()?,
                     mtime: d.zig()?,
                 };
@@ -396,7 +377,7 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
                     let mut entries = Vec::with_capacity(m);
                     for _ in 0..m {
                         let h = d.u64_le()?;
-                        entries.push((h, d.var()?, dec_kind(d)?));
+                        entries.push((h, d.var()?, d.kind()?));
                     }
                     if inside.insert(rel, Listing { ino, entries }).is_some() {
                         return bad("a directory listed twice");
@@ -415,6 +396,7 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
                 mode,
                 scan_root,
                 items,
+                protected: None,
             })
         }
         1 => DeleterReq::Undo { plan: d.var()? },
@@ -453,7 +435,6 @@ fn enc_refusal(e: &mut Enc, r: &Refusal) {
             e.u8(4);
             enc_path(e, p);
         }
-        Refusal::ReadOnly => e.u8(5),
         Refusal::TrashCrossesFilesystems => e.u8(6),
         Refusal::TrashOtherSubvolume(p) => {
             e.u8(7);
@@ -470,7 +451,7 @@ fn dec_refusal(d: &mut Dec) -> R<Refusal> {
         2 => Refusal::ScanRoot,
         3 => Refusal::MountPoint,
         4 => Refusal::ContainsMount(dec_path(d)?),
-        5 => Refusal::ReadOnly,
+        // 5 was a read-only refusal, which no deleter ever sent.
         6 => Refusal::TrashCrossesFilesystems,
         7 => Refusal::TrashOtherSubvolume(dec_path(d)?),
         8 => Refusal::NoJournal,

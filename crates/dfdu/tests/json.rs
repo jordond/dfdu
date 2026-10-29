@@ -286,6 +286,81 @@ fn native_commands_are_shown_for_their_item() {
     );
 }
 
+/// A rule location behind a link that leads out of the scan is named in the report's table
+/// footer and JSON, with where to run the report instead, and in the scan's JSON and NDJSON
+/// summary; the scan does not follow the link.
+#[test]
+#[cfg(unix)]
+fn rule_locations_behind_links_out_of_the_scan_are_named() {
+    let tmp = tempfile::tempdir().unwrap();
+    let top = dunce::canonicalize(tmp.path()).unwrap();
+    let (home, data) = (top.join("home"), top.join("data/tool"));
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(data.join("cache/v1")).unwrap();
+    fs::write(data.join("cache/v1/blob"), vec![3u8; 30_000]).unwrap();
+    std::os::unix::fs::symlink(&data, home.join(".tool")).unwrap();
+    let rules = top.join("config/dfdu/rules");
+    fs::create_dir_all(&rules).unwrap();
+    fs::write(
+        rules.join("tool.toml"),
+        "schema_version = 1\n[[rule]]\nid = \"test.tool-cache\"\ncategory = \"dev.pkgcache\"\n\
+         name = \"Tool caches\"\nsafety = \"safe\"\nexplanation = \"x\"\nlost = \"y\"\n\
+         [rule.match]\nkind = \"dir\"\npaths = [\"{home}/.tool/cache\"]\n",
+    )
+    .unwrap();
+    let run = |cmd: &str, root: &Path, format: &str| {
+        let o = common::bin_in(&top.join("state"))
+            .args([cmd.as_ref(), root.as_os_str()])
+            .args(["--format", format])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", top.join("config"))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        o
+    };
+    let report = |root: &Path, format: &str| run("report", root, format);
+    let table = String::from_utf8(report(&home, "table").stdout).unwrap();
+    let d = data.display();
+    assert!(
+        table.contains(&format!(
+            "~/.tool is a link to {d} (Tool caches), not scanned: dfdu report {d}"
+        )),
+        "{table}"
+    );
+    let doc = json(&report(&home, "json"));
+    let (schemas, ix) = schemas();
+    valid(&schemas, ix[2], &doc);
+    let l = &doc["links_outside"][0];
+    assert_eq!(l["link"], home.join(".tool").to_str().unwrap(), "{doc}");
+    assert_eq!(l["target"], data.to_str().unwrap());
+    assert_eq!(l["rules"], serde_json::json!(["test.tool-cache"]));
+    // Scanned where it leads, the location is found, and there is no link to name.
+    let doc = json(&report(&data, "json"));
+    let found = doc["items"].as_array().unwrap();
+    assert!(
+        found.iter().any(|i| i["rule"] == "test.tool-cache"),
+        "{doc}"
+    );
+    assert!(doc.get("links_outside").is_none(), "{doc}");
+    // The scan names the same link: in its JSON document, and in NDJSON's summary record.
+    let doc = json(&run("scan", &home, "json"));
+    valid(&schemas, ix[0], &doc);
+    assert_eq!(doc["links_outside"][0], *l, "{doc}");
+    let o = run("scan", &home, "ndjson");
+    let lines: Vec<Value> = (o.stdout.split(|&b| b == b'\n'))
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_slice(l).unwrap())
+        .collect();
+    for line in &lines {
+        valid(&schemas, ix[1], line);
+    }
+    let last = lines.last().unwrap();
+    assert_eq!(last["record"], "summary");
+    assert_eq!(last["links_outside"][0], *l, "{last}");
+    assert!(last.get("not_entered").is_none(), "{last}");
+}
+
 #[test]
 fn dupes_json_validates() {
     let tmp = tempfile::tempdir().unwrap();

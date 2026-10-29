@@ -1,17 +1,8 @@
 //! Messages from the scanner to the applier.
 
+use dfdu_sys::Profile;
 use dfdu_tree::{Class, ErrKind, Meta, Subvol};
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct JobId(pub u32);
-
-/// Per-job directory id, allocated by the scanner when it creates a task.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct DirId(pub u32);
-
-impl DirId {
-    pub const ROOT: DirId = DirId(0);
-}
+pub use dfdu_tree::{DirId, JobId};
 
 /// Byte range of a name in a chunk's `names` buffer.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -27,8 +18,8 @@ pub struct Probe {
     /// Files on this filesystem can share extents (btrfs, XFS, bcachefs), so measuring them is
     /// worthwhile.
     pub shares_extents: bool,
-    /// btrfs data profile name and raw bytes stored per byte of data (2 for DUP or RAID1).
-    pub profile: Option<(&'static str, f64)>,
+    /// btrfs data profile and raw bytes stored per byte of data (2 for DUP or RAID1).
+    pub profile: Option<(Profile, f64)>,
 }
 
 #[derive(Clone, Debug)]

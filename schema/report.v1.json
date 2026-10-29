@@ -15,6 +15,8 @@
     "elapsed_ms": { "$ref": "scan.v1.json#/$defs/count" },
     "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
     "summary": { "$ref": "#/$defs/summary" },
+    "not_entered": { "type": "array", "items": { "$ref": "scan.v1.json#/$defs/not_entered" }, "description": "As in scan.v1.json: mounts below the root the scan stayed out of." },
+    "links_outside": { "type": "array", "items": { "$ref": "scan.v1.json#/$defs/link_outside" }, "description": "As in scan.v1.json: rule locations behind a symbolic link that leads out of the scan. Run the report on the target to see them." },
     "threshold": {
       "type": "object",
       "description": "Present with --fail-above.",
@@ -51,6 +53,7 @@
         "in_use": { "type": "boolean" },
         "vcs_tracked": { "type": "boolean" },
         "scanning": { "type": "boolean" },
+        "matches_inside": { "$ref": "scan.v1.json#/$defs/count", "description": "Present when matches inside it are listed as items of their own: its sizes leave them out, and cleaning it up leaves them alone." },
         "degraded": { "type": "string", "description": "Why the safety level is lower than the rule's." },
         "explanation": { "type": "string" },
         "lost": { "type": "string", "description": "What deleting it loses." }

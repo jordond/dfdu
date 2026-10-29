@@ -294,7 +294,7 @@ pub struct Status {
     /// Measurements came from the extent tree (as root): sizes on disk are exact.
     pub exact_sizes: bool,
     /// btrfs data profile of the scan root's filesystem and its raw bytes per byte of data.
-    pub profile: Option<(&'static str, f64)>,
+    pub profile: Option<(dfdu_sys::Profile, f64)>,
 }
 
 /// A number of items and their bytes.
@@ -479,7 +479,7 @@ mod tests {
         changed(&m, "exact_sizes");
         m.status.compressed_upper_bound = true;
         changed(&m, "compressed_upper_bound");
-        m.status.profile = Some(("raid1", 2.0));
+        m.status.profile = Some((dfdu_sys::Profile::Raid1, 2.0));
         changed(&m, "profile");
         m.status.anomaly("a".into());
         changed(&m, "anomalies");

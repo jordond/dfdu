@@ -45,7 +45,7 @@ pub struct NativeRule {
 
 /// Shows an argv as a person would type it.
 #[must_use]
-pub fn shown(argv: &[String]) -> String {
+pub fn shown_argv(argv: &[String]) -> String {
     argv.iter()
         .map(|a| {
             if a.is_empty() || a.chars().any(|c| c.is_whitespace() || "'\"$\\".contains(c)) {
@@ -85,7 +85,7 @@ pub(crate) fn run(
     }
     steps.push(&req.command);
     for argv in steps {
-        line(format!("$ {}", shown(argv)));
+        line(format!("$ {}", shown_argv(argv)));
         let (tx, rx) = unbounded();
         let id = req.id;
         let out2 = out.clone();
