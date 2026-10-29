@@ -415,6 +415,12 @@ fn add_subdirs(
             crec.close(DirState::Skipped);
             crec.pending = 0;
             crec.reported = true;
+            // It stands for the loaded directory until the rescan swaps in.
+            if s.skip == Some(SkipReason::Kept)
+                && let Some(k) = j.kept.as_mut()
+            {
+                k.placeholders.push(tree.node_ref(cx));
+            }
         } else {
             new_pending += 1;
         }

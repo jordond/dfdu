@@ -13,6 +13,7 @@ mod messages;
 mod model;
 mod native;
 mod rescan;
+mod resume;
 mod scanner;
 #[cfg(test)]
 mod test_util;
@@ -43,6 +44,7 @@ use crate::recent::Event;
 use delete::ActivePlan;
 use jobs::JobStart;
 use measure::MeasureAt;
+use resume::Kept;
 use undo::Undoable;
 use work::Work;
 
@@ -72,7 +74,8 @@ pub enum Command {
     /// Rescan the root of a tree loaded from a file ([`Engine::load`](crate::Engine::load))
     /// with these options, which no scan job of this session holds. With `changed` (paths
     /// relative to the root, as [`changed_since`](crate::changed_since) gives them), the tree
-    /// is classified as loaded and only those directories are rescanned.
+    /// is classified as loaded and only those directories, and those above them, are listed
+    /// again: the subdirectories they still have are kept as loaded.
     Resume {
         node: NodeRef,
         opts: JobOptions,
@@ -136,6 +139,8 @@ struct Job {
     phase: JobPhase,
     /// Directories it scanned were queued for extent measurement as their listings closed.
     measures: bool,
+    /// A resume's rescan: the loaded directories it keeps.
+    kept: Option<Box<Kept>>,
 }
 
 /// What the applier knows about a `DirId` of a job.
@@ -258,6 +263,22 @@ pub(crate) fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     }
 }
 
+/// Whether `ix` was loaded from a file ([`Engine::load`](crate::Engine::load)) and nothing has
+/// brought it up to date yet: its directory (a file's parent) belongs to no job of this
+/// session. A resume takes over what the change journal says did not change and rescans the
+/// rest; until it has, the tree may be out of date anywhere below `ix`, which the identity
+/// the deleter checks again does not show. Deletes and native commands refuse such nodes.
+#[must_use]
+pub fn unrefreshed(tree: &Tree, ix: Ix) -> bool {
+    let dir = if tree.dir(ix).is_some() {
+        Some(ix)
+    } else {
+        tree.parent(ix)
+    };
+    dir.and_then(|d| tree.dir(d))
+        .is_some_and(|d| d.job == JobId(0))
+}
+
 fn empty_dir_meta() -> Meta {
     Meta {
         kind: Kind::Dir,
@@ -371,6 +392,7 @@ impl<B: Backend> Applier<B> {
             scope: VISIBLE,
             path,
             opts,
+            kept: None,
         };
         self.start(m, id, start);
     }
@@ -481,6 +503,19 @@ impl<B: Backend> Applier<B> {
         }
         if scans && m.status.disconnected.is_some() {
             return Some("the link to the agent is gone: nothing more is scanned");
+        }
+        if let Command::RunNative {
+            node,
+            dry_run: false,
+            ..
+        } = cmd
+            && m.tree
+                .resolve_visible(*node)
+                .is_some_and(|ix| unrefreshed(&m.tree, ix))
+        {
+            return Some(
+                "native command: not refreshed yet: loaded from a file, and the resume has not reached it",
+            );
         }
         None
     }

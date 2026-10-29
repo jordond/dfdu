@@ -187,6 +187,10 @@ fn subdir_skip<B: Backend>(
         m.dev != task.dev
     };
     if !mount_root {
+        // resume-keep
+        if job.opts.keep.as_ref().is_some_and(|k| k.take(m.dev, m.ino)) {
+            return (false, Some(SkipReason::Kept));
+        }
         return (false, unreadable);
     }
     let entered = job.opts.enter.contains(&(m.dev, m.ino));

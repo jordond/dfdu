@@ -308,6 +308,8 @@ fn enc_chunk(e: &mut Enc, c: &Chunk) {
             Some(SkipReason::Kernel) => 3,
             Some(SkipReason::DuplicateMount) => 4,
             Some(SkipReason::Excluded) => 5,
+            // resume-keep
+            Some(SkipReason::Kept) => 6,
         });
     }
     e.var(c.errors.len() as u64);
@@ -390,6 +392,8 @@ fn dec_chunk(d: &mut Dec, rules: Option<&RuleSet>) -> R<Chunk> {
                 3 => Some(SkipReason::Kernel),
                 4 => Some(SkipReason::DuplicateMount),
                 5 => Some(SkipReason::Excluded),
+                // resume-keep
+                6 => Some(SkipReason::Kept),
                 _ => return bad("skip reason"),
             },
         });

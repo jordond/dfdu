@@ -1,15 +1,13 @@
-//! Rescans of visible directories, and resuming a tree loaded from a file.
+//! Rescans of visible directories.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use dfdu_scan::classify::ClassOpts;
-use dfdu_scan::{Backend, DirId, JobId, JobOptions};
-use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Pages, Tree};
+use dfdu_scan::{Backend, JobOptions};
+use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
 use super::jobs::JobStart;
-use super::{Applier, Job, JobKind, JobPhase, Model, meta_of};
-use crate::links::VISIBLE;
+use super::{Applier, JobKind, JobPhase, Kept, Model, meta_of};
 
 /// What a rescan of directory `ix` classifies against: the rules decided above it, whether it
 /// is protected, and its own hits, from its parent's listing as the tree has it. `job` is what
@@ -87,51 +85,6 @@ fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> C
     }
 }
 
-/// More changed directories than this and a resume rescans the whole tree.
-const MAX_RESUME_RESCANS: usize = 10_000;
-
-/// The directories of the tree at `root` that `paths` (relative to it) name, or the nearest
-/// existing ancestor of one not in the tree.
-fn changed_dirs(tree: &Tree, root: Ix, paths: &[PathBuf]) -> Vec<Ix> {
-    let mut out = Vec::new();
-    for p in paths {
-        let mut at = root;
-        for c in p.components() {
-            let std::path::Component::Normal(n) = c else {
-                continue;
-            };
-            let n = dfdu_tree::name_bytes(n);
-            match tree
-                .children(at)
-                .find(|&k| tree.dir(k).is_some() && tree.name(k) == &n[..])
-            {
-                Some(k) => at = k,
-                None => break,
-            }
-        }
-        out.push(at);
-    }
-    out
-}
-
-/// `dirs` without duplicates and without those below another of them.
-fn topmost(tree: &Tree, mut dirs: Vec<Ix>) -> Vec<Ix> {
-    dirs.sort_unstable_by_key(|d| d.0);
-    dirs.dedup();
-    let set: HashSet<Ix> = dirs.iter().copied().collect();
-    dirs.retain(|&d| {
-        let mut cur = tree.parent(d);
-        while let Some(p) = cur {
-            if set.contains(&p) {
-                return false;
-            }
-            cur = tree.parent(p);
-        }
-        true
-    });
-    dirs
-}
-
 /// Whether `ix` is a mount the scan listed but did not enter: not a kernel filesystem, which is
 /// never scanned, nor a second mount of something counted elsewhere.
 fn left_out(tree: &Tree, ix: Ix) -> bool {
@@ -166,6 +119,18 @@ impl<B: Backend> Applier<B> {
         node: NodeRef,
         given: Option<JobOptions>,
         enter: bool,
+    ) {
+        self.rescan_keeping(m, node, given, enter, None);
+    }
+
+    /// [`Applier::rescan`], keeping the loaded directories of `kept` where the scan meets them.
+    pub(super) fn rescan_keeping(
+        &mut self,
+        m: &mut Model,
+        node: NodeRef,
+        given: Option<JobOptions>,
+        enter: bool,
+        kept: Option<Box<Kept>>,
     ) {
         let Some(ix) = m.tree.resolve_visible(node) else {
             m.status.notice("rescan: that directory is gone".into());
@@ -252,6 +217,7 @@ impl<B: Backend> Applier<B> {
         }
         // Not sent to an agent, which judges against its job's root.
         opts.scope = self.remote.is_none().then(|| m.tree.path_buf(top));
+        opts.keep = kept.as_ref().map(|k| Arc::new(k.keep()));
         self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
             m.rules = Some(c.rules.clone());
@@ -273,6 +239,7 @@ impl<B: Backend> Applier<B> {
             scope: id,
             path,
             opts,
+            kept,
         };
         self.start(m, id, start);
     }
@@ -333,142 +300,5 @@ impl<B: Backend> Applier<B> {
             self.cancel(id);
         }
         true
-    }
-
-    /// Takes over a tree loaded from a snapshot when the volume's change journal says which
-    /// directories changed since (`changed`, relative to the root): the tree is classified as
-    /// it stands, held by a finished job with `opts`, and only the topmost changed directories
-    /// are rescanned, each with its subtree. A changed root, or too many changes, rescan it all.
-    pub(super) fn resume_changed(
-        &mut self,
-        m: &mut Model,
-        node: NodeRef,
-        opts: JobOptions,
-        changed: &[PathBuf],
-    ) {
-        let Some(root) = m
-            .tree
-            .resolve_visible(node)
-            .filter(|&r| m.tree.dir(r).is_some() && m.tree.parent(r).is_none())
-        else {
-            return self.rescan(m, node, Some(opts), false);
-        };
-        let mut targets = changed_dirs(&m.tree, root, changed);
-        if targets.len() > MAX_RESUME_RESCANS || targets.contains(&root) {
-            return self.rescan(m, node, Some(opts), false);
-        }
-        let id = self.next_job;
-        self.next_job += 1;
-        // Other volumes mounted below keep their own journals: their mount roots are rescanned.
-        // So are btrfs subvolumes below (another device, no mount): each has a tree, and a
-        // generation, of its own.
-        let mut mounts = Vec::new();
-        let mut own = |tree: &mut Tree, ix: Ix| {
-            if let Some(d) = tree.dir_mut(ix) {
-                d.job = JobId(id);
-                d.dir_id = DirId::ROOT;
-            }
-            let other_dev = || {
-                tree.parent(ix)
-                    .is_some_and(|p| tree.dev_ino(p).0 != tree.dev_ino(ix).0)
-            };
-            if ix != root
-                && (tree.flags(ix).has(NodeFlags::MOUNT_ROOT) || other_dev())
-                && tree.dir(ix).is_some_and(|d| d.state != DirState::Skipped)
-            {
-                mounts.push(ix);
-            }
-        };
-        if let Some(c) = &opts.class {
-            m.rules = Some(c.rules.clone());
-            m.tree.set_protection(root, c.protection.protected(), false);
-            crate::reclassify::classify_loaded(&mut m.tree, root, c, &self.scan.backend, &mut own);
-        } else {
-            let mut stack = vec![root];
-            while let Some(ix) = stack.pop() {
-                own(&mut m.tree, ix);
-                stack.extend(m.tree.children(ix).filter(|&c| m.tree.dir(c).is_some()));
-            }
-        }
-        // Snapshots keep no measured extents: the loaded files are measured again where files
-        // can share them (rescanned parts are measured when their rescans end).
-        let mut devs = vec![root];
-        devs.extend(mounts.iter().copied());
-        for ix in devs {
-            let dev = m.tree.dev_ino(ix).0;
-            if !self.extent_devs.contains(&dev) {
-                let loc = self.scan.backend.loc_from_path(&m.tree.path_buf(ix));
-                if self.scan.backend.shares_extents(&loc) {
-                    self.extent_devs.insert(dev);
-                }
-            }
-        }
-        self.start_measure(m, node);
-        targets.extend(mounts);
-        let targets = topmost(&m.tree, targets);
-        self.jobs.insert(
-            id,
-            Job {
-                id: JobId(id),
-                kind: JobKind::Initial,
-                target: node,
-                root: node,
-                scope: VISIBLE,
-                opts,
-                map: Pages::default(),
-                held_close: HashMap::new(),
-                stalled: HashMap::new(),
-                submitted_seq: 0,
-                phase: JobPhase::Done,
-                measures: false,
-            },
-        );
-        m.tree.bump_version();
-        self.queue_checks(m);
-        for t in targets {
-            let r = m.tree.node_ref(t);
-            self.rescan(m, r, None, false);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_util::meta;
-    use dfdu_tree::Kind;
-
-    /// /r/{a/{b/, f}, c/}; returns the tree and r, a, b, c.
-    #[expect(
-        clippy::many_single_char_names,
-        reason = "nodes named as in the fixture's diagram"
-    )]
-    fn tree() -> (Tree, [Ix; 4]) {
-        let mut t = Tree::new();
-        let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
-        let a = t.add_dir(r, b"a", &meta(Kind::Dir, 0, 2));
-        let b = t.add_dir(a, b"b", &meta(Kind::Dir, 0, 3));
-        let c = t.add_dir(r, b"c", &meta(Kind::Dir, 0, 4));
-        t.add_file(a, b"f", &meta(Kind::File, 0, 5), false, None);
-        (t, [r, a, b, c])
-    }
-
-    #[test]
-    #[expect(
-        clippy::many_single_char_names,
-        reason = "nodes named as in the fixture's diagram"
-    )]
-    fn changed_paths_name_their_directory_or_its_nearest_ancestor() {
-        let (t, [r, a, b, c]) = tree();
-        let paths = ["a/b", "c", "a/gone/deeper", "a/f", ""].map(PathBuf::from);
-        assert_eq!(changed_dirs(&t, r, &paths), [b, c, a, a, r]);
-    }
-
-    #[test]
-    fn only_the_topmost_changed_directories_are_kept() {
-        let (t, [_, a, b, c]) = tree();
-        let mut want = vec![a, c];
-        want.sort_unstable_by_key(|d| d.0);
-        assert_eq!(topmost(&t, vec![b, c, a, b]), want);
     }
 }
