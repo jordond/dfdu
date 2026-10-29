@@ -274,6 +274,14 @@ mod tests {
         let got = got.expect("the journal can tell");
         assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
         assert!(!got.iter().any(|d| d.starts_with("quiet")), "{got:?}");
+        // The same directory named in the Data volume, where events name it through the
+        // `/private` firmlink.
+        let real = dunce::canonicalize(&root).unwrap();
+        let data = Path::new(DATA_VOLUME).join(real.strip_prefix("/").unwrap());
+        if data.exists() {
+            let got = changed_since(&data, since).expect("the journal can tell");
+            assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
+        }
         let mut other = since;
         other.volume[0] ^= 0xff;
         assert_eq!(changed_since(&root, other), None);
