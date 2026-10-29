@@ -92,8 +92,8 @@ pub fn request(app: &mut App) {
         return;
     }
     let mut new = Vec::new();
-    for e in app.snap.entries.iter().filter(|e| left_out(e)) {
-        let path = app.snap.dir_path.join(dfdu_tree::name_os(&e.name));
+    for (i, _) in (app.snap.entries.iter().enumerate()).filter(|(_, e)| left_out(e)) {
+        let path = crate::state::tree::path_of(&app.snap, i);
         if !o.mounts.contains_key(&path) {
             let lock = Arc::new(OnceLock::new());
             o.mounts.insert(path.clone(), lock.clone());
@@ -159,10 +159,11 @@ pub fn pane_lines(app: &App, path: &Path) -> (Option<String>, String) {
     (info, format!("{key} scans it"))
 }
 
-/// The note after the name of a row for a mount that was not entered.
+/// The note after the name of the row of entry `index`, a mount that was not entered.
 #[must_use]
-pub fn row_note(app: &App, e: &EntryData) -> String {
-    let path = app.snap.dir_path.join(dfdu_tree::name_os(&e.name));
+pub fn row_note(app: &App, index: usize) -> String {
+    let e = &app.snap.entries[index];
+    let path = crate::state::tree::path_of(&app.snap, index);
     let what = match e.mark {
         Mark::Network => "network filesystem",
         _ => "other filesystem",

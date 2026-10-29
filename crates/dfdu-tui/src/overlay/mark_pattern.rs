@@ -91,9 +91,7 @@ fn mark(app: &mut App, pattern: &str) {
         app.status = Some(format!("nothing here matches {pattern}"));
         return;
     }
-    let items: Vec<marks::Item> = (hits.iter())
-        .map(|&i| marks::item_of(app, &app.snap.entries[i]))
-        .collect();
+    let items: Vec<marks::Item> = (hits.iter()).map(|&i| marks::item_of(app, i)).collect();
     let size: u64 = items.iter().map(|it| it.size).sum();
     let n = items.len();
     let added = marks::add(app, items);

@@ -81,6 +81,40 @@ pub fn bar(frac: f64, width: usize, bars: Bars) -> String {
     s
 }
 
+/// A row's bar in tree mode, `width` cells wide: its own length for `frac`, as [`bar`] draws
+/// it, then a shadow up to the length of its parent's bar for `parent` (`░`, or `.` for
+/// [`Bars::Ascii`]), then blanks. Returns the bar and the shadow with the blanks, to be drawn
+/// in two styles. Without a parent there is no shadow.
+#[must_use]
+pub fn bar_with_shadow(
+    frac: f64,
+    parent: Option<f64>,
+    width: usize,
+    bars: Bars,
+) -> (String, String) {
+    // The cells a bar fills: a partly filled cell counts, but for ASCII bars, which round.
+    let cells = |frac: f64| {
+        let e = eighths(frac, width);
+        match bars {
+            Bars::Unicode => e.div_ceil(8),
+            Bars::Ascii => (e + 4) / 8,
+        }
+    };
+    let full = bar(frac, width, bars);
+    let own = cells(frac);
+    let filled: String = full.chars().take(own).collect();
+    let shade = match bars {
+        Bars::Unicode => "░",
+        Bars::Ascii => ".",
+    };
+    let shadow = parent.map_or(0, cells).saturating_sub(own);
+    let rest = width.saturating_sub(own + shadow);
+    (
+        filled,
+        format!("{}{}", shade.repeat(shadow), " ".repeat(rest)),
+    )
+}
+
 /// How many eighths of `width` cells `frac` fills, rounded.
 #[expect(
     clippy::cast_possible_truncation,
@@ -158,6 +192,42 @@ mod tests {
         assert_eq!(bar(0.0625, 4, Bars::Ascii), "    ");
         assert_eq!(bar(0.125, 4, Bars::Ascii), "#   ");
         assert!(bar(0.37, 24, Bars::Ascii).is_ascii());
+    }
+
+    #[test]
+    fn shadows_run_on_to_the_parents_bar() {
+        let cat = |(a, b): (String, String)| format!("{a}|{b}");
+        // 0.3 of 10 cells is 3 cells; the parent's half is five, so two cells of shadow.
+        assert_eq!(
+            cat(bar_with_shadow(0.3, Some(0.5), 10, Bars::Unicode)),
+            "███|░░     "
+        );
+        // A partly filled cell is part of the bar.
+        assert_eq!(
+            cat(bar_with_shadow(0.31, Some(0.5), 10, Bars::Unicode)),
+            "███▏|░     "
+        );
+        // At the top no shadow, and a row as long as its parent has none either.
+        assert_eq!(cat(bar_with_shadow(0.5, None, 4, Bars::Unicode)), "██|  ");
+        assert_eq!(
+            cat(bar_with_shadow(0.5, Some(0.5), 4, Bars::Unicode)),
+            "██|  "
+        );
+        assert_eq!(
+            cat(bar_with_shadow(0.3, Some(0.5), 10, Bars::Ascii)),
+            "###|..     "
+        );
+        for (f, p) in [
+            (0.0, Some(0.0)),
+            (0.01, Some(1.0)),
+            (1.0, Some(1.0)),
+            (0.4, None),
+        ] {
+            for bars in [Bars::Unicode, Bars::Ascii] {
+                let (a, b) = bar_with_shadow(f, p, 12, bars);
+                assert_eq!(a.chars().count() + b.chars().count(), 12, "{f} {p:?}");
+            }
+        }
     }
 
     #[test]

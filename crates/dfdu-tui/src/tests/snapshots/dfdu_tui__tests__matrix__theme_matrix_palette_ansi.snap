@@ -10,7 +10,7 @@ L1 26-32 fg=red | 92-94 fg=darkgray
 L2 0-99 fg=darkgray
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
 L3 0-13 reversed | 14-29 fg=cyan reversed | 30-47 reversed | 48-55 fg=blue bold reversed | 56-99 reversed
- ⠙  78.0 GiB┌ Commands 13/54 ──────────────────────────────────────────────────────────┐
+ ⠙  78.0 GiB┌ Commands 14/59 ──────────────────────────────────────────────────────────┐
 L4 0-11 fg=darkgray
     51.0 GiB│ : sort▌                                                                  │
 L5 13-14 bold | 20-20 bold
@@ -34,14 +34,15 @@ L13 17-17 fg=cyan underlined | 33-34 fg=cyan underlined | 42-42 fg=cyan underlin
 L14 28-28 fg=cyan underlined | 32-32 fg=cyan underlined | 36-36 fg=cyan underlined | 40-40 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
             │ mark by pattern: names in this directory matching a glob             act │
 L15 43-43 fg=cyan underlined | 51-52 fg=cyan underlined | 57-57 fg=cyan underlined | 83-85 fg=darkgray
+            │ invert the marks in this directory, as * does in the marks pane      act │
+L16 37-37 fg=cyan underlined | 45-46 fg=cyan underlined | 63-63 fg=cyan underlined | 83-85 fg=darkgray
             │ scan into the selected mount (another filesystem)                 act  m │
-L16 28-28 fg=cyan underlined | 38-38 fg=cyan underlined | 50-50 fg=cyan underlined | 59-59 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
+L17 28-28 fg=cyan underlined | 38-38 fg=cyan underlined | 50-50 fg=cyan underlined | 59-59 fg=cyan underlined | 80-82 fg=darkgray | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
-L17 16-16 fg=cyan underlined | 25-25 fg=cyan underlined | 37-37 fg=cyan underlined | 50-50 fg=cyan underlined | 77-82 fg=darkgray | 85-85 bold
+L18 16-16 fg=cyan underlined | 25-25 fg=cyan underlined | 37-37 fg=cyan underlined | 50-50 fg=cyan underlined | 77-82 fg=darkgray | 85-85 bold
             │ largest files anywhere below this directory                   display  5 │
-L18 26-26 fg=cyan underlined | 40-40 fg=cyan underlined | 50-50 fg=cyan underlined | 53-53 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
+L19 26-26 fg=cyan underlined | 40-40 fg=cyan underlined | 50-50 fg=cyan underlined | 53-53 fg=cyan underlined | 76-82 fg=darkgray | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 fg=yellow
 

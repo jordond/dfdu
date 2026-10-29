@@ -10,7 +10,7 @@ use super::{App, Effect, Overlay};
 use crate::features::{debug, details, largest, selected_path, treemap};
 use crate::overlay::{confirm, help, mark_pattern, palette, type_filter};
 use crate::state::order::SortKey;
-use crate::state::{filter, marks};
+use crate::state::{filter, marks, tree};
 
 mod act;
 mod lookup;
@@ -32,6 +32,7 @@ pub enum Action {
     First,
     Last,
     Open,
+    Enter,
     Parent,
     SortSize,
     SortName,
@@ -42,6 +43,9 @@ pub enum Action {
     ToggleReferenced,
     ToggleHidden,
     Columns,
+    ToggleTree,
+    ExpandChain,
+    CycleFold,
     Rescan,
     EnterMount,
     SkipStalled,
@@ -55,6 +59,7 @@ pub enum Action {
     ClearMarks,
     RangeMark,
     MarkPattern,
+    InvertMarks,
     CopyPath,
     OpenPath,
     Filter,
@@ -147,11 +152,22 @@ pub const ACTIONS: &[ActionInfo] = &[
     ),
     row(Action::First, "g Home", "first entry", Group::Navigate),
     row(Action::Last, "G End", "last entry", Group::Navigate),
-    row(Action::Open, "→ l Enter", "open directory", Group::Navigate),
+    row(
+        Action::Open,
+        "→ l",
+        "open directory (tree mode: expand it)",
+        Group::Navigate,
+    ),
+    row(
+        Action::Enter,
+        "Enter",
+        "open directory, even in tree mode",
+        Group::Navigate,
+    ),
     row(
         Action::Parent,
         "← h Backspace <",
-        "parent directory",
+        "parent directory (tree mode: collapse)",
         Group::Navigate,
     ),
     row(
@@ -248,6 +264,24 @@ pub const ACTIONS: &[ActionInfo] = &[
         Group::Display,
     ),
     row(
+        Action::ToggleTree,
+        "T",
+        "tree mode: expand directories in place",
+        Group::Display,
+    ),
+    row(
+        Action::ExpandChain,
+        "*",
+        "tree mode: expand the largest, level by level",
+        Group::Display,
+    ),
+    row(
+        Action::CycleFold,
+        "z",
+        "tree mode: fold under 1%, then 0.1%, then none",
+        Group::Display,
+    ),
+    row(
         Action::Rescan,
         "r",
         "rescan the selected directory",
@@ -282,6 +316,12 @@ pub const ACTIONS: &[ActionInfo] = &[
         Action::MarkPattern,
         "",
         "mark by pattern: names in this directory matching a glob",
+        Group::Act,
+    ),
+    row(
+        Action::InvertMarks,
+        "",
+        "invert the marks in this directory, as * does in the marks pane",
         Group::Act,
     ),
     row(
@@ -325,7 +365,7 @@ pub const ACTIONS: &[ActionInfo] = &[
     row(
         Action::FocusDetails,
         "Tab",
-        "move focus between the list and the details",
+        "move focus: the list, the details, the marks pane",
         Group::Panels,
     ),
     row(
@@ -377,11 +417,14 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::HalfPageDown => app.move_by((page / 2).max(1)),
         Action::First => app.move_to(0),
         Action::Last => app.move_to(app.rows.len().saturating_sub(1)),
-        Action::Open => {
-            if let Some(e) = app.selected_entry().filter(|e| e.is_dir).cloned() {
-                app.enter(&e);
+        Action::Open if tree::act::right(app) => {}
+        Action::Open | Action::Enter => {
+            let dir = app.selected_index().map(|row| app.rows[row]);
+            if let Some(i) = dir.filter(|&i| app.snap.entries[i].is_dir) {
+                app.enter(i);
             }
         }
+        Action::Parent if tree::act::left(app) => {}
         Action::Parent => app.up(),
         Action::SortSize => sort_by(app, SortKey::Size),
         Action::SortName => sort_by(app, SortKey::Name),
@@ -398,6 +441,9 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
             app.columns = app.columns.next();
             app.status = Some(app.columns.describe().into());
         }
+        Action::ToggleTree => tree::act::toggle(app),
+        Action::ExpandChain => tree::act::chain(app),
+        Action::CycleFold => tree::act::cycle_fold(app),
         Action::Rescan => {
             let node = match app.selected_entry() {
                 Some(e) if e.is_dir => Some(e.node),
@@ -440,12 +486,13 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::ClearMarks => marks::clear(app),
         Action::RangeMark => marks::range::toggle(app),
         Action::MarkPattern => mark_pattern::open(app),
+        Action::InvertMarks => marks::invert(app),
         Action::CopyPath => fx.extend(selected_path::copy(app)),
         Action::OpenPath => fx.extend(selected_path::open(app)),
         Action::Filter => filter::open(app),
         Action::Types => type_filter::open(app),
         Action::Details => details::toggle(app),
-        Action::FocusDetails => details::focus(app),
+        Action::FocusDetails => fx.extend(details::focus(app)),
         Action::Palette => palette::open(app),
         Action::Debug => debug::toggle(app),
         Action::ViewList => {
@@ -456,6 +503,7 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
         Action::ViewTreemap => {
             crate::features::dupes::show(app, false);
             crate::features::cleanup::show(app, false);
+            tree::act::treemap_dir(app);
             treemap::show(app, true);
         }
         Action::ViewCleanup => {

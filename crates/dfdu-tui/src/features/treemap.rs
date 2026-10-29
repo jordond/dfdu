@@ -579,7 +579,7 @@ pub fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     select_top(app, top);
     if again {
         app.treemap.last_click = None;
-        return Some(keys::run(app, Action::Open, now));
+        return Some(keys::run(app, Action::Enter, now));
     }
     app.treemap.last_click = Some((now, node));
     Some(Vec::new())

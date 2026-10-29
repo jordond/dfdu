@@ -10,7 +10,7 @@ L1 26-32 fg=#ff8f8f | 92-94 fg=#8b94a7
 L2 0-99 fg=#8b94a7
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
 L3 0-11 fg=#d8dee9 bg=#4c566a bold | 12-13 fg=#eceff4 bg=#4c566a bold | 14-29 fg=#88c0d0 bg=#4c566a bold | 30-39 fg=#eceff4 bg=#4c566a bold | 40-45 fg=#d8dee9 bg=#4c566a bold | 46-47 fg=#eceff4 bg=#4c566a bold | 48-55 fg=#8fbcf0 bg=#4c566a bold | 56-99 fg=#eceff4 bg=#4c566a bold
- ⠙  78.0 GiB┌ Commands 13/54 ──────────────────────────────────────────────────────────┐
+ ⠙  78.0 GiB┌ Commands 14/59 ──────────────────────────────────────────────────────────┐
 L4 0-11 fg=#8b94a7
     51.0 GiB│ : sort▌                                                                  │
 L5 13-14 fg=#88c0d0 bold | 20-20 fg=#88c0d0 bold
@@ -34,14 +34,15 @@ L13 17-17 fg=#f0c674 underlined | 33-34 fg=#f0c674 underlined | 42-42 fg=#f0c674
 L14 28-28 fg=#f0c674 underlined | 32-32 fg=#f0c674 underlined | 36-36 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ mark by pattern: names in this directory matching a glob             act │
 L15 43-43 fg=#f0c674 underlined | 51-52 fg=#f0c674 underlined | 57-57 fg=#f0c674 underlined | 83-85 fg=#8b94a7
+            │ invert the marks in this directory, as * does in the marks pane      act │
+L16 37-37 fg=#f0c674 underlined | 45-46 fg=#f0c674 underlined | 63-63 fg=#f0c674 underlined | 83-85 fg=#8b94a7
             │ scan into the selected mount (another filesystem)                 act  m │
-L16 28-28 fg=#f0c674 underlined | 38-38 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 59-59 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L17 28-28 fg=#f0c674 underlined | 38-38 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 59-59 fg=#f0c674 underlined | 80-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ list what could not be read, and go to it                      panels  ! │
-L17 16-16 fg=#f0c674 underlined | 25-25 fg=#f0c674 underlined | 37-37 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 77-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L18 16-16 fg=#f0c674 underlined | 25-25 fg=#f0c674 underlined | 37-37 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 77-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             │ largest files anywhere below this directory                   display  5 │
-L18 26-26 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 53-53 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
+L19 26-26 fg=#f0c674 underlined | 40-40 fg=#f0c674 underlined | 50-50 fg=#f0c674 underlined | 53-53 fg=#f0c674 underlined | 76-82 fg=#8b94a7 | 85-85 fg=#88c0d0 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 fg=#ebcb8b
 

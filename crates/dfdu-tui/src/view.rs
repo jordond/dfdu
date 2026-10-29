@@ -1,6 +1,6 @@
 //! Drawing. Works only from [`App`] and its snapshot, never from the engine model, so it runs
 //! after the read lock is released. [`draw`] lays out the screen, draws the header, the list
-//! or the treemap, and the footer (modules here, the treemap in its own), the details pane, the debug panel and the open overlay (each in its
+//! or the treemap, and the footer (modules here, the treemap in its own), the details pane or the marks pane in its place, the debug panel and the open overlay (each in its
 //! feature's module), and last lets motion effects work on the finished buffer.
 
 pub mod columns;
@@ -105,7 +105,11 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     footer::hints(f, app, footer);
 
     if let Some(pane) = pane {
-        details::draw(f, app, pane);
+        if crate::features::marks_pane::shown(app) {
+            crate::features::marks_pane::draw(f, app, pane);
+        } else {
+            details::draw(f, app, pane);
+        }
     }
     app.areas.debug = debug::draw(f, app, body);
     app.areas.overlay = match &app.overlay {

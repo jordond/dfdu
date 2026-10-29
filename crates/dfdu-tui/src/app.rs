@@ -111,6 +111,8 @@ pub struct App {
     pub size_mode: SizeMode,
     /// The optional columns of the list (`c`).
     pub columns: crate::view::columns::Columns,
+    /// Tree mode: the expanded directories and the fold threshold. `None` when off.
+    pub tree: Option<crate::state::tree::TreeState>,
     pub hide_hidden: bool,
     pub selected: Option<Selection>,
     /// Indices into `snap.entries`, in display order.
@@ -136,6 +138,8 @@ pub struct App {
     /// The file type filter (`overlay::type_filter`); empty when off.
     pub types: dfdu_tree::filetype::TypeFilter,
     pub details: details::Details,
+    /// The marks pane, in the place of the details pane while it is open.
+    pub marks_pane: crate::features::marks_pane::MarksPane,
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
@@ -225,6 +229,7 @@ impl App {
             sort: SortSpec::default(),
             size_mode: SizeMode::Disk,
             columns: crate::view::columns::Columns::default(),
+            tree: None,
             hide_hidden: false,
             selected: None,
             rows: Vec::new(),
@@ -243,6 +248,7 @@ impl App {
             filter: filter::Filter::default(),
             types: dfdu_tree::filetype::TypeFilter::default(),
             details: details::Details::default(),
+            marks_pane: crate::features::marks_pane::MarksPane::default(),
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
@@ -310,6 +316,12 @@ impl App {
             || crate::features::largest::stale(self)
     }
 
+    /// The tree mode state while the rows are a tree: tree mode is on and the treemap, whose
+    /// tiles are the rows of one directory, is off.
+    pub fn tree_shown(&self) -> Option<&crate::state::tree::TreeState> {
+        self.tree.as_ref().filter(|_| !self.treemap.on)
+    }
+
     /// Asks for an exact sort before the next frame.
     pub(crate) fn request_sort(&mut self) {
         self.sort_requested = true;
@@ -364,18 +376,13 @@ impl App {
         self.cursors.insert(self.snap.dir_path.clone(), c);
     }
 
-    fn enter(&mut self, e: &EntryData) {
+    /// Opens the directory of entry `index` of the snapshot: in tree mode a row at any depth,
+    /// and the expanded directories stay expanded.
+    fn enter(&mut self, index: usize) {
         self.save_cursor();
-        let path = self.snap.dir_path.join(&*dfdu_tree::name_os(&e.name));
-        let saved = self.cursors.get(&path).cloned();
-        self.target = Target {
-            node: Some(e.node),
-            path,
-            ident: Some(crate::model::snapshot::Ident {
-                dev_ino: e.dev_ino,
-                kind: e.kind,
-            }),
-        };
+        let target = crate::state::tree::target_of(&self.snap, index);
+        let saved = self.cursors.get(&target.path).cloned();
+        self.target = target;
         self.moved = saved.is_some();
         self.selected = saved.as_ref().and_then(|c| c.selected.clone());
         self.scroll = saved.map_or(0, |c| c.scroll);
@@ -439,7 +446,7 @@ impl App {
     }
 
     /// Handles a key: the open overlay takes it first, then the filter input while it is
-    /// edited, then the details pane while it has the focus, then the treemap's moves between
+    /// edited, then the marks pane while it is open, then the details pane while it has the focus, then the treemap's moves between
     /// tiles, and otherwise the action bound to it in `keys::ACTIONS`.
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
         if k.kind == KeyEventKind::Release {
@@ -461,6 +468,11 @@ impl App {
         }
         if filter::editing(self) {
             return filter::key(self, k, now);
+        }
+        if crate::features::marks_pane::shown(self)
+            && let Some(fx) = crate::features::marks_pane::key(self, &k, now)
+        {
+            return fx;
         }
         if details::focused(self)
             && let Some(fx) = details::key(self, &k)

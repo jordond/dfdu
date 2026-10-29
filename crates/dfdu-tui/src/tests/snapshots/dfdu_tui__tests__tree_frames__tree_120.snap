@@ -1,0 +1,36 @@
+---
+source: crates/dfdu-tui/src/tests/tree_frames.rs
+expression: "render(&mut dev(t0), t0, 120, 32)"
+---
+ dfdu  ~/dev                                                                                              done in 00:00
+ 101 items · 145.0 GiB                            tree  ·  sort size ↓  ·  share of parent  ·  fold < 1%  ·  disk usage
+        size                             share   items         name
+    40.7 GiB  ████████████████████████   28.0%      73         ▾ dfdu/                                                 ┃
+    20.8 GiB  ████████████▎░░░░░░░░░░░   51.1%      17         ├─▾ .claude/                                            ┃
+    20.8 GiB  ████████████▎             100.0%      16         │ └─▾ worktrees/                                        ┃
+     7.4 GiB  ████▍░░░░░░░░              35.6%       3         │   ├─▸ desloppify-code-health/                         ┃
+     6.9 GiB  ████▏░░░░░░░░              33.2%       3         │   ├─▸ fsevents-rescan/                                ┃
+     5.8 GiB  ███▍░░░░░░░░░              27.9%       3         │   ├─▸ apfs-labels/                                    ┃
+   696.3 MiB  ▍░░░░░░░░░░░░               3.3%      12         │   └─… 4 more                                          ┃
+    17.3 GiB  ██████████▎░░░░░░░░░░░░░   42.5%      30  build  ├─▾ target/                                             ┃
+     9.1 GiB  █████▍░░░░░                52.6%       3  build  │ ├─▸ debug/                                            ┃
+     2.2 GiB  █▎░░░░░░░░░                12.7%       3  build  │ ├─▸ release/                                          ┃
+     1.7 GiB  █░░░░░░░░░░                 9.8%       3  build  │ ├─▸ x86_64-pc-windows-msvc/                           ┃
+     1.6 GiB  █░░░░░░░░░░                 9.3%       3  build  │ ├─▸ llvm-cov-target/                                  ┃
+     1.4 GiB  ▉░░░░░░░░░░                 8.1%       3  build  │ ├─▸ bench-1m/                                         ┃
+     1.3 GiB  ▊░░░░░░░░░░                 7.5%      27  build  │ └─… 9 more                                            ┃
+     2.5 GiB  █▌░░░░░░░░░░░░░░░░░░░░░░    6.1%       3         ├─▸ fuzz/                                               ┃
+    84.6 MiB  ░░░░░░░░░░░░░░░░░░░░░░░░    0.2%      24         └─… 24 more                                             ┃
+    16.6 GiB  █████████▊                 11.5%       3         ▸ brewd/                                                ┃
+    16.3 GiB  █████████▋                 11.2%       3         ▸ experiment/                                           ┃
+    12.8 GiB  ███████▌                    8.8%       3         ▸ foodchapters/                                         ┃
+    10.9 GiB  ██████▍                     7.5%       3         ▸ MaterialKolor/                                        ┃
+     7.3 GiB  ████▎                       5.0%       3         ▸ filmstrip/                                            ┃
+     7.0 GiB  ████▏                       4.8%       3         ▸ whalesay/                                             ┃
+     6.5 GiB  ███▉                        4.5%       3         ▸ SIGO/                                                 ┃
+     6.4 GiB  ███▊                        4.4%       3         ▸ toebeans/                                             ┃
+     4.7 GiB  ██▊                         3.2%       3         ▸ jolt/                                                 │
+     3.7 GiB  ██▏                         2.6%       3         ▸ compass/                                              │
+     3.5 GiB  ██▏                         2.4%       3         ▸ bookdb/                                               │
+ ▸ ~/dev/dfdu/target/  17.3 GiB · 42.5% of dfdu/ · 30 items · build                                                8/30
+ ↑↓ move  → expand  ← collapse  * expand largest  Enter open  z fold < 1%  T list  ? help  q quit

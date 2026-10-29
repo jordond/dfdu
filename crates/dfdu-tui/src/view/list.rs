@@ -1,8 +1,10 @@
 //! The entry list: a dim header row naming the columns, then one row per entry with the columns
 //! [`columns::layout`] picks for the width (size, bar, share, items, change, `↔`, category) and
-//! the name with its notes, and a scrollbar when the rows do not fit.
+//! the name with its notes, and a scrollbar when the rows do not fit. In tree mode the rows are
+//! drawn as a tree ([`tree`]).
 
 pub(super) mod name;
+mod tree;
 
 use std::time::Instant;
 
@@ -45,8 +47,6 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
         .collect();
     motion::frame(app, now, &visible);
 
-    let app = &*app;
-    let t = &app.theme;
     let changes: Vec<Option<RowNote>> = visible.iter().map(|&i| change(app, i)).collect();
     let scrollbar = rows + extra > height;
     let mut cols = columns::layout(area.width, present(app, &visible, &changes));
@@ -54,6 +54,10 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
         // The name gives up the scrollbar's cell.
         name.1 = name.1.saturating_sub(1);
     }
+    app.mouse.name_x = area.x + name_offset(&cols);
+    let app = &*app;
+    let t = &app.theme;
+    let trees = tree::rows(app, &visible);
     let width = area.width.saturating_sub(u16::from(scrollbar));
     f.render_widget(Paragraph::new(header(app, &cols)), head);
 
@@ -77,6 +81,7 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
             max,
             total,
             change,
+            tree: trees.as_ref().map(|v| &v[row]),
         };
         let mut line = entry_line(app, &row_of, &cols);
         if sel == Some(app.scroll + row) {
@@ -111,13 +116,28 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     }
 }
 
+/// The cells before the name column of `cols`.
+fn name_offset(cols: &[(Col, u16)]) -> u16 {
+    let mut x = 0;
+    let mut prev = None;
+    for &(c, w) in cols {
+        x += c.gap(prev);
+        if c == Col::Name {
+            break;
+        }
+        x += w;
+        prev = Some(c);
+    }
+    x
+}
+
 /// What entry `index` changed since the last recorded scan, when that is worth a note.
 fn change(app: &App, index: usize) -> Option<RowNote> {
     let e = &app.snap.entries[index];
     if app.growth.is_none() || e.ghost || e.pseudo {
         return None;
     }
-    let path = app.snap.dir_path.join(dfdu_tree::name_os(&e.name));
+    let path = crate::state::tree::path_of(&app.snap, index);
     growth::row_note(app, &path, e.size, e.mark)
 }
 
@@ -184,7 +204,7 @@ fn mark_glyph(e: &EntryData, t: &Theme, frame: u64) -> (char, Style) {
 }
 
 /// What a row is drawn from besides its entry.
-struct Row {
+struct Row<'a> {
     /// The entry's index in the snapshot.
     index: usize,
     /// The animation frame, for the spinner.
@@ -194,11 +214,13 @@ struct Row {
     /// The directory's total, for the share.
     total: u64,
     change: Option<RowNote>,
+    /// The row's place in the tree, in tree mode.
+    tree: Option<&'a tree::TreeRow>,
 }
 
 /// The row of an entry in the columns `cols`. A ghost (a deleted entry kept in its place until
 /// the next re-sort) is struck through and dimmed, and says so.
-fn entry_line(app: &App, row: &Row, cols: &[(Col, u16)]) -> Line<'static> {
+fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
     let t = &app.theme;
     let e = &app.snap.entries[row.index];
     let mut spans = Vec::new();
@@ -209,13 +231,24 @@ fn entry_line(app: &App, row: &Row, cols: &[(Col, u16)]) -> Line<'static> {
         prev = Some(c);
         match c {
             Col::Gutter => {
-                let (glyph, gstyle) = mark_glyph(e, t, row.frame);
+                // A fold row stands for many entries: it has no mark of its own.
+                let (glyph, gstyle) = if e.fold > 0 {
+                    (' ', Style::new())
+                } else {
+                    mark_glyph(e, t, row.frame)
+                };
                 // The gutter cell takes the mark's style where the gutter sets none of its own.
                 let gutter = marks::gutter(app, e);
                 spans.push(Span::styled(gutter.content, gstyle.patch(gutter.style)));
                 spans.push(Span::styled(glyph.to_string(), gstyle));
             }
-            Col::Size => spans.push(right(human(e.size), w, size_style(e, t))),
+            Col::Size => {
+                let style = tree::size_style(app, e, size_style(e, t));
+                spans.push(right(human(e.size), w, style));
+            }
+            Col::Bar if let Some(tr) = row.tree => {
+                spans.extend(tree::bar(app, e, tr, row.max, w));
+            }
             Col::Bar => {
                 let frac = motion::bar(app, e, ratio(e.size, row.max));
                 spans.push(Span::styled(bar(frac, w.into(), t.bars), t.bar_fill));
@@ -223,11 +256,16 @@ fn entry_line(app: &App, row: &Row, cols: &[(Col, u16)]) -> Line<'static> {
             // A ghost's size is no longer part of the total: its share would be meaningless.
             Col::Share if e.ghost => spans.push(right(String::new(), w, Style::new())),
             Col::Share => {
-                let share = format!("{:.1}%", percent(e.size, row.total));
+                let share = match row.tree {
+                    Some(tr) => tree::share(app, e, tr, row.total),
+                    None => format!("{:.1}%", percent(e.size, row.total)),
+                };
                 spans.push(right(share, w, Style::new()));
             }
             // The data shared between entries has no items of its own.
-            Col::Items if e.pseudo && !e.ghost => spans.push(right(String::new(), w, t.fg_dim)),
+            Col::Items if e.pseudo && !e.ghost && e.fold == 0 => {
+                spans.push(right(String::new(), w, t.fg_dim));
+            }
             Col::Items => spans.push(right(count(e.items), w, t.fg_dim)),
             Col::Mtime => {
                 let day = (e.mtime > 0 && !e.pseudo).then(|| dfdu_store::history::day(e.mtime));
@@ -253,9 +291,19 @@ fn entry_line(app: &App, row: &Row, cols: &[(Col, u16)]) -> Line<'static> {
                 spans.push(left(text.to_owned(), w, style));
             }
             Col::Name => {
-                let (name, after) = name::cell(app, row.index, w.into());
-                spans.extend(name);
-                notes = after;
+                let mut room = usize::from(w);
+                if let Some(tr) = row.tree {
+                    let prefix = tree::prefix(app, e, tr, room);
+                    room = room.saturating_sub(prefix.iter().map(Span::width).sum());
+                    spans.extend(prefix);
+                }
+                if e.fold > 0 {
+                    spans.push(tree::fold_name(app, e, room));
+                } else {
+                    let (name, after) = name::cell(app, row.index, room);
+                    spans.extend(name);
+                    notes = after;
+                }
             }
         }
     }

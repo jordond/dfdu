@@ -75,9 +75,11 @@ pub fn follow(app: &mut App, before: Option<usize>) {
 fn mark_rows(app: &mut App, from: usize, to: usize) {
     let folders = !crate::overlay::type_filter::active(app);
     let items = (app.rows.get(from..=to).unwrap_or_default().iter())
-        .map(|&i| &app.snap.entries[i])
-        .filter(|e| !e.pseudo && (folders || !e.is_dir))
-        .map(|e| item_of(app, e))
+        .filter(|&&i| {
+            let e = &app.snap.entries[i];
+            !e.pseudo && (folders || !e.is_dir)
+        })
+        .map(|&i| item_of(app, i))
         .collect();
     add(app, items);
 }

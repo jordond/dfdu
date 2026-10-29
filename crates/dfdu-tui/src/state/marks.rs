@@ -1,5 +1,10 @@
 //! Marked entries: `Space` marks, the footer shows their live total, and a delete acts on them.
 //! `v` marks a range as the cursor moves ([`range`]).
+//!
+//! In the list a marked directory can hold marked entries, which count and go with it. In tree
+//! mode, where both show at once, a directory and something inside it are never both marked:
+//! marking one unmarks the other ([`exclusive`]), as marking a container in the cleanup view
+//! marks only its rest.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -118,11 +123,16 @@ struct Found {
 }
 
 /// Marks or unmarks the selected entry and moves the cursor down a row. The "shared between
-/// entries" row and deleted rows are not entries and cannot be marked.
+/// entries" row, fold rows and deleted rows are not entries and cannot be marked.
 pub fn toggle(app: &mut App) {
-    let Some(e) = app.selected_entry().cloned() else {
+    let Some(index) = app.selected_index().map(|row| app.rows[row]) else {
         return;
     };
+    let e = &app.snap.entries[index];
+    if e.fold > 0 {
+        app.status = Some("a fold row stands for many entries: → shows them".into());
+        return;
+    }
     if e.pseudo {
         app.status = Some("only entries can be marked".into());
         return;
@@ -131,28 +141,45 @@ pub fn toggle(app: &mut App) {
         app.status = Some(crate::overlay::type_filter::NO_FOLDERS.into());
         return;
     }
-    let item = item_of(app, &e);
+    let node = e.node;
+    let item = item_of(app, index);
+    let tree = app.tree_shown().is_some();
     let marks = &mut app.marks;
     match marks
         .items
         .iter()
-        .position(|it| it.target.node == Some(e.node) || it.target.path == item.target.path)
+        .position(|it| it.target.node == Some(node) || it.target.path == item.target.path)
     {
         Some(i) => {
             marks.items.remove(i);
         }
-        None => marks.items.push(item),
+        None => {
+            if tree {
+                exclusive(marks, &item.target.path);
+            }
+            marks.items.push(item);
+        }
     }
     marks.changed();
     app.move_by(1);
 }
 
-/// The mark of `e`, an entry of the current directory.
-pub(crate) fn item_of(app: &App, e: &EntryData) -> Item {
+/// Unmarks what is inside `path` and the directories it is in, before `path` is marked in tree
+/// mode.
+fn exclusive(marks: &mut Marks, path: &Path) {
+    marks
+        .items
+        .retain(|it| !it.target.path.starts_with(path) && !path.starts_with(&it.target.path));
+}
+
+/// The mark of entry `index` of the snapshot: a row of the current directory, or in tree mode
+/// of a directory below it.
+pub(crate) fn item_of(app: &App, index: usize) -> Item {
+    let e = &app.snap.entries[index];
     Item {
         target: Target {
             node: Some(e.node),
-            path: app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name)),
+            path: crate::state::tree::path_of(&app.snap, index),
             ident: Some(Ident {
                 dev_ino: e.dev_ino,
                 kind: e.kind,
@@ -192,12 +219,14 @@ pub fn set(app: &mut App, item: Item, on: bool) {
 
 /// Marks every one of `items` not marked yet, with one look-up each, and returns how many it
 /// marked: for a range or a pattern, which can mark a whole directory at once. A read-only
-/// browser marks nothing, as [`set`] does.
+/// browser marks nothing, as [`set`] does. In tree mode the outermost win: an item inside a
+/// marked directory is left out, and marks inside a directory marked now are dropped.
 pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
     if app.read_only {
         app.status = Some(crate::app::keys::READ_ONLY.into());
         return 0;
     }
+    let tree = app.tree_shown().is_some();
     let marks = &mut app.marks;
     let mut paths: HashSet<std::path::PathBuf> = marks
         .items
@@ -211,8 +240,23 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
             marks.items.push(it);
         }
     }
-    let added = marks.items.len() - before;
-    if added > 0 {
+    let mut added = marks.items.len() - before;
+    let mut dropped = 0;
+    if tree && added > 0 {
+        // What is inside a marked directory is left out, whether it was marked before or now.
+        let paths: HashSet<&Path> = marks.items.iter().map(|it| &*it.target.path).collect();
+        let below = |p: &Path| p.ancestors().skip(1).any(|a| paths.contains(a));
+        let kept: Vec<bool> = marks
+            .items
+            .iter()
+            .map(|it| !below(&it.target.path))
+            .collect();
+        added = kept[before..].iter().filter(|&&k| k).count();
+        dropped = kept[..before].iter().filter(|&&k| !k).count();
+        let mut keep = kept.into_iter();
+        marks.items.retain(|_| keep.next().unwrap_or(true));
+    }
+    if added > 0 || dropped > 0 {
         marks.changed();
     }
     added
@@ -355,6 +399,52 @@ pub fn apply(app: &mut App) {
     if swapped || marks.items.len() != before {
         marks.index();
     }
+}
+
+/// `*`: inverts the marks of the current directory's entries as the list shows them (after the
+/// filter, without the rows tree mode opens below them), and says how many changed. The "shared
+/// between entries" row is not an entry, and directories are left out while a type filter
+/// shows only some of their files. A read-only browser changes nothing, as [`add`] does, and
+/// the other views leave the list's rows alone, as the range mark does.
+pub fn invert(app: &mut App) {
+    use crate::features::{cleanup, dupes, largest, treemap};
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
+    if treemap::active(app) || cleanup::active(app) || dupes::active(app) || largest::active(app) {
+        let list = crate::app::keys::first_key(crate::app::keys::Action::ViewList);
+        app.status = Some(format!("marks are inverted in the list ({list})"));
+        return;
+    }
+    let folders = !crate::overlay::type_filter::active(app);
+    let rows: Vec<Item> = (app.rows.iter())
+        .filter(|&&i| {
+            let e = &app.snap.entries[i];
+            !e.pseudo && e.depth == 0 && (folders || !e.is_dir)
+        })
+        .map(|&i| item_of(app, i))
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    let marks = &mut app.marks;
+    let paths: HashSet<&Path> = marks.items.iter().map(|it| &*it.target.path).collect();
+    let marked = |it: &Item| {
+        it.target.node.is_some_and(|n| marks.nodes.contains(&n)) || paths.contains(&*it.target.path)
+    };
+    let (off, on): (Vec<Item>, Vec<Item>) = rows.into_iter().partition(marked);
+    let gone: HashSet<&Path> = off.iter().map(|it| &*it.target.path).collect();
+    let gone_nodes: HashSet<NodeRef> = off.iter().filter_map(|it| it.target.node).collect();
+    marks.items.retain(|it| {
+        !gone.contains(&*it.target.path) && !it.target.node.is_some_and(|n| gone_nodes.contains(&n))
+    });
+    let (marked, unmarked) = (on.len(), off.len());
+    marks.items.extend(on);
+    marks.changed();
+    app.status = Some(format!(
+        "marks inverted: {marked} marked, {unmarked} unmarked"
+    ));
 }
 
 #[cfg(test)]

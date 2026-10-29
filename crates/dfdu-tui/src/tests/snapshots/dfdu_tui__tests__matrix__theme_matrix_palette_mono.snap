@@ -10,7 +10,7 @@ L1 26-32 bold | 92-94 dim
 L2 0-99 dim
  ⠋ 112.0 GiB  ████████████████   46.4%  812.0k  Library/
 L3 0-47 reversed | 48-55 bold reversed | 56-99 reversed
- ⠙  78.0 GiB┌ Commands 13/54 ──────────────────────────────────────────────────────────┐
+ ⠙  78.0 GiB┌ Commands 14/59 ──────────────────────────────────────────────────────────┐
 L4 0-11 dim
     51.0 GiB│ : sort▌                                                                  │
 L5 13-14 bold | 20-20 bold
@@ -34,14 +34,15 @@ L13 17-17 underlined | 33-34 underlined | 42-42 underlined | 75-80 dim | 83-85 b
 L14 28-28 underlined | 32-32 underlined | 36-36 underlined | 40-40 underlined | 76-82 dim | 85-85 bold
             │ mark by pattern: names in this directory matching a glob             act │
 L15 43-43 underlined | 51-52 underlined | 57-57 underlined | 83-85 dim
+            │ invert the marks in this directory, as * does in the marks pane      act │
+L16 37-37 underlined | 45-46 underlined | 63-63 underlined | 83-85 dim
             │ scan into the selected mount (another filesystem)                 act  m │
-L16 28-28 underlined | 38-38 underlined | 50-50 underlined | 59-59 underlined | 80-82 dim | 85-85 bold
+L17 28-28 underlined | 38-38 underlined | 50-50 underlined | 59-59 underlined | 80-82 dim | 85-85 bold
             │ list what could not be read, and go to it                      panels  ! │
-L17 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
+L18 16-16 underlined | 25-25 underlined | 37-37 underlined | 50-50 underlined | 77-82 dim | 85-85 bold
             │ largest files anywhere below this directory                   display  5 │
-L18 26-26 underlined | 40-40 underlined | 50-50 underlined | 53-53 underlined | 76-82 dim | 85-85 bold
+L19 26-26 underlined | 40-40 underlined | 50-50 underlined | 53-53 underlined | 76-82 dim | 85-85 bold
             └──────────────────────────────────────────────────────────────────────────┘
-
  1 directory is not responding: wait, or press x to skip it
 L21 0-58 bold
 

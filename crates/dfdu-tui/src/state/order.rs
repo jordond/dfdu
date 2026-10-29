@@ -5,8 +5,22 @@
 //! their positions, entries that disappeared are dropped, and entries that appeared are
 //! collected as "new" and shown after the sorted rows. While the cursor is at the top, the
 //! first screen of rows is kept sorted with each snapshot ([`Order::sort_top`]).
+//!
+//! In tree mode the rows are a preorder of the expanded tree, and the same rules apply within
+//! each group of siblings ([`tree`], [`Order::sort_tree`]). Entries that appear between sorts
+//! then go after their known siblings instead of to the new list, and the first screen is not
+//! sorted with each snapshot: a row moving there would carry its expanded children along.
+
+mod tree;
 
 use std::cmp::Ordering;
+
+pub use tree::Siblings;
+#[cfg_attr(
+    not(test),
+    expect(unused_imports, reason = "for the tree mode keys and drawing")
+)]
+pub use tree::{tree_order, tree_rows};
 
 use crate::model::snapshot::EntryData;
 
@@ -254,6 +268,32 @@ impl Order {
                 self.new.push(i);
             }
         }
+    }
+
+    /// The rows in tree mode ([`tree_rows`]), with siblings ordered as `how` says. With no
+    /// rows yet, siblings get an exact sort whatever `how` is. The entries must be the ones the
+    /// order refers to ([`Order::remap`]).
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "positions are rows of one snapshot, fewer than 2^32"
+    )]
+    pub fn sort_tree(
+        &mut self,
+        entries: &[EntryData],
+        visible: impl Fn(usize, &EntryData) -> bool,
+        spec: SortSpec,
+        how: Siblings,
+    ) {
+        let mut prev = Vec::new();
+        if how != Siblings::Exact {
+            prev = vec![u32::MAX; entries.len()];
+            for (pos, &i) in self.rows.iter().chain(self.new.iter()).enumerate() {
+                prev[i] = pos as u32;
+            }
+        }
+        self.rows = tree_rows(entries, visible, spec, &prev, how);
+        self.new.clear();
+        self.base = Base::None;
     }
 
     /// Updates the order as [`Order::sync`] does, then sorts its first `height` rows: they become

@@ -209,7 +209,8 @@ impl Pacing {
         // directory or changed the size mode.
         let stale = app.target.path != app.snap.dir_path
             || app.size_mode != self.read_mode
-            || overlay::type_filter::stale(app);
+            || overlay::type_filter::stale(app)
+            || crate::state::tree::stale(app.tree_shown(), &app.snap);
         let read = extras::plan(data_ready || stale, app.extras_stale());
         let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
         let animating = spinners_visible(app)
@@ -233,7 +234,14 @@ impl Pacing {
         let breakdown = matches!(app.overlay, app::Overlay::Types(_));
         let (snap, extras, cost) = engine.read(|m| {
             let t = Instant::now();
-            let snap = snapshot::build_view(m, &mut target, mode, &app.types, breakdown);
+            let snap = snapshot::build_view(
+                m,
+                &mut target,
+                mode,
+                &app.types,
+                breakdown,
+                app.tree_shown(),
+            );
             let counters = debug::Counters::of(engine);
             let extras = extras::read(m, app, engine.budget(), counters);
             (snap, extras, t.elapsed())

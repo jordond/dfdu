@@ -30,9 +30,12 @@ fn selected(app: &App) -> Option<(PathBuf, bool)> {
         let it = cleanup::selected_item(app)?;
         return Some((it.path.clone(), it.kind == dfdu_tree::Kind::Dir));
     }
-    let e = app.selected_entry().filter(|e| !e.pseudo)?;
-    let path = app.snap.dir_path.join(&*dfdu_tree::name_os(&e.name));
-    Some((path, e.is_dir))
+    let index = app.rows[app.selected_index()?];
+    let e = &app.snap.entries[index];
+    if e.pseudo {
+        return None;
+    }
+    Some((crate::state::tree::path_of(&app.snap, index), e.is_dir))
 }
 
 /// `y`: copies the selected path, and says so.

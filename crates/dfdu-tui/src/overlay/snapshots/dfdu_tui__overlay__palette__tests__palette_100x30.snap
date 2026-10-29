@@ -3,14 +3,14 @@ source: crates/dfdu-tui/src/overlay/palette.rs
 expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00
- 3 items · 3┌ Commands 54/54 ──────────────────────────────────────────────────────────┐ze ↓ · disk
+ 3 items · 3┌ Commands 59/59 ──────────────────────────────────────────────────────────┐ze ↓ · disk
         size│ : ▌                                                                      │
-     3.0 GiB│ scan into the selected mount (another filesystem)                 act  m │
-   625.0 MiB│ skip directories that are not responding                          act  x │
-            │ mark or unmark, then move down                                act  Space │
+     3.0 GiB│ skip directories that are not responding                          act  x │
+   625.0 MiB│ mark or unmark, then move down                                act  Space │
             │ clear all marks                                                      act │
             │ mark a range: moving marks every row passed (v or Esc ends)       act  v │
             │ mark by pattern: names in this directory matching a glob             act │
+            │ invert the marks in this directory, as * does in the marks pane      act │
             │ copy the selected path (through the terminal, OSC 52)             act  y │
             │ open in the file manager (a file: its folder)                     act  o │
             │ move to Trash                                                     act  d │
@@ -19,7 +19,7 @@ expression: frame
             │ filter this directory                                          panels  / │
             │ show only files of some types (video, audio, .iso...)          panels  t │
             │ details of the selected entry                                  panels  i │
-            │ move focus between the list and the details                  panels  Tab │
+            │ move focus: the list, the details, the marks pane            panels  Tab │
             │ list what could not be read, and go to it                      panels  ! │
             │ keys                                                        panels  ? F1 │
             │ debug overlay                                                panels  F12 │

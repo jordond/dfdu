@@ -73,6 +73,7 @@ tachyonfx = { version = "0.25.2", default-features = false, features = ["std", "
 nucleo-matcher = "0.3.1"
 terminal-colorsaurus = "1.0.3"
 insta = "1.49.0"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 toml = { version = "1.1.8", default-features = false, features = ["std", "serde", "parse"] }
 loom = "0.7.2"
 windows-sys = { version = "0.61.2", features = [

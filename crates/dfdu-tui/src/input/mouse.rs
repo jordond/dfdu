@@ -1,7 +1,7 @@
 //! Mouse input: clicks, double clicks and the wheel, mapped through `App::areas`.
 //!
 //! A click selects a list row (or treemap tile) and a second click on it within [`DOUBLE_CLICK`]
-//! opens it; a click
+//! opens it; in tree mode a click on a row's `▸`/`▾` expands or collapses it. A click
 //! on the "new entries" row sorts, one on a breadcrumb goes to its directory, and one outside an
 //! open overlay closes it. The delete dialog ignores the mouse, so a stray click never confirms
 //! or cancels a delete. The wheel moves the selection, or scrolls the details pane. Over the
@@ -31,6 +31,9 @@ pub struct Mouse {
     last_click: Option<(Instant, NodeRef)>,
     /// The breadcrumbs the last frame drew, except the current directory's.
     pub crumbs: Vec<Crumb>,
+    /// The column the list's name cells start at in the last frame: in tree mode a click on
+    /// the `▸`/`▾` after a row's guide expands or collapses it.
+    pub name_x: u16,
 }
 
 /// A breadcrumb on screen. A click goes to its directory and selects `child`, the directory
@@ -62,7 +65,9 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     } else {
         i32::from(WHEEL_ROWS)
     };
-    if (app.areas.details.is_some_and(|r| r.contains(at)) || details::focused(app))
+    if (app.areas.details.is_some_and(|r| r.contains(at))
+        || details::focused(app)
+        || crate::features::marks_pane::shown(app))
         && details::scroll(app, step)
     {
         return Some(Vec::new());
@@ -119,6 +124,11 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     app.status = None;
     if line < entries {
         let row = app.scroll + line;
+        if on_glyph(app, row, at.x) {
+            app.mouse.last_click = None;
+            crate::state::tree::act::toggle_row(app, row);
+            return Some(Vec::new());
+        }
         let node = app.snap.entries[app.rows[row]].node;
         let again = app
             .mouse
@@ -128,7 +138,7 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
             app.mouse.last_click = None;
             // The selection may have moved since the first click; open the row clicked.
             app.move_to(row);
-            return Some(keys::run(app, Action::Open, now));
+            return Some(keys::run(app, Action::Enter, now));
         }
         app.mouse.last_click = Some((now, node));
         app.move_to(row);
@@ -139,6 +149,20 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
         return Some(keys::run(app, Action::Resort, now));
     }
     None
+}
+
+/// Whether column `x` is on the `▸`/`▾` of row `row` (or the blank after it), in tree mode:
+/// after the row's guide, two cells per level below the top.
+fn on_glyph(app: &App, row: usize, x: u16) -> bool {
+    if app.tree_shown().is_none() {
+        return false;
+    }
+    let e = &app.snap.entries[app.rows[row]];
+    if !e.is_dir || e.pseudo {
+        return false;
+    }
+    let at = app.mouse.name_x + 2 * u16::from(e.depth);
+    (at..at + 2).contains(&x)
 }
 
 #[cfg(test)]

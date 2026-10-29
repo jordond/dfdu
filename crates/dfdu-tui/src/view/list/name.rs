@@ -7,7 +7,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::app::App;
 use crate::model::outside;
-use crate::model::snapshot::{EntryData, Mark};
+use crate::model::snapshot::Mark;
 use crate::state::{filter, motion};
 use crate::theme::{Theme, count, truncate_middle};
 
@@ -32,7 +32,7 @@ pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<S
         spans.push(r);
     }
     let mut after = Vec::new();
-    for (text, style) in notes(app, e, t) {
+    for (text, style) in notes(app, index, t) {
         let w = Span::raw(&text).width();
         if w <= left {
             left -= w;
@@ -50,7 +50,8 @@ pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<S
 /// The notes after `e`'s name, each starting with two spaces, most important first: that it is
 /// deleted, what went wrong reading it or inside it, its mark, its subvolume label, and that its
 /// size is only an upper bound.
-fn notes(app: &App, e: &EntryData, t: &Theme) -> Vec<(String, Style)> {
+fn notes(app: &App, index: usize, t: &Theme) -> Vec<(String, Style)> {
+    let e = &app.snap.entries[index];
     let mut notes = Vec::new();
     if e.ghost {
         notes.push(("  deleted".to_owned(), t.fg_dim));
@@ -70,7 +71,7 @@ fn notes(app: &App, e: &EntryData, t: &Theme) -> Vec<(String, Style)> {
         1 => notes.push(("  1 error inside".to_owned(), t.status_error)),
         n => notes.push((format!("  {} errors inside", count(n)), t.status_error)),
     }
-    notes.extend(mark_note(app, e, t));
+    notes.extend(mark_note(app, index, t));
     if let Some(l) = &e.label {
         notes.push((format!("  [{l}]"), t.fg_dim));
     }
@@ -81,13 +82,14 @@ fn notes(app: &App, e: &EntryData, t: &Theme) -> Vec<(String, Style)> {
 }
 
 /// What the row says about its mark after the name, if anything.
-fn mark_note(app: &App, e: &EntryData, t: &Theme) -> Option<(String, Style)> {
+fn mark_note(app: &App, index: usize, t: &Theme) -> Option<(String, Style)> {
+    let e = &app.snap.entries[index];
     let note = |s: &str, style| Some((s.to_owned(), style));
     match e.mark {
         Mark::Stalled => note("  not responding", t.status_warn),
         Mark::Rescanning => note("  rescanning", t.fg_dim),
         // Its type and used space; what it uses is not part of the sizes here.
-        Mark::OtherFs | Mark::Network => Some((outside::row_note(app, e), t.fg_dim)),
+        Mark::OtherFs | Mark::Network => Some((outside::row_note(app, index), t.fg_dim)),
         Mark::DupMount => note("  mounted again: counted at its other mount", t.fg_dim),
         Mark::Kernel => note("  kernel filesystem", t.fg_dim),
         Mark::Incomplete => note("  incomplete: r to rescan", t.status_warn),

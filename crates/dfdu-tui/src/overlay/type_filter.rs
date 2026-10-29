@@ -330,7 +330,14 @@ mod tests {
     fn read(app: &mut App, m: &dfdu_engine::Model, now: Instant) {
         let mut target = app.target.clone();
         let breakdown = matches!(app.overlay, Overlay::Types(_));
-        let snap = snapshot::build_view(m, &mut target, app.size_mode, &app.types, breakdown);
+        let snap = snapshot::build_view(
+            m,
+            &mut target,
+            app.size_mode,
+            &app.types,
+            breakdown,
+            app.tree_shown(),
+        );
         app.target = target;
         app.refresh(snap, now);
     }

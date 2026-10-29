@@ -4,6 +4,9 @@
 //! Whether each entry matches is kept per index of the snapshot's entries, so new entries of a
 //! running scan are tested as they arrive, and a query that only grew re-tests only the entries
 //! that matched before. The filter only hides rows: the rest keep their sort order.
+//!
+//! In tree mode it matches anywhere in the expanded tree, and the rows a match is inside stay
+//! to show where it is. Fold rows never match.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -33,6 +36,8 @@ pub struct Filter {
     fuzzy: RefCell<Fuzzy>,
     /// `hits[i]`: entry `i` matches `query`. Empty while the query has no words.
     hits: Vec<bool>,
+    /// `around[i]`: in tree mode, some match is inside entry `i`. Empty otherwise.
+    around: Vec<bool>,
     /// Directory the entries are from; another one clears the filter.
     dir: PathBuf,
     counts: Counts,
@@ -80,7 +85,7 @@ impl Filter {
             self.active = !fuzzy.is_empty();
             if narrowed {
                 for (hit, e) in self.hits.iter_mut().zip(&snap.entries) {
-                    *hit = *hit && fuzzy.matches(&String::from_utf8_lossy(&e.name));
+                    *hit = *hit && hits(fuzzy, e);
                 }
             } else {
                 self.hits.clear();
@@ -91,13 +96,14 @@ impl Filter {
         if self.active {
             self.hits.truncate(snap.entries.len());
             let from = self.hits.len();
-            self.hits.extend(
-                snap.entries[from..]
-                    .iter()
-                    .map(|e| fuzzy.matches(&String::from_utf8_lossy(&e.name))),
-            );
+            self.hits
+                .extend(snap.entries[from..].iter().map(|e| hits(fuzzy, e)));
         } else {
             self.hits.clear();
+        }
+        self.around.clear();
+        if self.active && snap.tree.is_some() {
+            self.around = around(&snap.entries, &self.hits);
         }
         if self.active || self.editing {
             self.counts = self.count(&snap.entries);
@@ -111,7 +117,7 @@ impl Filter {
             if e.ghost {
                 continue;
             }
-            let (hidden, hit) = (e.hidden(), self.matches(i, e));
+            let (hidden, hit) = (e.hidden(), !self.active || self.hit(i));
             c.entries += 1;
             c.hidden += usize::from(hidden);
             c.matched += usize::from(hit);
@@ -130,11 +136,33 @@ impl Filter {
         &self.query
     }
 
-    /// Whether entry `index` (`e`) passes the filter; a lookup into what [`Filter::prepare`]
-    /// computed.
+    /// Whether entry `index` (`e`) passes the filter: it matches, or in tree mode a match is
+    /// inside it. A lookup into what [`Filter::prepare`] computed.
     pub fn matches(&self, index: usize, _e: &EntryData) -> bool {
-        !self.active || self.hits.get(index).copied().unwrap_or(false)
+        !self.active || self.hit(index) || self.around.get(index).copied().unwrap_or(false)
     }
+
+    fn hit(&self, index: usize) -> bool {
+        self.hits.get(index).copied().unwrap_or(false)
+    }
+}
+
+/// Whether `e`'s name matches; a fold row's text is not a name.
+fn hits(fuzzy: &mut Fuzzy, e: &EntryData) -> bool {
+    e.fold == 0 && fuzzy.matches(&String::from_utf8_lossy(&e.name))
+}
+
+/// For each entry of a tree read, whether one of `hits` is inside it. A row comes after the
+/// row it is in, so one pass from the end carries each match up to its parent.
+fn around(entries: &[EntryData], hits: &[bool]) -> Vec<bool> {
+    let mut out = vec![false; entries.len()];
+    for i in (0..entries.len()).rev() {
+        let p = entries[i].parent as usize;
+        if p < i && (out[i] || hits.get(i).copied().unwrap_or(false)) {
+            out[p] = true;
+        }
+    }
+    out
 }
 
 /// Starts editing the filter, with the cursor after the query in force.
@@ -170,7 +198,7 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
                     && !app.snap.entries[only].pseudo
                 {
                     app.select(0);
-                    return crate::app::keys::run(app, crate::app::keys::Action::Open, now);
+                    return crate::app::keys::run(app, crate::app::keys::Action::Enter, now);
                 }
             }
             Edit::Cancel => {

@@ -117,7 +117,7 @@ fn read_only_does_not_open_it() {
     assert!(matches!(app.overlay, Overlay::None));
     assert_eq!(app.status.as_deref(), Some(READ_ONLY));
     // Nor does anything else mark through the bulk path.
-    let items = vec![marks::item_of(&app, &app.snap.entries[0])];
+    let items = vec![marks::item_of(&app, 0)];
     assert_eq!(marks::add(&mut app, items), 0);
     assert!(app.marks.is_empty());
 }

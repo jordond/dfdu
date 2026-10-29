@@ -122,7 +122,9 @@ impl Motion {
         }
     }
 
-    /// Appends the ghosts to `new` and returns them with their times of deletion.
+    /// Appends the ghosts to `new` and returns them with their times of deletion. In tree mode
+    /// a ghost stays under the row it was in, found again in `new`; one whose row is gone too
+    /// (a collapsed directory) is dropped.
     fn add_ghosts(
         &self,
         old: &Snapshot,
@@ -131,11 +133,12 @@ impl Motion {
         now: Instant,
     ) -> HashMap<NodeRef, Instant> {
         let present: HashSet<NodeRef> = new.entries.iter().map(|e| e.node).collect();
-        let gone: Vec<&EntryData> = old
+        let gone: Vec<(usize, &EntryData)> = old
             .entries
             .iter()
-            .filter(|e| !present.contains(&e.node))
-            .filter(|e| {
+            .enumerate()
+            .filter(|(_, e)| !present.contains(&e.node))
+            .filter(|(_, e)| {
                 if e.ghost {
                     self.ghosts.contains_key(&e.node)
                 } else {
@@ -146,6 +149,7 @@ impl Motion {
         // A rescan replaces nodes: an entry with the same name and identity was not deleted.
         let names: HashSet<(&[u8], (u64, u64))> = gone
             .iter()
+            .map(|&(_, e)| e)
             .filter(|e| !e.ghost)
             .map(|e| (&e.name[..], e.dev_ino))
             .collect();
@@ -158,22 +162,49 @@ impl Motion {
                 .filter(|k| names.contains(k))
                 .collect()
         };
+        // The rows of the old entries in the new ones, by node, for ghosts below the top.
+        let nested = gone.iter().any(|&(_, e)| e.parent != u32::MAX);
+        let row_of: HashMap<NodeRef, usize> = if nested {
+            new.entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.node, i))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let mut moved: HashMap<usize, usize> = HashMap::new();
         let mut ghosts = HashMap::new();
         let mut added = Vec::new();
-        for e in gone {
-            if e.ghost {
-                ghosts.insert(e.node, self.ghosts[&e.node]);
-                added.push(e.clone());
+        for (i, e) in gone {
+            let deleted_at = if e.ghost {
+                self.ghosts[&e.node]
             } else if !swapped.contains(&(&e.name[..], e.dev_ino)) {
-                ghosts.insert(e.node, now);
-                added.push(EntryData {
-                    ghost: true,
-                    pseudo: true,
-                    is_dir: false,
-                    mark: Mark::None,
-                    ..e.clone()
-                });
-            }
+                now
+            } else {
+                continue;
+            };
+            let p = e.parent as usize;
+            let parent = if e.parent == u32::MAX {
+                Some(u32::MAX)
+            } else {
+                (moved.get(&p).copied())
+                    .or_else(|| row_of.get(&old.entries.get(p)?.node).copied())
+                    .and_then(|r| u32::try_from(r).ok())
+            };
+            let Some(parent) = parent else {
+                continue;
+            };
+            moved.insert(i, new.entries.len() + added.len());
+            ghosts.insert(e.node, deleted_at);
+            added.push(EntryData {
+                ghost: true,
+                pseudo: true,
+                is_dir: false,
+                mark: Mark::None,
+                parent,
+                ..e.clone()
+            });
         }
         new.entries.extend(added);
         ghosts

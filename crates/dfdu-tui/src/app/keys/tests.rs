@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::*;
 use crate::tests::press;
 
-const ALL: [Action; 50] = [
+const ALL: [Action; 55] = [
     Action::Quit,
     Action::Up,
     Action::Down,
@@ -16,6 +16,7 @@ const ALL: [Action; 50] = [
     Action::First,
     Action::Last,
     Action::Open,
+    Action::Enter,
     Action::Parent,
     Action::SortSize,
     Action::SortName,
@@ -26,6 +27,9 @@ const ALL: [Action; 50] = [
     Action::ToggleReferenced,
     Action::ToggleHidden,
     Action::Columns,
+    Action::ToggleTree,
+    Action::ExpandChain,
+    Action::CycleFold,
     Action::Rescan,
     Action::EnterMount,
     Action::SkipStalled,
@@ -39,6 +43,7 @@ const ALL: [Action; 50] = [
     Action::ClearMarks,
     Action::RangeMark,
     Action::MarkPattern,
+    Action::InvertMarks,
     Action::CopyPath,
     Action::OpenPath,
     Action::Filter,
@@ -76,8 +81,10 @@ fn every_action_has_one_registry_row() {
     let groups: HashSet<_> = ACTIONS.iter().map(|r| format!("{:?}", r.group)).collect();
     assert_eq!(groups.len(), 6, "every group has an action");
     let keyless: Vec<_> = ACTIONS.iter().filter(|r| r.keys.is_empty()).collect();
-    assert!(
-        matches!(keyless[..], [a, b] if a.action == Action::ClearMarks && b.action == Action::MarkPattern)
+    let keyless: Vec<_> = keyless.iter().map(|r| r.action).collect();
+    assert_eq!(
+        keyless,
+        [Action::ClearMarks, Action::MarkPattern, Action::InvertMarks]
     );
 }
 
@@ -105,7 +112,7 @@ fn existing_keys_map_to_the_same_actions() {
         (c('G'), Action::Last),
         (KeyCode::Right, Action::Open),
         (c('l'), Action::Open),
-        (KeyCode::Enter, Action::Open),
+        (KeyCode::Enter, Action::Enter),
         (KeyCode::Left, Action::Parent),
         (c('h'), Action::Parent),
         (KeyCode::Backspace, Action::Parent),
@@ -156,10 +163,13 @@ fn existing_keys_map_to_the_same_actions() {
         (c('t'), Action::Types),
         (c('+'), Action::TreemapDeeper),
         (c('-'), Action::TreemapShallower),
+        (c('T'), Action::ToggleTree),
+        (c('*'), Action::ExpandChain),
+        (c('z'), Action::CycleFold),
     ] {
         assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
     }
-    for code in [c('z'), c('6'), KeyCode::F(2), KeyCode::Insert] {
+    for code in [c('Z'), c('6'), KeyCode::F(2), KeyCode::Insert] {
         assert_eq!(action_for(&press(code)), None, "{code:?}");
     }
 }

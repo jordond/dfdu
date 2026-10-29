@@ -8,7 +8,7 @@ use dfdu_tree::NodeRef;
 
 use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, delete_summary, shown};
 use crate::model::snapshot::{EntryData, Snapshot};
-use crate::state::order::Order;
+use crate::state::order::{Order, Siblings};
 
 #[cfg(test)]
 mod tests;
@@ -37,7 +37,8 @@ enum Reorder {
     /// No sort: the new entries of a fresh snapshot are synced into the order.
     Sync,
     /// The new entries are synced and the rows on the first screen sorted, while the cursor is
-    /// at the top ([`App::keeps_top_sorted`]).
+    /// at the top ([`App::keeps_top_sorted`]). In tree mode this is [`Reorder::Sync`]: a row
+    /// moving up would carry its expanded children along.
     Top,
 }
 
@@ -56,6 +57,9 @@ impl App {
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
+        if let (Some(tree), Some(found)) = (&mut self.tree, &snap.tree) {
+            tree.apply(found);
+        }
         self.motion.carry_ghosts(&self.snap, &mut snap, now);
         if let Some(d) = &snap.last_delete
             && self
@@ -158,15 +162,31 @@ impl App {
         self.filter.prepare(&self.snap, replaced);
         let entries = &self.snap.entries;
         let (hide, filter) = (self.hide_hidden, &self.filter);
-        let visible = |i: usize, e: &EntryData| shown(hide, e) && filter.matches(i, e);
+        let tree = self.tree_shown().is_some();
+        // Rows below the top are left out of a list until the read without them comes in.
+        let visible = |i: usize, e: &EntryData| {
+            shown(hide, e) && (tree || e.parent == u32::MAX) && filter.matches(i, e)
+        };
         // Only the filter changed: its rows are picked from the kept exact sort of every entry
         // it can show, in the order an exact sort of only those gives.
         let refiltered = mode == Reorder::Exact
+            && !tree
             && refilter
             && !requested
             && !fresh
             && self.order.refilter(entries, visible, self.sort);
         match mode {
+            _ if tree => {
+                let how = match mode {
+                    Reorder::Exact => Siblings::Exact,
+                    Reorder::Auto => Siblings::Auto,
+                    Reorder::Sync | Reorder::Top => Siblings::Keep,
+                };
+                // Between sorts a deleted row keeps its place, as the list keeps its row.
+                let keep = how == Siblings::Keep;
+                let visible = |i: usize, e: &EntryData| visible(i, e) || (keep && e.ghost);
+                self.order.sort_tree(entries, visible, self.sort, how);
+            }
             Reorder::Exact if refiltered => {}
             Reorder::Exact => {
                 self.order = Order::default();

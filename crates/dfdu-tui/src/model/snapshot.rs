@@ -8,6 +8,8 @@ use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model, SizeMode, subvol_labe
 use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
 use dfdu_tree::{DirId, DirState, ErrKind, Ix, JobId, Kind, NodeRef, Totals, Tree, name_bytes};
 
+mod tree;
+
 /// How an entry is marked in the list.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Mark {
@@ -173,6 +175,13 @@ pub struct EntryData {
     /// A deleted entry kept in its row until the next re-sort, drawn struck through. Always
     /// also `pseudo` and never `is_dir`, so it cannot be opened or deleted either.
     pub ghost: bool,
+    /// Tree mode: how many directories down from the current one, zero for its own entries.
+    pub depth: u8,
+    /// Tree mode: the index of the parent's row in the entries, `u32::MAX` at the top.
+    pub parent: u32,
+    /// Tree mode: the number of small children this row stands for (a fold row, also
+    /// `pseudo`), zero for any other row.
+    pub fold: u32,
 }
 
 impl EntryData {
@@ -308,6 +317,9 @@ pub struct Snapshot {
     pub types: TypeFilter,
     /// The directory's files by type and extension, read while the type picker is open.
     pub breakdown: Option<std::sync::Arc<Breakdown>>,
+    /// Tree mode: what the read found of the expanded directories (`state::tree`). `None`
+    /// when tree mode is off.
+    pub tree: Option<crate::state::tree::Found>,
 }
 
 fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
@@ -351,20 +363,28 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
 /// to be found again (rescan swap) or no longer exists (falls back to the nearest ancestor).
 #[cfg(test)]
 pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
-    build_view(m, target, mode, &TypeFilter::default(), false)
+    build_view(m, target, mode, &TypeFilter::default(), false, None)
 }
 
 /// `build` counting only the files `types` matches (none left out when it is empty), and with
 /// the directory's [`Breakdown`] when `breakdown` is set. Both walk the directory's subtree.
+/// With `tree` set (tree mode), the rows of the expanded directories follow the directory's
+/// own entries ([`tree::expand`]).
 pub fn build_view(
     m: &Model,
     target: &mut Target,
     mode: SizeMode,
     types: &TypeFilter,
     breakdown: bool,
+    tree_state: Option<&crate::state::tree::TreeState>,
 ) -> Snapshot {
     let tree = &m.tree;
     let mut snap = status_of(m, types);
+    // Read for this tree state even when there is nothing to show yet, so it is not stale.
+    snap.tree = tree_state.map(|t| crate::state::tree::Found {
+        generation: t.generation,
+        ..Default::default()
+    });
     let Some(root) = tree.roots().next() else {
         return snap;
     };
@@ -412,14 +432,24 @@ pub fn build_view(
         filetype::sum(tree, dir, &TypeFilter::default(), Some(&mut b));
         snap.breakdown = Some(std::sync::Arc::new(b));
     }
-    if !types.is_empty() {
+    if types.is_empty() {
+        // Data the entries share is counted at the directory: show it as its own row.
+        let home = tree.shared_here(dir);
+        if mode == SizeMode::Disk && home > 0 {
+            snap.entries.push(shared_row(tree, dir, home));
+        }
+    } else {
         only_types(tree, dir, types, mode, &mut snap);
-        return snap;
     }
-    // Data the entries share is counted at the directory: show it as its own row.
-    let home = tree.shared_here(dir);
-    if mode == SizeMode::Disk && home > 0 {
-        snap.entries.push(shared_row(tree, dir, home));
+    if let Some(state) = tree_state {
+        let read = tree::Read {
+            m,
+            mode,
+            types,
+            rescanning: &rescanning,
+            dir_class,
+        };
+        tree::expand(&read, state, &mut snap);
     }
     snap
 }
@@ -482,6 +512,9 @@ fn entry_of(
         compressed: tree.flags(c).has(dfdu_tree::NodeFlags::COMPRESSED),
         pseudo: false,
         ghost: false,
+        depth: 0,
+        parent: u32::MAX,
+        fold: 0,
     }
 }
 
@@ -506,6 +539,9 @@ fn shared_row(tree: &Tree, dir: Ix, home: u64) -> EntryData {
         compressed: false,
         pseudo: true,
         ghost: false,
+        depth: 0,
+        parent: u32::MAX,
+        fold: 0,
     }
 }
 
@@ -565,5 +601,8 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         compressed: false,
         pseudo: false,
         ghost: false,
+        depth: 0,
+        parent: u32::MAX,
+        fold: 0,
     }
 }

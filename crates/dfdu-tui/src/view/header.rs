@@ -175,10 +175,14 @@ impl Flag {
     }
 }
 
-/// Tree mode, shown before the sort when it is on. Tree mode is not built yet, so there is
-/// nothing to show; this is where its flag goes.
-fn tree_flag(_app: &App) -> Option<Flag> {
-    None
+/// Tree mode, shown before the sort while the rows are a tree.
+fn tree_flag(app: &App) -> Option<Flag> {
+    app.tree_shown()?;
+    let tree = vec![Span::styled("tree", app.theme.key)];
+    Some(Flag {
+        wide: tree.clone(),
+        narrow: tree,
+    })
 }
 
 /// The sort, always shown: `sort size ↓`, or `size ↓` when the line is short.
@@ -201,15 +205,23 @@ fn sort_flag(app: &App) -> Flag {
 }
 
 /// The modes after the sort, in the order they give way when the line is short (the last
-/// first): the size shown, the treemap's colouring and depth while it is shown, then only what
-/// differs from the defaults: hidden files hidden, the filter kept, the type filter, and the day
-/// of the last recorded scan the changes are from.
+/// first): in tree mode that the share is of the parent and what folds, the size shown, the
+/// treemap's colouring and depth while it is shown, then only what differs from the defaults:
+/// hidden files hidden, the filter kept, the type filter, and the day of the last recorded scan
+/// the changes are from.
 fn flags(app: &App) -> Vec<Flag> {
-    let mut out = vec![match app.size_mode {
+    let mut out = Vec::new();
+    if let Some(tree) = app.tree_shown() {
+        out.push(Flag::new("share of parent", "of parent"));
+        if let Some(fold) = crate::state::tree::act::fold_label(tree.fold_ratio) {
+            out.push(Flag::new(fold, fold));
+        }
+    }
+    out.push(match app.size_mode {
         SizeMode::Disk => Flag::new("disk usage", "disk"),
         SizeMode::Apparent => Flag::new("apparent size", "apparent"),
         SizeMode::Referenced => Flag::new("disk usage like du", "du-like"),
-    }];
+    });
     if app.treemap.shown {
         let colour = app.treemap.color.label();
         out.push(Flag::new(format!("colour by {colour}"), colour));

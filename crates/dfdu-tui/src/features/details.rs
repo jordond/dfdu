@@ -1,6 +1,6 @@
 //! The details pane (`i`): everything the tree knows about the selected entry. On the right at
 //! 100 columns or more, as a sheet below the list when narrower. `Tab` gives it the focus, and
-//! the arrow and page keys then scroll it.
+//! the arrow and page keys then scroll it; `Tab` again opens the marks pane in its place.
 
 mod text;
 
@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::{App, Effect};
+use crate::features::marks_pane;
 use crate::model::snapshot::Mark;
 use crate::theme::{count, human};
 use crate::view::cells;
@@ -197,11 +198,19 @@ pub fn toggle(app: &mut App) {
     };
 }
 
-/// Moves the focus between the list and the pane, when the pane is shown.
-pub fn focus(app: &mut App) {
-    if app.details.open && app.areas.details.is_some() {
-        app.details.focused = !app.details.focused;
+/// `Tab`: moves the focus from the list to this pane when it is shown, from here to the marks
+/// pane, and from there back to the list. While the last frame had no room for this pane, it
+/// has none for the marks pane either, and the focus stays on the list.
+pub fn focus(app: &mut App) -> Vec<Effect> {
+    if marks_pane::close(app) || (app.details.open && app.areas.details.is_none()) {
+        return Vec::new();
     }
+    if app.details.open && !app.details.focused {
+        app.details.focused = true;
+        return Vec::new();
+    }
+    app.details.focused = false;
+    marks_pane::show(app)
 }
 
 /// True while the pane has the focus.
@@ -220,7 +229,8 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::Down => scroll(app, 1),
         KeyCode::PageUp => scroll(app, -page),
         KeyCode::PageDown => scroll(app, page),
-        KeyCode::Esc | KeyCode::Tab => {
+        KeyCode::Tab => return Some(focus(app)),
+        KeyCode::Esc => {
             app.details.focused = false;
             true
         }
@@ -236,6 +246,9 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 /// Scrolls the pane by `delta` lines, focused or not (the mouse wheel over it). False when the
 /// pane is not shown, so the caller can move the list instead.
 pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
+    if marks_pane::shown(app) {
+        return marks_pane::scroll(app, delta);
+    }
     let Some(r) = app.areas.details.filter(|_| app.details.open) else {
         return false;
     };
@@ -276,11 +289,12 @@ fn summary(app: &App) -> Option<String> {
     })
 }
 
-/// Splits the area below the header into the list and the pane, if the pane is open and fits.
+/// Splits the area below the header into the list and the pane, if the pane (or the marks pane
+/// in its place) is open and fits.
 /// When it does not fit, the list view's selection line already sums up the selected row; the
 /// other views show a summary in the status line instead, unless it has another message to show.
 pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>) {
-    if !app.details.open {
+    if !app.details.open && !marks_pane::shown(app) {
         return (area, None);
     }
     let parts = if area.width >= RIGHT_FROM {
@@ -300,6 +314,12 @@ pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>)
         (list, Some(pane))
     } else {
         app.details.focused = false;
+        if marks_pane::close(app) {
+            app.status = Some("no room for the marks pane: make the terminal larger".into());
+            if !app.details.open {
+                return (area, None);
+            }
+        }
         let line = if list_view { None } else { summary(app) };
         if ours {
             app.status.clone_from(&line);

@@ -24,28 +24,28 @@ L8 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-9 fg=#1b6b8c bold | 52-56 fg=#1b6b8c bold
 L9 2-2 fg=#2a6f97 | 4-9 fg=#1b6b8c bold | 52-52 fg=#6c7180 | 97-97 fg=#2a6f97
   ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
 L10 2-2 fg=#2a6f97 | 4-8 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ → l Enter        open directory                        passed (v or Esc ends)                ┃
-L11 2-2 fg=#2a6f97 | 4-12 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ ← h Backspace <  parent directory               :      mark by pattern: names in this        ┃
-L12 2-2 fg=#2a6f97 | 4-18 fg=#1b6b8c bold | 52-52 fg=#6c7180 | 97-97 fg=#2a6f97
-  ┃                                                        directory matching a glob (in the     ┃
-L13 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
-  ┃ Sort                                                   palette)                              ┃
-L14 2-2 fg=#2a6f97 | 3-7 fg=#1f2329 bold | 97-97 fg=#2a6f97
-  ┃ s  sort by size (again: reverse)                y      copy the selected path (through the   ┃
-L15 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ n  sort by name (again: reverse)                       terminal, OSC 52)                     ┃
-L16 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ C  sort by items (again: reverse)               o      open in the file manager (a file: its ┃
-L17 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ M  sort by modification time (again:                   folder)                               ┃
-L18 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃    reverse)                                     d      move to Trash                         ┃
-L19 2-2 fg=#2a6f97 | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
-  ┃ S  re-sort now                                  D      delete permanently (type delete)      ┃
+  ┃ → l              open directory (tree mode:            passed (v or Esc ends)                ┃
+L11 2-2 fg=#2a6f97 | 4-6 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃                  expand it)                     :      mark by pattern: names in this        ┃
+L12 2-2 fg=#2a6f97 | 52-52 fg=#6c7180 | 97-97 fg=#2a6f97
+  ┃ Enter            open directory, even in               directory matching a glob (in the     ┃
+L13 2-2 fg=#2a6f97 | 4-8 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃                  tree mode                             palette)                              ┃
+L14 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
+  ┃ ← h Backspace <  parent directory (tree         :      invert the marks in this directory,   ┃
+L15 2-2 fg=#2a6f97 | 4-18 fg=#1b6b8c bold | 52-52 fg=#6c7180 | 97-97 fg=#2a6f97
+  ┃                  mode: collapse)                       as * does in the marks pane (in the   ┃
+L16 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
+  ┃                                                        palette)                              ┃
+L17 2-2 fg=#2a6f97 | 97-97 fg=#2a6f97
+  ┃ Sort                                            y      copy the selected path (through the   ┃
+L18 2-2 fg=#2a6f97 | 3-7 fg=#1f2329 bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ s  sort by size (again: reverse)                       terminal, OSC 52)                     ┃
+L19 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+  ┃ n  sort by name (again: reverse)                o      open in the file manager (a file: its ┃
 L20 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
- 1┃                                                 U      put back what was last moved to the   ┃
-L21 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 52-52 fg=#1b6b8c bold | 97-97 fg=#2a6f97
+ 1┃ C  sort by items (again: reverse)                      folder)                               ┃
+L21 0-1 fg=#8a5300 | 2-2 fg=#2a6f97 | 4-4 fg=#1b6b8c bold | 97-97 fg=#2a6f97
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
 L22 0-0 fg=#6c7180 | 2-88 fg=#2a6f97 | 89-96 fg=#6c7180 | 97-97 fg=#2a6f97
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

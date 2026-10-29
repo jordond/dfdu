@@ -17,6 +17,8 @@ mod matrix;
 mod navigation;
 mod read_only;
 mod soak;
+mod tree;
+mod tree_frames;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;

@@ -13,22 +13,22 @@ expression: frame
   ┃ Ctrl-D           half a page down               Space  mark or unmark, then move down        ┃
   ┃ g Home           first entry                    :      clear all marks (in the palette)      ┃
   ┃ G End            last entry                     v      mark a range: moving marks every row  ┃
-  ┃ → l Enter        open directory                        passed (v or Esc ends)                ┃
-  ┃ ← h Backspace <  parent directory               :      mark by pattern: names in this        ┃
-  ┃                                                        directory matching a glob (in the     ┃
-  ┃ Sort                                                   palette)                              ┃
-  ┃ s  sort by size (again: reverse)                y      copy the selected path (through the   ┃
-  ┃ n  sort by name (again: reverse)                       terminal, OSC 52)                     ┃
-  ┃ C  sort by items (again: reverse)               o      open in the file manager (a file: its ┃
-  ┃ M  sort by modification time (again:                   folder)                               ┃
-  ┃    reverse)                                     d      move to Trash                         ┃
-  ┃ S  re-sort now                                  D      delete permanently (type delete)      ┃
-  ┃                                                 U      put back what was last moved to the   ┃
-  ┃ Display                                                Trash or staged                       ┃
-  ┃ 1  list view                                                                                 ┃
-  ┃ 2  treemap view                                 Panels                                       ┃
-  ┃ 3  cleanup view: what the rules found, by       /         filter this directory              ┃
-  ┃    safety                                       t         show only files of some types      ┃
-  ┃ 4  duplicate files (compares the scanned                  (video, audio, .iso...)            ┃
+  ┃ → l              open directory (tree mode:            passed (v or Esc ends)                ┃
+  ┃                  expand it)                     :      mark by pattern: names in this        ┃
+  ┃ Enter            open directory, even in               directory matching a glob (in the     ┃
+  ┃                  tree mode                             palette)                              ┃
+  ┃ ← h Backspace <  parent directory (tree         :      invert the marks in this directory,   ┃
+  ┃                  mode: collapse)                       as * does in the marks pane (in the   ┃
+  ┃                                                        palette)                              ┃
+  ┃ Sort                                            y      copy the selected path (through the   ┃
+  ┃ s  sort by size (again: reverse)                       terminal, OSC 52)                     ┃
+  ┃ n  sort by name (again: reverse)                o      open in the file manager (a file: its ┃
+  ┃ C  sort by items (again: reverse)                      folder)                               ┃
+  ┃ M  sort by modification time (again:            d      move to Trash                         ┃
+  ┃    reverse)                                     D      delete permanently (type delete)      ┃
+  ┃ S  re-sort now                                  U      put back what was last moved to the   ┃
+  ┃                                                        Trash or staged                       ┃
+  ┃ Display                                                                                      ┃
+  ┃ 1  list view                                    Panels                                       ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

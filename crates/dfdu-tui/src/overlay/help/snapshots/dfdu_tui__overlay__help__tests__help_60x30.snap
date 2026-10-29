@@ -13,8 +13,11 @@ expression: frame
   ┃ Ctrl-D           half a page down                    ┃
   ┃ g Home           first entry                         ┃
   ┃ G End            last entry                          ┃
-  ┃ → l Enter        open directory                      ┃
-  ┃ ← h Backspace <  parent directory                    ┃
+  ┃ → l              open directory (tree mode: expand   ┃
+  ┃                  it)                                 ┃
+  ┃ Enter            open directory, even in tree mode   ┃
+  ┃ ← h Backspace <  parent directory (tree mode:        ┃
+  ┃                  collapse)                           ┃
   ┃                                                      ┃
   ┃ Sort                                                 ┃
   ┃ s  sort by size (again: reverse)                     ┃
@@ -27,8 +30,5 @@ expression: frame
   ┃ 1  list view                                         ┃
   ┃ 2  treemap view                                      ┃
   ┃ 3  cleanup view: what the rules found, by safety     ┃
-  ┃ 4  duplicate files (compares the scanned files)      ┃
-  ┃ 5  largest files anywhere below this directory       ┃
-  ┃ K  duplicates: change which copy is kept             ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

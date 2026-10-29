@@ -18,7 +18,7 @@ pub use detect::{
 };
 pub use dfdu_engine::human;
 pub use file::{ThemeError, ThemeFile};
-pub use format::{Bars, bar, count, percent, ratio, spinner, truncate_middle};
+pub use format::{Bars, bar, bar_with_shadow, count, percent, ratio, spinner, truncate_middle};
 
 /// A themable style. [`Token::name`] is its key in a theme file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
