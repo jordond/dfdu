@@ -10,7 +10,6 @@ mod paths;
 pub use dir::{Children, DirRec, DirState};
 use edit::FreeWork;
 pub use edit::FreedLink;
-use extents::Extents;
 
 const NONE: u32 = u32::MAX;
 
@@ -169,8 +168,10 @@ fn pack_err(e: ErrKind) -> Option<u8> {
 #[derive(Default)]
 pub struct Tree {
     nodes: Pages<Node>,
-    /// Parallel to `nodes` once any node has shared-extent bytes; empty until then.
-    extents: Pages<Extents>,
+    /// Shared-extent bytes, by slot, of the nodes that have any: measured files and the nodes
+    /// shared bytes are counted at, a small part of the tree. A table parallel to `nodes` cost
+    /// 24 bytes for every node once one file was measured.
+    extents: extents::ExtentMap,
     /// Device numbers the nodes' `dev` indexes, and the reverse map.
     devs: Vec<u64>,
     dev_index: std::collections::HashMap<u64, u32>,

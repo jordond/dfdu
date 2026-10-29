@@ -115,9 +115,9 @@ pub struct RuleSet {
     protected: Arc<Protected>,
     fold: bool,
     /// Every sibling name a rule asks about without a variable in it, and the text after the
-    /// last variable of those with one (`.ini` for `{name_stem}.ini`).
+    /// last variable of those with one (`.ini` for `{name_stem}.ini`), with the rule asking.
     sibling_names: FastSet<Vec<u8>>,
-    sibling_tails: Vec<Vec<u8>>,
+    sibling_tails: Vec<(Vec<u8>, RuleIx)>,
     /// Seconds since the Unix epoch that `not_modified_days` counts back from.
     now: i64,
 }
@@ -196,23 +196,24 @@ impl RuleSet {
             .iter()
             .any(|r| r.paths.is_empty() && !r.names.is_empty() && r.kind != Kind::Dir);
         let mut sibling_names = FastSet::default();
-        let mut sibling_tails: Vec<Vec<u8>> = Vec::new();
-        let asked = rules.iter().flat_map(|r| {
-            r.sibling
+        let mut sibling_tails: Vec<(Vec<u8>, RuleIx)> = Vec::new();
+        for (i, r) in (0..=u16::MAX).zip(&rules) {
+            let asked = r
+                .sibling
                 .iter()
                 .flatten()
-                .chain(r.degrade.iter().flat_map(|d| &d.missing_sibling))
-        });
-        for n in asked {
-            match n.rfind('}') {
-                Some(i) => {
-                    let tail = n.as_bytes()[i + 1..].to_vec();
-                    if !sibling_tails.contains(&tail) {
-                        sibling_tails.push(tail);
+                .chain(r.degrade.iter().flat_map(|d| &d.missing_sibling));
+            for n in asked {
+                match n.rfind('}') {
+                    Some(k) => {
+                        let tail = (n.as_bytes()[k + 1..].to_vec(), RuleIx(i));
+                        if !sibling_tails.contains(&tail) {
+                            sibling_tails.push(tail);
+                        }
                     }
-                }
-                None => {
-                    sibling_names.insert(n.as_bytes().to_vec());
+                    None => {
+                        sibling_names.insert(n.as_bytes().to_vec());
+                    }
                 }
             }
         }
@@ -235,13 +236,6 @@ impl RuleSet {
     /// Sets the time `not_modified_days` counts back from (the clock when the set was made).
     pub fn set_now(&mut self, now: i64) {
         self.now = now;
-    }
-
-    /// Whether some rule may ask whether an entry named `name` is next to its candidate. A
-    /// wide directory keeps only these names for [`RuleSet::siblings`].
-    #[must_use]
-    pub fn may_be_sibling(&self, name: &[u8]) -> bool {
-        self.sibling_names.contains(name) || self.sibling_tails.iter().any(|t| name.ends_with(t))
     }
 
     /// The names [`RuleSet::check_inside`] asks about for rule `i` and the entry named `name`:

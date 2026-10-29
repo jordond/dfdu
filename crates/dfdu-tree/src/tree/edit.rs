@@ -1,6 +1,6 @@
 //! Adding, changing, detaching and freeing nodes, and keeping their ancestors' totals.
 
-use super::{Extents, Ix, NONE, Node, NodeFlags, NodeRef, Tree};
+use super::{Ix, NONE, Node, NodeFlags, NodeRef, Tree};
 use crate::pages::NameArena;
 use crate::{DirRec, ErrKind, Meta, Totals};
 
@@ -68,9 +68,6 @@ impl Tree {
             i
         };
         self.set_alloc(i, meta.alloc);
-        if !self.extents.is_empty() {
-            *self.ext_mut(i) = Extents::default();
-        }
         i
     }
 
@@ -393,6 +390,7 @@ impl Tree {
             });
         }
         self.classes.remove(&i);
+        self.extents.remove(&i);
         let n = &mut self.nodes[i as usize];
         self.names_garbage += NameArena::len_of(n.name);
         n.generation = n.generation.wrapping_add(1);

@@ -138,3 +138,20 @@ fn reach_handed_down_matches_trying_every_pattern() {
         "{matched} path matches, {protected} protected"
     );
 }
+
+/// A directory listed in several blocks keeps the names a rule that can match there may ask
+/// about as a sibling. `{name_stem}` (extracted archives, in Downloads) asks about any name,
+/// but only where its rule can match: elsewhere a wide directory kept every name it had.
+#[test]
+fn only_rules_that_can_match_here_make_a_name_a_possible_sibling() {
+    let set = mac();
+    let downloads = set.dir(b"/Users/u/Downloads");
+    assert!(downloads.may_be_sibling(b"f605cbf.dat"));
+    let elsewhere = set.dir(b"/srv/data/wide");
+    assert!(!elsewhere.may_be_sibling(b"f605cbf.dat"));
+    assert!(elsewhere.may_be_sibling(b"Cargo.toml"));
+    assert!(
+        set.dir(b"/Users/u/.android/avd")
+            .may_be_sibling(b"pixel.ini")
+    );
+}

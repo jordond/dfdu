@@ -14,6 +14,10 @@ pub struct Dir<'a> {
     parent: &'a [u8],
     /// Indices into `RuleSet::paths` whose pattern can match an entry here.
     paths: Vec<usize>,
+    /// The sibling tails ([`RuleSet::sibling_tails`]) of the rules that can match an entry
+    /// here. `{name_stem}` leaves an empty tail, which every name ends with, so a directory
+    /// where no such rule can match must not ask for it.
+    tails: Vec<&'a [u8]>,
     protected: protected::Dir,
     reach: Reach,
 }
@@ -95,10 +99,19 @@ impl RuleSet {
             }
         }
         let (protected, reach_protected) = self.protected.dir_in(&dir, reach.map(|r| &r.protected));
+        let mut tails: Vec<&[u8]> = Vec::new();
+        for (t, i) in &self.sibling_tails {
+            let here =
+                self.rule(*i).paths.is_empty() || paths.iter().any(|&k| self.paths[k].0 == *i);
+            if here && !tails.contains(&&t[..]) {
+                tails.push(t);
+            }
+        }
         Dir {
             set: self,
             parent,
             paths,
+            tails,
             protected,
             reach: Reach {
                 paths: below,
@@ -113,6 +126,14 @@ impl Dir<'_> {
     #[must_use]
     pub fn reach(&self) -> &Reach {
         &self.reach
+    }
+
+    /// Whether a rule that can match an entry here may ask whether an entry named `name` is
+    /// next to its candidate. A directory listed in several blocks keeps only these names for
+    /// [`RuleSet::siblings`].
+    #[must_use]
+    pub fn may_be_sibling(&self, name: &[u8]) -> bool {
+        self.set.sibling_names.contains(name) || self.tails.iter().any(|t| name.ends_with(t))
     }
 
     /// Classifies entry `c` of this directory (`c.parent` is ignored).
