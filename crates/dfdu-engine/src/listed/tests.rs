@@ -1,20 +1,8 @@
 use dfdu_rules::{Env, Platform, Safety};
-use dfdu_tree::{Kind, Meta};
+use dfdu_tree::Kind;
 
 use super::*;
-
-fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-    Meta {
-        kind,
-        apparent: size,
-        alloc: size,
-        mtime: 0,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
-    }
-}
+use crate::test_util::meta;
 
 /// A tree under construction, with the built-in rules of a Mac.
 struct Caches {

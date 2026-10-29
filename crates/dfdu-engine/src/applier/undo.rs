@@ -9,6 +9,9 @@ use dfdu_tree::{Ix, Kind, Tree};
 
 use super::{Applier, Count, Model, UndoInfo};
 
+#[cfg(test)]
+mod tests;
+
 /// What of a plan can still be put back: the mode it deleted with, and those items.
 pub(super) struct Undoable {
     mode: Mode,

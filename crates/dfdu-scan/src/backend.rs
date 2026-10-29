@@ -319,10 +319,46 @@ pub(crate) fn read_prefix_at(dir: &Path, name: &[u8], len: usize) -> Option<Vec<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::portable::PortableStream;
     use super::*;
     use std::path::PathBuf;
+
+    /// Fills `root` with `sub/`, files `f0` to `f19` of 0 to 19 000 bytes, and `sub/link`, a
+    /// hard link to `f3`: the entries every backend's comparison with the portable one starts from.
+    pub(crate) fn populate(root: &Path) {
+        std::fs::create_dir(root.join("sub")).unwrap();
+        for i in 0..20 {
+            std::fs::write(root.join(format!("f{i}")), vec![1u8; i * 1000]).unwrap();
+        }
+        std::fs::hard_link(root.join("f3"), root.join("sub").join("link")).unwrap();
+    }
+
+    /// Every entry of a directory on `storage` as `(name, meta)`, sorted by name, read
+    /// `per_block` entries at a time (several calls, and seeks).
+    pub(crate) fn list<B: Backend>(
+        b: &B,
+        dir: &Path,
+        storage: dfdu_sys::Storage,
+        per_block: usize,
+    ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
+        let mut s = b.open(&b.loc_from_path(dir), storage).unwrap();
+        let mut block = Block::default();
+        loop {
+            let (mut raw, more) = s.next_raw(per_block, 1 << 20).unwrap();
+            raw.stat(&mut block).unwrap();
+            if !more {
+                break;
+            }
+        }
+        let mut out: Vec<_> = block
+            .entries
+            .iter()
+            .map(|e| (block.name(e.name).to_vec(), e.meta))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
 
     /// Answers every defaulted method with something other than its default.
     struct Answers;

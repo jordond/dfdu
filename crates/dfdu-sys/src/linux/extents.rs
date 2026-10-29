@@ -6,7 +6,8 @@ use std::os::fd::AsFd;
 
 use rustix::ioctl::{ioctl, opcode};
 
-use super::{SearchArgs, SearchItem, errno, le_u64, tree_search};
+use super::search::{SearchArgs, SearchItem, tree_search};
+use super::{errno, le_u64};
 
 /// One extent as FIEMAP reports it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

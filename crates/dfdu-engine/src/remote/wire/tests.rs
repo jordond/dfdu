@@ -18,14 +18,6 @@ use super::scan::{dec_class, enc_class};
 use super::*;
 
 /// The built-in rules for Linux, and the number of one with a `degrade` condition.
-fn few_rules() -> RuleSet {
-    dfdu_rules::load_from(
-        &dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[]),
-        &[],
-    )
-    .0
-}
-
 fn rules() -> (RuleSet, RuleIx) {
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
     let set = dfdu_rules::builtin(&env).0;
@@ -272,7 +264,7 @@ fn measure_req() -> MeasureReq {
     }
 }
 
-fn plan() -> Plan {
+pub(super) fn plan() -> Plan {
     let mut inside = Listings::default();
     inside.insert(
         "".into(),
@@ -397,78 +389,6 @@ fn messages_round_trip() {
     )
     .0;
     assert!(ToAgent::decode(&job.encode(), Some(&few)).is_err());
-}
-
-/// Native commands and sizes go as their rule; the agent builds them from its rules.
-/// (Docker's rule, with variants and a size command, is for macOS and Windows.)
-#[test]
-fn native_commands_go_as_their_rule() {
-    let set = dfdu_rules::builtin(&dfdu_rules::Env::with(
-        dfdu_rules::Platform::MacOs,
-        &[("HOME", "/Users/u")],
-    ))
-    .0;
-    let docker = set
-        .rules()
-        .iter()
-        .position(|r| {
-            r.action
-                .native()
-                .is_some_and(|n| !n.variants.is_empty() && !n.size_command.is_empty())
-        })
-        .map(|i| RuleIx(u16::try_from(i).unwrap()))
-        .unwrap();
-    let path = std::path::Path::new("/srv/\u{e9}t\u{e9}");
-    for (variant, dry_run) in [(None, false), (None, true), (Some(0), false)] {
-        let want = crate::applier::native_req(&set, docker, variant, path, dry_run, 5)
-            .expect("the rule has the command");
-        let d = ToAgent::Delete(DeleterReq::Native(want.clone()));
-        let ToAgent::Delete(DeleterReq::Native(got)) =
-            ToAgent::decode(&d.encode(), Some(&set)).unwrap()
-        else {
-            panic!("not a native command");
-        };
-        assert_eq!(got, want);
-        assert!(ToAgent::decode(&d.encode(), None).is_err());
-        assert!(ToAgent::decode(&d.encode(), Some(&few_rules())).is_err());
-    }
-    // A variant the rule does not have, a relative path, or no rule at all are refused.
-    let mut bad = crate::applier::native_req(&set, docker, None, path, false, 5).unwrap();
-    bad.rule.as_mut().unwrap().variant = Some(99);
-    let bytes = ToAgent::Delete(DeleterReq::Native(bad.clone())).encode();
-    assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
-    bad.rule.as_mut().unwrap().variant = None;
-    bad.rule.as_mut().unwrap().path = "srv".into();
-    let bytes = ToAgent::Delete(DeleterReq::Native(bad.clone())).encode();
-    assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
-    bad.rule = None;
-    let bytes = ToAgent::Delete(DeleterReq::Native(bad)).encode();
-    assert!(ToAgent::decode(&bytes, Some(&set)).is_err());
-    let size = ToAgent::Check(vec![CheckReq::NativeSize {
-        rule: docker,
-        check: vec![],
-        command: vec!["anything".into()],
-    }]);
-    let ToAgent::Check(got) = ToAgent::decode(&size.encode(), Some(&set)).unwrap() else {
-        panic!("not a check");
-    };
-    let n = set.rule(docker).action.native().unwrap();
-    assert!(
-        matches!(&got[..], [CheckReq::NativeSize { rule, check, command }]
-        if *rule == docker && *check == n.check && *command == n.size_command)
-    );
-    let plain = set
-        .rules()
-        .iter()
-        .position(|r| r.action.native().is_none())
-        .unwrap();
-    let plain = RuleIx(u16::try_from(plain).unwrap());
-    let none = ToAgent::Check(vec![CheckReq::NativeSize {
-        rule: plain,
-        check: vec![],
-        command: vec![],
-    }]);
-    assert!(ToAgent::decode(&none.encode(), Some(&set)).is_err());
 }
 
 /// A class is written as the rule's index (a varint), the safety level's number, the

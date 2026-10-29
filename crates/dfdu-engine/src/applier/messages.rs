@@ -14,6 +14,9 @@ use super::work::Work;
 use super::{Applier, Job, JobPhase, Model, Slot, empty_dir_meta};
 use crate::recent::Event;
 
+#[cfg(test)]
+mod tests;
+
 impl<B: Backend> Applier<B> {
     /// Applies one scanner message.
     pub fn apply(&mut self, m: &mut Model, msg: ScanMsg, now: u64) {

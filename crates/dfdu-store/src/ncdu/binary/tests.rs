@@ -37,7 +37,7 @@ fn every_cut_is_refused_and_no_byte_flip_panics() {
     clippy::decimal_bitwise_operands,
     reason = "RFC 8949 gives the additional information values (24, 25, 27) in decimal"
 )]
-fn head(out: &mut Vec<u8>, major: u8, n: u64) {
+pub(super) fn head(out: &mut Vec<u8>, major: u8, n: u64) {
     let m = major << 5;
     match n {
         0..=23 => out.push(m | u8::try_from(n).unwrap()),
@@ -53,13 +53,13 @@ fn head(out: &mut Vec<u8>, major: u8, n: u64) {
     }
 }
 
-enum V<'a> {
+pub(super) enum V<'a> {
     I(i64),
     S(&'a str),
 }
 
 /// An entry as a CBOR map, `indefinite` with a break at the end.
-fn entry(fields: &[(u64, V)], indefinite: bool) -> Vec<u8> {
+pub(super) fn entry(fields: &[(u64, V)], indefinite: bool) -> Vec<u8> {
     let mut out = vec![];
     if indefinite {
         out.push(0xbf);

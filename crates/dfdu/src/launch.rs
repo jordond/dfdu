@@ -150,3 +150,75 @@ pub fn wait_scan<B: Backend>(engine: Engine<B>) -> Result<Engine<B>, ExitCode> {
     }
     Ok(engine)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use dfdu_rules::{Env, Platform};
+    use dfdu_scan::PortableBackend;
+
+    use super::*;
+
+    #[test]
+    fn headless_engines_abandon_stalls_and_delete_only_with_a_journal() {
+        let ro = headless(false);
+        assert_eq!(ro.auto_abandon, Some(STALL_ABANDON));
+        assert!(ro.read_only);
+        assert!(ro.journal_dir.is_none());
+        assert!(!headless(true).read_only);
+    }
+
+    #[test]
+    fn threads_given_override_the_storage_default() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (storage, auto) = for_storage(dir.path(), None, EngineOptions::default());
+        assert_eq!(auto.workers, dfdu_engine::workers_for(storage));
+        let (_, given) = for_storage(dir.path(), Some(3), EngineOptions::default());
+        assert_eq!(given.workers, 3);
+    }
+
+    #[test]
+    fn a_scan_classifies_only_with_rules_and_keeps_its_mount_options() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let local = Local {
+            mft: false,
+            threads: None,
+            job: JobOptions {
+                cross_mounts: true,
+                ..JobOptions::default()
+            },
+            rules: None,
+        };
+        let plain = local.job(dir.path());
+        assert!(plain.cross_mounts && plain.class.is_none());
+        let rules = Arc::new(dfdu_rules::builtin(&Env::with(Platform::Linux, &[])).0);
+        let local = Local {
+            rules: Some(rules.clone()),
+            ..local
+        };
+        let classified = local.job(dir.path());
+        assert!(classified.cross_mounts);
+        assert!(
+            classified
+                .class
+                .is_some_and(|c| Arc::ptr_eq(&c.rules, &rules))
+        );
+    }
+
+    #[test]
+    fn run_scan_returns_once_the_tree_is_complete() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::create_dir(dir.path().join("sub")).expect("mkdir");
+        fs::write(dir.path().join("sub/f"), b"x").expect("write");
+        let engine = Engine::start(PortableBackend::default(), headless(false));
+        let scan = Command::Scan {
+            path: dir.path().to_path_buf(),
+            opts: JobOptions::default(),
+        };
+        let engine = run_scan(engine, scan).expect("scanned");
+        let items = engine.read(|m| m.tree.roots().next().map(|r| m.tree.total(r).items));
+        engine.shutdown(SHUTDOWN);
+        assert_eq!(items, Some(3));
+    }
+}

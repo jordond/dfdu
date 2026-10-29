@@ -14,6 +14,8 @@ mod model;
 mod native;
 mod rescan;
 mod scanner;
+#[cfg(test)]
+mod test_util;
 mod undo;
 mod work;
 

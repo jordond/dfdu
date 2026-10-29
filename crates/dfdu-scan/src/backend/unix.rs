@@ -73,36 +73,11 @@ pub(crate) fn name_at(names: &[u8], off: u32) -> &CStr {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::backend::{Backend, Block, DirStream};
-    use dfdu_tree::{ErrKind, Kind, Meta};
-
-    /// Every entry of a directory on `storage` as `(name, meta)`, sorted by name, read
-    /// `per_block` entries at a time (several calls, and seeks).
-    pub(crate) fn list<B: Backend<Loc = PathBuf>>(
-        b: &B,
-        dir: &Path,
-        storage: dfdu_sys::Storage,
-        per_block: usize,
-    ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        let mut s = b.open(&dir.to_path_buf(), storage).unwrap();
-        let mut block = Block::default();
-        loop {
-            let (mut raw, more) = s.next_raw(per_block, 1 << 20).unwrap();
-            raw.stat(&mut block).unwrap();
-            if !more {
-                break;
-            }
-        }
-        let mut out: Vec<_> = block
-            .entries
-            .iter()
-            .map(|e| (block.name(e.name).to_vec(), e.meta))
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
-    }
+    use crate::backend::Backend;
+    use crate::backend::tests::list;
+    use dfdu_tree::Kind;
 
     #[test]
     fn names_come_back_from_their_offsets() {

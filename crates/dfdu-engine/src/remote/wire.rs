@@ -16,6 +16,7 @@
 //! alike (checked by [`RuleSet::fingerprint`]), so classes travel as rule numbers.
 
 mod codec;
+mod delete;
 mod jobs;
 mod message;
 mod scan;

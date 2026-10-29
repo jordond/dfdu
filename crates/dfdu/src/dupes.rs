@@ -205,3 +205,72 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
         "groups": groups,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use dfdu_dupes::{Candidate, Group};
+
+    use super::*;
+
+    fn file(path: &str, private: Option<u64>) -> Candidate {
+        Candidate {
+            path: path.into(),
+            size: 100,
+            alloc: 4096,
+            dev_ino: (1, 0),
+            mtime: 0,
+            links: 0,
+            private,
+        }
+    }
+
+    fn group(files: Vec<Candidate>) -> Group {
+        Group {
+            size: 100,
+            hash: [0xab; 32],
+            files,
+        }
+    }
+
+    #[test]
+    fn json_lists_the_top_groups_and_the_waste_of_all() {
+        let found = Found {
+            groups: vec![
+                group(vec![file("/a", None), file("/b", None)]),
+                group(vec![file("/c", Some(0)), file("/d", Some(0))]),
+                group(vec![file("/e", Some(1024)), file("/f", None)]),
+            ],
+            compared: 6,
+            ..Found::default()
+        };
+        let doc = to_json(&found, Some(1), 1 << 20);
+        assert_eq!(doc["groups"].as_array().map(Vec::len), Some(1));
+        // Every group's waste, the ones left out by `top` included: the clones free nothing.
+        assert_eq!(doc["wasted"], 2 * 4096);
+        assert_eq!(doc["min_size"], 1 << 20);
+        let g = &doc["groups"][0];
+        assert_eq!(g["sha256"], "ab".repeat(32));
+        assert_eq!(g["clones"], false);
+        assert!(g["files"][0].get("private").is_none());
+        let all = to_json(&found, None, 1);
+        assert_eq!(all["groups"].as_array().map(Vec::len), Some(3));
+        assert_eq!(all["groups"][1]["clones"], true);
+        assert_eq!(all["groups"][1]["wasted"], 0);
+        assert_eq!(all["groups"][2]["files"][0]["private"], 1024);
+    }
+
+    #[test]
+    fn the_progress_line_names_its_round() {
+        let p = Progress::default();
+        p.round.store(1, Ordering::Relaxed);
+        p.files.store(3, Ordering::Relaxed);
+        p.round_files.store(10, Ordering::Relaxed);
+        let line = progress_line(&p);
+        assert!(
+            line.starts_with("comparing starts and ends: 3/10 files, "),
+            "{line}"
+        );
+        p.round.store(2, Ordering::Relaxed);
+        assert!(progress_line(&p).starts_with("comparing contents: 3/10 files, "));
+    }
+}

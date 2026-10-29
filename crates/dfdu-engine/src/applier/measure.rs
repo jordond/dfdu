@@ -10,6 +10,9 @@ use crate::extents::Inode;
 use crate::links::VISIBLE;
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 
+#[cfg(test)]
+mod tests;
+
 /// Files in measurement requests in flight at most.
 const MEASURE_INFLIGHT: usize = 32768;
 /// Files per measurement request (one directory per request).

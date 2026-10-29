@@ -11,6 +11,9 @@ use super::work::Work;
 use super::{Applier, Job, JobKind, JobPhase, Model};
 use crate::links::Scope;
 
+#[cfg(test)]
+mod tests;
+
 /// What a job scans: the node it is for (`target`), the directory it scans into (`root`: the
 /// target, or a shadow that replaces it when the job finishes), the scope of the hard links it
 /// finds, and the path and options it scans with.

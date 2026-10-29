@@ -17,6 +17,8 @@ mod recommend;
 mod remote;
 mod runtime;
 mod sizes;
+#[cfg(test)]
+mod test_util;
 mod threads;
 
 pub use applier::{

@@ -1,10 +1,10 @@
-//! Scanner state shared by workers, the watchdog and the applier, and the watchdog step
-//! function. The worker step function is in the `worker` submodule.
+//! Scanner state shared by workers, the watchdog and the applier. The worker step function is
+//! in the `worker` submodule, the watchdog's in `watchdog`, and each worker's own state in
+//! `slot`.
 
 use fixedbitset::FixedBitSet;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
@@ -15,8 +15,15 @@ use crate::gate::{Gate, GateStats};
 use crate::proto::{Batch, DirId, JobId, ListingStatus, ScanMsg};
 use crate::sync::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Injector, Mutex, RwLock};
 
+mod slot;
+mod watchdog;
 mod worker;
 
+#[cfg(test)]
+mod test_util;
+
+pub use slot::{Outbox, WorkerSlot};
+pub use watchdog::WatchdogReport;
 pub use worker::{StepResult, Worker};
 
 /// Monotonic time in nanoseconds; never returns 0 (0 means "not set" in the slot fields).
@@ -235,66 +242,6 @@ impl JobState {
     }
 }
 
-/// Unsent messages and unpublished tasks of one worker. Held under the slot's mutex only to
-/// append, pop or flush; never across a filesystem call.
-pub struct Outbox<L> {
-    msgs: Vec<ScanMsg>,
-    bytes: usize,
-    oldest: u64,
-    /// Parts (tasks) finished since the last flush: `(job, dir, part)`.
-    done: Vec<(JobId, DirId, u32)>,
-    tasks: Vec<Task<L>>,
-    /// A chunk task is among `tasks`: publish it soon, others may be idle.
-    has_chunk_task: bool,
-    /// An own task could not run for its mount's limit: publish it, so it can wait in the
-    /// mount's gate and the tasks under it can be taken.
-    gated_task: bool,
-    /// The gate whose permit the running part holds.
-    permit: Option<Arc<TaskGate<L>>>,
-    /// A task handed over with a permit by the part that released it; runs next.
-    handoff: Option<Task<L>>,
-}
-
-impl<L> Default for Outbox<L> {
-    fn default() -> Self {
-        Outbox {
-            msgs: Vec::new(),
-            bytes: 0,
-            oldest: 0,
-            done: Vec::new(),
-            tasks: Vec::new(),
-            has_chunk_task: false,
-            gated_task: false,
-            permit: None,
-            handoff: None,
-        }
-    }
-}
-
-impl<L> Outbox<L> {
-    fn push(&mut self, msg: ScanMsg, now: u64) {
-        self.bytes += msg.size();
-        if self.msgs.is_empty() {
-            self.oldest = now;
-        }
-        self.msgs.push(msg);
-    }
-    /// Messages not yet sent.
-    pub fn messages(&self) -> &[ScanMsg] {
-        &self.msgs
-    }
-
-    /// Tasks not yet published.
-    pub fn unpublished(&self) -> usize {
-        self.tasks.len()
-    }
-
-    /// Nothing to send, publish or report done.
-    pub fn is_empty(&self) -> bool {
-        self.msgs.is_empty() && self.tasks.is_empty() && self.done.is_empty()
-    }
-}
-
 const NO_TASK: u64 = u64::MAX;
 
 fn pack(job: JobId, dir: DirId) -> u64 {
@@ -307,70 +254,6 @@ fn pack(job: JobId, dir: DirId) -> u64 {
 )]
 fn unpack(v: u64) -> (JobId, DirId) {
     (JobId((v >> 32) as u32), DirId(v as u32))
-}
-
-/// Per-worker state visible to the watchdog and the applier.
-pub struct WorkerSlot<L> {
-    pub outbox: Mutex<Outbox<L>>,
-    /// Time the worker entered its current filesystem call, or 0.
-    syscall_since: AtomicU64,
-    /// Task being run, packed `(job, dir)`, or `NO_TASK`, and which part of the directory it
-    /// is. Changed only under the outbox lock.
-    current: AtomicU64,
-    part: AtomicU32,
-    stall_reported: AtomicBool,
-}
-
-impl<L> WorkerSlot<L> {
-    fn new() -> Self {
-        WorkerSlot {
-            outbox: Mutex::new(Outbox::default()),
-            syscall_since: AtomicU64::new(0),
-            current: AtomicU64::new(NO_TASK),
-            part: AtomicU32::new(LISTING_PART),
-            stall_reported: AtomicBool::new(false),
-        }
-    }
-
-    /// The part being run: `(job, dir, part)`, part 0 being the listing task and part
-    /// `seq + 1` the chunk task for block `seq`.
-    pub fn current(&self) -> Option<(JobId, DirId, u32)> {
-        let cur = self.current.load(SeqCst);
-        (cur != NO_TASK).then(|| {
-            let (job, dir) = unpack(cur);
-            (job, dir, self.part.load(SeqCst))
-        })
-    }
-
-    /// Marks the start of a filesystem call. A call retried after "not ready" keeps its
-    /// original start time.
-    fn begin_syscall(&self, now: u64) {
-        let _ = self.syscall_since.compare_exchange(0, now, SeqCst, SeqCst);
-    }
-
-    /// Marks the end of a filesystem call, or of whatever call the part left open.
-    fn end_syscall(&self) {
-        self.syscall_since.store(0, SeqCst);
-    }
-
-    /// Runs a filesystem call under the stall watch. A call that reports "not ready"
-    /// (`WouldBlock`) stays open, so its retry keeps the original start time.
-    fn watch_io<T>(&self, now: u64, call: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-        self.begin_syscall(now);
-        let res = call();
-        if !matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
-            self.end_syscall();
-        }
-        res
-    }
-
-    /// Runs a filesystem call that cannot report "not ready" under the stall watch.
-    fn watch<T>(&self, now: u64, call: impl FnOnce() -> T) -> T {
-        self.begin_syscall(now);
-        let res = call();
-        self.end_syscall();
-        res
-    }
 }
 
 pub struct Shared<B: Backend> {
@@ -688,92 +571,6 @@ impl<B: Backend> Shared<B> {
         }
         true
     }
-
-    /// One watchdog round. Never blocks.
-    pub fn watchdog_round(&self, sink: &dyn Sink, now: u64) -> WatchdogReport {
-        let mut rep = WatchdogReport::default();
-        let mut requeue = Vec::new();
-        for slot in self.slots.read().iter() {
-            let since = slot.syscall_since.load(SeqCst);
-            let is_stuck = since != 0 && now.saturating_sub(since) > self.limits.stall_ns;
-            if is_stuck {
-                rep.stuck += 1;
-                let cur = slot.current.load(SeqCst);
-                let (job, dir) = unpack(cur);
-                if cur != NO_TASK
-                    && self
-                        .abandoned
-                        .lock()
-                        .contains(&(job, dir, slot.part.load(SeqCst)))
-                {
-                    rep.stuck_abandoned += 1;
-                }
-            }
-            let Some(mut ob) = slot.outbox.try_lock() else {
-                continue;
-            };
-            let mut force = false;
-            // Looked at again under the lock: the call seen above may have returned and the
-            // worker moved on to another part, which must not be reported as stalled. A part
-            // ends (clearing the start time) and the next one is taken under this lock, so a
-            // start time read here belongs to the part in `current`.
-            let since = slot.syscall_since.load(SeqCst);
-            let is_stuck = since != 0 && now.saturating_sub(since) > self.limits.stall_ns;
-            if is_stuck && !slot.stall_reported.load(SeqCst) {
-                let cur = slot.current.load(SeqCst);
-                if cur != NO_TASK {
-                    let (job, dir) = unpack(cur);
-                    ob.push(ScanMsg::Stalled { job, dir }, now);
-                    slot.stall_reported.store(true, SeqCst);
-                    force = true;
-                }
-            }
-            // A part stuck in a call does not count against its mount's limit: its permit goes
-            // back, and a task waiting for one is queued again.
-            if is_stuck
-                && let Some(g) = &ob.permit
-                && let Some(next) = g.revoke()
-            {
-                ob.permit = None;
-                requeue.extend(next);
-            }
-            let old =
-                !ob.msgs.is_empty() && now.saturating_sub(ob.oldest) > self.limits.flush_age_ns;
-            if force || old || (ob.msgs.is_empty() && !ob.is_empty()) {
-                self.flush_locked(&mut ob, sink, false);
-            }
-        }
-        if !requeue.is_empty() {
-            // They were published before they waited, so they go to the queue directly.
-            for t in requeue {
-                self.injector.push(t);
-            }
-            self.wake();
-        }
-        let seq = self.submitted_seq.load(SeqCst);
-        let (out, ab) = self.outstanding();
-        if out == ab && self.last_quiescent.swap(seq, SeqCst) != seq {
-            sink.send_control(ScanMsg::Quiescent { submitted_seq: seq });
-        }
-        rep
-    }
-
-    /// How many workers beyond the pool's target may exist: one per stuck worker, at most
-    /// `min(target, 16)` for stalls still being waited on, and at most 64 more for workers
-    /// stuck on tasks the applier abandoned. A thread stuck in a call cannot be stopped, so
-    /// without the second allowance a few abandoned stalls could leave no worker for the rest.
-    pub fn allowed_extra_workers(&self, target: usize, rep: &WatchdogReport) -> usize {
-        let live = rep.stuck - rep.stuck_abandoned;
-        live.min(target.min(16)) + rep.stuck_abandoned.min(64)
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct WatchdogReport {
-    /// Workers inside one filesystem call for longer than the stall limit.
-    pub stuck: usize,
-    /// Of those, the ones whose task the applier has abandoned.
-    pub stuck_abandoned: usize,
 }
 
 /// The message of a caught panic payload (`panic!` with a literal or a formatted string).

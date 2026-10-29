@@ -4,15 +4,17 @@
 //! and Cargo.toml rather than repeated here.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 
 mod cmd;
+mod release;
 
 use cmd::{Step, cargo, docker_run, has_cargo, need, need_cargo, output, quote, root, run, steps};
+use release::{Release, release};
 
 #[derive(Parser)]
 #[command(about, bin_name = "cargo xtask")]
@@ -162,27 +164,6 @@ struct CiArgs {
     /// Also the MSRV, coverage, CI's 5000 simulation seeds and a minute of fuzzing per target.
     #[arg(long)]
     full: bool,
-}
-
-#[derive(Subcommand)]
-enum Release {
-    /// What dist would build and publish for a tag.
-    Plan,
-    /// The checks a release needs on top of CI: assets current, advisories, dist plan.
-    Check,
-    /// Set the workspace version, update Cargo.lock and the assets; with --commit, commit and tag.
-    Bump {
-        /// The new version, e.g. 0.2.0.
-        version: String,
-        #[arg(long)]
-        commit: bool,
-    },
-    /// Fill the Scoop, winget and AUR manifests for a published release (scripts/package-manifests.sh).
-    Manifests {
-        version: String,
-        /// Output directory (default target/pkg/VERSION).
-        out: Option<PathBuf>,
-    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -529,65 +510,6 @@ fn demo() -> anyhow::Result<()> {
     // browse.tape reads the tree from this path.
     run(Command::new("scripts/vhs/demo-tree.sh").arg("/tmp/dfdu-demo"))?;
     run(Command::new("vhs").arg("scripts/vhs/browse.tape"))
-}
-
-fn release(r: Release) -> anyhow::Result<()> {
-    match r {
-        Release::Plan => {
-            need("dist")?;
-            run(Command::new("dist").arg("plan"))
-        }
-        Release::Check => steps(vec![
-            (
-                "assets",
-                Box::new(|| run(&mut cargo(["test", "-p", "dfdu", "--test", "assets"]))),
-            ),
-            ("advisories", Box::new(|| deny(true))),
-            ("dist plan", Box::new(|| release(Release::Plan))),
-        ]),
-        Release::Bump { version, commit } => bump(&version, commit),
-        Release::Manifests { version, out } => {
-            need("gh")?;
-            let mut c = Command::new("scripts/package-manifests.sh");
-            c.arg(&version);
-            if let Some(o) = out {
-                c.arg(o);
-            }
-            run(&mut c)
-        }
-    }
-}
-
-fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
-    let ok = version.split('.').count() >= 3
-        && version
-            .split(['.', '-', '+'])
-            .next()
-            .is_some_and(|m| m.parse::<u64>().is_ok());
-    if !ok {
-        bail!("{version:?} is not a version like 1.2.3");
-    }
-    if commit && !output(Command::new("git").args(["status", "--porcelain"]))?.is_empty() {
-        bail!("the working tree has changes; commit or stash them first");
-    }
-    let manifest = fs::read_to_string("Cargo.toml")?;
-    let old = toml_value(&manifest, "version").context("no version in Cargo.toml")?;
-    // The first `version = ` is [workspace.package]'s; dependencies use inline tables.
-    let line = format!("version = \"{old}\"");
-    fs::write(
-        "Cargo.toml",
-        manifest.replacen(&line, &format!("version = \"{version}\""), 1),
-    )?;
-    eprintln!("version {old} -> {version}");
-    run(&mut cargo(["update", "--workspace"]))?;
-    assets()?;
-    if commit {
-        let tag = format!("v{version}");
-        run(Command::new("git").args(["commit", "-am", &format!("Release {tag}")]))?;
-        run(Command::new("git").args(["tag", "-a", &tag, "-m", &tag]))?;
-        eprintln!("\npush to publish: git push origin HEAD {tag}");
-    }
-    Ok(())
 }
 
 /// A `KEY: value` from ci.yml's `env:` blocks.

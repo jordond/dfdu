@@ -1,5 +1,5 @@
 ---
-source: crates/dfdu-tui/src/overlay/help.rs
+source: crates/dfdu-tui/src/overlay/help/tests.rs
 expression: frame
 ---
  dfdu  /r                                                                          ⠋ scanning 00:00

@@ -18,9 +18,10 @@ use std::path::{Path, PathBuf};
 use rustix::fs::CWD;
 use rustix::ioctl::{ioctl, opcode};
 
+use super::search::{Key, SearchArgs, search};
 use super::{
-    BTRFS_IOCTL_MAGIC, BTRFS_SUBVOL_ROOT_INO, Key, SearchArgs, errno, is_btrfs_fd, le_u32, le_u64,
-    open_dir, search, subvol_args,
+    BTRFS_IOCTL_MAGIC, BTRFS_SUBVOL_ROOT_INO, errno, is_btrfs_fd, le_u32, le_u64, open_dir,
+    subvol_args,
 };
 
 const INODE_ITEM_KEY: u32 = 1;

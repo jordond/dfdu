@@ -277,18 +277,14 @@ mod tests {
         dir: &Path,
         storage: dfdu_sys::Storage,
     ) -> Vec<(Vec<u8>, Result<Meta, ErrKind>)> {
-        crate::backend::unix::tests::list(b, dir, storage, 3)
+        crate::backend::tests::list(b, dir, storage, 3)
     }
 
     #[test]
     fn entries_match_the_portable_backend() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        fs::create_dir(root.join("sub")).unwrap();
-        for i in 0..20 {
-            fs::write(root.join(format!("f{i}")), vec![1u8; i * 1000]).unwrap();
-        }
-        fs::hard_link(root.join("f3"), root.join("sub/link")).unwrap();
+        crate::backend::tests::populate(root);
         std::os::unix::fs::symlink("sub", root.join("sym")).unwrap();
         std::os::unix::fs::symlink("nowhere", root.join("dangling")).unwrap();
         fs::write(root.join(OsStr::from_bytes(b"bad-\xff")), b"x").unwrap();

@@ -40,3 +40,24 @@ impl<B: Backend> Forward for PanicOnSecondOpen<B> {
         self.inner.open(loc, storage)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use dfdu_scan::PortableBackend;
+    use dfdu_sys::Storage;
+
+    use super::*;
+
+    #[test]
+    fn only_the_second_open_panics() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let b = PanicOnSecondOpen::new(PortableBackend::default());
+        let loc = b.loc_from_path(dir.path());
+        let open = || Backend::open(&b, &loc, Storage::Unknown).is_ok();
+        assert!(open());
+        assert!(catch_unwind(AssertUnwindSafe(open)).is_err());
+        assert!(open());
+    }
+}

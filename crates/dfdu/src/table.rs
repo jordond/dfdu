@@ -306,3 +306,61 @@ pub fn print_debug_stats(m: &Model) {
         Timing::max(&t.wait),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use dfdu_tree::{ErrKind, Kind, Meta};
+
+    use super::*;
+
+    fn meta(kind: Kind, ino: u64) -> Meta {
+        Meta {
+            kind,
+            apparent: 0,
+            alloc: 0,
+            mtime: 0,
+            dev: 1,
+            ino,
+            nlink: 1,
+            mount: 0,
+        }
+    }
+
+    #[test]
+    fn notes_say_why_a_directory_was_not_scanned() {
+        let mut m = Model::default();
+        let t = &mut m.tree;
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 1), true);
+        let net = t.add_dir_flagged(r, b"net", &meta(Kind::Dir, 2), NodeFlags::NETWORK);
+        let both = NodeFlags::DUP_MOUNT | NodeFlags::NETWORK;
+        let dup = t.add_dir_flagged(r, b"dup", &meta(Kind::Dir, 3), both);
+        let other = t.add_dir(r, b"other", &meta(Kind::Dir, 4));
+        t.dir_mut(other).expect("a directory").state = DirState::Skipped;
+        let plain = t.add_dir(r, b"plain", &meta(Kind::Dir, 5));
+        let network = "network filesystem, not scanned (--network)";
+        assert_eq!(notes(&m, net), network);
+        assert_eq!(notes(&m, dup), "mounted again: counted at its other mount");
+        assert_eq!(
+            notes(&m, other),
+            "other filesystem, not scanned (--cross-mounts)"
+        );
+        assert_eq!(note(&m, net), format!("  [{network}]"));
+        assert_eq!(note(&m, plain), "");
+    }
+
+    #[test]
+    fn errors_inside_are_counted_apart_from_the_entry_own() {
+        let mut m = Model::default();
+        let t = &mut m.tree;
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 1), true);
+        let d = t.add_dir(r, b"d", &meta(Kind::Dir, 2));
+        for (ino, name) in [(3, b"a"), (4, b"b")] {
+            let f = t.add_file(d, name, &meta(Kind::File, ino), false, None);
+            t.set_error(f, ErrKind::PermissionDenied);
+        }
+        assert_eq!(notes(&m, d), "2 errors inside");
+        m.tree.set_error(d, ErrKind::Other);
+        assert_eq!(notes(&m, d), "could not be read; 2 errors inside");
+        assert_eq!(notes(&m, r), "3 errors inside");
+    }
+}

@@ -5,9 +5,10 @@ use dfdu_rules::RuleSet;
 use dfdu_scan::{DirId, JobId};
 
 use super::codec::{Dec, Enc, R, bad};
+use super::delete::{dec_del_msg, dec_del_req, enc_del_msg, enc_del_req};
 use super::jobs::{
-    dec_check_msg, dec_check_req, dec_del_msg, dec_del_req, dec_measure_msg, dec_measure_req,
-    enc_check_msg, enc_check_req, enc_del_msg, enc_del_req, enc_measure_msg, enc_measure_req,
+    dec_check_msg, dec_check_req, dec_measure_msg, dec_measure_req, enc_check_msg, enc_check_req,
+    enc_measure_msg, enc_measure_req,
 };
 use super::scan::{dec_msg, dec_wclass, enc_msg, enc_wclass};
 use super::{FromAgent, ToAgent};

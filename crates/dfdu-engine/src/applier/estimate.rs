@@ -8,6 +8,9 @@ use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef};
 use super::{Applier, Estimate, Model};
 use crate::extents::Inode;
 
+#[cfg(test)]
+mod tests;
+
 impl<B: Backend> Applier<B> {
     /// What deleting `items` would free. Walks them, so it is linear in their size.
     #[must_use]

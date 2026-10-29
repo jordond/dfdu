@@ -1,12 +1,14 @@
 use super::*;
+use crate::ImportError;
+use crate::ncdu::Limits;
 use crate::ncdu::tests::{NCDU, dump};
 
-fn sample() -> (Tree, Ix) {
+pub(super) fn sample() -> (Tree, Ix) {
     let im = crate::ncdu::import(NCDU, &Limits::default()).unwrap();
     (im.tree, im.root)
 }
 
-fn header() -> Header {
+pub(super) fn header() -> Header {
     Header {
         tool_version: "0.1.0".into(),
         written: 1_793_000_000,
@@ -20,7 +22,7 @@ fn header() -> Header {
     }
 }
 
-fn bytes(t: &Tree, r: Ix) -> Vec<u8> {
+pub(super) fn bytes(t: &Tree, r: Ix) -> Vec<u8> {
     let mut out = vec![];
     write(t, r, &mut out, &header()).unwrap();
     out
@@ -37,22 +39,6 @@ fn round_trip() {
     assert_eq!(l.entries, 10);
     assert_eq!(dump(&t, r), dump(&l.tree, l.root));
     assert_eq!(bytes(&l.tree, l.root), out);
-}
-
-/// Every flipped byte and every cut is refused, never half-loaded.
-#[test]
-fn damage_is_refused() {
-    let (t, r) = sample();
-    let out = bytes(&t, r);
-    for i in 0..out.len() {
-        let mut bad = out.clone();
-        bad[i] ^= 0x41;
-        assert!(read(&bad[..], &Limits::default()).is_err(), "flip at {i}");
-        assert!(read(&out[..i], &Limits::default()).is_err(), "cut at {i}");
-    }
-    let mut more = out.clone();
-    more.push(0);
-    assert!(read(&more[..], &Limits::default()).is_err());
 }
 
 /// A tree large enough for several frames, with names that are not UTF-8.
@@ -81,28 +67,4 @@ fn many_frames() {
         ..Limits::default()
     };
     assert!(matches!(read(&out[..], &small), Err(ImportError::Limit(_))));
-}
-
-/// Version 1 files (no journal position) and version 2 files (no time) still read.
-#[test]
-fn version_1_reads() {
-    let (t, r) = sample();
-    let mut out = vec![];
-    let h = Header {
-        journal: None,
-        ..header()
-    };
-    write(&t, r, &mut out, &h).unwrap();
-    out[8..12].copy_from_slice(&1u32.to_le_bytes());
-    let l = read(&out[..], &Limits::default()).unwrap();
-    assert_eq!(l.header, h);
-    let l = read(&bytes(&t, r)[..], &Limits::default()).unwrap();
-    assert_eq!(l.header, header());
-    // Version 2: a journal position without its time.
-    let mut v2 = header();
-    v2.journal.as_mut().unwrap().time = 0;
-    let mut out = vec![];
-    write_as(&t, r, &mut out, &v2, VERSION_2).unwrap();
-    let l = read(&out[..], &Limits::default()).unwrap();
-    assert_eq!(l.header, v2);
 }

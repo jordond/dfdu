@@ -1,0 +1,151 @@
+use std::collections::HashSet;
+
+use super::*;
+use crate::tests::press;
+
+const ALL: [Action; 41] = [
+    Action::Quit,
+    Action::Up,
+    Action::Down,
+    Action::PageUp,
+    Action::PageDown,
+    Action::First,
+    Action::Last,
+    Action::Open,
+    Action::Parent,
+    Action::SortSize,
+    Action::SortName,
+    Action::SortItems,
+    Action::SortMtime,
+    Action::Resort,
+    Action::ToggleApparent,
+    Action::ToggleReferenced,
+    Action::ToggleHidden,
+    Action::Rescan,
+    Action::EnterMount,
+    Action::SkipStalled,
+    Action::Trash,
+    Action::DeletePermanent,
+    Action::Undo,
+    Action::Help,
+    Action::Errors,
+    Action::Close,
+    Action::ToggleMark,
+    Action::ClearMarks,
+    Action::Filter,
+    Action::Types,
+    Action::Details,
+    Action::FocusDetails,
+    Action::Palette,
+    Action::Debug,
+    Action::ViewList,
+    Action::ViewTreemap,
+    Action::ViewCleanup,
+    Action::ViewDupes,
+    Action::TreemapDeeper,
+    Action::TreemapShallower,
+    Action::TreemapColor,
+];
+
+#[test]
+fn every_action_has_one_registry_row() {
+    for a in ALL {
+        let rows = ACTIONS.iter().filter(|r| r.action == a).count();
+        assert_eq!(rows, 1, "{a:?}");
+    }
+    assert_eq!(ACTIONS.len(), ALL.len());
+    let mut claimed = HashSet::new();
+    for r in ACTIONS {
+        assert!(!r.label.is_empty(), "{:?} has no label", r.action);
+        for k in r.keys.split_whitespace() {
+            let parsed = parse(k).unwrap_or_else(|| panic!("{:?}: bad key {k}", r.action));
+            assert!(claimed.insert(parsed), "{k} is bound twice");
+        }
+    }
+    let groups: HashSet<_> = ACTIONS.iter().map(|r| format!("{:?}", r.group)).collect();
+    assert_eq!(groups.len(), 6, "every group has an action");
+    let keyless: Vec<_> = ACTIONS.iter().filter(|r| r.keys.is_empty()).collect();
+    assert!(matches!(keyless[..], [r] if r.action == Action::ClearMarks));
+}
+
+#[test]
+fn first_key_is_the_first_binding() {
+    assert_eq!(first_key(Action::Up), "↑");
+    assert_eq!(first_key(Action::Palette), ":");
+    assert_eq!(first_key(Action::ClearMarks), "");
+}
+
+#[test]
+fn existing_keys_map_to_the_same_actions() {
+    let c = KeyCode::Char;
+    let table = [
+        (c('q'), Action::Quit),
+        (KeyCode::Up, Action::Up),
+        (c('k'), Action::Up),
+        (KeyCode::Down, Action::Down),
+        (c('j'), Action::Down),
+        (KeyCode::PageUp, Action::PageUp),
+        (KeyCode::PageDown, Action::PageDown),
+        (KeyCode::Home, Action::First),
+        (c('g'), Action::First),
+        (KeyCode::End, Action::Last),
+        (c('G'), Action::Last),
+        (KeyCode::Right, Action::Open),
+        (c('l'), Action::Open),
+        (KeyCode::Enter, Action::Open),
+        (KeyCode::Left, Action::Parent),
+        (c('h'), Action::Parent),
+        (KeyCode::Backspace, Action::Parent),
+        (c('s'), Action::SortSize),
+        (c('n'), Action::SortName),
+        (c('C'), Action::SortItems),
+        (c('M'), Action::SortMtime),
+        (c('S'), Action::Resort),
+        (c('a'), Action::ToggleApparent),
+        (c('u'), Action::ToggleReferenced),
+        (c('e'), Action::ToggleHidden),
+        (c('r'), Action::Rescan),
+        (c('m'), Action::EnterMount),
+        (c('x'), Action::SkipStalled),
+        (c('d'), Action::Trash),
+        (c('D'), Action::DeletePermanent),
+        (c('U'), Action::Undo),
+        (c('?'), Action::Help),
+        (c('!'), Action::Errors),
+        (KeyCode::Esc, Action::Close),
+    ];
+    for (code, want) in table {
+        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
+    }
+    // Keys match whatever the modifiers: Shift for capitals, and Ctrl on a key without a
+    // Ctrl binding of its own.
+    let shifted = KeyEvent::new(c('G'), KeyModifiers::SHIFT);
+    assert_eq!(action_for(&shifted), Some(Action::Last));
+    let ctrl_j = KeyEvent::new(c('j'), KeyModifiers::CONTROL);
+    assert_eq!(action_for(&ctrl_j), Some(Action::Down));
+    let ctrl_p = KeyEvent::new(c('p'), KeyModifiers::CONTROL);
+    assert_eq!(action_for(&ctrl_p), Some(Action::Palette));
+    assert_eq!(action_for(&press(c('p'))), Some(Action::TreemapColor));
+    for (code, want) in [
+        (c(' '), Action::ToggleMark),
+        (c('/'), Action::Filter),
+        (c('i'), Action::Details),
+        (KeyCode::Tab, Action::FocusDetails),
+        (c(':'), Action::Palette),
+        (KeyCode::F(12), Action::Debug),
+        (KeyCode::F(1), Action::Help),
+        (c('<'), Action::Parent),
+        (c('1'), Action::ViewList),
+        (c('2'), Action::ViewTreemap),
+        (c('3'), Action::ViewCleanup),
+        (c('4'), Action::ViewDupes),
+        (c('t'), Action::Types),
+        (c('+'), Action::TreemapDeeper),
+        (c('-'), Action::TreemapShallower),
+    ] {
+        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
+    }
+    for code in [c('z'), c('5'), KeyCode::F(2), KeyCode::Insert] {
+        assert_eq!(action_for(&press(code)), None, "{code:?}");
+    }
+}

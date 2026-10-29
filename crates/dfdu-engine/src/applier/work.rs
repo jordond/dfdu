@@ -7,6 +7,9 @@ use dfdu_tree::{DirState, ErrKind, NodeRef};
 use super::{Applier, Model};
 use crate::links::{Scope, VISIBLE};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) enum Work {
     Free,
     /// Drop freed links from these inodes' lists
