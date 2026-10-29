@@ -1,6 +1,33 @@
-//! Measured and shared-extent bytes, in a side table that stays empty until a node has some.
+//! Measured and shared-extent bytes, in a side table holding only the nodes that have some.
+
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use super::{Ix, NodeFlags, Tree};
+
+/// Hashes a slot number. [`Tree::own`] looks a node up for every total it computes, so this
+/// is a multiply, not SipHash.
+#[derive(Default)]
+pub(super) struct SlotHasher(u64);
+
+impl Hasher for SlotHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b.into());
+        }
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(n.into());
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0 ^ n).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+pub(super) type ExtentMap = HashMap<u32, Extents, BuildHasherDefault<SlotHasher>>;
 
 /// Shared-extent bytes of a node; zero except on filesystems that share extents.
 #[derive(Copy, Clone, Debug, Default)]
@@ -17,13 +44,15 @@ pub(super) struct Extents {
 
 impl Tree {
     pub(super) fn ext(&self, i: u32) -> Extents {
-        self.extents.get(i as usize).copied().unwrap_or_default()
+        if self.extents.is_empty() {
+            return Extents::default();
+        }
+        self.extents.get(&i).copied().unwrap_or_default()
     }
 
-    /// The node's shared-extent bytes, creating the side table on first use.
+    /// The node's shared-extent bytes, creating its entry on first use.
     pub(super) fn ext_mut(&mut self, i: u32) -> &mut Extents {
-        self.extents.grow_to(self.nodes.len(), Extents::default());
-        &mut self.extents[i as usize]
+        self.extents.entry(i).or_default()
     }
 
     /// Records a file's measured unshared bytes ([`NodeFlags::MEASURED`]).
@@ -70,6 +99,9 @@ impl Tree {
             x.shared = x.shared.saturating_sub(bytes);
             if out {
                 x.shared_out = x.shared_out.saturating_sub(bytes);
+            }
+            if x.excl == 0 && x.shared == 0 && x.shared_out == 0 {
+                t.extents.remove(&ix.0);
             }
         });
     }
