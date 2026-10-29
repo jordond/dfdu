@@ -302,9 +302,9 @@ impl RuleArgs {
         Some(Arc::new(set))
     }
 
-    /// The rule files [`RuleArgs::load`] loads, for an agent to classify a scan of `root` on
-    /// its host with.
-    fn remote(self, root: &Path) -> Option<dfdu_engine::RemoteRules> {
+    /// The rule files [`RuleArgs::load`] loads, for an agent to classify a scan on its host
+    /// with.
+    fn remote(self) -> Option<dfdu_engine::RemoteRules> {
         if self.no_rules {
             return None;
         }
@@ -313,10 +313,7 @@ impl RuleArgs {
         for e in errors {
             eprintln!("dfdu: {e}");
         }
-        Some(dfdu_engine::RemoteRules {
-            files,
-            root: root.to_path_buf(),
-        })
+        Some(dfdu_engine::RemoteRules { files })
     }
 }
 

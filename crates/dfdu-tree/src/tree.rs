@@ -1,5 +1,5 @@
 use crate::pages::{KidArena, NameArena, Pages};
-use crate::{Class, ErrKind, Kind, Totals};
+use crate::{Class, ErrKind, Host, Kind, Totals};
 
 mod classes;
 mod dir;
@@ -189,6 +189,8 @@ pub struct Tree {
     names: NameArena,
     names_garbage: u64,
     roots: Vec<u32>,
+    /// The host the paths are on: this machine, unless the tree came from an agent or a file.
+    host: Host,
     version: u64,
     free_work: Vec<FreeWork>,
     live: u64,
@@ -198,6 +200,16 @@ impl Tree {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The host the tree's paths name files on.
+    #[must_use]
+    pub fn host(&self) -> Host {
+        self.host
+    }
+
+    pub fn set_host(&mut self, host: Host) {
+        self.host = host;
     }
 
     #[must_use]

@@ -41,7 +41,7 @@ pub(super) fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.add(&unread_note(app), t.fg_dim);
         return out.out;
     };
-    out.add(&f.path.display().to_string(), t.fg_dim);
+    out.add(&f.path.to_string(), t.fg_dim);
     kind(&mut out, t, f, width);
     if matches!(f.mark, Mark::OtherFs | Mark::Network) {
         let (info, hint) = crate::model::outside::pane_lines(app, &f.path);
@@ -169,7 +169,7 @@ fn rule_match(out: &mut Text, t: &Theme, c: &Matched) {
     ]));
     out.add(&c.rule, t.title);
     if let Some(p) = &c.above {
-        out.add(&format!("in {}", p.display()), t.fg_dim);
+        out.add(&format!("in {p}"), t.fg_dim);
     }
     out.add(&c.explanation, plain);
     out.add(&format!("lost: {}", c.lost), t.fg_dim);

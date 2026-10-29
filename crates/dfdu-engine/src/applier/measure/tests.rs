@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use dfdu_tree::ErrKind;
 
 use super::super::test_util::{Listing, Rig, chunk, close};
@@ -42,7 +40,7 @@ fn answer(r: &Rig, path: &str, round: u64, result: MeasureResult) -> MeasureMsg 
 fn files_with_data_are_requested_by_directory() {
     let mut r = measured_scan();
     let reqs = r.a.take_measure_requests();
-    let asked: Vec<(PathBuf, Vec<Vec<u8>>)> = reqs
+    let asked: Vec<(dfdu_tree::HostPath, Vec<Vec<u8>>)> = reqs
         .iter()
         .map(|q| {
             (
@@ -55,7 +53,10 @@ fn files_with_data_are_requested_by_directory() {
         asked,
         [
             ("/r".into(), vec![b"f".to_vec()]),
-            ("/r/a".into(), vec![b"g".to_vec()])
+            (
+                dfdu_tree::HostPath::from("/r").join(b"a"),
+                vec![b"g".to_vec()]
+            )
         ]
     );
     assert_eq!(r.m.status.measuring.as_ref().map(|p| p.requested), Some(2));

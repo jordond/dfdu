@@ -1,7 +1,7 @@
-use std::path::PathBuf;
 use std::time::Instant;
 
 use dfdu_engine::Estimate;
+use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 
 use super::*;
@@ -37,10 +37,10 @@ fn browser() -> (App, Instant) {
         dir(2, "node_modules", 6 * GIB / 5),
         test_entry(3, "README.md", 4 << 10),
     ];
-    let dir_path = PathBuf::from("/home/jo/dev/projects/website-redesign-2026");
+    let dir_path = HostPath::from("/home/jo/dev/projects/website-redesign-2026");
     let snap = Snapshot {
         dir_path,
-        root_path: PathBuf::from("/home/jo"),
+        root_path: HostPath::from("/home/jo"),
         at_root: false,
         busy: false,
         ..snap_with_totals(entries, 1)
@@ -156,7 +156,7 @@ fn space_unmarks_the_selected_item_and_asks_again() {
     app.key(press(KeyCode::Down), t0);
     let fx = app.key(press(KeyCode::Char(' ')), t0);
     let names: Vec<_> = (app.marks.items().iter())
-        .map(|it| it.target.path.file_name().expect("name").to_owned())
+        .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     assert_eq!(names, ["target", "node_modules"]);
     assert_eq!(app.marks_pane.cursor, 1, "the cursor stays on the row");
@@ -180,7 +180,7 @@ fn star_inverts_the_marks_of_the_directory() {
     app.key(press(KeyCode::Tab), t0);
     app.key(press(KeyCode::Char('*')), t0);
     let mut names: Vec<_> = (app.marks.items().iter())
-        .map(|it| it.target.path.file_name().expect("name").to_owned())
+        .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     names.sort();
     assert_eq!(
@@ -198,7 +198,7 @@ fn star_inverts_the_marks_of_the_directory() {
     // Again, back to the first mark. In the list `*` is tree mode's, not the marks'.
     app.key(press(KeyCode::Char('*')), t0);
     let names: Vec<_> = (app.marks.items().iter())
-        .map(|it| it.target.path.file_name().expect("name").to_owned())
+        .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     assert_eq!(names, ["target"]);
 }

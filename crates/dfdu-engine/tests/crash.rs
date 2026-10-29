@@ -21,7 +21,7 @@ fn applier_panic_is_fatal_and_reported() {
         },
     );
     e.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     e.send(Command::InjectPanic);

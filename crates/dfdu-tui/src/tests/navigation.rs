@@ -4,12 +4,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use dfdu_tree::{Host, HostPath, Kind};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{library_snap, press, snap_with_totals, typed};
+use super::{below, library_snap, meta, press, render, snap_with_totals, typed};
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect};
-use crate::model::snapshot::test_entry;
+use crate::features::treemap::tests::sync;
+use crate::model::snapshot::{self, test_entry};
 use crate::theme::Theme;
 
 fn ctrl(c: char) -> KeyEvent {
@@ -31,12 +33,7 @@ fn twenty() -> (App, Instant) {
 fn marked(app: &App) -> Vec<String> {
     (app.marks.items().iter())
         .map(|it| {
-            it.target
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
+            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
         })
         .collect()
 }
@@ -122,6 +119,53 @@ fn y_copies_the_selected_path() {
     );
 }
 
+/// A scan of another kind of host keeps that host's paths: `C:\Users\u\proj` on a Unix
+/// machine (or `/home/u/pro\j`, one name, on a Windows one) is shown, copied and found again
+/// as it is.
+#[test]
+fn paths_of_another_kind_of_host_are_shown_and_found_as_they_are() {
+    let (host, root_name, name, want) = match Host::LOCAL {
+        Host::Unix => (Host::Windows, r"C:\Users\u", "proj", r"C:\Users\u\proj"),
+        Host::Windows => (Host::Unix, "/home/u", r"pro\j", r"/home/u/pro\j"),
+    };
+    let mut m = dfdu_engine::Model::default();
+    m.tree.set_host(host);
+    let root = (m.tree).new_root(root_name.as_bytes(), &meta(Kind::Dir, 0, 1), true);
+    let dir = (m.tree).add_dir_flagged(root, name.as_bytes(), &meta(Kind::Dir, 0, 2), 0);
+    let path = HostPath::new(host, want.as_bytes().to_vec());
+    assert_eq!(m.tree.host_path(dir), path);
+    assert_eq!(snapshot::find_path(&m.tree, &path), Some(dir));
+
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &m, t0);
+    assert!(render(&mut app, t0, 80, 8).contains(&format!(" {root_name} ")));
+    let fx = app.key(press(KeyCode::Char('y')), t0);
+    assert!(
+        matches!(&fx[..], [Effect::Copy(text)] if *text == want),
+        "{fx:?}"
+    );
+    assert!(app.status.as_deref().is_some_and(|s| s.contains(want)));
+
+    // Gone to by its path: its directory opens with it selected.
+    let root_path = app.snap.root_path.clone();
+    app.go_to(&path, &root_path);
+    sync(&mut app, &m, t0);
+    assert_eq!(app.snap.dir_path, root_path);
+    assert_eq!(
+        app.selected_entry().map(|e| &e.name[..]),
+        Some(name.as_bytes())
+    );
+    app.key(press(KeyCode::Enter), t0);
+    sync(&mut app, &m, t0);
+    assert_eq!(app.snap.dir_path, path);
+    let header = render(&mut app, t0, 80, 8);
+    assert!(
+        header.contains(&format!("{root_name} › {name}")),
+        "{header}"
+    );
+}
+
 #[test]
 fn o_opens_the_file_manager_only_for_this_machine() {
     let t0 = Instant::now();
@@ -156,18 +200,18 @@ fn filter_enter_opens_the_only_match() {
     typed(&mut app, "i", t0);
     assert_eq!(app.rows.len(), 2);
     app.key(press(KeyCode::Enter), t0);
-    assert!(!app.target.path.ends_with("Library"));
+    assert!(!app.target.path.to_local().ends_with("Library"));
     // One file: stays too.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "notes", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert!(!app.target.path.ends_with("Library"));
+    assert!(!app.target.path.to_local().ends_with("Library"));
     // One directory: Enter opens it.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "libr", t0);
     assert_eq!(app.rows.len(), 1);
     app.key(press(KeyCode::Enter), t0);
-    assert_eq!(app.target.path, Path::new("/r").join("Library"));
+    assert_eq!(app.target.path, below("/r", "Library"));
 }

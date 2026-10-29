@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use dfdu_rules::protected::Protected;
 use dfdu_rules::{Env, rule_path};
 
-use dfdu_tree::{ErrKind, Kind, Meta};
+use dfdu_tree::{ErrKind, Host, Kind, Meta};
 
 use crate::{DeleteResult, Mode, Plan, PlanItem, Refusal};
 
@@ -103,7 +103,9 @@ fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
         return None;
     }
     if same_mount(path, &dir) == Some(true) {
-        Some(Refusal::TrashOtherSubvolume(subvolume_root(path, item_dev)))
+        Some(Refusal::TrashOtherSubvolume(dfdu_tree::HostPath::local(
+            &subvolume_root(path, item_dev),
+        )))
     } else {
         Some(Refusal::TrashCrossesFilesystems)
     }
@@ -186,7 +188,12 @@ fn mount_inside(dir: &Path, dev: u64) -> Option<std::path::PathBuf> {
 /// Why not to delete it now: refused (outside the scan root, protected, on another
 /// filesystem), gone, changed since the scan, or not readable.
 pub fn verify(item: &PlanItem, plan: &Plan) -> Result<(), Rejection> {
-    let (path, scan_root, mode) = (&item.path, plan.scan_root.as_path(), plan.mode);
+    // A plan for another host's paths names nothing here (an agent's plan comes decoded as
+    // its own host's).
+    if item.path.host() != Host::LOCAL || plan.scan_root.host() != Host::LOCAL {
+        return Err(Rejection::Refused(Refusal::OutsideScanRoot));
+    }
+    let (path, scan_root, mode) = (&item.path.to_local(), &plan.scan_root.to_local(), plan.mode);
     if !path.is_absolute() || !scan_root.is_absolute() {
         // Callers canonicalise the scan root; a relative path here is a bug, not a target.
         return Err(Rejection::Refused(Refusal::OutsideScanRoot));
@@ -273,7 +280,9 @@ pub fn verify(item: &PlanItem, plan: &Plan) -> Result<(), Rejection> {
         && matches!(mode, Mode::Trash | Mode::Stage)
         && let Some(m) = mount_inside(path, now.dev)
     {
-        return Err(Rejection::Refused(Refusal::ContainsMount(m)));
+        return Err(Rejection::Refused(Refusal::ContainsMount(
+            m.as_path().into(),
+        )));
     }
     if mode == Mode::Trash
         && let Some(r) = trash_refusal(path, now.dev)

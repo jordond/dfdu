@@ -63,7 +63,7 @@ fn clones_count_once() {
         },
     );
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());

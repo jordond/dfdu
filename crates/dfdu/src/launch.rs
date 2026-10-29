@@ -113,7 +113,7 @@ pub fn scan(
     run_scan(
         engine,
         Command::Scan {
-            path: path.to_path_buf(),
+            path: path.to_path_buf().into(),
             opts: job,
         },
     )
@@ -213,7 +213,7 @@ mod tests {
         fs::write(dir.path().join("sub/f"), b"x").expect("write");
         let engine = Engine::start(PortableBackend::default(), headless(false));
         let scan = Command::Scan {
-            path: dir.path().to_path_buf(),
+            path: dir.path().to_path_buf().into(),
             opts: JobOptions::default(),
         };
         let engine = run_scan(engine, scan).expect("scanned");

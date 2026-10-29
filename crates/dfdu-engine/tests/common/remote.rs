@@ -18,13 +18,14 @@ pub fn remote() -> (
     Engine<PortableBackend>,
     std::thread::JoinHandle<std::io::Result<()>>,
 ) {
-    let (e, agent, _) = remote_with(None, None);
+    let (e, agent, _) = remote_with(std::path::Path::new("/"), None, None);
     (e, agent)
 }
 
-/// [`remote`], classifying with `rules`, the agent journalling deletions in `journal`; also
-/// what the root classifies against.
+/// [`remote`] for scans of `root`, classifying with `rules`, the agent journalling deletions in
+/// `journal`; also what the root classifies against.
 pub fn remote_with(
+    root: &std::path::Path,
     rules: Option<RemoteRules>,
     journal: Option<std::path::PathBuf>,
 ) -> (
@@ -45,6 +46,7 @@ pub fn remote_with(
             writer: Box::new(down_w),
             child: None,
         },
+        root,
         rules,
     )
     .unwrap();

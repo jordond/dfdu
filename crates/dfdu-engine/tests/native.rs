@@ -66,7 +66,7 @@ fn dry_run_then_run() {
         },
     );
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(Arc::new(rules), &root)),
             ..JobOptions::default()

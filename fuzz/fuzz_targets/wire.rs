@@ -14,14 +14,14 @@ static RULES: LazyLock<RuleSet> = LazyLock::new(|| {
 
 fuzz_target!(|data: &[u8]| {
     let rules = Some(&*RULES);
-    let _ = FromAgent::decode(data, rules);
-    let _ = FromAgent::decode(data, None);
+    let _ = FromAgent::decode(data, rules, dfdu_tree::Host::LOCAL);
+    let _ = FromAgent::decode(data, None, dfdu_tree::Host::LOCAL);
     let _ = ToAgent::decode(data, rules);
     let _ = ToAgent::decode(data, None);
     let mut r = data;
     let mut buf = Vec::new();
     while let Ok(true) = read_frame(&mut r, &mut buf) {
-        if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&buf, rules) {
+        if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&buf, rules, dfdu_tree::Host::LOCAL) {
             for m in msgs {
                 if let dfdu_scan::ScanMsg::Chunk(c) = m {
                     for f in &c.files {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use dfdu_tree::HostPath;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyCode;
@@ -136,7 +137,11 @@ fn ghost_rows_are_struck_through_and_cannot_be_opened_or_deleted() {
     for code in [KeyCode::Enter, KeyCode::Char('d'), KeyCode::Char('D')] {
         assert!(app.key(press(code), t0).is_empty());
         assert!(matches!(app.overlay, Overlay::None), "{code:?}");
-        assert_eq!(app.target.path, PathBuf::new(), "{code:?} opened the ghost");
+        assert_eq!(
+            app.target.path,
+            HostPath::default(),
+            "{code:?} opened the ghost"
+        );
     }
     // A re-sort drops the ghost.
     app.key(press(KeyCode::Char('S')), t0);

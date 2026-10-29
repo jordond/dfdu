@@ -2,7 +2,7 @@
 //! varint length and the bytes.
 
 use dfdu_rules::{RuleIx, Safety};
-use dfdu_tree::Kind;
+use dfdu_tree::{Host, Kind};
 
 use super::WireError;
 
@@ -51,6 +51,9 @@ impl Enc {
 pub struct Dec<'a> {
     buf: &'a [u8],
     pos: usize,
+    /// The host the paths in the payload are on: the agent's for what the local side reads,
+    /// this one for what the agent reads.
+    pub(super) host: Host,
 }
 
 pub(super) type R<T> = Result<T, WireError>;
@@ -62,7 +65,13 @@ pub(super) fn bad<T>(what: &'static str) -> R<T> {
 impl<'a> Dec<'a> {
     #[must_use]
     pub fn new(buf: &'a [u8]) -> Self {
-        Dec { buf, pos: 0 }
+        Dec::on(buf, Host::LOCAL)
+    }
+
+    /// A decoder of a payload whose paths are on `host`.
+    #[must_use]
+    pub fn on(buf: &'a [u8], host: Host) -> Self {
+        Dec { buf, pos: 0, host }
     }
     pub(super) fn u8(&mut self) -> R<u8> {
         let b = *self

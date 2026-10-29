@@ -10,11 +10,10 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
-use dfdu_tree::{Ix, Kind, NodeRef, Tree};
+use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::keys::{self, Action};
@@ -48,7 +47,7 @@ pub struct Largest {
 /// What a walk was for, and when it ran.
 #[derive(Clone, Debug)]
 pub struct Walked {
-    dir: PathBuf,
+    dir: HostPath,
     mode: SizeMode,
     hide_hidden: bool,
     at: Instant,
@@ -63,7 +62,7 @@ pub struct Walked {
 pub struct File {
     pub node: NodeRef,
     /// Relative to the directory walked.
-    pub path: PathBuf,
+    pub path: HostPath,
     pub size: u64,
     pub dev_ino: (u64, u64),
     pub shared_out: u64,
@@ -178,19 +177,25 @@ fn walk(t: &Tree, dir: Ix, mode: SizeMode, hide_hidden: bool) -> (Vec<File>, u64
             shared_out: t.total(ix).shared_out,
         })
         .collect();
-    files.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path)));
+    files.sort_by(|a, b| {
+        (b.size.cmp(&a.size)).then_with(|| a.path.components().cmp(b.path.components()))
+    });
     (files, count)
 }
 
 /// The path of `ix` relative to its ancestor `dir`.
-fn below(t: &Tree, dir: Ix, ix: Ix) -> PathBuf {
+fn below(t: &Tree, dir: Ix, ix: Ix) -> HostPath {
     let mut names = Vec::new();
     let mut at = Some(ix);
     while let Some(i) = at.filter(|&i| i != dir) {
         names.push(t.name(i));
         at = t.parent(i);
     }
-    names.iter().rev().map(|n| dfdu_tree::name_os(n)).collect()
+    let mut out = HostPath::empty(t.host());
+    for n in names.iter().rev() {
+        out.push(n);
+    }
+    out
 }
 
 /// Takes in a walk, keeping the cursor on the file it was on when that file is still listed,
@@ -214,9 +219,9 @@ pub fn apply(app: &mut App) {
 }
 
 /// The selected file, its path joined to the directory shown.
-pub(crate) fn selected(app: &App) -> Option<(PathBuf, &File)> {
+pub(crate) fn selected(app: &App) -> Option<(HostPath, &File)> {
     let f = app.largest.files.get(app.largest.cursor)?;
-    Some((app.snap.dir_path.join(&f.path), f))
+    Some((app.snap.dir_path.join(f.path.as_bytes()), f))
 }
 
 /// Keys the view takes before the action registry; `None` passes the key on. The keys that

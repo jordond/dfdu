@@ -2,7 +2,6 @@
 //! deleter's results.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
 use dfdu_scan::Backend;
@@ -135,7 +134,7 @@ impl<B: Backend> Applier<B> {
             let (dev, ino) = m.tree.dev_ino(ix);
             out.push(PlanItem {
                 node: m.tree.node_ref(ix),
-                path: m.tree.path_buf(ix),
+                path: m.tree.host_path(ix),
                 identity: Identity {
                     dev,
                     ino,
@@ -157,9 +156,9 @@ impl<B: Backend> Applier<B> {
                 while let Some(p) = m.tree.parent(ix) {
                     ix = p;
                 }
-                m.tree.path_buf(ix)
+                m.tree.host_path(ix)
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| dfdu_tree::HostPath::empty(m.tree.host()));
         let id = self.next_plan;
         self.next_plan += 1;
         self.queued_plans.push_back(Plan {
@@ -367,7 +366,7 @@ fn listings(tree: &Tree, item: Ix) -> dfdu_clean::inside::Listings {
     if tree.kind(item) != Kind::Dir {
         return out;
     }
-    let mut stack = vec![(item, PathBuf::new())];
+    let mut stack = vec![(item, dfdu_tree::HostPath::empty(tree.host()))];
     while let Some((d, rel)) = stack.pop() {
         if tree.dir(d).is_none_or(|r| r.state != DirState::Complete) {
             continue;
@@ -377,7 +376,7 @@ fn listings(tree: &Tree, item: Ix) -> dfdu_clean::inside::Listings {
             let name = tree.name(c);
             entries.push((name_hash(name), tree.dev_ino(c).1, tree.kind(c)));
             if tree.kind(c) == Kind::Dir {
-                stack.push((c, rel.join(&*dfdu_tree::name_os(name))));
+                stack.push((c, rel.join(name)));
             }
         }
         entries.sort_unstable();
@@ -474,6 +473,33 @@ mod tests {
         assert_eq!((s.stale, s.refused, s.failed, s.aborted), (1, 0, 1, 1));
         let kept: Vec<NodeRef> = s.problems.iter().map(|p| p.0).collect();
         assert_eq!(kept, [n(2), n(3), n(4)]);
+    }
+
+    /// The keys of what the scan saw inside an item are joined with the separator of the
+    /// tree's host, which is what the deleter there joins them with: a Windows client deleting
+    /// on a Unix host must not skip the check below the item's first level.
+    #[test]
+    fn listings_are_keyed_with_the_hosts_separator() {
+        use crate::test_util::meta;
+        use dfdu_tree::{Host, HostPath};
+        for host in [Host::Unix, Host::Windows] {
+            let mut t = Tree::new();
+            t.set_host(host);
+            let root = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+            let item = t.add_dir(root, b"item", &meta(Kind::Dir, 0, 2));
+            let a = t.add_dir(item, b"a", &meta(Kind::Dir, 0, 3));
+            let b = t.add_dir(a, b"b", &meta(Kind::Dir, 0, 4));
+            t.add_file(b, b"f", &meta(Kind::File, 1, 5), false, None);
+            for d in [item, a, b] {
+                t.dir_mut(d).expect("directory").state = DirState::Complete;
+            }
+            let mut keys: Vec<HostPath> = listings(&t, item).into_keys().collect();
+            keys.sort();
+            let sep = char::from(host.sep());
+            let want =
+                ["", "a", &format!("a{sep}b")].map(|k| HostPath::new(host, k.as_bytes().to_vec()));
+            assert_eq!(keys, want, "{host:?}");
+        }
     }
 
     #[test]

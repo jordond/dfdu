@@ -3,11 +3,26 @@
 use std::path::PathBuf;
 
 use super::{Ix, SEP, Tree};
-use crate::name_os;
+use crate::{HostPath, name_os};
 
 impl Tree {
-    /// Filesystem path of the node: the root's path joined with each name below it. Use this for
-    /// anything handed to the OS; [`Tree::path`] is a byte key for ordering and lookups.
+    /// Path of the node on the tree's host: the root's path joined with each name below it,
+    /// with that host's separator. Use this for anything shown, sent to an agent or compared
+    /// with paths from one; [`Tree::path_buf`] only for a tree of this machine.
+    #[must_use]
+    pub fn host_path(&self, ix: Ix) -> HostPath {
+        let mut parts = Vec::new();
+        self.ancestors(ix, &mut parts);
+        let mut out = HostPath::empty(self.host);
+        for p in parts {
+            out.push(self.name(p));
+        }
+        out
+    }
+
+    /// Filesystem path of the node on this machine: the root's path joined with each name below
+    /// it. Use this for anything handed to the OS, for a tree of this machine; another host's
+    /// tree has [`Tree::host_path`]. [`Tree::path`] is a byte key for ordering and lookups.
     #[must_use]
     pub fn path_buf(&self, ix: Ix) -> PathBuf {
         let mut parts = Vec::new();

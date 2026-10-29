@@ -7,6 +7,7 @@ pub(crate) use options::default_measurers;
 pub use options::{EngineOptions, workers_for};
 
 use dfdu_scan::panic_message;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
@@ -17,7 +18,7 @@ use dfdu_clean::{DeleterMsg, spawn_deleter};
 use dfdu_scan::journal::{JournalPosition, changed_since};
 use dfdu_scan::runtime::Pool;
 use dfdu_scan::{Backend, Batch, Budget, JobOptions, PortableBackend, ScanMsg, Shared, Sink};
-use dfdu_tree::Tree;
+use dfdu_tree::{Host, HostPath, Tree};
 use parking_lot::RwLock;
 
 use crate::applier::{Command, Model};
@@ -140,9 +141,10 @@ impl<B: Backend> Engine<B> {
 
     /// An engine whose scans run on another host, by the `dfdu agent` at the other end of `io`;
     /// `backend` is only consulted for local reads. Fails when the
-    /// agent does not answer the greeting or speaks no common protocol version. With `rules`,
-    /// the agent classifies with them; the answer says what the scan root classifies against,
-    /// to put in [`Command::Scan`]'s options.
+    /// agent does not answer the greeting or speaks no common protocol version. The agent
+    /// resolves `root` (as typed) on its host; the answer has it, to scan with
+    /// [`Command::Scan`]. With `rules`, the agent classifies with them; the answer says what the
+    /// scan root classifies against, to put in its options.
     ///
     /// # Errors
     ///
@@ -152,9 +154,10 @@ impl<B: Backend> Engine<B> {
         backend: B,
         opts: EngineOptions,
         io: crate::RemoteIo,
+        root: &std::path::Path,
         rules: Option<crate::RemoteRules>,
     ) -> std::io::Result<(Self, crate::Connected)> {
-        let (link, reader, connected) = crate::remote::connect(io, rules)?;
+        let (link, reader, connected) = crate::remote::connect(io, root, rules)?;
         // The tree's paths are the other host's: nothing here may act on them. Deletion, guard
         // checks and extent measurement run on the agent (`measure_workers` 0 still turns
         // measurement off); native commands would run on this host.
@@ -185,10 +188,20 @@ impl<B: Backend> Engine<B> {
             Source::Remote(r) => (Some(r), false),
             Source::Imported(tree) => {
                 model.tree = *tree;
+                // A file does not say which host its paths are on; its root's form does.
+                let host = model
+                    .tree
+                    .roots()
+                    .next()
+                    .map(|r| Host::guess(model.tree.name(r)));
+                model.tree.set_host(host.unwrap_or(Host::LOCAL));
                 model.tree.bump_version();
                 (None, true)
             }
         };
+        if let Some(r) = &remote {
+            model.tree.set_host(r.link.host);
+        }
         let model = Arc::new(RwLock::new(model));
         *CRASH_MODEL.lock() = Some(Arc::downgrade(&model));
         let (cmd_tx, cmd_rx) = unbounded::<Command>();
@@ -305,14 +318,12 @@ impl<B: Backend> Engine<B> {
             self.delete_abort.store(true, SeqCst);
         }
         // Scan roots are made absolute and canonical here, on the caller's thread, so the
-        // applier never does I/O and deletion can require absolute paths inside the root.
+        // applier never does I/O and deletion can require absolute paths inside the root. A
+        // remote engine's roots are the agent's, resolved there
+        // ([`Connected::root`](crate::Connected::root)).
         let cmd = match cmd {
-            Command::Scan { path, opts } => {
-                // dunce: on Windows, the plain C:\ form where it is equivalent, instead of the
-                // \\?\ verbatim form std returns.
-                let path = dunce::canonicalize(&path)
-                    .or_else(|_| std::path::absolute(&path))
-                    .unwrap_or(path);
+            Command::Scan { path, opts } if self.link.is_none() && path.host() == Host::LOCAL => {
+                let path = HostPath::local(&resolve_root(path.to_local()));
                 Command::Scan { path, opts }
             }
             other => other,
@@ -452,6 +463,14 @@ struct Remote {
     reader: Box<dyn std::io::Read + Send>,
     measure_min: u64,
     privileged: bool,
+}
+
+/// `path` made absolute and canonical, as scan roots are: on Windows the plain `C:\` form
+/// where it is equivalent (dunce), instead of the `\\?\` verbatim form std returns.
+pub(crate) fn resolve_root(path: PathBuf) -> PathBuf {
+    dunce::canonicalize(&path)
+        .or_else(|_| std::path::absolute(&path))
+        .unwrap_or(path)
 }
 
 /// `rx`, or a channel that never receives when the pool that would send on it is off: a

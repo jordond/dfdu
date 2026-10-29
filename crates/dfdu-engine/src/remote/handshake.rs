@@ -2,6 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, OnceLock};
 
@@ -9,12 +10,14 @@ use super::wire::{self, FromAgent, ToAgent, WireClass, read_frame};
 use super::{Connected, Link, RemoteIo, RemoteRules};
 use dfdu_rules::hash::FastMap as HashMap;
 use dfdu_rules::{Env, Platform, RuleSet, Source};
+use dfdu_tree::{Host, HostPath};
 use parking_lot::Mutex;
 
 /// Greets the agent: the versions must overlap. With `rules`, sends them and builds the set the
 /// agent built. Returns the link and the agent's reader.
 pub(crate) fn connect(
     io: RemoteIo,
+    root: &Path,
     rules: Option<RemoteRules>,
 ) -> io::Result<(Arc<Link>, Box<dyn Read + Send>, Connected)> {
     let RemoteIo {
@@ -42,7 +45,10 @@ pub(crate) fn connect(
         FromAgent::Fatal(s) => return Err(io::Error::other(s)),
         _ => return Err(io::Error::other("the agent did not say hello")),
     };
-    let link = Arc::new(Link {
+    // The agent's host is not known until it says; the greeting carries no paths.
+    let host = Host::LOCAL;
+    let mut link = Link {
+        host,
         writer: Mutex::new(writer),
         seq: AtomicU64::new(0),
         pending: Mutex::new(VecDeque::new()),
@@ -55,11 +61,12 @@ pub(crate) fn connect(
         plans: Mutex::new(HashMap::default()),
         natives: Mutex::new(HashSet::default()),
         measuring: Mutex::new(HashMap::default()),
-    });
+    };
     link.send(&ToAgent::Hello {
         version: wire::VERSION,
+        root: dfdu_tree::name_bytes(root.as_os_str()).into_owned(),
     });
-    let (measure_min, privileged) = loop {
+    let (measure_min, privileged, host, root) = loop {
         let closed = io::Error::other("the agent closed the link");
         match next_message(&mut reader, &mut buf, closed)? {
             FromAgent::Heartbeat => {}
@@ -67,12 +74,18 @@ pub(crate) fn connect(
             FromAgent::Host {
                 measure_min,
                 privileged,
-            } => break (measure_min, privileged),
+                host,
+                root,
+            } => break (measure_min, privileged, host, root),
             _ => return Err(io::Error::other("the agent did not describe its host")),
         }
     };
+    link.host = host;
+    let link = Arc::new(link);
     let mut connected = Connected {
         tool,
+        host,
+        root: HostPath::new(host, root),
         class: None,
         errors: Vec::new(),
         measure_min,
@@ -108,7 +121,7 @@ fn exchange_rules(
                 (name, text.clone())
             })
             .collect(),
-        root: dfdu_tree::name_bytes(r.root.as_os_str()).into_owned(),
+        root: connected.root.as_bytes().to_vec(),
     });
     let answer = loop {
         let closed = io::Error::other("the agent closed the link");
@@ -155,7 +168,7 @@ fn next_message(
     if !read_frame(reader, buf).map_err(bad)? {
         return Err(closed);
     }
-    FromAgent::decode(buf, None).map_err(bad)
+    FromAgent::decode(buf, None, Host::LOCAL).map_err(bad)
 }
 
 /// What the agent built its rules for ([`FromAgent::Rules`]).

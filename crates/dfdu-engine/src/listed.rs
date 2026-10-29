@@ -8,16 +8,15 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 use dfdu_rules::RuleSet;
-use dfdu_tree::{Class, DirState, Ix, Totals, Tree};
+use dfdu_tree::{Class, DirState, HostPath, Ix, Totals, Tree};
 
 /// One listed match.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Listed {
     pub ix: Ix,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub class: Class,
     /// It is a directory still being scanned: its size can grow.
     pub scanning: bool,
@@ -54,7 +53,7 @@ pub fn listed(t: &Tree, rules: &RuleSet) -> Vec<Listed> {
         at.insert(ix, out.len());
         out.push(Listed {
             ix,
-            path: t.path_buf(ix),
+            path: t.host_path(ix),
             class,
             scanning: scanning(t, ix),
             inner: Vec::new(),

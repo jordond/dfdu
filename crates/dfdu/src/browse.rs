@@ -35,11 +35,11 @@ pub fn run(cli: Cli) -> ExitCode {
     } else if let Some(host) = &cli.remote {
         // Connected before the browser takes the terminal, so ssh can ask for a password.
         // Deletion runs on the agent, journalled on its host.
-        let rules = cli.rules.remote(&path);
-        match remote::engine(host, engine.clone(), rules) {
-            Ok((engine, class)) => Source::Remote {
+        let rules = cli.rules.remote();
+        match remote::engine(host, engine.clone(), &path, rules) {
+            Ok((engine, class, root)) => Source::Remote {
                 engine,
-                path,
+                path: root,
                 job: JobOptions {
                     class,
                     ..cli.mounts.job()

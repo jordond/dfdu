@@ -66,7 +66,8 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
     };
     let list = items(&m, &rules, &all, 0);
     let paths: Vec<_> = list.iter().map(|i| i.path.clone()).collect();
-    assert_eq!(paths, [PathBuf::from("/r/Caches"), "/r/Caches/pip".into()]);
+    let caches_path = HostPath::from("/r").join(b"Caches");
+    assert_eq!(paths, [caches_path.clone(), caches_path.join(b"pip")]);
     let (caches, pip_item) = (&list[0], &list[1]);
     assert_eq!((caches.disk, caches.matches_inside), (1000, 1));
     assert_eq!(pip_item.disk, 300);

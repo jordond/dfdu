@@ -1,10 +1,12 @@
 //! Scans on another host: `dfdu agent` scans there, and `--remote` starts it through `ssh`.
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use dfdu_engine::{Engine, EngineOptions};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{NativeBackend, native_backend};
+use dfdu_tree::HostPath;
 
 /// `dfdu agent`: the scanner for a dfdu on another host, over stdin and stdout.
 pub fn agent(threads: Option<usize>) -> ExitCode {
@@ -55,18 +57,21 @@ fn agent_io(host: &str) -> std::io::Result<dfdu_engine::RemoteIo> {
     })
 }
 
-/// An engine scanning on `host` through its agent, classifying with `rules`, and what the scan
-/// root classifies against; reports a failure to start.
+/// An engine scanning on `host` through its agent, classifying with `rules`, what the scan
+/// root classifies against, and the root to scan: `root` as typed, resolved by the agent on its
+/// host. Reports a failure to start.
 pub fn engine(
     host: &str,
     opts: EngineOptions,
+    root: &Path,
     rules: Option<dfdu_engine::RemoteRules>,
-) -> Result<(Engine<NativeBackend>, Option<ClassOpts>), ExitCode> {
+) -> Result<(Engine<NativeBackend>, Option<ClassOpts>, HostPath), ExitCode> {
     let started = agent_io(host).and_then(|io| {
         Engine::start_remote(
             native_backend(dfdu_sys::Storage::Unknown, false),
             opts,
             io,
+            root,
             rules,
         )
     });
@@ -75,7 +80,7 @@ pub fn engine(
             for msg in c.errors {
                 eprintln!("dfdu: {host}: {msg}");
             }
-            Ok((e, c.class))
+            Ok((e, c.class, c.root))
         }
         Err(e) => {
             eprintln!("dfdu: {host}: {e}");

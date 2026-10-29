@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
@@ -100,7 +101,7 @@ fn engine(journal: Option<&Path>, read_only: bool) -> Engine<PortableBackend> {
 
 fn scan(e: &Engine<PortableBackend>, root: &Path) {
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
@@ -377,7 +378,7 @@ fn deleted_marks_are_dropped() {
         .iter()
         .map(|it| it.target.path.clone())
         .collect();
-    assert_eq!(left, [root.join("file.bin")]);
+    assert_eq!(left, [HostPath::local(&root.join("file.bin"))]);
     let out = render(&mut app, t, 90, 8);
     assert!(line(&out, "file.bin").starts_with('●'), "{out}");
     assert!(line(&out, "keep.bin").starts_with("  "), "{out}");

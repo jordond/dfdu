@@ -37,7 +37,7 @@ pub use codec::{Dec, Enc};
 
 /// The protocol version this build speaks. Both sides speak exactly one, so any change to a
 /// message's encoding takes a new number.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 
 /// The largest payload accepted.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -175,8 +175,15 @@ pub enum FromAgent {
     Checked(Vec<CheckMsg>),
     /// Sent once the version is agreed: the smallest allocation worth measuring on the agent's
     /// host (1 MiB on macOS, where each file costs a lookup), 0 when it cannot measure; and
-    /// whether it runs as root (read-only btrfs snapshots can be deleted).
-    Host { measure_min: u64, privileged: bool },
+    /// whether it runs as root (read-only btrfs snapshots can be deleted); the kind of host,
+    /// which the local side builds the host's paths for; and the scan root of
+    /// [`ToAgent::Hello`] as the host resolves it (canonical, or at least absolute).
+    Host {
+        measure_min: u64,
+        privileged: bool,
+        host: dfdu_tree::Host,
+        root: Vec<u8>,
+    },
     /// The answers to one [`ToAgent::Measure`] request.
     Measured(Vec<MeasureMsg>),
 }
@@ -184,9 +191,11 @@ pub enum FromAgent {
 /// A message to the agent.
 #[derive(Clone, Debug)]
 pub enum ToAgent {
-    /// First message: the version chosen.
+    /// First message: the version chosen, and the scan root as given, which only the agent's
+    /// host can resolve.
     Hello {
         version: u32,
+        root: Vec<u8>,
     },
     /// The rules to classify with: rule files in load order, `None` naming the built-in pack
     /// (the text is still sent, so both sides have the same one). The agent answers with

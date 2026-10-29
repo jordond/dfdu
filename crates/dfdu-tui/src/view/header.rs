@@ -2,11 +2,12 @@
 //! state, then totals and the modes that change the numbers: the sort, the size shown, and what
 //! differs from the defaults.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use dfdu_engine::SizeMode;
 use dfdu_store::history;
+use dfdu_tree::{Host, HostPath};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
@@ -16,6 +17,7 @@ use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::input::mouse::Crumb;
 use crate::model::growth;
+use crate::model::outside::rel_text;
 use crate::state::filter;
 use crate::state::order::SortKey;
 use crate::theme::{Theme, count, human, spinner, truncate_middle};
@@ -29,33 +31,35 @@ const COLLAPSED: &str = "…";
 #[derive(Debug, PartialEq)]
 struct Segment {
     text: String,
-    dir: PathBuf,
+    dir: HostPath,
 }
 
 /// The breadcrumbs of `dir`: the scan root `root` as its path, with the home directory `home`
 /// shown as `~`, then one per directory below it. All of `dir` is one breadcrumb when it is not
-/// below `root` (before the first snapshot).
-fn segments(dir: &Path, root: &Path, home: Option<&Path>) -> Vec<Segment> {
-    let (root, below) = match dir.strip_prefix(root) {
-        Ok(below) if !root.as_os_str().is_empty() => (root, below),
-        _ => (dir, Path::new("")),
+/// below `root` (before the first snapshot). `home` is this machine's: another host's root is
+/// shown as it is.
+fn segments(dir: &HostPath, root: &HostPath, home: Option<&Path>) -> Vec<Segment> {
+    let (root, below) = match dir.rel(root) {
+        Some(below) if !root.is_empty() => (root, below),
+        _ => (dir, Vec::new()),
     };
     // A home directory of `/` would turn every path into `~/...`.
-    let home = home.filter(|h| h.parent().is_some());
-    let text = match home.and_then(|h| root.strip_prefix(h).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => Path::new("~").join(rest).display().to_string(),
-        None => root.display().to_string(),
+    let home = home.filter(|h| h.parent().is_some() && root.host() == Host::LOCAL);
+    let home = home.map(HostPath::local);
+    let text = match home.as_ref().and_then(|h| rel_text(root, h)) {
+        Some(rest) if rest.is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{}{rest}", char::from(root.host().sep())),
+        None => root.to_string(),
     };
     let mut out = vec![Segment {
         text,
-        dir: root.to_path_buf(),
+        dir: root.clone(),
     }];
-    let mut dir = root.to_path_buf();
-    for part in below.components() {
+    let mut dir = root.clone();
+    for part in below {
         dir.push(part);
         out.push(Segment {
-            text: part.as_os_str().to_string_lossy().into_owned(),
+            text: String::from_utf8_lossy(part).into_owned(),
             dir: dir.clone(),
         });
     }

@@ -17,10 +17,10 @@ fn plan_of(path: PathBuf, scan_root: PathBuf) -> Plan {
     Plan {
         id: 1,
         mode: Mode::Permanent,
-        scan_root,
+        scan_root: scan_root.into(),
         items: vec![PlanItem {
             node: tree.node_ref(root),
-            path,
+            path: path.into(),
             identity: Identity {
                 dev: 0,
                 ino: 0,
@@ -121,6 +121,28 @@ fn a_result_the_journal_cannot_record_is_noted() {
         note.contains("victim: the journal could not record the result"),
         "{note}"
     );
+}
+
+/// A plan for another host's paths names nothing here: refused, even where its bytes would
+/// name a file on this machine.
+#[test]
+fn a_plan_for_another_hosts_paths_is_refused() {
+    use dfdu_tree::Host;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let victim = root.join("victim");
+    fs::write(&victim, b"x").unwrap();
+    let mut plan = plan_of(victim.clone(), root);
+    let other = match Host::LOCAL {
+        Host::Unix => Host::Windows,
+        Host::Windows => Host::Unix,
+    };
+    let foreign = |p: &HostPath| HostPath::new(other, p.as_bytes().to_vec());
+    plan.scan_root = foreign(&plan.scan_root);
+    plan.items[0].path = foreign(&plan.items[0].path);
+    let r = verify(&plan.items[0], &plan).map_err(DeleteResult::from);
+    assert_eq!(r, Err(DeleteResult::Refused(Refusal::OutsideScanRoot)));
+    assert!(victim.exists());
 }
 
 /// The protected paths a plan carries (its rule set's) are refused on top of this

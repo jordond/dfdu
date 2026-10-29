@@ -2,10 +2,9 @@
 //! finishing.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use dfdu_scan::{Backend, DirId, JobId, JobOptions};
-use dfdu_tree::{DirState, ErrKind, Ix, NodeRef, Pages, Tree};
+use dfdu_tree::{DirState, ErrKind, HostPath, Ix, NodeRef, Pages, Tree};
 
 use super::work::Work;
 use super::{Applier, Job, JobKind, JobPhase, Model};
@@ -22,7 +21,7 @@ pub(super) struct JobStart {
     pub target: Ix,
     pub root: Ix,
     pub scope: Scope,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub opts: JobOptions,
 }
 

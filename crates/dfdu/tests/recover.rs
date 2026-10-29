@@ -24,7 +24,7 @@ fn item(tree: &mut Tree, p: &Path) -> PlanItem {
     let r = tree.new_root(b"/", &m, false);
     PlanItem {
         node: tree.node_ref(r),
-        path: p.to_path_buf(),
+        path: p.into(),
         identity: Identity {
             dev: m.dev,
             ino: m.ino,
@@ -61,7 +61,7 @@ fn run_plan(journals: &Path, root: &Path, mode: Mode, paths: &[&Path]) {
         .send(DeleterReq::Plan(Plan {
             id: 1,
             mode,
-            scan_root: root.to_path_buf(),
+            scan_root: root.into(),
             items,
             protected: None,
         }))

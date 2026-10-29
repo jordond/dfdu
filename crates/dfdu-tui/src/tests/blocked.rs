@@ -200,7 +200,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
 
     let t0 = Instant::now();
     engine.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     let mut held_for = Duration::ZERO;

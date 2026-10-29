@@ -138,13 +138,19 @@ fn the_largest_come_first() {
     let l = listed(&fx.tree, &fx.rules);
     let sizes: Vec<u64> = l.iter().map(|l| l.total.alloc).collect();
     assert!(sizes.is_sorted_by(|a, b| a >= b), "{sizes:?}");
-    assert_eq!(l[0].path, PathBuf::from("/r/Caches"));
+    assert_eq!(l[0].path, dfdu_tree::HostPath::from("/r").join(b"Caches"));
     // Equal sizes go by path.
     let yarn = fx.find("Caches/group/Yarn");
     fx.file(yarn, "more", 100);
     let l = listed(&fx.tree, &fx.rules);
-    let pip = l.iter().position(|l| l.path.ends_with("pip")).unwrap();
-    let yarn = l.iter().position(|l| l.path.ends_with("Yarn")).unwrap();
+    let pip = l
+        .iter()
+        .position(|l| l.path.file_name() == Some(b"pip"))
+        .unwrap();
+    let yarn = l
+        .iter()
+        .position(|l| l.path.file_name() == Some(b"Yarn"))
+        .unwrap();
     assert_eq!(l[yarn].total.alloc, l[pip].total.alloc);
     assert!(yarn < pip, "{l:?}");
 }

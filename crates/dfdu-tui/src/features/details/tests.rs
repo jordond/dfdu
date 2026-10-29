@@ -424,7 +424,7 @@ fn the_pane_names_the_nearest_match_like_the_cleanup_view() {
     assert_eq!((at.rule.as_str(), at.above), (pip_name.as_str(), None));
     let at = matched(&m, wheel).expect("wheel");
     assert_eq!(at.rule, pip_name);
-    assert_eq!(at.above, Some(m.tree.path_buf(pip)));
+    assert_eq!(at.above, Some(m.tree.host_path(pip)));
     // A match below a rule that stops the descent is covered by that one.
     let at = matched(&m, nm).expect("node_modules");
     assert_eq!(at.rule, target_name);

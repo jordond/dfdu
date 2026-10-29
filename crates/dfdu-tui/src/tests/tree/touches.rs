@@ -1,8 +1,8 @@
 //! What tree mode touches: marks, the filter, deleted rows, the treemap and the selection line.
 
-use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use dfdu_tree::HostPath;
 use ratatui::crossterm::event::KeyCode;
 
 use super::keys::{key, select, selected, small, tree_app};
@@ -10,10 +10,10 @@ use super::sync;
 use crate::app::App;
 use crate::model::snapshot::Snapshot;
 use crate::state::motion;
-use crate::tests::{render, row_names, typed};
+use crate::tests::{below, render, row_names, typed};
 use crate::theme::Theme;
 
-fn marked(app: &App) -> Vec<PathBuf> {
+fn marked(app: &App) -> Vec<HostPath> {
     app.marks
         .items()
         .iter()
@@ -28,12 +28,12 @@ fn a_directory_and_what_is_inside_it_are_never_both_marked() {
     let mut app = tree_app(&fx, t0);
     key(&mut app, &fx, KeyCode::Right, t0);
     key(&mut app, &fx, KeyCode::Char(' '), t0);
-    assert_eq!(marked(&app), [Path::new("/r/a")]);
+    assert_eq!(marked(&app), [below("/r", "a")]);
     select(&mut app, "a1");
     key(&mut app, &fx, KeyCode::Char(' '), t0);
     assert_eq!(
         marked(&app),
-        [Path::new("/r/a/a1")],
+        [below("/r", "a/a1")],
         "the directory is unmarked"
     );
     select(&mut app, "a2");
@@ -43,7 +43,7 @@ fn a_directory_and_what_is_inside_it_are_never_both_marked() {
     key(&mut app, &fx, KeyCode::Char(' '), t0);
     assert_eq!(
         marked(&app),
-        [Path::new("/r/a")],
+        [below("/r", "a")],
         "what is inside is unmarked"
     );
 
@@ -57,7 +57,7 @@ fn a_directory_and_what_is_inside_it_are_never_both_marked() {
     for code in [KeyCode::Char('v'), KeyCode::Down, KeyCode::Down] {
         key(&mut app, &fx, code, t0);
     }
-    assert_eq!(marked(&app), [Path::new("/r/a")]);
+    assert_eq!(marked(&app), [below("/r", "a")]);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn in_the_list_a_marked_directory_still_holds_marks() {
     key(&mut app, &fx, KeyCode::Enter, t0);
     select(&mut app, "a1");
     key(&mut app, &fx, KeyCode::Char(' '), t0);
-    assert_eq!(marked(&app), [Path::new("/r/a"), Path::new("/r/a/a1")]);
+    assert_eq!(marked(&app), [below("/r", "a"), below("/r", "a/a1")]);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn the_treemap_shows_the_directory_of_the_selected_row() {
     key(&mut app, &fx, KeyCode::Right, t0);
     select(&mut app, "a2");
     key(&mut app, &fx, KeyCode::Char('2'), t0);
-    assert_eq!(app.target.path, Path::new("/r/a"));
+    assert_eq!(app.target.path, below("/r", "a"));
     assert_eq!(selected(&app), "a2");
     assert!(app.tree_shown().is_none(), "the tiles are one directory's");
     assert_eq!(row_names(&app), ["a1", "a2", "s"]);

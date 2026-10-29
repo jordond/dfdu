@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use crossbeam_channel::Sender;
-use dfdu_tree::{ErrKind, NodeRef};
+use dfdu_tree::{ErrKind, HostPath, NodeRef};
 
 use crate::extents::{Inode, Measurement};
 use crate::threads::spawn_pool;
@@ -16,7 +16,7 @@ use crate::threads::spawn_pool;
 pub struct MeasureReq {
     /// Requests of an abandoned measurement round are answered but ignored.
     pub round: u64,
-    pub dir: PathBuf,
+    pub dir: HostPath,
     pub files: Vec<MeasureFile>,
 }
 
@@ -30,7 +30,7 @@ pub struct MeasureFile {
 impl MeasureReq {
     #[must_use]
     pub fn path(&self, f: &MeasureFile) -> PathBuf {
-        self.dir.join(&*dfdu_tree::name_os(&f.name))
+        self.dir.join(&f.name).to_local()
     }
 }
 
@@ -196,7 +196,7 @@ impl Measurer {
         use rustix::fs::{CWD, Mode, OFlags};
         let dir = rustix::fs::openat(
             CWD,
-            &r.dir,
+            r.dir.to_local(),
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         );
@@ -296,7 +296,7 @@ impl Measurer {
     fn measure_dir(&mut self, r: &MeasureReq) -> Vec<MeasureResult> {
         use std::os::fd::AsFd;
         // Something other than a directory there now fails each lookup with ENOTDIR.
-        let dir = match std::fs::File::open(&r.dir) {
+        let dir = match std::fs::File::open(r.dir.to_local()) {
             Ok(d) => d,
             Err(e) => return r.files.iter().map(|_| from_io(&e)).collect(),
         };

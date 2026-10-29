@@ -78,7 +78,7 @@ fn shutdown_leaves_a_stuck_worker_within_its_bound() {
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     let t0 = Instant::now();

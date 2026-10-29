@@ -258,7 +258,7 @@ pub(super) fn enc_del_msg(e: &mut Enc, m: &DeleterMsg) {
             enc_path(e, original);
             e.bool(*staged);
             e.var(*bytes);
-            enc_result(e, result, |e, p| enc_path(e, p));
+            enc_result(e, result, enc_path);
         }
         DeleterMsg::UndoDone { plan } => {
             e.u8(4);

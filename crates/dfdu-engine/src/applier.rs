@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use dfdu_clean::{DeleterReq, Mode, Plan};
 use dfdu_scan::{Backend, DirId, JobId, JobOptions, ListingStatus, Shared};
-use dfdu_tree::{Class, Ix, Kind, Meta, NodeRef, Pages, Tree};
+use dfdu_tree::{Class, HostPath, Ix, Kind, Meta, NodeRef, Pages, Tree};
 
 pub use measure::MEASURE_MIN;
 pub use model::{
@@ -52,9 +52,11 @@ type HeldClose = (u32, (ListingStatus, Vec<(DirId, Class)>));
 
 #[derive(Clone, Debug)]
 pub enum Command {
-    /// Start a scan of `path` as a new visible root.
+    /// Start a scan of `path` as a new visible root. A path on this machine (a
+    /// `PathBuf` converts with `into()`), or for a remote engine the agent's
+    /// ([`Connected::root`](crate::Connected::root)).
     Scan {
-        path: PathBuf,
+        path: HostPath,
         opts: JobOptions,
     },
     /// Rescan a visible directory.
@@ -205,7 +207,7 @@ pub struct Applier<B: Backend> {
     undoable: BTreeMap<u64, Undoable>,
     /// Paths whose directories are rescanned when the running undo or native command ends:
     /// what it put back or what it cleaned.
-    rescan_paths: Vec<PathBuf>,
+    rescan_paths: Vec<dfdu_tree::HostPath>,
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
@@ -354,11 +356,10 @@ impl<B: Backend> Applier<B> {
     }
 
     /// Starts a scan of `path` into a new visible root.
-    fn start_scan(&mut self, m: &mut Model, path: PathBuf, opts: JobOptions) {
+    fn start_scan(&mut self, m: &mut Model, path: HostPath, opts: JobOptions) {
         let id = self.next_job;
         self.next_job += 1;
-        let name = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
-        let root = m.tree.new_root(&name, &empty_dir_meta(), true);
+        let root = m.tree.new_root(path.as_bytes(), &empty_dir_meta(), true);
         if let Some(c) = &opts.class {
             m.rules = Some(c.rules.clone());
             m.tree.set_protection(root, c.protection.protected(), false);

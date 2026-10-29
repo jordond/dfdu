@@ -152,7 +152,7 @@ fn scanned() -> (tempfile::TempDir, Engine<Mounts>) {
         },
     );
     e.send(Command::Scan {
-        path: root,
+        path: root.into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(60))).is_idle());

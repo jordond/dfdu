@@ -97,7 +97,7 @@ fn settled_with_panels(
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     let ui = UiOptions {

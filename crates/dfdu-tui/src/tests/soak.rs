@@ -59,7 +59,7 @@ fn scan_quietly(root: &Path) -> (Totals, Duration) {
     let e = engine(root);
     let t0 = Instant::now();
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(
@@ -146,7 +146,7 @@ fn soak_busy_reader_and_blocked_terminal() {
 
     let t0 = Instant::now();
     engine.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     let done = engine.wait_idle(Some(Duration::from_secs(3600))).is_idle();

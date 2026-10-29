@@ -21,10 +21,9 @@ mod tree;
 mod tree_frames;
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dfdu_tree::{Kind, Meta, Totals};
+use dfdu_tree::{HostPath, Kind, Meta, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -202,7 +201,7 @@ pub(crate) fn mid_scan_app(theme: Theme) -> (App, Instant) {
     ];
     let total: u64 = entries.iter().map(|e| e.size).sum();
     let snap = Snapshot {
-        dir_path: PathBuf::from("/home/jo"),
+        dir_path: HostPath::from("/home/jo"),
         dir_node: Some(root.node),
         at_root: true,
         dir_total: Totals {
@@ -268,6 +267,13 @@ pub(crate) fn row_names(app: &App) -> Vec<String> {
         .collect()
 }
 
+/// The path of `rel` (names separated by `/`) below the root `root`, as a tree of this
+/// machine builds it: with this machine's separator.
+pub(crate) fn below(root: &str, rel: &str) -> HostPath {
+    rel.split('/')
+        .fold(HostPath::from(root), |p, n| p.join(n.as_bytes()))
+}
+
 pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
@@ -290,7 +296,7 @@ pub(crate) fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
 pub(crate) fn snap_without_totals(entries: Vec<EntryData>, version: u64) -> Snapshot {
     let root = test_entry(99, "/r", 0);
     Snapshot {
-        dir_path: PathBuf::from("/r"),
+        dir_path: HostPath::from("/r"),
         dir_node: Some(root.node),
         at_root: true,
         entries,

@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{RecvTimeoutError, Sender, unbounded};
-use dfdu_tree::{ErrKind, Kind};
+use dfdu_tree::{ErrKind, HostPath, Kind};
 
 use crate::journal::Journal;
 use crate::recover;
@@ -218,7 +218,7 @@ impl State {
                     _ => self.no_journal(),
                 }
             };
-            btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path);
+            btrfs |= result == DeleteResult::Deleted && on_btrfs(&item.path.to_local());
             let _ = self.out.send(DeleterMsg::Item {
                 plan: plan.id,
                 node: item.node,
@@ -315,9 +315,10 @@ impl State {
             .partition(|k| k.plan == plan);
         self.kept = keep;
         for k in mine {
+            let path = k.item.path.to_local();
             let result = match &k.staged {
-                Some(s) => crate::stage::put_back(s, &k.item.path),
-                None => crate::stage::restore_from_trash(&k.item.path, &k.item.identity, k.at),
+                Some(s) => crate::stage::put_back(s, &path),
+                None => crate::stage::restore_from_trash(&path, &k.item.identity, k.at),
             }
             .map_err(|e| e.to_string());
             // The item is back either way; a lost record only makes a later recovery list it
@@ -339,7 +340,7 @@ impl State {
                 original: k.item.path.clone(),
                 staged: k.staged.is_some(),
                 bytes: k.item.bytes,
-                result,
+                result: result.map(|to| HostPath::local(&to)),
             });
         }
         let _ = self.out.send(DeleterMsg::UndoDone { plan });
@@ -380,7 +381,8 @@ fn run_item(
         .map_err(DeleteResult::from)
         .and_then(|()| {
             if item.identity.kind == Kind::Dir {
-                crate::inside::compare(&item.path, &item.inside).map_err(DeleteResult::Stale)
+                crate::inside::compare(&item.path.to_local(), &item.inside)
+                    .map_err(DeleteResult::Stale)
             } else {
                 Ok(())
             }
@@ -390,7 +392,7 @@ fn run_item(
         return (r, None);
     }
     let stage = if plan.mode == Mode::Stage {
-        match stager.target(item, &plan.scan_root) {
+        match stager.target(item, &plan.scan_root.to_local()) {
             Ok(t) => Some(t),
             Err(e) => {
                 let r = DeleteResult::Failed {
@@ -415,7 +417,12 @@ fn run_item(
             None,
         );
     }
-    let result = execute(&item.path, &item.identity, plan.mode, stage.as_deref());
+    let result = execute(
+        &item.path.to_local(),
+        &item.identity,
+        plan.mode,
+        stage.as_deref(),
+    );
     record(journal, &result);
     (result, stage)
 }

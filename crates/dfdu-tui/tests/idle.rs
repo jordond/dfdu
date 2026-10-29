@@ -127,7 +127,7 @@ fn settled_with(ui: UiOptions, check: impl FnOnce(Sender<Event>, &Mutex<Frames>)
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     thread::scope(|scope| {

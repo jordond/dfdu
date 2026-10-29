@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use super::*;
 use crate::model::snapshot::{EntryData, test_entry};
 use crate::state::order::{SortSpec, tree_order};
@@ -105,21 +103,27 @@ fn inside_follows_the_parents() {
 #[test]
 fn paths_are_the_names_down_from_the_directory() {
     let snap = Snapshot {
-        dir_path: PathBuf::from("/r"),
+        dir_path: HostPath::from("/r"),
         entries: sample(),
         ..Default::default()
     };
-    assert_eq!(path_of(&snap, 3), PathBuf::from("/r/a/y/p"));
-    assert_eq!(path_of(&snap, 6), PathBuf::from("/r/b"));
+    assert_eq!(
+        path_of(&snap, 3),
+        HostPath::from("/r").join(b"a").join(b"y").join(b"p")
+    );
+    assert_eq!(path_of(&snap, 6), HostPath::from("/r").join(b"b"));
     let t = target_of(&snap, 8);
-    assert_eq!(t.path, PathBuf::from("/r/b/only/deep"));
+    assert_eq!(
+        t.path,
+        HostPath::from("/r").join(b"b").join(b"only").join(b"deep")
+    );
     assert_eq!(t.node, Some(snap.entries[8].node));
 }
 
 fn target(e: &EntryData, path: &str) -> Target {
     Target {
         node: Some(e.node),
-        path: PathBuf::from(path),
+        path: HostPath::from(path),
         ident: None,
     }
 }

@@ -10,11 +10,10 @@
 //! twice.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, Ix, Kind, NodeRef, Totals, now_secs};
+use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Effect};
@@ -55,7 +54,7 @@ pub struct Cleanup {
 #[derive(Clone, Debug)]
 pub struct Item {
     pub node: NodeRef,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub dev_ino: (u64, u64),
     pub kind: Kind,
     pub class: Class,
@@ -122,7 +121,7 @@ pub fn read(m: &Model, app: &App) -> Info {
         return Info::default();
     }
     let t = &m.tree;
-    let item = |ix: Ix, path: PathBuf, class: Class, tot: Totals, scanning: bool| Item {
+    let item = |ix: Ix, path: HostPath, class: Class, tot: Totals, scanning: bool| Item {
         node: t.node_ref(ix),
         path,
         dev_ino: t.dev_ino(ix),
@@ -145,7 +144,7 @@ pub fn read(m: &Model, app: &App) -> Info {
             let rest = (l.rest.iter())
                 .map(|&r| {
                     let scanning = t.dir(r).is_some_and(|d| d.state == DirState::Pending);
-                    item(r, t.path_buf(r), l.class, t.total(r), scanning)
+                    item(r, t.host_path(r), l.class, t.total(r), scanning)
                 })
                 .collect();
             Item {

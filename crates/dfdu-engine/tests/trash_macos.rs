@@ -31,7 +31,7 @@ fn trash_and_undo() {
         },
     );
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());

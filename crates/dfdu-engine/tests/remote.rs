@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, RemoteIo, RemoteRules};
@@ -45,7 +46,7 @@ fn a_remote_scan_builds_the_local_tree() {
     let local_scan = || {
         let local = Engine::start(PortableBackend::default(), opts());
         local.send(Command::Scan {
-            path: root.clone(),
+            path: root.clone().into(),
             opts: JobOptions::default(),
         });
         assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -57,7 +58,7 @@ fn a_remote_scan_builds_the_local_tree() {
 
     let (e, agent) = remote();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -109,6 +110,8 @@ fn a_closed_link_is_reported() {
         let host = dfdu_engine::wire::FromAgent::Host {
             measure_min: 0,
             privileged: false,
+            host: dfdu_tree::Host::LOCAL,
+            root: b"/".to_vec(),
         };
         dfdu_engine::wire::write_frame(&mut up_w, &host.encode()).unwrap();
         let mut buf = Vec::new();
@@ -122,6 +125,7 @@ fn a_closed_link_is_reported() {
             writer: Box::new(down_w),
             child: None,
         },
+        Path::new("/"),
         None,
     )
     .unwrap();
@@ -155,6 +159,8 @@ fn a_silent_agent_is_given_up() {
     let host = dfdu_engine::wire::FromAgent::Host {
         measure_min: 0,
         privileged: false,
+        host: dfdu_tree::Host::LOCAL,
+        root: b"/".to_vec(),
     };
     dfdu_engine::wire::write_frame(&mut frame, &host.encode()).unwrap();
     fs::write(&hello, frame).unwrap();
@@ -170,7 +176,8 @@ fn a_silent_agent_is_given_up() {
         writer: Box::new(child.stdin.take().unwrap()),
         child: Some(child),
     };
-    let (e, c) = Engine::start_remote(PortableBackend::default(), opts(), io, None).unwrap();
+    let (e, c) =
+        Engine::start_remote(PortableBackend::default(), opts(), io, Path::new("/"), None).unwrap();
     assert_eq!(c.tool, "silent");
     let t = std::time::Instant::now();
     e.send(Command::Scan {
@@ -287,7 +294,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
     let rules = std::sync::Arc::new(dfdu_rules::load_from(&env, &files).0);
     let local = Engine::start(PortableBackend::default(), opts());
     local.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(rules, &root)),
             ..JobOptions::default()
@@ -303,16 +310,10 @@ fn a_remote_scan_classifies_as_a_local_one() {
         "{want:?}"
     );
 
-    let (e, agent, class) = remote_with(
-        Some(RemoteRules {
-            files,
-            root: root.clone(),
-        }),
-        None,
-    );
+    let (e, agent, class) = remote_with(&root, Some(RemoteRules { files }), None);
     let class = class.expect("both sides build the same rules");
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class: Some(class),
             ..JobOptions::default()
@@ -367,7 +368,9 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
         let mut buf = Vec::new();
         let mut chunks = 0;
         while chunks < 5 && read_frame(&mut r, &mut buf).unwrap() {
-            if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&buf, None) {
+            if let Ok(FromAgent::Batch(msgs)) =
+                FromAgent::decode(&buf, None, dfdu_tree::Host::LOCAL)
+            {
                 chunks += msgs
                     .iter()
                     .filter(|m| matches!(m, dfdu_scan::ScanMsg::Chunk(_)))
@@ -386,11 +389,12 @@ fn a_link_lost_mid_scan_keeps_what_arrived() {
             writer: Box::new(down_w),
             child: None,
         },
+        Path::new("/"),
         None,
     )
     .unwrap();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -445,13 +449,7 @@ fn a_rescan_keeps_a_match_made_through_a_link_on_the_agent() {
         at.display()
     );
     let files = vec![(dfdu_rules::Source::File("/rules/tool.toml".into()), text)];
-    let (e, agent, class) = remote_with(
-        Some(RemoteRules {
-            files,
-            root: data.clone(),
-        }),
-        None,
-    );
+    let (e, agent, class) = remote_with(&data, Some(RemoteRules { files }), None);
     let rules = class.as_ref().expect("rules agreed").rules.clone();
     // Patterns are in lower case where paths compare ignoring it (macOS).
     let there = data.join("cache").to_str().unwrap().to_owned();
@@ -463,7 +461,7 @@ fn a_rescan_keeps_a_match_made_through_a_link_on_the_agent() {
         "the local set follows the agent's link: {pats:?}"
     );
     e.send(Command::Scan {
-        path: data.clone(),
+        path: data.clone().into(),
         opts: JobOptions {
             class,
             ..JobOptions::default()
@@ -485,6 +483,30 @@ fn a_rescan_keeps_a_match_made_through_a_link_on_the_agent() {
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
     assert_eq!(e.read(|m| m.status.fatal.clone()), None);
     assert_eq!(cache(&e).1.as_deref(), Some("test.tool-cache"));
+    e.shutdown(Duration::from_secs(1));
+    agent.join().unwrap().unwrap();
+}
+
+/// The agent resolves the scan root as typed on its host and says which kind of host it is,
+/// so the local side neither canonicalizes another host's path nor guesses its separator.
+#[test]
+fn the_agent_resolves_the_root_and_names_its_host() {
+    let (down_r, down_w) = std::io::pipe().unwrap();
+    let (up_r, up_w) = std::io::pipe().unwrap();
+    let agent = std::thread::spawn(move || {
+        dfdu_engine::agent::run(PortableBackend::default(), 1, None, down_r, up_w)
+    });
+    let io = RemoteIo {
+        reader: Box::new(up_r),
+        writer: Box::new(down_w),
+        child: None,
+    };
+    let (e, c) =
+        Engine::start_remote(PortableBackend::default(), opts(), io, Path::new("."), None).unwrap();
+    assert_eq!(c.host, dfdu_tree::Host::LOCAL);
+    let here = dunce::canonicalize(".").unwrap();
+    assert_eq!(c.root, dfdu_tree::HostPath::local(&here));
+    assert!(c.root.is_absolute());
     e.shutdown(Duration::from_secs(1));
     agent.join().unwrap().unwrap();
 }

@@ -105,7 +105,7 @@ fn row(app: &App, file: &File, cols: &[(Col, u16)], largest: u64, total: u64) ->
                 spans.push(right(share, w, Style::new()));
             }
             Col::Name => {
-                let path = file.path.display().to_string();
+                let path = file.path.to_string();
                 spans.push(Span::raw(truncate_middle(&path, w.into())));
             }
             _ => spans.push(Span::raw(" ".repeat(w.into()))),

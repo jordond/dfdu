@@ -19,7 +19,7 @@ fn lines_carry_valid_crc_and_detect_damage() {
     let root = tree.new_root(b"/x", &meta, true);
     let item = PlanItem {
         node: tree.node_ref(root),
-        path: PathBuf::from("/tmp/a \"quoted\"\nname"),
+        path: Path::new("/tmp/a \"quoted\"\nname").into(),
         identity: Identity {
             dev: 1,
             ino: 2,

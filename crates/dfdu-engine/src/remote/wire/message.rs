@@ -80,10 +80,14 @@ impl FromAgent {
             FromAgent::Host {
                 measure_min,
                 privileged,
+                host,
+                root,
             } => {
                 e.u8(9);
                 e.var(*measure_min);
                 e.bool(*privileged);
+                e.u8(host.to_u8());
+                e.bytes(root);
             }
             FromAgent::Measured(msgs) => {
                 e.u8(10);
@@ -96,16 +100,16 @@ impl FromAgent {
         e.0
     }
 
-    /// Decodes a payload; classes must name one of the local side's `rules`, and there are
-    /// none without them. [`FromAgent::Rules`]'s root is not checked: the local side checks it
-    /// against the set it then builds.
+    /// Decodes a payload whose paths are on `host` (the agent's); classes must name one of the
+    /// local side's `rules`, and there are none without them. [`FromAgent::Rules`]'s root is
+    /// not checked: the local side checks it against the set it then builds.
     ///
     /// # Errors
     ///
     /// [`WireError::Malformed`](super::WireError::Malformed) if the payload is not a valid
     /// message, or names a rule the local side does not have.
-    pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<FromAgent> {
-        let mut d = Dec::new(buf);
+    pub fn decode(buf: &[u8], rules: Option<&RuleSet>, host: dfdu_tree::Host) -> R<FromAgent> {
+        let mut d = Dec::on(buf, host);
         let up = match d.u8()? {
             0 => FromAgent::Hello {
                 min: d.u32()?,
@@ -143,6 +147,11 @@ impl FromAgent {
             9 => FromAgent::Host {
                 measure_min: d.var()?,
                 privileged: d.bool()?,
+                host: match dfdu_tree::Host::from_u8(d.u8()?) {
+                    Some(h) => h,
+                    None => return bad("host"),
+                },
+                root: d.bytes()?.to_vec(),
             },
             10 => {
                 let n = d.count(4)?;
@@ -183,9 +192,10 @@ impl ToAgent {
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Enc::default();
         match self {
-            ToAgent::Hello { version } => {
+            ToAgent::Hello { version, root } => {
                 e.u8(0);
                 e.var((*version).into());
+                e.bytes(root);
             }
             ToAgent::Rules { files, root } => {
                 e.u8(5);
@@ -278,7 +288,10 @@ impl ToAgent {
     pub fn decode(buf: &[u8], rules: Option<&RuleSet>) -> R<ToAgent> {
         let mut d = Dec::new(buf);
         let down = match d.u8()? {
-            0 => ToAgent::Hello { version: d.u32()? },
+            0 => ToAgent::Hello {
+                version: d.u32()?,
+                root: d.bytes()?.to_vec(),
+            },
             1 => ToAgent::StartJob {
                 job: JobId(d.u32()?),
                 root: d.bytes()?.to_vec(),

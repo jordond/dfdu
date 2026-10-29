@@ -12,9 +12,9 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use dfdu_tree::{Kind, name_bytes};
+use dfdu_tree::{Host, HostPath, Kind, name_bytes};
 
 /// A directory's entries as the scan saw them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -25,8 +25,10 @@ pub struct Listing {
     pub entries: Vec<(u64, u64, Kind)>,
 }
 
-/// Listings of the directories in an item, by path relative to the item ("" for the item).
-pub type Listings = HashMap<PathBuf, Listing>;
+/// Listings of the directories in an item, by path relative to the item (empty for the item),
+/// joined with the separator of the item's host: the scan builds the keys from its tree and the
+/// deleter from the disk, and on a remote scan the two are on different machines.
+pub type Listings = HashMap<HostPath, Listing>;
 
 /// FNV-1a over a name's bytes.
 #[must_use]
@@ -44,18 +46,18 @@ pub fn name_hash(name: &[u8]) -> u64 {
 /// What differs, as a message: an entry added, gone or changed, or a directory that could not
 /// be read.
 pub fn compare(root: &Path, expect: &Listings) -> Result<(), String> {
-    walk(root, Path::new(""), expect)
+    walk(root, &HostPath::empty(Host::LOCAL), expect)
 }
 
-fn walk(dir: &Path, rel: &Path, expect: &Listings) -> Result<(), String> {
+fn walk(dir: &Path, rel: &HostPath, expect: &Listings) -> Result<(), String> {
     let Some(want) = expect.get(rel) else {
         return Ok(());
     };
     let shown = || {
-        if rel.as_os_str().is_empty() {
+        if rel.is_empty() {
             "its contents".to_string()
         } else {
-            rel.display().to_string()
+            rel.to_string()
         }
     };
     let mut got = vec![];
@@ -91,7 +93,7 @@ fn walk(dir: &Path, rel: &Path, expect: &Listings) -> Result<(), String> {
         }
     }
     for name in subdirs {
-        walk(&dir.join(&name), &rel.join(&name), expect)?;
+        walk(&dir.join(&name), &rel.join(&name_bytes(&name)), expect)?;
     }
     Ok(())
 }
@@ -163,13 +165,13 @@ mod tests {
 
     fn listings(root: &Path) -> Listings {
         let mut out = Listings::new();
-        let mut stack = vec![PathBuf::new()];
-        while let Some(rel) = stack.pop() {
-            let dir = root.join(&rel);
+        let mut stack = vec![(root.to_path_buf(), HostPath::empty(Host::LOCAL))];
+        while let Some((dir, rel)) = stack.pop() {
             out.insert(rel.clone(), listing_of(&dir).unwrap());
             for e in fs::read_dir(&dir).unwrap().flatten() {
                 if e.file_type().unwrap().is_dir() {
-                    stack.push(rel.join(e.file_name()));
+                    let name = e.file_name();
+                    stack.push((dir.join(&name), rel.join(&name_bytes(&name))));
                 }
             }
         }
@@ -201,7 +203,7 @@ mod tests {
 
         // Not compared where the scan has no listing.
         let mut partial = listings(&d);
-        partial.remove(Path::new("a/b"));
+        partial.remove(&HostPath::empty(Host::LOCAL).join(b"a").join(b"b"));
         fs::write(d.join("a/b/new"), b"x").unwrap();
         compare(&d, &partial).unwrap();
     }

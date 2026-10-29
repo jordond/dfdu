@@ -1,11 +1,9 @@
 //! Plans whose items can still be put back, and rescans of what an undo or a native command
 //! changed.
 
-use std::path::Path;
-
 use dfdu_clean::Mode;
 use dfdu_scan::Backend;
-use dfdu_tree::{Ix, Kind, Tree};
+use dfdu_tree::{HostPath, Ix, Kind, Tree};
 
 use super::{Applier, Count, Model, UndoInfo};
 
@@ -55,7 +53,7 @@ impl<B: Backend> Applier<B> {
     pub(super) fn rescan_paths(&mut self, m: &mut Model) {
         let mut dirs: Vec<Ix> = std::mem::take(&mut self.rescan_paths)
             .iter()
-            .filter_map(|p| p.parent().and_then(|p| node_at(&m.tree, p)))
+            .filter_map(|p| p.parent().and_then(|p| node_at(&m.tree, &p)))
             .collect();
         dirs.sort_unstable();
         dirs.dedup();
@@ -77,16 +75,14 @@ impl<B: Backend> Applier<B> {
 
 /// The deepest visible node on `path`: the node itself when the tree has it, else its nearest
 /// ancestor that it has.
-fn node_at(tree: &Tree, path: &Path) -> Option<Ix> {
-    let root = tree
+fn node_at(tree: &Tree, path: &HostPath) -> Option<Ix> {
+    let (root, rest) = tree
         .roots()
         .filter(|&r| tree.is_visible(r))
-        .find(|&r| path.starts_with(tree.path_buf(r)))?;
-    let rest = path.strip_prefix(tree.path_buf(root)).ok()?;
+        .find_map(|r| Some((r, path.rel(&tree.host_path(r))?)))?;
     let mut at = root;
-    for c in rest.components() {
-        let name = dfdu_tree::name_bytes(c.as_os_str());
-        match tree.children(at).find(|&ch| tree.name(ch) == &*name) {
+    for name in rest {
+        match tree.children(at).find(|&ch| tree.name(ch) == name) {
             Some(ch) if tree.kind(ch) == Kind::Dir => at = ch,
             _ => break,
         }

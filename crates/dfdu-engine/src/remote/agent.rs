@@ -93,11 +93,11 @@ pub fn run<B: dfdu_scan::Backend>(
         last: AtomicU64::new(0),
         failed: AtomicBool::new(false),
     });
-    if !greet(&out, &mut input)? {
+    let Some(root) = greet(&out, &mut input)? else {
         return Ok(());
-    }
+    };
     let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
-    let measurers = describe_host(&out);
+    let measurers = describe_host(&out, &root);
     let shared = Arc::new(Shared::new(
         backend,
         Limits {
@@ -226,10 +226,12 @@ fn stop_deleter(d: DeleterHandle) {
     let _ = d.thread.join();
 }
 
-/// Tells the local side what this host can measure and whether the agent runs privileged;
-/// returns the number of measurers to start.
-fn describe_host<W: Write>(out: &Out<W>) -> usize {
+/// Tells the local side what this host can measure, whether the agent runs privileged, what
+/// kind of host it is and where the scan root `root` (as given) resolves to; returns the
+/// number of measurers to start.
+fn describe_host<W: Write>(out: &Out<W>, root: &[u8]) -> usize {
     let measurers = crate::runtime::default_measurers();
+    let root = crate::runtime::resolve_root(PathBuf::from(dfdu_tree::name_os(root).into_owned()));
     out.send(&FromAgent::Host {
         measure_min: if measurers > 0 {
             crate::applier::MEASURE_MIN
@@ -237,12 +239,15 @@ fn describe_host<W: Write>(out: &Out<W>) -> usize {
             0
         },
         privileged: dfdu_sys::is_privileged(),
+        host: dfdu_tree::Host::LOCAL,
+        root: dfdu_tree::name_bytes(root.as_os_str()).into_owned(),
     });
     measurers
 }
 
-/// Exchanges hellos with the local side; `false` if `input` ends first.
-fn greet<W: Write>(out: &Out<W>, input: &mut impl Read) -> io::Result<bool> {
+/// Exchanges hellos with the local side; the scan root it gave, or `None` if `input` ends
+/// first.
+fn greet<W: Write>(out: &Out<W>, input: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     out.send(&FromAgent::Hello {
         min: VERSION,
         max: VERSION,
@@ -251,11 +256,11 @@ fn greet<W: Write>(out: &Out<W>, input: &mut impl Read) -> io::Result<bool> {
     let mut buf = Vec::new();
     let bad = |e: super::wire::WireError| io::Error::new(io::ErrorKind::InvalidData, e);
     if !read_frame(input, &mut buf).map_err(bad)? {
-        return Ok(false);
+        return Ok(None);
     }
     match ToAgent::decode(&buf, None).map_err(bad)? {
-        ToAgent::Hello { version } if version == VERSION => Ok(true),
-        ToAgent::Hello { version } => {
+        ToAgent::Hello { version, root } if version == VERSION => Ok(Some(root)),
+        ToAgent::Hello { version, .. } => {
             out.send(&FromAgent::Fatal(format!(
                 "protocol version {version} not spoken"
             )));

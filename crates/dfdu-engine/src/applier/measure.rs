@@ -159,7 +159,7 @@ impl<B: Backend> Applier<B> {
                     .measuring
                     .get_or_insert_with(Default::default)
                     .requested += files.len() as u64;
-                let dir = tree.path_buf(ix);
+                let dir = tree.host_path(ix);
                 for part in files.chunks(MEASURE_BATCH) {
                     self.outgoing_measure.push(MeasureReq {
                         round: self.measure_round,
@@ -182,7 +182,7 @@ impl<B: Backend> Applier<B> {
         };
         self.outgoing_measure.push(MeasureReq {
             round: self.measure_round,
-            dir: tree.path_buf(parent),
+            dir: tree.host_path(parent),
             files: vec![MeasureFile {
                 node,
                 name: tree.name(ix).to_vec(),

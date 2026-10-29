@@ -11,7 +11,7 @@ use super::list::name::cut_end;
 use super::spread;
 use crate::app::App;
 use crate::model::growth;
-use crate::model::outside::tilde;
+use crate::model::outside::{rel_text, tilde};
 use crate::state::{marks, tree};
 use crate::theme::{count, human, percent, truncate_middle};
 
@@ -74,11 +74,8 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     };
     // In tree mode the path from the scan root, or all of it when that fits.
     let names: Vec<String> = if in_tree && e.fold == 0 {
-        let rel = path.strip_prefix(&app.snap.root_path).unwrap_or(&path);
-        vec![
-            slash(tilde(&path, app.home.as_deref())),
-            slash(rel.display().to_string()),
-        ]
+        let rel = rel_text(&path, &app.snap.root_path).unwrap_or_else(|| path.to_string());
+        vec![slash(tilde(&path, app.home.as_deref())), slash(rel)]
     } else {
         vec![slash(String::from_utf8_lossy(&e.name).into_owned())]
     };
@@ -143,8 +140,8 @@ fn share_of_parent(app: &App, index: usize) -> Span<'static> {
         None => (
             app.size_mode.of(&s.dir_total),
             s.dir_path.file_name().map_or_else(
-                || s.dir_path.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
+                || s.dir_path.to_string(),
+                |n| String::from_utf8_lossy(n).into_owned(),
             ),
         ),
     };

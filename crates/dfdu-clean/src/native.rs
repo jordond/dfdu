@@ -40,7 +40,7 @@ pub struct NativeRule {
     pub rule: dfdu_rules::RuleIx,
     /// Index into the rule's `native.variant` list; `None` for its own command.
     pub variant: Option<u16>,
-    pub path: PathBuf,
+    pub path: dfdu_tree::HostPath,
 }
 
 /// Shows an argv as a person would type it.

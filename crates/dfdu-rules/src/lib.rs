@@ -316,8 +316,14 @@ impl Rule {
 /// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
 /// the deletion-time protection check both read paths through this.
 pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
-    let b = dfdu_tree::name_bytes(path.as_os_str()).into_owned();
-    if cfg!(windows) {
+    rule_path_on(&dfdu_tree::HostPath::local(path))
+}
+
+/// [`rule_path`] of a path on any host: an agent's, for a remote tree.
+#[must_use]
+pub fn rule_path_on(path: &dfdu_tree::HostPath) -> Vec<u8> {
+    let b = path.as_bytes().to_vec();
+    if path.host() == dfdu_tree::Host::Windows {
         let b = b.strip_prefix(br"\\?\").map(<[u8]>::to_vec).unwrap_or(b);
         b.into_iter()
             .map(|c| if c == b'\\' { b'/' } else { c })

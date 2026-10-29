@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_tree::HostPath;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -14,8 +15,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use super::{
-    assert_cue, meta, mid_scan_app, press, render, render_buffer, shared_model, style_at, styled,
-    text,
+    assert_cue, below, meta, mid_scan_app, press, render, render_buffer, shared_model, style_at,
+    styled, text,
 };
 use crate::app::App;
 use crate::model::snapshot::{self, Mark, Target, test_entry};
@@ -128,7 +129,7 @@ fn completed_scan_view() {
         },
     );
     engine.send(Command::Scan {
-        path: dir.clone(),
+        path: dir.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
@@ -177,13 +178,13 @@ fn target_survives_rescan_swap() {
         },
     );
     engine.send(Command::Scan {
-        path: dir.clone(),
+        path: dir.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let sub_path = dir.join("sub");
     let mut target = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &sub_path).expect("sub");
+        let sub = snapshot::find_path(&m.tree, &HostPath::local(&sub_path)).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = target.node.expect("node");
@@ -194,7 +195,7 @@ fn target_survives_rescan_swap() {
 
     assert_ne!(target.node, Some(old), "the rescan replaced the node");
     assert!(
-        snap.dir_path.ends_with("sub"),
+        snap.dir_path.to_local().ends_with("sub"),
         "still in sub: {:?}",
         snap.dir_path.display()
     );
@@ -212,7 +213,7 @@ fn overlays_fit_a_small_terminal() {
         items: (0..50)
             .map(|i| dfdu_engine::ErrorItem {
                 node,
-                path: format!("/r/some/rather/long/path/number/{i}").into(),
+                path: HostPath::from(format!("/r/some/rather/long/path/number/{i}").as_str()),
                 is_dir: true,
                 problem: "permission denied".into(),
             })
@@ -303,13 +304,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     let list = dfdu_engine::errors(&m.tree, root, 100);
     assert_eq!(list.total, 2);
     let paths: Vec<_> = list.items.iter().map(|e| e.path.clone()).collect();
-    assert_eq!(
-        paths,
-        [
-            std::path::Path::new("/r/a/b/locked"),
-            std::path::Path::new("/r/gone")
-        ]
-    );
+    assert_eq!(paths, [below("/r", "a/b/locked"), below("/r", "gone")]);
     assert_eq!(
         list.summary(),
         "1 permission denied, 1 removed during the scan"
@@ -348,7 +343,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     let snap = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Disk);
     app.target = target;
     app.refresh(snap, t0);
-    assert_eq!(app.snap.dir_path, std::path::Path::new("/r/a/b"));
+    assert_eq!(app.snap.dir_path, below("/r", "a/b"));
     let sel = app.selected_entry().expect("selected");
     assert_eq!(sel.name, b"locked");
     assert_eq!(sel.problem.as_deref(), Some("permission denied"));

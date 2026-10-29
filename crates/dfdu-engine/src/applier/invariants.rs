@@ -42,7 +42,7 @@ impl<B: Backend> Applier<B> {
                 let rec = m.tree.dir(ix).ok_or_else(|| {
                     format!(
                         "{} scanned by job {} is not a directory",
-                        m.tree.path_buf(ix).display(),
+                        m.tree.host_path(ix),
                         j.id.0
                     )
                 })?;
@@ -61,7 +61,7 @@ impl<B: Backend> Applier<B> {
                 if rec.pending != expect {
                     return Err(format!(
                         "{:?} pending {} expected {} (job {})",
-                        m.tree.path_buf(ix).display(),
+                        m.tree.host_path(ix),
                         rec.pending,
                         expect,
                         j.id.0

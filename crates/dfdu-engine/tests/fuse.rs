@@ -142,7 +142,7 @@ fn hung_network_mount_is_abandoned_and_the_rest_counted() {
     );
     let t0 = Instant::now();
     engine.send(Command::Scan {
-        path: root,
+        path: root.into(),
         opts: JobOptions {
             network: true,
             ..JobOptions::default()

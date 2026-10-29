@@ -124,7 +124,7 @@ fn scan<B: Backend>(backend: B, root: &Path) -> (Totals, u64) {
         },
     );
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(60))).is_idle());

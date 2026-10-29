@@ -2,11 +2,10 @@
 //! only reads and copies; drawing happens after the lock is released.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 
 use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model, SizeMode, subvol_label};
 use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
-use dfdu_tree::{DirId, DirState, ErrKind, Ix, JobId, Kind, NodeRef, Totals, Tree, name_bytes};
+use dfdu_tree::{DirId, DirState, ErrKind, HostPath, Ix, JobId, Kind, NodeRef, Totals, Tree};
 
 mod tree;
 
@@ -201,7 +200,7 @@ pub struct Ident {
 #[derive(Clone, Debug)]
 pub struct Target {
     pub node: Option<NodeRef>,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub ident: Option<Ident>,
 }
 
@@ -210,7 +209,7 @@ impl Target {
     pub fn root() -> Self {
         Target {
             node: None,
-            path: PathBuf::new(),
+            path: HostPath::default(),
             ident: None,
         }
     }
@@ -219,7 +218,7 @@ impl Target {
     pub fn of(tree: &Tree, ix: Ix) -> Self {
         Target {
             node: Some(tree.node_ref(ix)),
-            path: tree.path_buf(ix),
+            path: tree.host_path(ix),
             ident: Some(ident(tree, ix)),
         }
     }
@@ -254,15 +253,14 @@ fn ident(tree: &Tree, ix: Ix) -> Ident {
 
 /// Finds a visible node by path: the root whose path is a prefix of it, then one child per
 /// remaining component.
-pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
+pub fn find_path(tree: &Tree, path: &HostPath) -> Option<Ix> {
     for root in tree.roots() {
-        let Ok(rest) = path.strip_prefix(tree.path_buf(root)) else {
+        let Some(rest) = path.rel(&tree.host_path(root)) else {
             continue;
         };
         let mut cur = root;
-        for part in rest.components() {
-            let name = name_bytes(part.as_os_str());
-            cur = tree.children(cur).find(|&c| *tree.name(c) == *name)?;
+        for name in rest {
+            cur = tree.children(cur).find(|&c| tree.name(c) == name)?;
         }
         return Some(cur);
     }
@@ -277,9 +275,9 @@ pub fn find_path(tree: &Tree, path: &Path) -> Option<Ix> {
 pub struct Snapshot {
     /// The rules the scan classifies against, when it does: rows have a category column.
     pub rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
-    pub dir_path: PathBuf,
+    pub dir_path: HostPath,
     /// Path of the scan root; `dir_path` is below it or equal to it.
-    pub root_path: PathBuf,
+    pub root_path: HostPath,
     pub dir_node: Option<NodeRef>,
     pub at_root: bool,
     pub dir_total: Totals,
@@ -392,9 +390,12 @@ pub fn build_view(
 
     let mut dir = target.resolve(tree);
     // The directory is gone: go up until something resolves.
-    let mut path = target.path.clone();
-    while dir.is_none() && path.pop() {
-        dir = find_path(tree, &path);
+    let mut path = target.path.parent();
+    while dir.is_none()
+        && let Some(p) = path
+    {
+        dir = find_path(tree, &p);
+        path = p.parent();
     }
     let dir = dir.filter(|&d| tree.dir(d).is_some()).unwrap_or(root);
     *target = Target::of(tree, dir);
@@ -413,8 +414,8 @@ pub fn build_view(
         .collect();
 
     snap.focus = Some((rec.job, rec.dir_id));
-    snap.dir_path = tree.path_buf(dir);
-    snap.root_path = tree.path_buf(root);
+    snap.dir_path = tree.host_path(dir);
+    snap.root_path = tree.host_path(root);
     snap.dir_node = Some(tree.node_ref(dir));
     snap.at_root = dir == root;
     snap.dir_total = tree.total(dir);

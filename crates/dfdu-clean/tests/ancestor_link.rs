@@ -57,7 +57,7 @@ fn an_ancestor_replaced_by_a_link_leaves_the_item_stale() {
         .send(DeleterReq::Plan(Plan {
             id: 1,
             mode: Mode::Permanent,
-            scan_root: root.clone(),
+            scan_root: root.as_path().into(),
             items: vec![it],
             protected: None,
         }))

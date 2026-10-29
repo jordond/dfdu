@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 use dfdu_engine::{Command, Model, SizeMode};
+use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
@@ -157,9 +158,10 @@ pub fn export(args: &ExportArgs) -> ExitCode {
         None => args.path.clone(),
     };
     let opts = launch::headless(false);
-    let (engine, job) = if let Some(host) = &args.remote {
-        match remote::engine(host, opts, None) {
-            Ok((e, _)) => (e, job),
+    // A remote scan's root is the one the agent resolved on its host.
+    let (engine, job, root) = if let Some(host) = &args.remote {
+        match remote::engine(host, opts, &path, None) {
+            Ok((e, _, root)) => (e, job, root),
             Err(code) => return code,
         }
     } else {
@@ -169,7 +171,8 @@ pub fn export(args: &ExportArgs) -> ExitCode {
             job,
             rules: None,
         };
-        local.start(&path, opts)
+        let (engine, job) = local.start(&path, opts);
+        (engine, job, HostPath::local(&path))
     };
     // Taken before the scan, so that what changes during it is replayed on resume.
     let journal = if args.remote.is_none() {
@@ -180,7 +183,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     match resumed {
         Some(l) => engine.resume(l.tree, l.header.journal, job.clone()),
         None => engine.send(Command::Scan {
-            path: path.clone(),
+            path: root,
             opts: job.clone(),
         }),
     }

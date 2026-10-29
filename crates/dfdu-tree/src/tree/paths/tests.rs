@@ -2,6 +2,7 @@ use std::path::Path;
 
 use super::super::test_util::{add_dir, add_file, dir_meta};
 use super::super::{SEP, Tree};
+use crate::Host;
 
 #[test]
 fn cmp_paths_orders_like_path() {
@@ -61,4 +62,29 @@ fn path_buf_joins_the_root_path_and_names() {
     let f = add_file(&mut t, a, "f.txt", 1);
     assert_eq!(t.path_buf(f), Path::new("/r").join("a").join("f.txt"));
     assert_eq!(t.path_buf(root), Path::new("/r"));
+}
+
+/// Another host's tree joins with that host's separator, whatever this machine uses, and keeps
+/// names as stored.
+#[test]
+fn host_path_joins_with_the_trees_host_separator() {
+    let mut t = Tree::new();
+    assert_eq!(t.host(), Host::LOCAL);
+    t.set_host(Host::Unix);
+    let root = t.new_root(b"/home/u", &dir_meta(), true);
+    let a = add_dir(&mut t, root, "a\\b");
+    let f = add_file(&mut t, a, "f", 1);
+    assert_eq!(t.host_path(f).as_bytes(), b"/home/u/a\\b/f");
+    assert_eq!(t.host_path(root).as_bytes(), b"/home/u");
+
+    let mut t = Tree::new();
+    t.set_host(Host::Windows);
+    let root = t.new_root(br"C:\", &dir_meta(), true);
+    let a = add_dir(&mut t, root, "Users");
+    let f = add_file(&mut t, a, "f", 1);
+    let p = t.host_path(f);
+    assert_eq!(
+        (p.host(), p.as_bytes()),
+        (Host::Windows, &br"C:\Users\f"[..])
+    );
 }

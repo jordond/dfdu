@@ -83,12 +83,12 @@ fn rows_of_mounts_left_out_show_their_use_and_m_enters_them() {
     app.refresh(crate::tests::snap_with_totals(es, 1), t0);
     let dir = app.snap.dir_path.clone();
     app.outside
-        .set_mount(dir.join("data"), Some(info("zfs", Some(1_300 << 30))));
+        .set_mount(dir.join(b"data"), Some(info("zfs", Some(1_300 << 30))));
     let mut nfs = Some(info("nfs4", None));
     if let Some(n) = &mut nfs {
         n.class = dfdu_sys::FsClass::Network;
     }
-    app.outside.set_mount(dir.join("nas"), nfs);
+    app.outside.set_mount(dir.join(b"nas"), nfs);
     let frame = render(&mut app, t0, 140, 10);
     let line = |name: &str| {
         frame

@@ -56,7 +56,7 @@ fn start<B: Backend>(backend: B, root: &Path) -> (Arc<Shared<B>>, Applier<B>, Mo
     applier.apply_command(
         &mut model,
         Command::Scan {
-            path: root.to_path_buf(),
+            path: root.to_path_buf().into(),
             opts: JobOptions::default(),
         },
     );
@@ -172,7 +172,7 @@ fn engine<B: Backend>(backend: impl Fn() -> B, root: &Path, runs: usize, workers
         let t0 = Instant::now();
         let e = Engine::start(backend(), opts);
         e.send(Command::Scan {
-            path: root.to_path_buf(),
+            path: root.to_path_buf().into(),
             opts: JobOptions::default(),
         });
         assert!(e.wait_idle(None).is_idle(), "scan failed");

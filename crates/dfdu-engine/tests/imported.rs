@@ -112,3 +112,38 @@ fn imported_trees_cannot_delete() {
         e.shutdown(Duration::from_secs(1));
     }
 }
+
+/// A file does not say which host its paths are on: the root's form decides, so another
+/// system's export shows its own paths.
+#[test]
+fn an_imported_trees_host_follows_its_root() {
+    use dfdu_tree::Host;
+    let dir = Meta {
+        kind: Kind::Dir,
+        apparent: 0,
+        alloc: 0,
+        mtime: 0,
+        dev: 1,
+        ino: 1,
+        nlink: 1,
+        mount: 0,
+    };
+    for (root, host) in [
+        (&br"C:\Users\u"[..], Host::Windows),
+        (b"/home/u", Host::Unix),
+    ] {
+        let mut t = Tree::default();
+        let r = t.new_root(root, &dir, true);
+        t.add_dir(r, b"proj", &dir);
+        let e = Engine::start_imported(t, EngineOptions::default());
+        let (got, path) = e.read(|m| {
+            let r = m.tree.roots().next().unwrap();
+            let p = m.tree.children(r).next().unwrap();
+            (m.tree.host(), m.tree.host_path(p))
+        });
+        assert_eq!(got, host);
+        assert_eq!(path.parent().unwrap().as_bytes(), root);
+        assert_eq!(path.file_name(), Some(&b"proj"[..]));
+        e.shutdown(Duration::from_secs(1));
+    }
+}

@@ -17,7 +17,7 @@ impl Sim {
     pub fn running_plan(&self) -> Option<Vec<PathBuf>> {
         self.plans
             .front()
-            .map(|(p, _)| p.items.iter().map(|i| i.path.clone()).collect())
+            .map(|(p, _)| p.items.iter().map(|i| i.path.to_local()).collect())
     }
 
     /// The deleter's result for the next item of the running plan, applied at once (a
@@ -35,7 +35,7 @@ impl Sim {
             let item = plan.items[*i].clone();
             *i += 1;
             if result == DeleteResult::Deleted {
-                let n = self.shared.backend.loc_from_path(&item.path);
+                let n = self.shared.backend.loc_from_path(&item.path.to_local());
                 self.spec.delete_subtree(n);
                 self.report.deleted_items += 1;
             }
@@ -114,7 +114,7 @@ pub(crate) fn deleter_step(
     }
     let item = plan.items[*i].clone();
     *i += 1;
-    let n = shared.backend.loc_from_path(&item.path);
+    let n = shared.backend.loc_from_path(&item.path.to_local());
     let is_dir = spec.nodes[n as usize].meta.kind == Kind::Dir;
     let result = match rng.below(100) {
         0..70 => {

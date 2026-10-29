@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Overlay};
 use crate::input::line::{Edit, LineInput};
+use crate::model::outside::rel_text;
 use crate::model::snapshot::{EntryData, Mark};
 use crate::theme::{Theme, count, human};
 use crate::view::cells;
@@ -138,13 +139,13 @@ pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
             .iter()
             .filter_map(|m| {
                 let path = &m.target.path;
-                let shown = match path.strip_prefix(dir) {
-                    Ok(rel) if !rel.as_os_str().is_empty() => rel,
-                    _ => path,
+                let shown = match rel_text(path, dir) {
+                    Some(rel) if !rel.is_empty() => rel,
+                    _ => path.to_string(),
                 };
                 Some(Item {
                     node: m.target.node?,
-                    name: shown.display().to_string(),
+                    name: shown,
                     size: m.size,
                     items: m.items,
                     shared_out: m.shared_out,

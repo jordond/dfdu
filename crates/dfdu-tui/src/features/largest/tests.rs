@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Instant;
 
 use dfdu_engine::Model;
@@ -49,7 +48,7 @@ fn model() -> Model {
 
 fn paths(app: &App) -> Vec<String> {
     (app.largest.files.iter())
-        .map(|f| f.path.to_string_lossy().replace('\\', "/"))
+        .map(|f| f.path.to_string().replace('\\', "/"))
         .collect()
 }
 
@@ -95,7 +94,11 @@ fn lists_the_largest_files_below_with_their_paths_relative() {
     crate::tests::typed(&mut app, "a", t0);
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &m, t0);
-    assert!(app.snap.dir_path.ends_with("a"), "{:?}", app.snap.dir_path);
+    assert!(
+        app.snap.dir_path.to_local().ends_with("a"),
+        "{:?}",
+        app.snap.dir_path
+    );
     app.key(press(KeyCode::Char('5')), t0);
     sync(&mut app, &m, t0);
     assert_eq!(paths(&app), ["big.iso", "deep/x.bin"]);
@@ -108,7 +111,10 @@ fn enter_goes_to_the_file_in_its_directory() {
     app.key(press(KeyCode::End), t0);
     app.key(press(KeyCode::Enter), t0);
     assert!(!active(&app), "the view closes");
-    assert_eq!(app.target.path, Path::new("/r").join("a").join("deep"));
+    assert_eq!(
+        app.target.path,
+        HostPath::from("/r").join(b"a").join(b"deep")
+    );
     sync(&mut app, &m, t0);
     let e = app.selected_entry().expect("selected");
     assert_eq!(&e.name[..], b"x.bin");
@@ -175,7 +181,7 @@ fn keys_move_mark_and_refuse() {
     );
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks.items().len(), 1);
-    let huge = Path::new("/r").join(".cache").join("huge");
+    let huge = HostPath::from("/r").join(b".cache").join(b"huge");
     assert_eq!(app.marks.items()[0].target.path, huge);
     assert_eq!(app.largest.cursor, 1);
     let frame = render(&mut app, t0, 100, 10);

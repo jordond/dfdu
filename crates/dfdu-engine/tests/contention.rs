@@ -47,7 +47,7 @@ fn scan(root: &std::path::Path, contend: bool) -> (dfdu_tree::Totals, Duration) 
     });
     let t0 = Instant::now();
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(

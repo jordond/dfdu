@@ -19,6 +19,7 @@ use std::time::Instant;
 
 use crate::app::keys::{self, Action, first_key};
 use crate::app::{App, Effect};
+use crate::model::outside::rel_text;
 use crate::state::marks;
 use crate::theme::{human, truncate_middle};
 use crate::view::columns::cursor;
@@ -178,11 +179,10 @@ fn unmark(app: &mut App) {
 /// The path of a mark relative to the scan root, `/` after a directory.
 fn label(app: &App, it: &marks::Item) -> String {
     let path = &it.target.path;
-    let rel = match path.strip_prefix(&app.snap.root_path) {
-        Ok(rel) if !rel.as_os_str().is_empty() => rel,
-        _ => path,
+    let mut s = match rel_text(path, &app.snap.root_path) {
+        Some(rel) if !rel.is_empty() => rel,
+        _ => path.to_string(),
     };
-    let mut s = rel.display().to_string();
     if it.is_dir {
         s.push('/');
     }

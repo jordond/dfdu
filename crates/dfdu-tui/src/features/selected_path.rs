@@ -11,20 +11,22 @@
 //! one read from a file has no file manager here to show its paths in.
 
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
+
+use dfdu_tree::HostPath;
 
 use crate::app::{App, Effect};
 use crate::features::{cleanup, dupes, largest};
 use crate::model::outside::tilde;
 
 /// The path of what is selected in the view shown, and whether it is a directory.
-fn selected(app: &App) -> Option<(PathBuf, bool)> {
+fn selected(app: &App) -> Option<(HostPath, bool)> {
     if largest::active(app) {
         return largest::selected(app).map(|(path, _)| (path, false));
     }
     if dupes::active(app) {
-        return dupes::selected_path(app).map(|p| (p, false));
+        return dupes::selected_path(app).map(|p| (HostPath::local(&p), false));
     }
     if cleanup::active(app) {
         let it = cleanup::selected_item(app)?;
@@ -44,7 +46,7 @@ pub fn copy(app: &mut App) -> Option<Effect> {
         app.status = Some("nothing selected to copy".into());
         return None;
     };
-    let text = path.display().to_string();
+    let text = path.to_string();
     let shown = tilde(&path, app.home.as_deref());
     app.status = Some(format!("copied {shown} (through the terminal, OSC 52)"));
     Some(Effect::Copy(text))
@@ -63,7 +65,10 @@ pub fn open(app: &mut App) -> Option<Effect> {
     };
     let shown = tilde(&path, app.home.as_deref());
     app.status = Some(format!("opening {shown} in the file manager…"));
-    Some(Effect::Open { path, is_dir })
+    Some(Effect::Open {
+        path: path.to_local(),
+        is_dir,
+    })
 }
 
 /// The OSC 52 escape that sets the clipboard to `text`.

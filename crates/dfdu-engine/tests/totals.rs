@@ -187,6 +187,9 @@ fn ent(path: &Path, m: &fs::Metadata) -> Ent {
         dir: m.is_dir(),
         len: if file {
             fs::symlink_metadata(path).unwrap().len()
+        } else if m.is_dir() {
+            // As the scanner counts them (`Meta::from_windows`): a handle's size is the index's.
+            0
         } else {
             m.len()
         },
@@ -272,7 +275,7 @@ fn scan<B: Backend>(backend: B, root: &Path) -> HashMap<Vec<u8>, Totals> {
         },
     );
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());

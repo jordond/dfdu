@@ -81,11 +81,12 @@ pub enum Source {
     },
     /// A scan read from a file, browsed read-only.
     Imported(dfdu_tree::Tree),
-    /// An engine scanning `path` on another host with `job`. It deletes there too (unless
+    /// An engine scanning `path` on another host with `job`: the root the agent resolved
+    /// ([`dfdu_engine::Connected::root`]). It deletes there too (unless
     /// [`EngineOptions::read_only`]); nothing is recorded in the history.
     Remote {
         engine: Engine<dfdu_scan::NativeBackend>,
-        path: PathBuf,
+        path: dfdu_tree::HostPath,
         job: JobOptions,
     },
 }
@@ -117,7 +118,7 @@ pub struct UiOptions {
     pub mouse: bool,
     /// Start with the debug panel open.
     pub debug: bool,
-    /// The user's home directory, shown as `~`.
+    /// The user's home directory, shown as `~` in paths of a scan of this machine.
     pub home: Option<PathBuf>,
     /// The scan history this browser reads and adds to.
     pub history: Option<HistoryLink>,
@@ -187,7 +188,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         background: colors.background,
         mouse,
         debug: ui.debug_stats,
-        home: setup::home_dir(),
+        // Another host's paths are not below this one's home directory.
+        home: setup::home_dir().filter(|_| local),
         history,
         types: ui.types.clone(),
         local,
@@ -202,8 +204,11 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     let (path, start) = match opts.source {
         Source::Imported(tree) => {
             let engine = Engine::start_imported(tree, opts.engine);
+            // Most files are of this machine's scans; another system's paths are left alone
+            // by their host.
             let ui = UiOptions {
                 read_only: true,
+                home: setup::home_dir(),
                 ..ui_opts(theme, None, false)
             };
             return browse(&mut terminal, engine, ui);
@@ -246,7 +251,10 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
     let (engine, job) = start(&path, opts.engine.clone());
     let history = link(&root, &job, &opts.engine);
-    engine.send(Command::Scan { path, opts: job });
+    engine.send(Command::Scan {
+        path: path.into(),
+        opts: job,
+    });
     browse(&mut terminal, engine, ui_opts(theme, history, true))
 }
 

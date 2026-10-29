@@ -31,7 +31,7 @@ impl<B: Backend> Applier<B> {
             self.outgoing_checks.push(CheckReq::Guards {
                 node: m.tree.node_ref(ix),
                 rule: c.rule,
-                path: m.tree.path_buf(ix),
+                path: m.tree.host_path(ix),
                 vcs: g.not_vcs_tracked,
                 processes: g.not_running.clone(),
             });

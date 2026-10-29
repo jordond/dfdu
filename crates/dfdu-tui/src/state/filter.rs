@@ -9,7 +9,6 @@
 //! to show where it is. Fold rows never match.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use dfdu_tree::NodeRef;
@@ -39,7 +38,7 @@ pub struct Filter {
     /// `around[i]`: in tree mode, some match is inside entry `i`. Empty otherwise.
     around: Vec<bool>,
     /// Directory the entries are from; another one clears the filter.
-    dir: PathBuf,
+    dir: dfdu_tree::HostPath,
     counts: Counts,
     /// The selected entry when the query hid it, and the entry the selection moved to then
     /// (`None`: no row was left). While that one stays selected, the selection goes back as
@@ -67,7 +66,7 @@ impl Filter {
     pub fn prepare(&mut self, snap: &Snapshot, replaced: bool) {
         if snap.dir_path != self.dir {
             // Before the first snapshot there is no directory, and a query typed by then stays.
-            if !self.dir.as_os_str().is_empty() {
+            if !self.dir.is_empty() {
                 self.input.clear();
                 self.editing = false;
                 self.restore = None;

@@ -12,12 +12,14 @@ use dfdu_tree::Ix;
 use dfdu_tui::NotEntered;
 use serde_json::{Map, Value};
 
-use crate::json::put_path;
+use crate::json::{put_host_path, put_path};
 
 /// What was looked up once the scan ended.
 pub struct Outside {
     pub mounts: Vec<(NotEntered, Option<MountInfo>)>,
     pub linked: Vec<Linked>,
+    /// The scan is of this machine: its paths below the home directory are shown with `~`.
+    pub local: bool,
 }
 
 /// The mounts below `root` the scan did not enter and the links out of it. With `local` unset
@@ -26,7 +28,7 @@ pub struct Outside {
 pub fn gather(m: &Model, root: Ix, local: bool) -> Outside {
     let list = dfdu_tui::not_entered(&m.tree, root);
     let infos = if local && !list.is_empty() {
-        let paths: Vec<_> = list.iter().map(|n| n.path.clone()).collect();
+        let paths: Vec<_> = list.iter().map(|n| n.path.to_local()).collect();
         dfdu_sys::mounts_at(&paths, dfdu_sys::DISK_TIMEOUT)
     } else {
         vec![None; list.len()]
@@ -38,6 +40,7 @@ pub fn gather(m: &Model, root: Ix, local: bool) -> Outside {
     Outside {
         mounts: list.into_iter().zip(infos).collect(),
         linked,
+        local,
     }
 }
 
@@ -46,7 +49,7 @@ pub fn gather(m: &Model, root: Ix, local: bool) -> Outside {
 /// (`dfdu report`) on where they lead.
 pub fn lines(o: &Outside, rules: Option<&RuleSet>, command: &str) -> Vec<String> {
     const MAX: usize = 5;
-    let home = dfdu_tui::home_dir();
+    let home = dfdu_tui::home_dir().filter(|_| o.local);
     let mut out = dfdu_tui::not_entered_lines(&o.mounts, home.as_deref());
     let Some(rules) = rules else {
         return out;
@@ -88,7 +91,7 @@ pub fn put_json(doc: &mut Map<String, Value>, o: &Outside, rules: Option<&RuleSe
             .iter()
             .map(|(n, info)| {
                 let mut e = Map::new();
-                put_path(&mut e, "path", &n.path);
+                put_host_path(&mut e, "path", &n.path);
                 e.insert("network".into(), n.network.into());
                 e.insert("option".into(), n.option().into());
                 if let Some(i) = info {
@@ -130,6 +133,7 @@ mod tests {
         let o = Outside {
             mounts: vec![],
             linked: vec![],
+            local: true,
         };
         let mut doc = Map::new();
         put_json(&mut doc, &o, None);
@@ -148,6 +152,7 @@ mod tests {
                 }),
             )],
             linked: vec![],
+            local: true,
         };
         put_json(&mut doc, &o, None);
         assert_eq!(

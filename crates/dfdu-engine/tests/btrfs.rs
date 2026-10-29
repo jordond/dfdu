@@ -63,7 +63,7 @@ fn engine(journal: &Path) -> Engine<NativeBackend> {
 
 fn scan(e: &Engine<NativeBackend>, root: &Path, cross_mounts: bool) {
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions {
             cross_mounts,
             ..Default::default()

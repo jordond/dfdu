@@ -9,7 +9,6 @@
 //! changes nothing and is not input: it draws no frame and does not hold off the automatic
 //! re-sort.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_tree::NodeRef;
@@ -41,7 +40,7 @@ pub struct Mouse {
 #[derive(Clone, Debug)]
 pub struct Crumb {
     pub area: Rect,
-    pub child: PathBuf,
+    pub child: dfdu_tree::HostPath,
 }
 
 /// Handles a mouse event; `None` when it changed nothing, so no frame is drawn.
@@ -167,8 +166,7 @@ fn on_glyph(app: &App, row: usize, x: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
+    use dfdu_tree::HostPath;
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
     use super::*;
@@ -227,7 +225,7 @@ mod tests {
         assert_eq!(selected(&app).as_deref(), Some("d2"));
         assert_eq!(
             app.target.path,
-            Path::new(""),
+            HostPath::default(),
             "a single click opens nothing"
         );
         // Clicks below the last row and on the footer change nothing.
@@ -270,7 +268,7 @@ mod tests {
             assert!(event(&mut app, mouse(kind, x, y), t0).is_none(), "{kind:?}");
         }
         assert_eq!(selected(&app).as_deref(), Some("d0"));
-        assert_eq!(app.target.path, Path::new(""));
+        assert_eq!(app.target.path, HostPath::from(""));
         // Left of the panel, the same row takes the click.
         event(&mut app, left(panel.x - 1, y), t0).expect("redraw");
         assert_eq!(selected(&app).as_deref(), Some("d1"));
@@ -283,7 +281,7 @@ mod tests {
         event(&mut app, left(30, TOP + 1), t0).expect("redraw");
         let t1 = t0 + Duration::from_millis(250);
         event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-        assert_eq!(app.target.path, Path::new("/r/d1"));
+        assert_eq!(app.target.path, HostPath::from("/r").join(b"d1"));
     }
 
     #[test]
@@ -295,7 +293,7 @@ mod tests {
         assert_eq!(selected(&app).as_deref(), Some("d2"));
         let t1 = t0 + Duration::from_millis(250);
         event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-        assert_eq!(app.target.path, Path::new("/r/d1"));
+        assert_eq!(app.target.path, HostPath::from("/r").join(b"d1"));
     }
 
     #[test]
@@ -305,11 +303,11 @@ mod tests {
         event(&mut app, left(30, TOP + 1), t0).expect("redraw");
         let t1 = t0 + Duration::from_millis(450);
         event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-        assert_eq!(app.target.path, Path::new(""));
+        assert_eq!(app.target.path, HostPath::from(""));
         assert_eq!(selected(&app).as_deref(), Some("d1"));
         // Two quick clicks on different rows select the second one.
         event(&mut app, left(30, TOP + 3), t1).expect("redraw");
-        assert_eq!(app.target.path, Path::new(""));
+        assert_eq!(app.target.path, HostPath::from(""));
         assert_eq!(selected(&app).as_deref(), Some("d3"));
     }
 
@@ -432,12 +430,12 @@ mod tests {
         assert!(event(&mut app, left(16, 0), t0).is_none());
         assert!(event(&mut app, left(10, 0), t0).is_none());
         event(&mut app, left(12, 0), t0).expect("redraw");
-        assert_eq!(app.target.path, Path::new("/r/a"));
+        assert_eq!(app.target.path, HostPath::from("/r").join(b"a"));
         assert_eq!(app.selected.as_ref().expect("selection").name, b"b");
 
         let mut app = below_root(t0);
         event(&mut app, left(8, 0), t0).expect("redraw");
-        assert_eq!(app.target.path, Path::new("/r"));
+        assert_eq!(app.target.path, HostPath::from("/r"));
         assert_eq!(app.selected.as_ref().expect("selection").name, b"a");
     }
 }

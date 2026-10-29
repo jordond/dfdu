@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, SizeMode};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tree::{DirState, ErrKind, Ix, Kind};
+use dfdu_tree::{DirState, ErrKind, HostPath, Ix, Kind};
 
 use super::meta;
 use crate::app::App;
@@ -323,13 +323,13 @@ fn expanded_directories_survive_a_rescan_swap() {
         },
     );
     engine.send(Command::Scan {
-        path: dir.clone(),
+        path: dir.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let mut t = TreeState::default();
     let sub = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &dir.join("sub")).expect("sub");
+        let sub = snapshot::find_path(&m.tree, &HostPath::local(&dir.join("sub"))).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = sub.node.expect("node");

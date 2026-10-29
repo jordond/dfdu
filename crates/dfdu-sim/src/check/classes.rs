@@ -162,8 +162,7 @@ pub fn sim_check(req: &CheckReq) -> CheckMsg {
             vcs,
             processes,
         } => {
-            let (tracked, running) =
-                pool_answer(path.as_os_str().as_encoded_bytes(), *vcs, processes);
+            let (tracked, running) = pool_answer(path.as_bytes(), *vcs, processes);
             CheckMsg::Guards {
                 node: *node,
                 rule: *rule,

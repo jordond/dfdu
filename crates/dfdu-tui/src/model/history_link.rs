@@ -245,7 +245,7 @@ mod tests {
         let link = HistoryLink::start(db.clone(), root.clone(), "k".into());
         let engine = Engine::start(PortableBackend::default(), EngineOptions::default());
         engine.send(dfdu_engine::Command::Scan {
-            path: root,
+            path: root.into(),
             opts: dfdu_scan::JobOptions::default(),
         });
         assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());

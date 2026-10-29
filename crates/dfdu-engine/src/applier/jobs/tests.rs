@@ -63,7 +63,7 @@ fn finished_jobs_past_the_last_64_are_retired() {
     let mut r = Rig::scan();
     for id in 2..=70 {
         let scan = Command::Scan {
-            path: format!("/r{id}").into(),
+            path: std::path::Path::new(&format!("/r{id}")).into(),
             opts: JobOptions::default(),
         };
         r.command(scan);

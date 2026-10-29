@@ -62,7 +62,7 @@ fn scan_with<T>(
         },
     );
     engine.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(rules, root)),
             ..JobOptions::default()
@@ -248,7 +248,7 @@ fn a_protected_node_is_not_deleted() {
     );
     let root = tmp.path().join("web");
     engine.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(rules(), &root)),
             ..JobOptions::default()
@@ -312,7 +312,7 @@ fn a_git_tracked_target_is_protected() {
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(rules(), tmp.path())),
             ..JobOptions::default()
@@ -369,7 +369,7 @@ fn a_target_git_cannot_answer_for_is_flagged() {
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(rules(), tmp.path())),
             ..JobOptions::default()
@@ -445,7 +445,7 @@ not_modified_days = 30
         },
     );
     engine.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class: Some(ClassOpts::for_root(Arc::new(set), &root)),
             ..JobOptions::default()

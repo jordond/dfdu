@@ -38,7 +38,7 @@ fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> C
     let path = if cur.is_some() {
         path_of(&names)
     } else {
-        dfdu_rules::rule_path(&tree.path_buf(ix))
+        dfdu_rules::rule_path_on(&tree.host_path(ix))
     };
     let mut inside = Vec::new();
     let mut cur = tree.parent(ix);
@@ -228,7 +228,7 @@ impl<B: Backend> Applier<B> {
         self.cut(m, ix, DirState::Superseded);
         let id = self.next_job;
         self.next_job += 1;
-        let path = m.tree.path_buf(ix);
+        let path = m.tree.host_path(ix);
         let shadow = m.tree.new_root(
             m.tree.name(ix).to_vec().as_slice(),
             &meta_of(&m.tree, ix),
@@ -250,7 +250,8 @@ impl<B: Backend> Applier<B> {
         while let Some(p) = m.tree.parent(top) {
             top = p;
         }
-        opts.scope = Some(m.tree.path_buf(top));
+        // Not sent to an agent, which judges against its job's root.
+        opts.scope = self.remote.is_none().then(|| m.tree.path_buf(top));
         self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
             m.rules = Some(c.rules.clone());

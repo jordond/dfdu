@@ -37,7 +37,6 @@ pub(crate) use handshake::connect;
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, OnceLock};
@@ -55,7 +54,7 @@ use dfdu_rules::hash::FastMap as HashMap;
 use dfdu_rules::{RuleSet, Source};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Batch, DirId, JobId, JobOptions, ScanMsg, Sink};
-use dfdu_tree::NodeRef;
+use dfdu_tree::{Host, HostPath, NodeRef};
 use parking_lot::Mutex;
 use wire::{FromAgent, ToAgent, WireClass, read_frame, write_frame};
 
@@ -70,17 +69,20 @@ pub struct RemoteIo {
     pub child: Option<Child>,
 }
 
-/// The rules a remote scan classifies with (rule files in load order, as
-/// [`dfdu_rules::sources`] reads them), and the scan root on the agent's host.
+/// The rules a remote scan classifies with: rule files in load order, as
+/// [`dfdu_rules::sources`] reads them.
 pub struct RemoteRules {
     pub files: Vec<(Source, String)>,
-    pub root: PathBuf,
 }
 
 /// What a connected agent said.
 pub struct Connected {
     /// Its program and version.
     pub tool: String,
+    /// The kind of host it runs on, which the tree's paths are built for.
+    pub host: Host,
+    /// The scan root as the agent's host resolved it.
+    pub root: HostPath,
     /// What the scan root classifies against, with the rules as built for the agent's host;
     /// `None` without rules, or when the two sides do not build the same set.
     pub class: Option<ClassOpts>,
@@ -93,6 +95,8 @@ pub struct Connected {
 }
 
 pub(crate) struct Link {
+    /// The agent's kind of host: the paths it sends are on it.
+    pub(crate) host: Host,
     writer: Mutex<Box<dyn Write + Send>>,
     seq: AtomicU64,
     /// Local numbers of starts the agent has not confirmed yet, oldest first.
@@ -130,12 +134,12 @@ impl Link {
         }
     }
 
-    pub(crate) fn start_job(&self, job: JobId, root: &Path, opts: &JobOptions) -> u64 {
+    pub(crate) fn start_job(&self, job: JobId, root: &HostPath, opts: &JobOptions) -> u64 {
         let seq = self.seq.fetch_add(1, SeqCst) + 1;
         self.pending.lock().push_back(seq);
         self.send(&ToAgent::StartJob {
             job,
-            root: dfdu_tree::name_bytes(root.as_os_str()).into_owned(),
+            root: root.as_bytes().to_vec(),
             cross_mounts: opts.cross_mounts,
             network: opts.network,
             enter: opts.enter.clone(),
@@ -450,7 +454,7 @@ fn pump(link: &Link, r: &mut impl Read, sink: &impl Sink, answers: &Answers) -> 
             Ok(false) => return "the agent closed the link".into(),
             Err(e) => return e.to_string(),
         }
-        match FromAgent::decode(&buf, link.rules.get().map(|r| &**r)) {
+        match FromAgent::decode(&buf, link.rules.get().map(|r| &**r), link.host) {
             Ok(FromAgent::Batch(mut msgs)) => {
                 let mut bytes = 0;
                 for m in &mut msgs {

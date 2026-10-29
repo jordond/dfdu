@@ -12,11 +12,10 @@ mod remove;
 mod stage;
 mod verify;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use dfdu_rules::protected::Protected;
-use dfdu_tree::{ErrKind, Kind, NodeRef};
+use dfdu_tree::{ErrKind, HostPath, Kind, NodeRef};
 use serde::{Deserialize, Serialize};
 
 pub use deleter::{DeleterHandle, STAGE_UNDO_WINDOW, spawn_deleter};
@@ -82,7 +81,8 @@ pub enum DeleterReq {
 #[derive(Clone, Debug)]
 pub struct PlanItem {
     pub node: NodeRef,
-    pub path: PathBuf,
+    /// On the scanned host: this machine's for a local deleter, the agent's for a remote one.
+    pub path: HostPath,
     pub identity: Identity,
     /// Disk usage of the item as scanned, for progress and reporting.
     pub bytes: u64,
@@ -95,7 +95,7 @@ pub struct Plan {
     pub id: u64,
     pub mode: Mode,
     /// Items must be strictly inside this directory.
-    pub scan_root: PathBuf,
+    pub scan_root: HostPath,
     pub items: Vec<PlanItem>,
     /// The protected paths of the rule set the tree was classified with, refused on top of
     /// this process's own ([`is_protected`]). Not sent to an agent, which uses its own.
@@ -109,12 +109,12 @@ pub enum Refusal {
     ScanRoot,
     MountPoint,
     /// A filesystem is mounted inside the directory; moving it would move the mount.
-    ContainsMount(PathBuf),
+    ContainsMount(HostPath),
     /// Moving to the trash would copy the item to another filesystem (Linux home trash).
     TrashCrossesFilesystems,
     /// The item is in another btrfs subvolume than the trash; a rename between subvolumes is
     /// not possible, so the trash would copy it. Holds the root of the item's subvolume.
-    TrashOtherSubvolume(PathBuf),
+    TrashOtherSubvolume(HostPath),
     /// There is no directory for the deletion journal, so nothing is deleted. When the journal
     /// cannot be created there, each item fails with the cause instead.
     NoJournal,
@@ -159,11 +159,11 @@ pub enum DeleterMsg {
     /// next to it when something else is there now), or could not.
     Restored {
         plan: u64,
-        original: PathBuf,
+        original: HostPath,
         /// It was staged (not in the trash), and its disk usage as scanned.
         staged: bool,
         bytes: u64,
-        result: Result<PathBuf, String>,
+        result: Result<HostPath, String>,
     },
     /// Every item of an undo was answered.
     UndoDone {
@@ -195,7 +195,7 @@ impl std::fmt::Display for Refusal {
             Refusal::ScanRoot => "refused: the scanned directory itself",
             Refusal::MountPoint => "refused: a mount point",
             Refusal::ContainsMount(m) => {
-                return write!(f, "refused: a filesystem is mounted at {}", m.display());
+                return write!(f, "refused: a filesystem is mounted at {}", m);
             }
             Refusal::TrashCrossesFilesystems => {
                 "refused for trash: the trash is on another filesystem (it would be copied)"
@@ -205,7 +205,7 @@ impl std::fmt::Display for Refusal {
                     f,
                     "refused for trash: the item is in btrfs subvolume {}, the trash in another \
                      (it would be copied)",
-                    sv.display()
+                    sv
                 );
             }
             Refusal::NoJournal => "refused: the deletion journal could not be written",

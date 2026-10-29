@@ -4,9 +4,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::PathBuf;
 
-use dfdu_tree::{DirState, ErrKind, Ix, NodeRef, Tree};
+use dfdu_tree::{DirState, ErrKind, HostPath, Ix, NodeRef, Tree};
 
 use crate::Model;
 use crate::sizes::human;
@@ -33,7 +32,7 @@ pub fn errors_below(tree: &Tree, ix: Ix) -> u64 {
 #[derive(Clone, Debug)]
 pub struct ErrorItem {
     pub node: NodeRef,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub is_dir: bool,
     pub problem: String,
 }
@@ -41,7 +40,7 @@ pub struct ErrorItem {
 #[derive(Clone, Debug, Default)]
 pub struct ErrorList {
     /// The directory the list covers.
-    pub root: PathBuf,
+    pub root: HostPath,
     /// The first errors in path order, at most the limit given to [`errors`].
     pub items: Vec<ErrorItem>,
     /// All errors below the root, listed or not.
@@ -90,7 +89,7 @@ impl ErrorList {
 #[must_use]
 pub fn errors(tree: &Tree, root: Ix, limit: usize) -> ErrorList {
     let mut list = ErrorList {
-        root: tree.path_buf(root),
+        root: tree.host_path(root),
         ..Default::default()
     };
     let mut kinds: BTreeMap<ErrKind, u64> = BTreeMap::new();
@@ -102,7 +101,7 @@ pub fn errors(tree: &Tree, root: Ix, limit: usize) -> ErrorList {
             if list.items.len() < limit {
                 list.items.push(ErrorItem {
                     node: tree.node_ref(ix),
-                    path: tree.path_buf(ix),
+                    path: tree.host_path(ix),
                     is_dir: tree.dir(ix).is_some(),
                     problem: problem(tree, ix).unwrap_or_default(),
                 });

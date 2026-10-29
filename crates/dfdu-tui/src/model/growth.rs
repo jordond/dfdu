@@ -1,10 +1,9 @@
 //! What grew since the last recorded scan of the root (`dfdu_store::history`): a note on list
 //! rows whose size changed noticeably, and a line in the details pane.
 
-use std::path::Path;
-
 use dfdu_engine::SizeMode;
 use dfdu_store::history;
+use dfdu_tree::HostPath;
 
 use crate::app::App;
 use crate::model::snapshot::Mark;
@@ -15,15 +14,16 @@ const NOTICEABLE: u64 = 1 << 20;
 /// The change in the size shown of `path` (now `size`) since the last recorded scan, with its
 /// size then and when that scan finished. `None` when the history has no size for it, the
 /// size mode is not recorded, or the size is still changing.
-pub fn since(app: &App, path: &Path, size: u64, mark: Mark) -> Option<(i128, u64, i64)> {
+pub fn since(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<(i128, u64, i64)> {
     if matches!(
         mark,
         Mark::Scanning | Mark::Rescanning | Mark::Stalled | Mark::Incomplete | Mark::Deleting
     ) {
         return None;
     }
+    // The history is of this machine's scans only.
     let g = app.growth.as_ref()?;
-    let then = g.get(path)?;
+    let then = g.get(&path.to_local())?;
     let then = match app.size_mode {
         SizeMode::Disk => then.disk,
         SizeMode::Apparent => then.apparent,
@@ -69,7 +69,7 @@ impl RowNote {
 }
 
 /// The note for a list row: changes of at least 1 MiB and 1% of the size.
-pub fn row_note(app: &App, path: &Path, size: u64, mark: Mark) -> Option<RowNote> {
+pub fn row_note(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<RowNote> {
     let (delta, then, at) = since(app, path, size, mark)?;
     let abs = delta.unsigned_abs();
     if abs < u128::from(NOTICEABLE) || abs * 100 < u128::from(then.max(size)) {
@@ -125,7 +125,7 @@ mod tests {
             ..UiOptions::from_env()
         };
         engine.send(Command::Scan {
-            path: root.clone(),
+            path: root.clone().into(),
             opts: JobOptions::default(),
         });
         let recorded = std::thread::scope(|s| {

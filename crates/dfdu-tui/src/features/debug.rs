@@ -3,11 +3,11 @@
 //! The counters come with every read of the model. `Timing` is not part of the model's
 //! fingerprint, so the panel adds no frames of its own: it shows what the last frame read.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use dfdu_engine::{Engine, Model, Stats, Timing};
 use dfdu_scan::{Backend, Budget};
+use dfdu_tree::HostPath;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -67,7 +67,7 @@ pub struct Info {
     pub running: usize,
     pub stalled: usize,
     /// The first [`STALLED_SHOWN`] stalled directories.
-    pub stalled_paths: Vec<PathBuf>,
+    pub stalled_paths: Vec<HostPath>,
 }
 
 /// Opens or closes the panel.
@@ -124,7 +124,7 @@ pub fn read(m: &Model, budget: &Budget, counters: Counters) -> Info {
             .iter()
             .filter_map(|st| m.tree.resolve_visible(st.node))
             .take(STALLED_SHOWN)
-            .map(|ix| m.tree.path_buf(ix))
+            .map(|ix| m.tree.host_path(ix))
             .collect(),
     }
 }
@@ -269,7 +269,7 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
         ]),
     ];
     for p in &info.stalled_paths {
-        lines.push(Line::styled(format!("   {}", p.display()), t.fg_dim));
+        lines.push(Line::styled(format!("   {p}"), t.fg_dim));
     }
     if let Some((draw, read)) = ui {
         lines.push(plain(format!("ui draw {}  read {}", dur(draw), dur(read))));
@@ -324,7 +324,7 @@ mod tests {
             budget: (budget.used(), budget.peak(), budget.capacity()),
             running: 1,
             stalled: 1,
-            stalled_paths: vec![PathBuf::from("/home/jo/nfs")],
+            stalled_paths: vec![HostPath::from("/home/jo/nfs")],
         }
     }
 

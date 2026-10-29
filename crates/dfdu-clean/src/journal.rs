@@ -124,7 +124,7 @@ impl ItemRec {
         ItemRec {
             plan,
             path: item.path.display().to_string(),
-            path_hex: hex_path(&item.path),
+            path_hex: hex_path(&item.path.to_local()),
             dev: id.dev,
             ino: id.ino,
             kind: id.kind,
@@ -269,7 +269,7 @@ impl Journal {
         stage: Option<&Path>,
     ) -> io::Result<()> {
         let rec = ItemRec {
-            subvol_uuid: crate::verify::subvolume_uuid(&item.path, item.identity.dev),
+            subvol_uuid: crate::verify::subvolume_uuid(&item.path.to_local(), item.identity.dev),
             ..ItemRec::of(plan, item)
         };
         self.write(&Record::Intent {

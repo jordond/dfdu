@@ -167,7 +167,7 @@ impl Sim {
         sim.applier.apply_command(
             &mut sim.model,
             Command::Scan {
-                path: PathBuf::from(ROOT_NAME),
+                path: PathBuf::from(ROOT_NAME).into(),
                 opts: JobOptions {
                     cross_mounts,
                     network,
@@ -444,9 +444,7 @@ impl Sim {
                 }) {
                     return Err(self.fail(format!(
                         "{} asked to be measured again before its answer",
-                        r.dir
-                            .join(String::from_utf8_lossy(&f.name).as_ref())
-                            .display()
+                        r.dir.join(&f.name)
                     )));
                 }
                 self.meas_q.push(MeasureReq {

@@ -1,5 +1,6 @@
-use std::path::PathBuf;
 use std::time::Instant;
+
+use dfdu_tree::HostPath;
 
 use super::*;
 use crate::model::snapshot::{Snapshot, test_entry};
@@ -332,7 +333,7 @@ fn one_command_with_all_outermost_targets() {
     let x = test_entry(3, "x", 4000);
     app.refresh(
         Snapshot {
-            dir_path: PathBuf::from("/r/a"),
+            dir_path: HostPath::from("/r/a"),
             dir_node: Some(a.node),
             entries: vec![x.clone()],
             version: 2,

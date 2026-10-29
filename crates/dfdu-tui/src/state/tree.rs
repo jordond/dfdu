@@ -7,9 +7,8 @@
 //! back, so expanded directories replaced by a rescan stay expanded.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
-use dfdu_tree::NodeRef;
+use dfdu_tree::{HostPath, NodeRef};
 
 use crate::model::snapshot::{EntryData, Ident, Snapshot, Target};
 
@@ -196,7 +195,7 @@ pub fn inside(entries: &[EntryData], i: usize, ancestor: usize) -> bool {
 }
 
 /// The path of entry `i` of a tree snapshot: the directory's path and the names down to it.
-pub fn path_of(snap: &Snapshot, i: usize) -> PathBuf {
+pub fn path_of(snap: &Snapshot, i: usize) -> HostPath {
     let mut names = vec![i];
     let mut cur = i;
     while let Some(p) = parent(&snap.entries, cur) {
@@ -205,7 +204,7 @@ pub fn path_of(snap: &Snapshot, i: usize) -> PathBuf {
     }
     let mut path = snap.dir_path.clone();
     for &n in names.iter().rev() {
-        path.push(&*dfdu_tree::name_os(&snap.entries[n].name));
+        path.push(&snap.entries[n].name);
     }
     path
 }

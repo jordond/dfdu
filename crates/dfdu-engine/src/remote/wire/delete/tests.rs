@@ -135,7 +135,7 @@ fn native_commands_go_as_their_rule() {
         .map(|i| RuleIx(u16::try_from(i).unwrap()))
         .unwrap();
     // The agent decodes the command, so the path is absolute by the agent's (this host's) rules.
-    let path = std::path::Path::new(if cfg!(windows) {
+    let path = &dfdu_tree::HostPath::from(if cfg!(windows) {
         "C:\\srv\\\u{e9}t\u{e9}"
     } else {
         "/srv/\u{e9}t\u{e9}"

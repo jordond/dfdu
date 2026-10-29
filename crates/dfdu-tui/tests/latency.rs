@@ -186,7 +186,7 @@ fn measure(tree: &Path, workers: Option<usize>, after: usize, seed: u64) -> Run 
         },
     );
     engine.send(Command::Scan {
-        path: tree.to_path_buf(),
+        path: tree.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     thread::scope(|scope| {

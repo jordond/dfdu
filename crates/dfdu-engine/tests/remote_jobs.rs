@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions, RemoteIo, RemoteRules};
@@ -35,9 +36,9 @@ fn deletes_run_on_the_agent() {
     put("changed", 100);
     put("kept", 100);
     let ops = base.join("state/ops");
-    let (e, agent, _) = remote_with(None, Some(ops.clone()));
+    let (e, agent, _) = remote_with(Path::new("/"), None, Some(ops.clone()));
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -110,11 +111,12 @@ fn a_read_only_remote_engine_deletes_nothing() {
             writer: Box::new(down_w),
             child: None,
         },
+        Path::new("/"),
         None,
     )
     .unwrap();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -136,6 +138,7 @@ fn a_read_only_remote_engine_deletes_nothing() {
 /// first handle ends when the link does.
 fn cut_at_delete(
     ops: std::path::PathBuf,
+    root: &Path,
     rules: Option<RemoteRules>,
 ) -> (
     Engine<PortableBackend>,
@@ -193,6 +196,7 @@ fn cut_at_delete(
             writer: Box::new(down_w),
             child: None,
         },
+        root,
         rules,
     )
     .unwrap();
@@ -206,9 +210,9 @@ fn a_link_lost_during_a_delete_ends_the_plan() {
     let root = base.join("t");
     fs::create_dir_all(root.join("d")).unwrap();
     fs::write(root.join("d/f"), b"x").unwrap();
-    let (e, _, relay, agent) = cut_at_delete(base.join("ops"), None);
+    let (e, _, relay, agent) = cut_at_delete(base.join("ops"), Path::new("/"), None);
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -290,7 +294,7 @@ fn extents_are_measured_on_the_agent() {
     let (_tmp, root, shares) = clones();
     let local = Engine::start(PortableBackend::default(), opts());
     local.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -300,7 +304,7 @@ fn extents_are_measured_on_the_agent() {
 
     let (e, agent) = remote();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -319,7 +323,7 @@ fn extents_are_measured_on_the_agent() {
             },
         );
         e.send(Command::Scan {
-            path: root.clone(),
+            path: root.clone().into(),
             opts: JobOptions::default(),
         });
         assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
@@ -356,7 +360,9 @@ fn a_link_lost_while_measuring_leaves_files_unmeasured() {
         let (mut r, mut w) = (agent_r, up_w);
         let mut buf = Vec::new();
         while read_frame(&mut r, &mut buf).unwrap() {
-            if let Ok(FromAgent::Measured(_)) = FromAgent::decode(&buf, None) {
+            if let Ok(FromAgent::Measured(_)) =
+                FromAgent::decode(&buf, None, dfdu_tree::Host::LOCAL)
+            {
                 break;
             }
             write_frame(&mut w, &buf).unwrap();
@@ -370,12 +376,13 @@ fn a_link_lost_while_measuring_leaves_files_unmeasured() {
             writer: Box::new(down_w),
             child: None,
         },
+        Path::new("/"),
         None,
     )
     .unwrap();
     let t = std::time::Instant::now();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
@@ -416,17 +423,14 @@ command = ["sleep", "30"]
 "#;
 
 #[cfg(unix)]
-fn native_rules(root: &std::path::Path) -> RemoteRules {
+fn native_rules() -> RemoteRules {
     let (mut files, errors) = dfdu_rules::sources(None);
     assert!(errors.is_empty(), "{errors:?}");
     files.push((
         dfdu_rules::Source::File("/rules/junk.toml".into()),
         NATIVE_RULE.into(),
     ));
-    RemoteRules {
-        files,
-        root: root.to_path_buf(),
-    }
+    RemoteRules { files }
 }
 
 /// Native commands of the rules run on the agent's host: the dry run's output comes back, the
@@ -443,9 +447,9 @@ fn native_commands_run_on_the_agent() {
     fs::write(root.join("junk/a.o"), vec![0u8; 9000]).unwrap();
     fs::create_dir_all(root.join("other")).unwrap();
     let ops = base.join("state/ops");
-    let (e, agent, class) = remote_with(Some(native_rules(&root)), Some(ops.clone()));
+    let (e, agent, class) = remote_with(&root, Some(native_rules()), Some(ops.clone()));
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class,
             ..JobOptions::default()
@@ -511,9 +515,9 @@ fn a_link_lost_during_a_native_command_ends_it() {
     let base = dunce::canonicalize(tmp.path()).unwrap();
     let root = base.join("p");
     fs::create_dir_all(root.join("junk")).unwrap();
-    let (e, class, relay, agent) = cut_at_delete(base.join("ops"), Some(native_rules(&root)));
+    let (e, class, relay, agent) = cut_at_delete(base.join("ops"), &root, Some(native_rules()));
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: JobOptions {
             class,
             ..JobOptions::default()

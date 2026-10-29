@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::Sender;
-use dfdu_tree::{NodeRef, RuleIx};
+use dfdu_tree::{HostPath, NodeRef, RuleIx};
 use parking_lot::Mutex;
 
 use crate::threads::spawn_pool;
@@ -30,7 +30,7 @@ pub enum CheckReq {
     Guards {
         node: NodeRef,
         rule: RuleIx,
-        path: PathBuf,
+        path: HostPath,
         vcs: bool,
         processes: Vec<String>,
     },
@@ -96,7 +96,11 @@ pub fn check_batch(batch: &[CheckReq]) -> Vec<CheckMsg> {
             } => CheckMsg::Guards {
                 node: *node,
                 rule: *rule,
-                tracked: if *vcs { git_tracked(path) } else { Some(false) },
+                tracked: if *vcs {
+                    git_tracked(&path.to_local())
+                } else {
+                    Some(false)
+                },
                 running: procs.as_ref().and_then(|p| {
                     processes
                         .iter()

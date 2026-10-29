@@ -1,12 +1,12 @@
 //! Native cleanup commands of rules.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dfdu_clean::DeleterReq;
 use dfdu_scan::Backend;
-use dfdu_tree::{NodeRef, RuleIx};
+use dfdu_tree::{HostPath, NodeRef, RuleIx};
 
 use super::{Applier, Model, NativeRun};
 
@@ -28,7 +28,7 @@ impl<B: Backend> Applier<B> {
         let Some(class) = m.tree.class(ix) else {
             return;
         };
-        let path = m.tree.path_buf(ix);
+        let path = m.tree.host_path(ix);
         let Some(req) = variant
             .map_or(Some(None), |v| u16::try_from(v).ok().map(Some))
             .and_then(|v| native_req(&rules, class.rule, v, &path, dry_run, id))
@@ -54,7 +54,7 @@ impl<B: Backend> Applier<B> {
 
 /// A rule's native command as it runs for the matched node at `path`.
 #[must_use]
-pub fn native_argv(argv: &[String], path: &Path) -> Vec<String> {
+pub fn native_argv(argv: &[String], path: &HostPath) -> Vec<String> {
     argv.iter().map(|a| native_var(a, path)).collect()
 }
 
@@ -65,7 +65,7 @@ pub(crate) fn native_req(
     rules: &dfdu_rules::RuleSet,
     rule: RuleIx,
     variant: Option<u16>,
-    path: &Path,
+    path: &HostPath,
     dry_run: bool,
     id: u64,
 ) -> Option<dfdu_clean::NativeReq> {
@@ -95,19 +95,20 @@ pub(crate) fn native_req(
         rule: Some(dfdu_clean::NativeRule {
             rule,
             variant,
-            path: path.to_path_buf(),
+            path: path.clone(),
         }),
     })
 }
 
 /// Expands the variables a native command may use, for the matched node at `path`: `{path}`,
 /// `{parent}`, `{name}` and `{name_stem}`.
-fn native_var(arg: &str, path: &Path) -> String {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let raw = dfdu_tree::name_bytes(path.file_name().unwrap_or_default());
-    let stem = String::from_utf8_lossy(dfdu_rules::stem(&raw));
-    arg.replace("{path}", &path.to_string_lossy())
-        .replace("{parent}", &path.parent().unwrap_or(path).to_string_lossy())
+fn native_var(arg: &str, path: &HostPath) -> String {
+    let raw = path.file_name().unwrap_or_default();
+    let name = String::from_utf8_lossy(raw);
+    let stem = String::from_utf8_lossy(dfdu_rules::stem(raw));
+    let parent = path.parent();
+    arg.replace("{path}", &path.display())
+        .replace("{parent}", &parent.as_ref().unwrap_or(path).display())
         .replace("{name_stem}", &stem)
         .replace("{name}", &name)
 }
@@ -115,6 +116,7 @@ fn native_var(arg: &str, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dfdu_tree::Host;
 
     #[test]
     fn variables_expand_for_the_matched_node() {
@@ -128,7 +130,10 @@ mod tests {
             "{path}",
         ]
         .map(String::from);
-        let got = native_argv(&argv, Path::new("/srv/web/src.tar.gz"));
+        let got = native_argv(
+            &argv,
+            &HostPath::new(Host::Unix, b"/srv/web/src.tar.gz".to_vec()),
+        );
         assert_eq!(
             got,
             [

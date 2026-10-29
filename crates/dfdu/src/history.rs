@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::Args;
 use dfdu_engine::{EngineOptions, Model};
 use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
-use dfdu_tree::{Ix, now_secs};
+use dfdu_tree::{HostPath, Ix, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::report::{ReportFormat, age_arg, size_arg};
@@ -366,7 +366,7 @@ fn print_json(
     total: Option<&Change>,
     shown: &[&Change],
 ) -> std::io::Result<()> {
-    let mut doc = js::document(root);
+    let mut doc = js::document(&HostPath::local(root));
     doc.insert("old".into(), side_json(old));
     doc.insert("new".into(), side_json(new));
     let get = |s: &Side| s.sizes.get(&b""[..]).copied();

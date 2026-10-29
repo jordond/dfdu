@@ -214,6 +214,8 @@ fn sample() -> Vec<FromAgent> {
         FromAgent::Host {
             measure_min: 1 << 20,
             privileged: true,
+            host: dfdu_tree::Host::Windows,
+            root: b"C:\\Users\\u".to_vec(),
         },
         FromAgent::Measured(vec![
             MeasureMsg {
@@ -316,11 +318,14 @@ fn messages_round_trip() {
     let (set, rule) = rules();
     for up in sample() {
         let bytes = up.encode();
-        let back = FromAgent::decode(&bytes, Some(&set)).unwrap();
+        let back = FromAgent::decode(&bytes, Some(&set), dfdu_tree::Host::LOCAL).unwrap();
         assert_eq!(back.encode(), bytes, "{up:?}");
     }
     let downs = [
-        ToAgent::Hello { version: 1 },
+        ToAgent::Hello {
+            version: 1,
+            root: b"/home/u".to_vec(),
+        },
         ToAgent::Rules {
             files: vec![
                 (None, "[[rule]]".into()),
@@ -393,6 +398,38 @@ fn messages_round_trip() {
 
 /// A class is written as the rule's index (a varint), the safety level's number, the
 /// `degrade` condition and the flags; a safety number past the last level is refused.
+/// Paths from the agent are on its host, whatever this one is: a Unix host's name holding `\`
+/// or bytes that are not UTF-8 comes back as sent, and a Windows host's path keeps its
+/// separators, tagged with the host the local side was told of.
+#[test]
+fn paths_come_back_on_the_agents_host() {
+    use dfdu_tree::{Host, HostPath};
+    for (host, original) in [
+        (Host::Unix, &b"/home/u/a\\b/caf\xe9"[..]),
+        (Host::Windows, b"C:\\Users\\u\\proj"),
+    ] {
+        let original = HostPath::new(host, original.to_vec());
+        let up = FromAgent::Deleter(DeleterMsg::Restored {
+            plan: 1,
+            original: original.clone(),
+            staged: false,
+            bytes: 1,
+            result: Ok(original.join(b"x")),
+        });
+        let FromAgent::Deleter(DeleterMsg::Restored {
+            original: o,
+            result: Ok(r),
+            ..
+        }) = FromAgent::decode(&up.encode(), None, host).unwrap()
+        else {
+            panic!("not a restore");
+        };
+        assert_eq!(o, original);
+        assert_eq!((r.host(), r.file_name()), (host, Some(&b"x"[..])));
+        assert_eq!(r.parent(), Some(original));
+    }
+}
+
 #[test]
 fn class_layout() {
     let c = Class {
@@ -453,7 +490,7 @@ fn frames_are_checked() {
     let mut n = 0;
     let set = rules().0;
     while read_frame(&mut r, &mut buf).unwrap() {
-        FromAgent::decode(&buf, Some(&set)).unwrap();
+        FromAgent::decode(&buf, Some(&set), dfdu_tree::Host::LOCAL).unwrap();
         n += 1;
     }
     assert_eq!(n, sample().len());
@@ -483,12 +520,14 @@ fn damaged_payloads_never_panic() {
     for up in sample() {
         let bytes = up.encode();
         for cut in 0..bytes.len() {
-            assert!(FromAgent::decode(&bytes[..cut], Some(&set)).is_err());
+            assert!(FromAgent::decode(&bytes[..cut], Some(&set), dfdu_tree::Host::LOCAL).is_err());
         }
         for i in 0..bytes.len() * 8 {
             let mut b = bytes.clone();
             b[i / 8] ^= 1 << (i % 8);
-            if let Ok(FromAgent::Batch(msgs)) = FromAgent::decode(&b, Some(&set)) {
+            if let Ok(FromAgent::Batch(msgs)) =
+                FromAgent::decode(&b, Some(&set), dfdu_tree::Host::LOCAL)
+            {
                 for m in msgs {
                     if let ScanMsg::Chunk(c) = m {
                         // Reading names must not panic.
@@ -505,13 +544,13 @@ fn damaged_payloads_never_panic() {
     }
     // Classes of rules the local side does not have are refused, and any without rules.
     let batch = &sample()[1];
-    assert!(FromAgent::decode(&batch.encode(), None).is_err());
+    assert!(FromAgent::decode(&batch.encode(), None, dfdu_tree::Host::LOCAL).is_err());
     let few = dfdu_rules::load_from(
         &dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[]),
         &[],
     )
     .0;
-    assert!(FromAgent::decode(&batch.encode(), Some(&few)).is_err());
+    assert!(FromAgent::decode(&batch.encode(), Some(&few), dfdu_tree::Host::LOCAL).is_err());
     for d in [
         ToAgent::Rules {
             files: vec![(Some("a".into()), "x".into())],
@@ -538,5 +577,5 @@ fn damaged_payloads_never_panic() {
     {
         me.ranges[0] = (9, 8);
     }
-    assert!(FromAgent::decode(&m.encode(), None).is_err());
+    assert!(FromAgent::decode(&m.encode(), None, dfdu_tree::Host::LOCAL).is_err());
 }

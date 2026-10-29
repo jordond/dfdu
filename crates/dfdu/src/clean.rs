@@ -13,7 +13,7 @@ use clap::Args;
 use dfdu_engine::{Command, Engine, Mode, Model, WaitIdle};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, NodeRef};
+use dfdu_tree::{Class, HostPath, NodeRef};
 use serde_json::{Value, json};
 
 use crate::report::{self, Filter, Item};
@@ -455,7 +455,7 @@ fn print_json(m: &Model, rules: &RuleSet, args: &CleanArgs, r: &Results) -> std:
         complete,
         now,
     } = r;
-    let mut doc = js::document(root);
+    let mut doc = js::document(&HostPath::local(root));
     doc.insert("generated_at".into(), now.into());
     doc.insert("complete".into(), complete.into());
     doc.insert("dry_run".into(), (!args.yes).into());

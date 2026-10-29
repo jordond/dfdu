@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 
 use dfdu_rules::{Linked, RuleSet};
 use dfdu_sys::MountInfo;
-use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
+use dfdu_tree::{DirState, Host, HostPath, Ix, NodeFlags, Tree};
 use ratatui::text::Line;
 
 use crate::app::App;
@@ -29,7 +29,7 @@ const VIEW_MAX: usize = 3;
 pub struct Outside {
     /// Look things up on this machine; off for imported and remote scans, and in tests.
     pub local: bool,
-    mounts: HashMap<PathBuf, Arc<OnceLock<Option<MountInfo>>>>,
+    mounts: HashMap<HostPath, Arc<OnceLock<Option<MountInfo>>>>,
     linked: Option<Arc<OnceLock<Vec<Linked>>>>,
     /// Lookups that had ended when last polled.
     done: usize,
@@ -38,7 +38,7 @@ pub struct Outside {
 impl Outside {
     /// The mount at `path`, once looked up.
     #[must_use]
-    pub fn mount(&self, path: &Path) -> Option<&MountInfo> {
+    pub fn mount(&self, path: &HostPath) -> Option<&MountInfo> {
         self.mounts.get(path)?.get()?.as_ref()
     }
 
@@ -69,7 +69,7 @@ impl Outside {
 
     /// Records `info` for the mount at `path`, as a lookup would.
     #[cfg(test)]
-    pub fn set_mount(&mut self, path: PathBuf, info: Option<MountInfo>) {
+    pub fn set_mount(&mut self, path: HostPath, info: Option<MountInfo>) {
         self.mounts.insert(path, Arc::new(OnceLock::from(info)));
     }
 
@@ -104,7 +104,7 @@ pub fn request(app: &mut App) {
         let spawned = std::thread::Builder::new()
             .name("dfdu-mounts".into())
             .spawn(move || {
-                let paths: Vec<PathBuf> = new.iter().map(|(p, _)| p.clone()).collect();
+                let paths: Vec<PathBuf> = new.iter().map(|(p, _)| p.to_local()).collect();
                 let found = dfdu_sys::mounts_at(&paths, dfdu_sys::DISK_TIMEOUT);
                 for ((_, lock), info) in new.iter().zip(found) {
                     let _ = lock.set(info);
@@ -116,9 +116,9 @@ pub fn request(app: &mut App) {
         }
     }
     if let (None, Some(rules)) = (&o.linked, &app.snap.rules)
-        && !app.snap.root_path.as_os_str().is_empty()
+        && !app.snap.root_path.is_empty()
     {
-        let (rules, root) = (rules.clone(), app.snap.root_path.clone());
+        let (rules, root) = (rules.clone(), app.snap.root_path.to_local());
         let lock: Arc<OnceLock<Vec<Linked>>> = Arc::default();
         let set = lock.clone();
         let _ = std::thread::Builder::new()
@@ -144,7 +144,7 @@ pub fn describe(info: &MountInfo) -> String {
 /// with its used and total space, once looked up (only the type for a network filesystem,
 /// which is never asked), and the key that scans it.
 #[must_use]
-pub fn pane_lines(app: &App, path: &Path) -> (Option<String>, String) {
+pub fn pane_lines(app: &App, path: &HostPath) -> (Option<String>, String) {
     let info = app.outside.mount(path).map(|i| match (i.used, i.total) {
         (Some(u), Some(t)) => format!(
             "{} · {} used of {}, not counted here",
@@ -179,16 +179,27 @@ pub fn row_note(app: &App, index: usize) -> String {
     }
 }
 
-/// `path` with the home directory shown as `~`.
+/// `path` with the home directory shown as `~`. `home` is this machine's: a path on another
+/// host is shown as it is, and callers pass no `home` for a scan of another machine.
 #[must_use]
-pub fn tilde(path: &Path, home: Option<&Path>) -> String {
+pub fn tilde(path: &HostPath, home: Option<&Path>) -> String {
     // A home directory of `/` would turn every path into `~/...`.
-    let home = home.filter(|h| h.parent().is_some());
-    match home.and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rel) if rel.as_os_str().is_empty() => "~".into(),
-        Some(rel) => format!("~/{}", rel.display()),
-        None => path.display().to_string(),
+    let home = home.filter(|h| h.parent().is_some() && path.host() == Host::LOCAL);
+    let home = home.map(HostPath::local);
+    match home.as_ref().and_then(|h| rel_text(path, h)) {
+        Some(rel) if rel.is_empty() => "~".into(),
+        Some(rel) => format!("~/{rel}"),
+        None => path.to_string(),
     }
+}
+
+/// `path` below `base` as text, with the host's separators: empty for `base` itself, `None`
+/// when it is not below it.
+#[must_use]
+pub fn rel_text(path: &HostPath, base: &HostPath) -> Option<String> {
+    let sep = [path.host().sep()];
+    let rel = path.rel(base)?;
+    Some(String::from_utf8_lossy(&rel.join(&sep[..])).into_owned())
 }
 
 /// The user's home directory with links resolved, as scan paths are.
@@ -213,7 +224,7 @@ pub fn linked_note(rules: &RuleSet, l: &Linked, home: Option<&Path>, command: &s
     };
     format!(
         "{} is a link to {} ({what}), not scanned: {command} {}",
-        tilde(&l.link, home),
+        tilde(&HostPath::local(&l.link), home),
         l.target.display(),
         l.target.display()
     )
@@ -247,7 +258,7 @@ pub fn view_lines(app: &App, rules: &RuleSet) -> Vec<Line<'static>> {
 /// A mount the scan listed but did not enter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotEntered {
-    pub path: PathBuf,
+    pub path: HostPath,
     /// A network filesystem, entered with `--network`; the others with `--cross-mounts`.
     pub network: bool,
 }
@@ -280,7 +291,7 @@ pub fn not_entered(tree: &Tree, root: Ix) -> Vec<NotEntered> {
             && !f.has(NodeFlags::DUP_MOUNT)
         {
             out.push(NotEntered {
-                path: tree.path_buf(ix),
+                path: tree.host_path(ix),
                 network: f.has(NodeFlags::NETWORK),
             });
         }

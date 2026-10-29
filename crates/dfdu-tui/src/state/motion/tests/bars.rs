@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use dfdu_tree::HostPath;
 
 use super::*;
 
@@ -43,7 +43,7 @@ fn entering_a_directory_does_not_animate() {
     render_buffer(&mut app, t0, W, H);
     // The same nodes in another directory, with other sizes: no bar starts from the old length.
     let mut sub = snap_with_alloc(vec![test_entry(0, "a", 100), test_entry(1, "b", 900)], 2);
-    sub.dir_path = PathBuf::from("/r/sub");
+    sub.dir_path = HostPath::from("/r/sub");
     sub.dir_node = Some(test_entry(98, "/r/sub", 0).node);
     sub.at_root = false;
     let t1 = t0 + ms(50);

@@ -7,6 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Overlay};
+use crate::model::outside::rel_text;
 use crate::theme::count;
 
 /// Cursor keys move, `Enter` (or `→`, `l`) goes to the entry, any other key closes the list.
@@ -60,11 +61,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         .skip(top)
         .take(rows)
         .map(|(i, e)| {
-            let rel = e.path.strip_prefix(&list.root).unwrap_or(&e.path);
-            let mut path = if rel.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                rel.display().to_string()
+            let mut path = match rel_text(&e.path, &list.root) {
+                Some(rel) if rel.is_empty() => ".".to_string(),
+                Some(rel) => rel,
+                None => e.path.to_string(),
             };
             if e.is_dir {
                 path.push('/');

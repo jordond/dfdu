@@ -34,12 +34,7 @@ fn open_from_palette(app: &mut App, t0: Instant) {
 fn marked(app: &App) -> Vec<String> {
     let mut names: Vec<String> = (app.marks.items().iter())
         .map(|it| {
-            it.target
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
+            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
         })
         .collect();
     names.sort();

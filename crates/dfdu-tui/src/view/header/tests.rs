@@ -9,10 +9,10 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::*;
 use crate::model::snapshot::Snapshot;
-use crate::tests::{press, render_buffer, snap_without_totals, style_at, text};
+use crate::tests::{below, press, render_buffer, snap_without_totals, style_at, text};
 
 fn texts(dir: &str, root: &str, home: Option<&str>) -> Vec<String> {
-    segments(Path::new(dir), Path::new(root), home.map(Path::new))
+    segments(&dir.into(), &root.into(), home.map(Path::new))
         .into_iter()
         .map(|s| s.text)
         .collect()
@@ -60,7 +60,7 @@ fn breadcrumbs_show_path_below_root() {
     let children: Vec<_> = app.mouse.crumbs.iter().map(|c| c.child.clone()).collect();
     assert_eq!(
         children,
-        ["/srv/data/dev", "/srv/data/dev/rust"].map(PathBuf::from)
+        [below("/srv/data", "dev"), below("/srv/data", "dev/rust")]
     );
 }
 
@@ -77,7 +77,13 @@ fn long_paths_collapse_from_the_left() {
         .iter()
         .map(|c| (c.area, c.child.clone()))
         .collect();
-    assert_eq!(crumbs, [(Rect::new(11, 0, 3, 1), PathBuf::from(dir))]);
+    assert_eq!(
+        crumbs,
+        [(
+            Rect::new(11, 0, 3, 1),
+            below("/srv/data", "projects/rust/dfdu/src/ui")
+        )]
+    );
 
     let (_, buf) = browser(dir, "/srv/data", Theme::no_color(), 100);
     let first = first_line(&buf);
@@ -181,7 +187,7 @@ fn header_shows_the_home_directory_as_tilde() {
     let first = first_line(&render_buffer(&mut app, t0, 80, 8));
     assert!(first.starts_with(" dfdu  ~ › dev "), "{first}");
     let crumbs: Vec<_> = app.mouse.crumbs.iter().map(|c| c.child.clone()).collect();
-    assert_eq!(crumbs, [PathBuf::from("/home/jo/dev")]);
+    assert_eq!(crumbs, [crate::tests::below("/home/jo", "dev")]);
 }
 
 /// 2026-10-18 12:00 UTC, when the last recorded scan finished.

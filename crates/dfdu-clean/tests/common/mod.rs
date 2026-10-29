@@ -39,7 +39,7 @@ pub fn item(tree: &mut Tree, path: PathBuf, identity: Identity) -> PlanItem {
     let r = tree.new_root(b"/", &m, false);
     PlanItem {
         node: tree.node_ref(r),
-        path,
+        path: path.into(),
         identity,
         bytes: 0,
         inside: std::sync::Arc::default(),

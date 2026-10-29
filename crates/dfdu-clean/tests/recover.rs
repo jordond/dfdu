@@ -32,7 +32,7 @@ fn plan(root: &Path, n: usize) -> Plan {
     Plan {
         id: 1,
         mode: Mode::Stage,
-        scan_root: root.to_path_buf(),
+        scan_root: root.into(),
         items: vec![common::item(&mut Tree::new(), junk, identity)],
         protected: None,
     }

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use clap::Args;
 use dfdu_engine::{Command, Engine, EngineOptions, SizeMode};
 use dfdu_scan::{Backend, JobOptions, PortableBackend};
+use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
@@ -139,13 +140,14 @@ pub fn run(args: ScanArgs) -> ExitCode {
     let key = dfdu_store::history::options_key(&args.mounts.job(), opts.measure_workers > 0);
     // The agent scans with its own workers; the path is on its host, not this one.
     if let Some(host) = args.remote.as_deref() {
-        return match remote::engine(host, opts, args.rules.remote(&args.path)) {
-            Ok((e, class)) => {
+        let rules = args.rules.remote();
+        return match remote::engine(host, opts, &args.path, rules) {
+            Ok((e, class, root)) => {
                 let job = JobOptions {
                     class,
                     ..args.mounts.job()
                 };
-                scan_with(e, job, &key, args)
+                scan_with(e, job, root, &key, args)
             }
             Err(code) => code,
         };
@@ -156,35 +158,42 @@ pub fn run(args: ScanArgs) -> ExitCode {
         eprintln!("storage: {storage:?}, {} workers", opts.workers);
     }
     let job = local.job(&args.path);
+    let root = HostPath::local(&args.path);
     match args.backend {
         BackendArg::Native if inject::requested() => scan_with(
             Engine::start(inject::PanicOnSecondOpen::new(local.backend(storage)), opts),
             job,
+            root,
             &key,
             args,
         ),
-        BackendArg::Native => {
-            scan_with(Engine::start(local.backend(storage), opts), job, &key, args)
-        }
+        BackendArg::Native => scan_with(
+            Engine::start(local.backend(storage), opts),
+            job,
+            root,
+            &key,
+            args,
+        ),
         BackendArg::Portable => scan_with(
             Engine::start(PortableBackend::default(), opts),
             job,
+            root,
             &key,
             args,
         ),
     }
 }
 
-/// Runs the scan of `args.path` with `engine` and `job`, prints it, and records it in the
-/// history under `key`.
+/// Runs the scan of `root` (`args.path`, or where the agent resolved it) with `engine` and
+/// `job`, prints it, and records it in the history under `key`.
 fn scan_with<B: Backend>(
     engine: Engine<B>,
     job: JobOptions,
+    root: HostPath,
     key: &str,
     args: ScanArgs,
 ) -> ExitCode {
     let ScanArgs {
-        path,
         format,
         depth,
         top,
@@ -203,7 +212,13 @@ fn scan_with<B: Backend>(
     let no_history = no_history || remote.is_some();
     let t0 = Instant::now();
     let started = dfdu_tree::now_secs();
-    let engine = match launch::run_scan(engine, Command::Scan { path, opts: job }) {
+    let engine = match launch::run_scan(
+        engine,
+        Command::Scan {
+            path: root,
+            opts: job,
+        },
+    ) {
         Ok(e) => e,
         Err(code) => return code,
     };

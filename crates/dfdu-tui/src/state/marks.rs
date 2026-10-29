@@ -6,12 +6,10 @@
 //! marking one unmarks the other ([`exclusive`]), as marking a container in the cleanup view
 //! marks only its rest.
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use dfdu_engine::{JobKind, JobPhase, Model};
-use dfdu_tree::{DirState, Ix, NodeRef, name_bytes};
+use dfdu_tree::{DirState, HostPath, Ix, NodeRef};
 use ratatui::text::Span;
 
 use crate::app::App;
@@ -48,7 +46,7 @@ pub struct Marks {
     /// The `version` the last [`apply`] took in.
     applied: u64,
     /// The directory a range mark is going on in ([`range`]).
-    range: Option<std::path::PathBuf>,
+    range: Option<HostPath>,
 }
 
 impl Marks {
@@ -87,22 +85,28 @@ impl Marks {
     /// ancestors is marked, so this costs a set lookup per mark and path component.
     fn index(&mut self) {
         self.nodes = self.items.iter().filter_map(|it| it.target.node).collect();
-        let paths: HashSet<&Path> = self.items.iter().map(|it| &*it.target.path).collect();
+        let paths: HashSet<&HostPath> = self.items.iter().map(|it| &it.target.path).collect();
         let inside: Vec<bool> = self
             .items
             .iter()
-            .map(|it| {
-                it.target
-                    .path
-                    .ancestors()
-                    .skip(1)
-                    .any(|a| paths.contains(a))
-            })
+            .map(|it| below_any(&it.target.path, &paths))
             .collect();
         for (it, inside) in self.items.iter_mut().zip(inside) {
             it.inside = inside;
         }
     }
+}
+
+/// Whether one of the directories `path` is in is among `paths`.
+fn below_any(path: &HostPath, paths: &HashSet<&HostPath>) -> bool {
+    let mut at = path.parent();
+    while let Some(a) = at {
+        if paths.contains(&a) {
+            return true;
+        }
+        at = a.parent();
+    }
+    false
 }
 
 /// What [`read`] found for each mark, in the order of [`Marks::items`].
@@ -166,7 +170,7 @@ pub fn toggle(app: &mut App) {
 
 /// Unmarks what is inside `path` and the directories it is in, before `path` is marked in tree
 /// mode.
-fn exclusive(marks: &mut Marks, path: &Path) {
+fn exclusive(marks: &mut Marks, path: &HostPath) {
     marks
         .items
         .retain(|it| !it.target.path.starts_with(path) && !path.starts_with(&it.target.path));
@@ -228,7 +232,7 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
     }
     let tree = app.tree_shown().is_some();
     let marks = &mut app.marks;
-    let mut paths: HashSet<std::path::PathBuf> = marks
+    let mut paths: HashSet<HostPath> = marks
         .items
         .iter()
         .map(|it| it.target.path.clone())
@@ -244,12 +248,11 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
     let mut dropped = 0;
     if tree && added > 0 {
         // What is inside a marked directory is left out, whether it was marked before or now.
-        let paths: HashSet<&Path> = marks.items.iter().map(|it| &*it.target.path).collect();
-        let below = |p: &Path| p.ancestors().skip(1).any(|a| paths.contains(a));
+        let paths: HashSet<&HostPath> = marks.items.iter().map(|it| &it.target.path).collect();
         let kept: Vec<bool> = marks
             .items
             .iter()
-            .map(|it| !below(&it.target.path))
+            .map(|it| !below_any(&it.target.path, &paths))
             .collect();
         added = kept[before..].iter().filter(|&&k| k).count();
         dropped = kept[..before].iter().filter(|&&k| !k).count();
@@ -320,7 +323,7 @@ pub fn read(m: &Model, app: &App) -> Marked {
         .iter()
         .map(|it| it.target.node.and_then(|r| tree.resolve_visible(r)))
         .collect();
-    let mut lost: HashMap<&Path, HashMap<Cow<'_, [u8]>, Vec<usize>>> = HashMap::new();
+    let mut lost: HashMap<HostPath, HashMap<&[u8], Vec<usize>>> = HashMap::new();
     for (i, it) in items.iter().enumerate() {
         if ixs[i].is_some() {
             continue;
@@ -330,14 +333,14 @@ pub fn read(m: &Model, app: &App) -> Marked {
             (Some(dir), Some(name)) => lost
                 .entry(dir)
                 .or_default()
-                .entry(name_bytes(name))
+                .entry(name)
                 .or_default()
                 .push(i),
             _ => ixs[i] = it.target.resolve(tree),
         }
     }
     for (dir, mut names) in lost {
-        let Some(d) = find_path(tree, dir) else {
+        let Some(d) = find_path(tree, &dir) else {
             for i in names.into_values().flatten() {
                 ixs[i] = items[i].target.resolve(tree);
             }
@@ -429,15 +432,15 @@ pub fn invert(app: &mut App) {
         return;
     }
     let marks = &mut app.marks;
-    let paths: HashSet<&Path> = marks.items.iter().map(|it| &*it.target.path).collect();
+    let paths: HashSet<&HostPath> = marks.items.iter().map(|it| &it.target.path).collect();
     let marked = |it: &Item| {
-        it.target.node.is_some_and(|n| marks.nodes.contains(&n)) || paths.contains(&*it.target.path)
+        it.target.node.is_some_and(|n| marks.nodes.contains(&n)) || paths.contains(&it.target.path)
     };
     let (off, on): (Vec<Item>, Vec<Item>) = rows.into_iter().partition(marked);
-    let gone: HashSet<&Path> = off.iter().map(|it| &*it.target.path).collect();
+    let gone: HashSet<&HostPath> = off.iter().map(|it| &it.target.path).collect();
     let gone_nodes: HashSet<NodeRef> = off.iter().filter_map(|it| it.target.node).collect();
     marks.items.retain(|it| {
-        !gone.contains(&*it.target.path) && !it.target.node.is_some_and(|n| gone_nodes.contains(&n))
+        !gone.contains(&it.target.path) && !it.target.node.is_some_and(|n| gone_nodes.contains(&n))
     });
     let (marked, unmarked) = (on.len(), off.len());
     marks.items.extend(on);

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, ErrorList, SizeMode};
-use dfdu_tree::NodeRef;
+use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
@@ -151,7 +151,8 @@ pub struct App {
     pub extras: Extras,
     /// Where the last frame drew each part of the screen.
     pub areas: Areas,
-    /// The user's home directory, shown as `~` in the breadcrumbs.
+    /// The user's home directory, shown as `~` in the breadcrumbs; `None` for a scan that is
+    /// not of this machine.
     pub home: Option<PathBuf>,
     /// The sizes of the last recorded scan of this root, to show what grew since.
     pub growth: Option<std::sync::Arc<dfdu_store::history::Growth>>,
@@ -171,7 +172,7 @@ pub struct App {
     /// The user moved the cursor in the current directory; re-sorts then follow the selected
     /// row instead of returning to the top.
     moved: bool,
-    cursors: HashMap<PathBuf, Cursor>,
+    cursors: HashMap<HostPath, Cursor>,
     /// Row where [`App::selected_index`] last found the selection.
     sel_hint: Cell<usize>,
 }
@@ -397,10 +398,7 @@ impl App {
         let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
             return;
         };
-        let (parent, name) = (
-            parent.to_path_buf(),
-            dfdu_tree::name_bytes(name).into_owned(),
-        );
+        let name = name.to_vec();
         let saved = self.cursors.get(&parent).cloned();
         self.target = Target {
             node: None,
@@ -423,7 +421,7 @@ impl App {
     }
 
     /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
-    pub(crate) fn go_to(&mut self, path: &std::path::Path, root: &std::path::Path) {
+    pub(crate) fn go_to(&mut self, path: &HostPath, root: &HostPath) {
         let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
             return;
         };
@@ -433,14 +431,14 @@ impl App {
         self.save_cursor();
         self.target = Target {
             node: None,
-            path: parent.to_path_buf(),
+            path: parent,
             ident: None,
         };
         self.moved = true;
         self.scroll = 0;
         self.selected = Some(Selection {
             node: None,
-            name: dfdu_tree::name_bytes(name).into_owned(),
+            name: name.to_vec(),
             dev_ino: (0, 0),
         });
     }

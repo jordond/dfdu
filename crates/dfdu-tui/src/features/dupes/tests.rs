@@ -30,7 +30,7 @@ fn duplicates_are_found_marked_and_shown() {
         },
     );
     engine.send(EngineCommand::Scan {
-        path: dir.clone(),
+        path: dir.clone().into(),
         opts: JobOptions::default(),
     });
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
@@ -41,6 +41,15 @@ fn duplicates_are_found_marked_and_shown() {
     app.target = target;
     app.refresh(snap, t0);
 
+    // Another machine's tree (remote or from a file) is not compared with this one's files.
+    assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
+    assert!(
+        app.status
+            .as_deref()
+            .unwrap()
+            .contains("this machine's files")
+    );
+    app.outside.local = true;
     let fx = app.key(press(KeyCode::Char('4')), t0);
     assert!(matches!(fx[..], [Effect::FindDupes]));
     let (root, cands) = engine.read(|m| {

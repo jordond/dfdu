@@ -32,7 +32,7 @@ fn root_total(e: &Engine<PortableBackend>) -> Totals {
 fn scan(root: &Path) -> (Vec<u8>, Totals) {
     let e = engine();
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
@@ -276,7 +276,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
     };
     let e = engine();
     e.send(Command::Scan {
-        path: root.clone(),
+        path: root.clone().into(),
         opts: opts(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());

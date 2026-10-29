@@ -57,7 +57,7 @@ fn engine<B: Backend>(backend: B, journal: Option<PathBuf>, read_only: bool) -> 
 
 fn scan<B: Backend>(e: &Engine<B>, root: &Path) {
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());

@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 
 use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
 use dfdu_engine::Model;
-use dfdu_tree::{Kind, NodeRef};
+use dfdu_tree::{HostPath, Kind, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Effect};
@@ -124,6 +124,14 @@ pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
 }
 
 fn start(app: &mut App) -> Vec<Effect> {
+    // The comparison reads the files here: for another machine's tree it would read this
+    // one's files at the same paths, and a delete would then remove the other's.
+    if !app.outside.local {
+        app.status = Some(
+            "duplicates reads this machine's files; this scan is remote or from a file".into(),
+        );
+        return Vec::new();
+    }
     if app.snap.busy {
         app.status = Some("duplicates: wait until the scan is done, then press r".into());
         return Vec::new();
@@ -181,7 +189,7 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
             let node = match app.extras.dupes.get(&c.path) {
                 Some(Some(n)) => m.tree.resolve_visible(*n).map(|_| *n),
                 Some(None) => None,
-                None => crate::model::snapshot::find_path(&m.tree, &c.path)
+                None => crate::model::snapshot::find_path(&m.tree, &HostPath::local(&c.path))
                     .filter(|&ix| m.tree.dev_ino(ix) == c.dev_ino)
                     .map(|ix| m.tree.node_ref(ix)),
             };
@@ -224,7 +232,7 @@ fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
     marks::Item {
         target: Target {
             node: Some(node),
-            path: c.path.clone(),
+            path: HostPath::local(&c.path),
             ident: Some(Ident {
                 dev_ino: c.dev_ino,
                 kind: Kind::File,
@@ -353,7 +361,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                     app.dupes.run.as_ref()?.root.clone(),
                 );
                 app.dupes.on = false;
-                app.go_to(&path, &root);
+                app.go_to(&HostPath::local(&path), &HostPath::local(&root));
             }
         }
         _ => return None,

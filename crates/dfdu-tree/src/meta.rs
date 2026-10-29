@@ -13,7 +13,9 @@ pub enum Kind {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Meta {
     pub kind: Kind,
-    /// File length in bytes.
+    /// File length in bytes. A directory's is its `st_size` on Unix, as `du --apparent-size`
+    /// and ncdu count it (a listing and a scan root's `stat` agree there);
+    /// on Windows it is 0, as listings report it, whatever a handle to it says.
     pub apparent: u64,
     /// Bytes allocated on disk (`st_blocks * 512` or the platform equivalent).
     pub alloc: u64,

@@ -32,7 +32,7 @@ fn sent_counter_counts_messages() {
         },
     );
     engine.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     let mut samples = 0;

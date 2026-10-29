@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use dfdu_engine::Model;
-use dfdu_tree::{DirState, Ix, Kind};
+use dfdu_tree::{DirState, HostPath, Ix, Kind};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 
@@ -333,11 +333,11 @@ fn arrows_move_between_tiles_and_enter_zooms() {
 
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.snap.dir_path.ends_with("big"));
+    assert!(app.snap.dir_path.to_local().ends_with("big"));
     render(&mut app, t0, 100, 30);
     app.key(press(KeyCode::Char('<')), t0);
     sync(&mut app, &fx.m, t0);
-    assert_eq!(app.snap.dir_path, std::path::Path::new("/r"));
+    assert_eq!(app.snap.dir_path, HostPath::from("/r"));
 }
 
 #[test]
@@ -385,7 +385,7 @@ fn click_selects_a_tile_and_a_second_click_zooms_in() {
     let fx2 = crate::input::mouse::event(&mut app, click, t0).expect("handled");
     assert!(fx2.is_empty());
     sync(&mut app, &fx.m, t0);
-    assert!(app.snap.dir_path.ends_with("mid"));
+    assert!(app.snap.dir_path.to_local().ends_with("mid"));
 }
 
 #[test]

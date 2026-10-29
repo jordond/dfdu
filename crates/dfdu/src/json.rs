@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use dfdu_engine::{Model, SizeMode};
-use dfdu_tree::{Class, DirState, Ix, Kind, NodeFlags, Totals, Tree};
+use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeFlags, Totals, Tree};
 use serde_json::{Map, Value, json};
 
 /// Bumped when a field changes meaning or goes away; new fields keep the version.
@@ -42,8 +42,14 @@ fn put_bytes(o: &mut Map<String, Value>, key: &str, bytes: &[u8]) {
     }
 }
 
+/// A path on this machine.
 pub fn put_path(o: &mut Map<String, Value>, key: &str, path: &Path) {
     put_bytes(o, key, path.as_os_str().as_encoded_bytes());
+}
+
+/// A path of a tree, on the host it was scanned on.
+pub fn put_host_path(o: &mut Map<String, Value>, key: &str, path: &HostPath) {
+    put_bytes(o, key, path.as_bytes());
 }
 
 pub fn tool() -> Value {
@@ -51,11 +57,11 @@ pub fn tool() -> Value {
 }
 
 /// The fields every document starts with: `schema_version`, `tool` and `root`.
-pub fn document(root: &Path) -> Map<String, Value> {
+pub fn document(root: &HostPath) -> Map<String, Value> {
     let mut doc = Map::new();
     doc.insert("schema_version".into(), SCHEMA_VERSION.into());
     doc.insert("tool".into(), tool());
-    put_path(&mut doc, "root", root);
+    put_host_path(&mut doc, "root", root);
     doc
 }
 
@@ -187,7 +193,7 @@ fn errors(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
         .iter()
         .map(|e| {
             let mut o = Map::new();
-            put_path(&mut o, "path", &e.path);
+            put_host_path(&mut o, "path", &e.path);
             o.insert("dir".into(), e.is_dir.into());
             o.insert("problem".into(), e.problem.clone().into());
             o
@@ -217,7 +223,7 @@ fn skipped(m: &Model, root: Ix) -> Vec<Map<String, Value>> {
         match reason {
             Some(reason) => {
                 let mut item = Map::new();
-                put_path(&mut item, "path", &t.path_buf(ix));
+                put_host_path(&mut item, "path", &t.host_path(ix));
                 item.insert("reason".into(), reason.into());
                 out.push(item);
             }
@@ -241,7 +247,7 @@ pub struct ScanOut<'a> {
 
 /// `scan --format json`: one document.
 pub fn scan(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<()> {
-    let mut doc = document(&m.tree.path_buf(root));
+    let mut doc = document(&m.tree.host_path(root));
     doc.insert("size_mode".into(), mode_name(o.mode).into());
     doc.insert("complete".into(), m.complete(root).into());
     doc.insert("elapsed_ms".into(), o.elapsed_ms.into());
@@ -275,7 +281,7 @@ fn line(w: &mut dyn Write, record: &str, mut o: Map<String, Value>) -> io::Resul
 /// `summary` line.
 pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<()> {
     let t = &m.tree;
-    let mut header = document(&t.path_buf(root));
+    let mut header = document(&t.host_path(root));
     header.insert("size_mode".into(), mode_name(o.mode).into());
     line(w, "header", header)?;
     let max_depth = o.depth.unwrap_or(usize::MAX);
@@ -285,7 +291,7 @@ pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::R
         let mut record = entry(m, ix, &(o.note)(ix));
         record.remove("name");
         record.remove("name_bytes_b64");
-        put_path(&mut record, "path", &t.path_buf(ix));
+        put_host_path(&mut record, "path", &t.host_path(ix));
         record.insert("depth".into(), depth.into());
         line(w, "entry", record)?;
         if depth < max_depth && t.dir(ix).is_some() {

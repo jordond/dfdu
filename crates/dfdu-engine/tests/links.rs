@@ -103,7 +103,7 @@ fn check(inodes: usize, profiles: usize) {
     );
     let t = Instant::now();
     e.send(Command::Scan {
-        path: tmp.path().to_path_buf(),
+        path: tmp.path().to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());

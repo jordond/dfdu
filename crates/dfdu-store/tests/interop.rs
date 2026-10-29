@@ -50,7 +50,7 @@ fn scan(root: &Path) -> (Vec<u8>, Totals) {
         },
     );
     e.send(Command::Scan {
-        path: root.to_path_buf(),
+        path: root.to_path_buf().into(),
         opts: JobOptions::default(),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());

@@ -1,18 +1,17 @@
 //! Scanner control: the local scanner, or the agent of a remote scan. Every call that steers
 //! scan jobs goes through here, so none has to choose between the two itself.
 
-use std::path::Path;
-
 use dfdu_scan::{Backend, DirId, JobId, JobOptions};
+use dfdu_tree::HostPath;
 
 use super::Applier;
 
 impl<B: Backend> Applier<B> {
     /// Starts job `job` scanning `path`; returns the sequence number of its submission.
-    pub(super) fn scanner_start_job(&self, job: JobId, path: &Path, opts: JobOptions) -> u64 {
+    pub(super) fn scanner_start_job(&self, job: JobId, path: &HostPath, opts: JobOptions) -> u64 {
         match &self.remote {
             Some(l) => l.start_job(job, path, &opts),
-            None => self.scan.start_job(job, path, opts),
+            None => self.scan.start_job(job, &path.to_local(), opts),
         }
     }
 

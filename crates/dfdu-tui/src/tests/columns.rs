@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dfdu_store::history::{Growth, Sizes};
-use dfdu_tree::Totals;
+use dfdu_tree::{HostPath, Totals};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
@@ -116,8 +116,8 @@ fn dev_in(theme: Theme, t0: Instant) -> App {
     };
     let root = test_entry(99, "dev", 0);
     let snap = Snapshot {
-        dir_path: PathBuf::from("/home/jo/dev"),
-        root_path: PathBuf::from("/home/jo/dev"),
+        dir_path: HostPath::from("/home/jo/dev"),
+        root_path: HostPath::from("/home/jo/dev"),
         dir_node: Some(root.node),
         at_root: true,
         dir_total: total,

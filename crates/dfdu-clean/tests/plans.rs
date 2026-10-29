@@ -243,7 +243,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
     let plan = Plan {
         id: seed,
         mode,
-        scan_root: c.root.clone(),
+        scan_root: c.root.as_path().into(),
         items: items.clone(),
         protected: None,
     };
@@ -259,7 +259,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
         .collect();
     let ctx = || format!("seed {seed}, {mode:?}: {items:#?}\n{results:#?}");
     for i in &deleted {
-        let p = &i.path;
+        let p = &i.path.to_local();
         assert!(
             p.starts_with(&c.root)
                 && p != &c.root
@@ -281,7 +281,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
         if fs::symlink_metadata(p).is_ok() {
             continue;
         }
-        let by = deleted.iter().find(|i| p.starts_with(&i.path));
+        let by = deleted.iter().find(|i| p.starts_with(i.path.to_local()));
         let Some(by) = by else {
             panic!(
                 "{} ({:?}) gone, no item held it; {}",
@@ -292,7 +292,7 @@ fn check_case(c: &Case, seed: u64, mode: Mode) -> Vec<DeleteResult> {
         };
         for m in &c.mounts {
             assert!(
-                !p.starts_with(m) || by.path.starts_with(m),
+                !p.starts_with(m) || by.path.to_local().starts_with(m),
                 "deleted {} in the mount at {} through {}; {}",
                 p.display(),
                 m.display(),

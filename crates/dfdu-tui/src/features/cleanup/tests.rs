@@ -36,7 +36,13 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     assert!(frame.contains("▾ OS and user caches"), "{frame}");
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.items()[0].target.path.ends_with("mid/m0"));
+    assert!(
+        app.marks.items()[0]
+            .target
+            .path
+            .to_local()
+            .ends_with("mid/m0")
+    );
     app.key(press(KeyCode::Up), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(app.marks.is_empty(), "Space on a group toggles all of it");
@@ -87,7 +93,7 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
     let marked: Vec<_> = app.marks.items().iter().map(|i| &i.target.path).collect();
-    assert_eq!(marked, [&std::path::PathBuf::from("/r/old-cache")]);
+    assert_eq!(marked, [&HostPath::from("/r").join(b"old-cache")]);
     assert_eq!(
         app.status.as_deref(),
         Some("marked 1 recommended item (1.0 GiB) · Space unmarks")
@@ -320,7 +326,7 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     let items = app.extras.cleanup.items.clone();
     let at = items
         .iter()
-        .position(|it| it.path.ends_with("old-cache"))
+        .position(|it| it.path.to_local().ends_with("old-cache"))
         .unwrap();
     app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
     let frame = render(&mut app, t0, 100, 24);
@@ -459,14 +465,18 @@ fn marking_a_container_marks_its_rest() {
     let items = app.extras.cleanup.items.clone();
     let at = items
         .iter()
-        .position(|it| it.path.ends_with("Caches"))
+        .position(|it| it.path.to_local().ends_with("Caches"))
         .expect("the user caches are listed");
     let it = &items[at];
     assert_eq!(it.size, m.tree.total(cache).alloc - 500);
-    let mut rest: Vec<&std::path::Path> = it.rest.iter().map(|r| &*r.path).collect();
+    let mut rest: Vec<&HostPath> = it.rest.iter().map(|r| &r.path).collect();
     rest.sort();
     assert_eq!(rest.len(), 2, "{rest:?}");
-    assert!(items.iter().any(|i| i.path.ends_with("Caches/pip")));
+    assert!(
+        items
+            .iter()
+            .any(|i| i.path.to_local().ends_with("Caches/pip"))
+    );
     let cat = app
         .snap
         .rules
@@ -477,8 +487,7 @@ fn marking_a_container_marks_its_rest() {
     app.cleanup.open.insert((cat, it.class.safety));
     app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
     app.key(press(KeyCode::Char(' ')), t0);
-    let mut marked: Vec<&std::path::Path> =
-        app.marks.items().iter().map(|i| &*i.target.path).collect();
+    let mut marked: Vec<&HostPath> = app.marks.items().iter().map(|i| &i.target.path).collect();
     marked.sort();
     assert_eq!(marked, rest);
     assert!(is_marked(&app, it));

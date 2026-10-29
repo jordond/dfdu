@@ -1,13 +1,11 @@
 //! The jobs the local side hands the agent on the wire: content checks and measurements, their
 //! requests and their answers, and the path and result encodings deletions share with them.
 
-use std::path::PathBuf;
-
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::extents::Measurement;
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use dfdu_rules::RuleSet;
-use dfdu_tree::NodeRef;
+use dfdu_tree::{Host, HostPath, NodeRef};
 
 use super::codec::{Dec, Enc, R, bad};
 use super::scan::{dec_err, enc_err};
@@ -160,7 +158,11 @@ pub(super) fn dec_measure_req(d: &mut Dec) -> R<MeasureReq> {
         let node = NodeRef::from_bits(d.var()?);
         let name = d.bytes()?;
         // A name, not a path: the measurer opens it relative to `dir`.
-        if name.is_empty() || name.contains(&b'/') || name == b"." || name == b".." {
+        if name.is_empty()
+            || name.iter().any(|&b| Host::LOCAL.is_sep(b))
+            || name == b"."
+            || name == b".."
+        {
             return bad("file name");
         }
         files.push(MeasureFile {
@@ -248,12 +250,14 @@ pub(super) fn dec_measure_msg(d: &mut Dec) -> R<MeasureMsg> {
     })
 }
 
-pub(super) fn enc_path(e: &mut Enc, p: &std::path::Path) {
-    e.bytes(&dfdu_tree::name_bytes(p.as_os_str()));
+pub(super) fn enc_path(e: &mut Enc, p: &HostPath) {
+    e.bytes(p.as_bytes());
 }
 
-pub(super) fn dec_path(d: &mut Dec) -> R<PathBuf> {
-    Ok(PathBuf::from(dfdu_tree::name_os(d.bytes()?).into_owned()))
+/// A path on the host the payload's paths are on ([`Dec::on`]).
+pub(super) fn dec_path(d: &mut Dec) -> R<HostPath> {
+    let host = d.host;
+    Ok(HostPath::new(host, d.bytes()?.to_vec()))
 }
 
 pub(super) fn enc_result<T>(e: &mut Enc, r: &Result<T, String>, ok: impl FnOnce(&mut Enc, &T)) {

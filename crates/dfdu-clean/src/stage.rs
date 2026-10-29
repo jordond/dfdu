@@ -73,16 +73,17 @@ impl Stager {
     /// created if need be.
     pub fn target(&mut self, item: &PlanItem, scan_root: &Path) -> io::Result<PathBuf> {
         let dev = item.identity.dev;
+        let path = item.path.to_local();
         let dir = if let Some(d) = self.dirs.get(&dev) {
             d.clone()
         } else {
-            let d = self.find_dir(&item.path, dev, scan_root)?;
+            let d = self.find_dir(&path, dev, scan_root)?;
             self.dirs.insert(dev, d.clone());
             d
         };
         self.n += 1;
         let mut name = OsString::from(format!("{}-", self.n));
-        name.push(item.path.file_name().unwrap_or_default());
+        name.push(path.file_name().unwrap_or_default());
         Ok(dir.join(name))
     }
 

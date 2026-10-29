@@ -4,10 +4,8 @@
 
 mod text;
 
-use std::path::PathBuf;
-
 use dfdu_engine::{Model, SizeMode, subvol_label};
-use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, RuleIx, Safety, Totals, Tree};
+use dfdu_tree::{HostPath, Ix, Kind, NodeFlags, NodeRef, RuleIx, Safety, Totals, Tree};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -75,7 +73,7 @@ pub struct Info {
 #[derive(Clone, Debug)]
 pub struct Facts {
     pub name: String,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub kind: Kind,
     pub is_dir: bool,
     pub total: Totals,
@@ -108,7 +106,7 @@ pub struct Matched {
     pub slot: usize,
     pub safety: Safety,
     /// The path of the match above, when it is not the entry itself.
-    pub above: Option<PathBuf>,
+    pub above: Option<HostPath>,
     pub explanation: String,
     pub lost: String,
     /// The `degrade` condition that holds.
@@ -127,7 +125,7 @@ fn matched(m: &Model, ix: Ix) -> Option<Matched> {
         category: cat.name,
         slot: cat.color as usize,
         safety: c.safety,
-        above: (at != ix).then(|| m.tree.path_buf(at)),
+        above: (at != ix).then(|| m.tree.host_path(at)),
         explanation: r.explanation.clone(),
         lost: r.lost.clone(),
         degraded: c.degraded.map(|d| r.degrade[d as usize].reason.clone()),
@@ -269,10 +267,10 @@ pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
 fn summary(app: &App) -> Option<String> {
     let (name, is_dir, size, items) = if crate::features::cleanup::active(app) {
         let it = crate::features::cleanup::selected_item(app)?;
-        let name = it.path.file_name().unwrap_or(it.path.as_os_str());
+        let name = it.path.file_name().unwrap_or(it.path.as_bytes());
         let is_dir = it.kind == Kind::Dir;
         (
-            name.to_string_lossy().into_owned(),
+            String::from_utf8_lossy(name).into_owned(),
             is_dir,
             it.size,
             it.items,
@@ -416,7 +414,7 @@ fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
     let facts = match tree.resolve_visible(e.node) {
         Some(ix) if !e.pseudo => Some(Facts {
             name: String::from_utf8_lossy(tree.name(ix)).into_owned(),
-            path: tree.path_buf(ix),
+            path: tree.host_path(ix),
             kind: tree.kind(ix),
             is_dir: tree.dir(ix).is_some(),
             total: tree.total(ix),

@@ -11,7 +11,7 @@ use clap::Args;
 use dfdu_engine::{Engine, Model};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, Kind, NodeRef, now_secs};
+use dfdu_tree::{Class, HostPath, Kind, NodeRef, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
@@ -115,7 +115,7 @@ fn category_arg(s: &str) -> Result<String, String> {
 #[derive(Clone, Debug)]
 pub struct Item {
     pub node: NodeRef,
-    pub path: PathBuf,
+    pub path: HostPath,
     pub kind: Kind,
     pub class: Class,
     pub disk: u64,
@@ -257,7 +257,7 @@ pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
     let r = rules.rule(it.class.rule);
     let c = &it.class;
     let mut o = Map::new();
-    js::put_path(&mut o, "path", &it.path);
+    js::put_host_path(&mut o, "path", &it.path);
     o.insert(
         "type".into(),
         if it.kind == Kind::Dir { "dir" } else { "file" }.into(),
@@ -347,7 +347,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
         let exceeded = args.fail_above.is_some_and(|t| total > t);
         let left_out = crate::outside::gather(m, root, true);
         let r = if args.format == ReportFormat::Json {
-            let mut doc = js::document(&m.tree.path_buf(root));
+            let mut doc = js::document(&m.tree.host_path(root));
             doc.insert("generated_at".into(), now.into());
             doc.insert("complete".into(), m.complete(root).into());
             doc.insert(
