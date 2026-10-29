@@ -333,7 +333,7 @@ fn one_command_with_all_outermost_targets() {
     let x = test_entry(3, "x", 4000);
     app.refresh(
         Snapshot {
-            dir_path: HostPath::from("/r/a"),
+            dir_path: HostPath::from("/r").join(b"a"),
             dir_node: Some(a.node),
             entries: vec![x.clone()],
             version: 2,

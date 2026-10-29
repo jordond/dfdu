@@ -41,15 +41,6 @@ impl Host {
         b == b'/' || (self == Host::Windows && b == b'\\')
     }
 
-    /// Writes each separator in `bytes` as [`Host::sep`]: on Windows, `/` as `\`.
-    fn normalize(self, bytes: &mut [u8]) {
-        if self == Host::Windows {
-            for b in bytes.iter_mut().filter(|b| **b == b'/') {
-                *b = b'\\';
-            }
-        }
-    }
-
     /// The host a root path looks like it is from, for a scan read from a file, which does not
     /// say: a drive letter or a `\\` prefix is Windows, a leading `/` is Unix, anything else is
     /// taken to be this machine's.
@@ -87,9 +78,9 @@ impl Default for Host {
     }
 }
 
-/// A path on `host`, as the bytes a tree stores names in. Its separators are the host's
-/// [`Host::sep`]: a Windows path written with `/` is stored with `\`, so that `C:/a` and `C:\a`,
-/// one path to Windows, compare and hash as one.
+/// A path on `host`, as the bytes a tree stores names in. Paths compare and hash byte for byte,
+/// so one compared with a tree's comes from that tree ([`crate::Tree::host_path`], [`HostPath::join`]):
+/// on Windows, `C:/a` and the tree's `C:\a` are two.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct HostPath {
     host: Host,
@@ -98,8 +89,7 @@ pub struct HostPath {
 
 impl HostPath {
     #[must_use]
-    pub fn new(host: Host, mut bytes: Vec<u8>) -> HostPath {
-        host.normalize(&mut bytes);
+    pub fn new(host: Host, bytes: Vec<u8>) -> HostPath {
         HostPath { host, bytes }
     }
 
@@ -143,9 +133,7 @@ impl HostPath {
         if self.bytes.last().is_some_and(|&b| !self.host.is_sep(b)) {
             self.bytes.push(self.host.sep());
         }
-        let start = self.bytes.len();
         self.bytes.extend_from_slice(name);
-        self.host.normalize(&mut self.bytes[start..]);
     }
 
     #[must_use]

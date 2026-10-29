@@ -438,15 +438,17 @@ fn the_pane_describes_a_mount_left_out() {
     let tree = &mut m.tree;
     let root = tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     tree.dir_mut(root).expect("root").state = DirState::Complete;
-    for (name, ino, flags) in [
+    let [data, nas] = [
         (&b"data"[..], 2, NodeFlags::MOUNT_ROOT),
         (b"nas", 3, NodeFlags::MOUNT_ROOT | NodeFlags::NETWORK),
-    ] {
+    ]
+    .map(|(name, ino, flags)| {
         let d = tree.add_dir_flagged(root, name, &meta(Kind::Dir, 4096, ino), flags);
         let own = tree.own(d);
         tree.propagate_add(d, &own);
         tree.dir_mut(d).expect("dir").state = DirState::Skipped;
-    }
+        d
+    });
     let mut app = app_on(&m);
     let local = |fstype: &str, used, total| dfdu_sys::MountInfo {
         fstype: fstype.into(),
@@ -455,14 +457,14 @@ fn the_pane_describes_a_mount_left_out() {
         total,
     };
     app.outside.set_mount(
-        "/r/data".into(),
+        m.tree.host_path(data),
         Some(local("zfs", Some(1_300 << 30), Some(3 << 40))),
     );
     let nfs = dfdu_sys::MountInfo {
         class: dfdu_sys::FsClass::Network,
         ..local("nfs4", None, None)
     };
-    app.outside.set_mount("/r/nas".into(), Some(nfs));
+    app.outside.set_mount(m.tree.host_path(nas), Some(nfs));
     let t0 = app.started;
     let e = app.selected_entry().expect("selected");
     assert_eq!((&e.name[..], e.mark), (&b"data"[..], Mark::OtherFs));
