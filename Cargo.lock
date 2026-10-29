@@ -733,6 +733,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfdu-demofs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fuser",
+ "rustix",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "dfdu-dupes"
 version = "0.1.0"
 dependencies = [

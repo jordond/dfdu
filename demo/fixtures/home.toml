@@ -1,0 +1,301 @@
+# The home directory most recordings browse: projects with dependencies and build output,
+# package caches, downloads with duplicates, photos and videos, a few unreadable entries and
+# slow directories so the live scan is visible. Paths are relative to $HOME (/home/demo).
+# Ages count back from `now`, the time the recordings run at.
+
+now = "2026-10-01T09:00:00Z"
+age = "45d"
+
+[disk]
+total = "1TB"
+free = "212GB"
+device = "/dev/nvme0n1p2"
+
+# --- Projects ---------------------------------------------------------------------------------
+
+[[entry]]
+path = "dev/web-shop/package.json"
+text = '{ "name": "web-shop", "private": true }'
+
+[[entry]]
+path = "dev/web-shop/package-lock.json"
+size = "412KiB"
+
+[[entry]]
+path = "dev/web-shop/src"
+fill = { files = 140, size = "3MiB", seed = 1 }
+
+[[entry]]
+path = "dev/web-shop/node_modules"
+age = "60d"
+fill = { files = 2400, size = "1.8GiB", style = "npm", seed = 1 }
+
+[[entry]]
+path = "dev/web-shop/dist/bundle.js"
+size = "12MiB"
+
+[[entry]]
+path = "dev/web-shop/.next/cache"
+fill = { files = 900, size = "940MiB", style = "cache", seed = 2 }
+
+[[entry]]
+path = "dev/admin-panel/package.json"
+text = '{ "name": "admin-panel", "private": true }'
+
+[[entry]]
+path = "dev/admin-panel/yarn.lock"
+size = "380KiB"
+
+[[entry]]
+path = "dev/admin-panel/node_modules"
+age = "90d"
+fill = { files = 1500, size = "1.1GiB", style = "npm", seed = 2 }
+
+# No lockfile: the cleanup view rates this one "review".
+[[entry]]
+path = "dev/landing/package.json"
+text = '{ "name": "landing" }'
+
+[[entry]]
+path = "dev/landing/node_modules"
+age = "120d"
+fill = { files = 800, size = "420MiB", style = "npm", seed = 3 }
+
+[[entry]]
+path = "dev/indexer/Cargo.toml"
+text = "[package]\nname = \"indexer\"\n"
+
+[[entry]]
+path = "dev/indexer/src/main.rs"
+text = "fn main() {}\n"
+
+[[entry]]
+path = "dev/indexer/target/CACHEDIR.TAG"
+text = "Signature: 8a477f597d28d172789f06886806bc55\n"
+
+[[entry]]
+path = "dev/indexer/target/debug"
+fill = { files = 1600, size = "6.4GiB", style = "cargo", seed = 4 }
+
+[[entry]]
+path = "dev/indexer/target/release"
+fill = { files = 400, size = "1.2GiB", style = "cargo", seed = 5 }
+
+[[entry]]
+path = "dev/cli-tool/Cargo.toml"
+text = "[package]\nname = \"cli-tool\"\n"
+
+[[entry]]
+path = "dev/cli-tool/target/debug"
+age = "20d"
+fill = { files = 700, size = "2.1GiB", style = "cargo", seed = 6 }
+
+[[entry]]
+path = "dev/notebook/requirements.txt"
+text = "numpy\npandas\ntorch\n"
+
+[[entry]]
+path = "dev/notebook/.venv/pyvenv.cfg"
+text = "home = /usr/bin\n"
+
+[[entry]]
+path = "dev/notebook/.venv/lib/python3.13/site-packages"
+age = "70d"
+delay = "1500ms"
+fill = { files = 1200, size = "3.2GiB", style = "python", seed = 7 }
+
+[[entry]]
+path = "dev/notebook/data/events-2025.parquet"
+size = "2.4GiB"
+age = "300d"
+
+[[entry]]
+path = "dev/ml-experiments/checkpoints/epoch-10.pt"
+size = "880MiB"
+age = "100d"
+
+[[entry]]
+path = "dev/ml-experiments/checkpoints/epoch-20.pt"
+size = "880MiB"
+age = "95d"
+
+[[entry]]
+path = "dev/ml-experiments/checkpoints/epoch-30.pt"
+size = "880MiB"
+age = "90d"
+content = "model-final"
+
+[[entry]]
+path = "dev/ml-experiments/model-final.pt"
+size = "880MiB"
+age = "90d"
+content = "model-final"
+
+# A link to a project that was moved away.
+[[entry]]
+path = "dev/current"
+target = "projects-old/web-shop"
+
+# --- Downloads, media, documents --------------------------------------------------------------
+
+[[entry]]
+path = "Downloads/ubuntu-24.04.1-desktop-amd64.iso"
+size = "5.8GiB"
+age = "200d"
+
+[[entry]]
+path = "Downloads/debian-13.1.0-amd64-netinst.iso"
+size = "754MiB"
+age = "160d"
+content = "debian-netinst"
+
+[[entry]]
+path = "Downloads/old-laptop/debian-13.1.0-amd64-netinst.iso"
+size = "754MiB"
+age = "400d"
+content = "debian-netinst"
+
+# Not only the ISO, so the directory sorts above it rather than level with it.
+[[entry]]
+path = "Downloads/old-laptop/notes.txt"
+size = "18KiB"
+age = "400d"
+
+[[entry]]
+path = "Downloads/photos-export.zip"
+size = "610MiB"
+age = "80d"
+content = "photos-export"
+
+[[entry]]
+path = "Downloads/photos-export (1).zip"
+size = "610MiB"
+age = "80d"
+content = "photos-export"
+
+[[entry]]
+path = "Downloads/screen-recording-2026-08-14.mov"
+size = "3.1GiB"
+age = "48d"
+
+[[entry]]
+path = "Downloads/slack-desktop-4.41.105-amd64.deb"
+size = "92MiB"
+age = "130d"
+
+[[entry]]
+path = "Videos/2026/lisbon-trip.mp4"
+size = "4.2GiB"
+age = "150d"
+
+[[entry]]
+path = "Videos/2025/birthday.mp4"
+size = "1.9GiB"
+age = "380d"
+
+[[entry]]
+path = "Videos/2025/drone-coast.mov"
+size = "6.7GiB"
+age = "420d"
+
+[[entry]]
+path = "Pictures/2026/lisbon"
+age = "150d"
+fill = { files = 600, size = "3.6GiB", style = "photos", seed = 8 }
+
+[[entry]]
+path = "Pictures/2025"
+age = "400d"
+delay = "1s"
+fill = { files = 900, size = "5.1GiB", style = "photos", seed = 9 }
+
+[[entry]]
+path = "Documents/taxes-2025.pdf"
+size = "2.1MiB"
+age = "180d"
+
+[[entry]]
+path = "Documents/lease-agreement.pdf"
+size = "840KiB"
+age = "500d"
+
+[[entry]]
+path = "Documents/thesis"
+age = "700d"
+fill = { files = 60, size = "380MiB", seed = 10 }
+
+[[entry]]
+path = "Documents/scanned-receipt.pdf"
+size = "1.2MiB"
+error = "io"
+
+[[entry]]
+path = "Documents/New Folder"
+kind = "dir"
+
+# --- Caches, toolchains, emulators ------------------------------------------------------------
+
+[[entry]]
+path = ".cache/pip/http"
+fill = { files = 1800, size = "1.3GiB", style = "cache", seed = 11 }
+
+[[entry]]
+path = ".cache/google-chrome/Default/Cache"
+age = "2d"
+fill = { files = 3000, size = "820MiB", style = "cache", seed = 12 }
+
+[[entry]]
+path = ".cache/JetBrains/IntelliJIdea2026.2"
+fill = { files = 1200, size = "1.1GiB", style = "cache", seed = 13 }
+
+[[entry]]
+path = ".cache/yarn/v6"
+fill = { files = 1500, size = "690MiB", style = "cache", seed = 14 }
+
+[[entry]]
+path = ".npm/_cacache"
+fill = { files = 2000, size = "2.4GiB", style = "cache", seed = 15 }
+
+[[entry]]
+path = ".cargo/registry"
+delay = "1s"
+fill = { files = 3000, size = "3.9GiB", style = "cache", seed = 16 }
+
+[[entry]]
+path = ".rustup/toolchains/stable-x86_64-unknown-linux-gnu"
+age = "30d"
+fill = { files = 900, size = "1.6GiB", seed = 17 }
+
+[[entry]]
+path = ".rustup/toolchains/1.95-x86_64-unknown-linux-gnu"
+age = "200d"
+fill = { files = 900, size = "1.5GiB", seed = 18 }
+
+[[entry]]
+path = "Android/Sdk/system-images/android-35"
+age = "160d"
+delay = "2s"
+fill = { files = 400, size = "7.8GiB", seed = 19 }
+
+[[entry]]
+path = ".android/avd/Pixel_8_API_35.avd/userdata-qemu.img"
+size = "6GiB"
+alloc = "2.2GiB"
+age = "160d"
+
+[[entry]]
+path = ".local/share/containers/storage"
+fill = { files = 2500, size = "6.3GiB", style = "cache", seed = 20 }
+
+[[entry]]
+path = ".local/share/Trash/files/old-notes"
+fill = { files = 40, size = "340MiB", seed = 21 }
+
+[[entry]]
+path = ".local/share/Trash/info/old-notes.trashinfo"
+text = "[Trash Info]\nPath=/home/demo/Documents/old-notes\nDeletionDate=2026-09-02T10:15:00\n"
+
+[[entry]]
+path = ".config/private"
+kind = "dir"
+error = "denied"

@@ -1,0 +1,54 @@
+# A server's /srv, scanned through `dfdu --remote` in remote.tape: container volumes, logs,
+# backups and a website.
+now = "2026-10-01T09:00:00Z"
+age = "30d"
+
+[disk]
+total = "2TB"
+free = "640GB"
+device = "/dev/md0"
+
+[[entry]]
+path = "docker/volumes/postgres-data"
+age = "1h"
+fill = { files = 1400, size = "84GiB", style = "cache", seed = 31, spread = "200d" }
+
+[[entry]]
+path = "docker/volumes/minio-data"
+age = "3h"
+fill = { files = 2600, size = "310GiB", style = "cache", seed = 32, spread = "300d" }
+
+[[entry]]
+path = "docker/volumes/grafana"
+fill = { files = 120, size = "1.2GiB", seed = 33 }
+
+[[entry]]
+path = "logs/nginx"
+age = "10m"
+delay = "1500ms"
+fill = { files = 400, size = "46GiB", seed = 34, spread = "365d" }
+
+[[entry]]
+path = "logs/app"
+age = "2m"
+fill = { files = 900, size = "120GiB", seed = 35, spread = "365d" }
+
+[[entry]]
+path = "backups/postgres"
+age = "8h"
+delay = "1200ms"
+fill = { files = 90, size = "410GiB", seed = 36, spread = "90d" }
+
+[[entry]]
+path = "www/shop/public"
+fill = { files = 1800, size = "6.4GiB", style = "photos", seed = 37 }
+
+[[entry]]
+path = "www/shop/node_modules"
+age = "200d"
+fill = { files = 2000, size = "1.4GiB", style = "npm", seed = 38 }
+
+[[entry]]
+path = "www/shop/package.json"
+text = '{ "name": "shop", "private": true }'
+age = "200d"

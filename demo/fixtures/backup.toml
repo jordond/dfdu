@@ -1,0 +1,36 @@
+# The backup disk at /mnt/backup, for the disk list and the picker: nightly archives, photo
+# libraries and a VM image.
+now = "2026-10-01T09:00:00Z"
+age = "20d"
+
+[disk]
+total = "4TB"
+free = "1.4TB"
+device = "/dev/sda1"
+
+[[entry]]
+path = "borg/devbox/data"
+age = "1d"
+delay = "1500ms"
+fill = { files = 600, size = "1.6TB", style = "cache", seed = 1, spread = "300d" }
+
+[[entry]]
+path = "borg/devbox/config"
+text = "[repository]\nversion = 1\n"
+age = "300d"
+
+[[entry]]
+path = "Photos/2024"
+age = "280d"
+fill = { files = 900, size = "310GB", style = "photos", seed = 2 }
+
+[[entry]]
+path = "Photos/2025"
+age = "5d"
+fill = { files = 1200, size = "420GB", style = "photos", seed = 3, spread = "270d" }
+
+[[entry]]
+path = "vm/win11.qcow2"
+size = "128GiB"
+alloc = "61GiB"
+age = "90d"

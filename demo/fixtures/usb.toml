@@ -1,0 +1,22 @@
+# A USB stick at /media/demo/USB, for the disk list and the picker.
+now = "2026-10-01T09:00:00Z"
+age = "60d"
+
+[disk]
+total = "64GB"
+free = "38GB"
+device = "/dev/sdb1"
+
+[[entry]]
+path = "ubuntu-24.04.1-desktop-amd64.iso"
+size = "5.8GiB"
+age = "200d"
+
+[[entry]]
+path = "Music"
+fill = { files = 400, size = "14GB", seed = 4, spread = "2y" }
+
+[[entry]]
+path = "slides/talk-final.pdf"
+size = "38MB"
+age = "12d"

@@ -2,3 +2,4 @@
 **/*.snap.new
 .desloppify/
 scorecard.png
+/demo/out/

@@ -1,0 +1,2 @@
+# The build context is only the Dockerfile; binaries are copied into each container.
+out/

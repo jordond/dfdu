@@ -1,0 +1,24 @@
+# home.toml as it was a week earlier, for the history the `diff` recordings compare with
+# (`# history: home-week-ago 7d` in a tape): less build output and cache, no Next.js cache yet.
+# Only what differs is here; the rest comes from home.toml.
+extends = "home.toml"
+
+remove = ["dev/web-shop/.next"]
+
+[[entry]]
+path = "dev/indexer/target/debug"
+fill = { files = 900, size = "3.1GiB", style = "cargo", seed = 4 }
+
+[[entry]]
+path = "dev/cli-tool/target/debug"
+age = "20d"
+fill = { files = 300, size = "900MiB", style = "cargo", seed = 6 }
+
+[[entry]]
+path = ".cache/google-chrome/Default/Cache"
+age = "9d"
+fill = { files = 1200, size = "310MiB", style = "cache", seed = 12 }
+
+[[entry]]
+path = ".local/share/containers/storage"
+fill = { files = 1800, size = "4.1GiB", style = "cache", seed = 20 }

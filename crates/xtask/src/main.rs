@@ -11,9 +11,11 @@ use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
 
 mod cmd;
+mod demo;
 mod release;
 
 use cmd::{Step, cargo, docker_run, has_cargo, need, need_cargo, output, quote, root, run, steps};
+use demo::{DemoArgs, demo};
 use release::{Release, release};
 
 #[derive(Parser)]
@@ -90,8 +92,8 @@ enum Cmd {
     },
     /// Rewrite the man pages and completions in assets/.
     Assets,
-    /// Record the README demo (assets/screenshots/browse.gif) with vhs.
-    Demo,
+    /// Record the demo GIFs (demo/tapes) with VHS in Docker, against made-up files.
+    Demo(DemoArgs),
     /// Release tasks.
     #[command(subcommand)]
     Release(Release),
@@ -193,7 +195,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Ci(a) => ci(&a),
         Cmd::Bench { args } => run(Command::new("scripts/bench.sh").args(args)),
         Cmd::Assets => assets(),
-        Cmd::Demo => demo(),
+        Cmd::Demo(a) => demo(&a),
         Cmd::Release(r) => release(r),
     }
 }
@@ -506,14 +508,6 @@ fn ci(a: &CiArgs) -> anyhow::Result<()> {
 
 fn assets() -> anyhow::Result<()> {
     run(cargo(["test", "-p", "dfdu", "--test", "assets"]).env("DFDU_UPDATE_ASSETS", "1"))
-}
-
-fn demo() -> anyhow::Result<()> {
-    need("vhs")?;
-    run(&mut cargo(["build", "--release", "-p", "dfdu"]))?;
-    // browse.tape reads the tree from this path.
-    run(Command::new("scripts/vhs/demo-tree.sh").arg("/tmp/dfdu-demo"))?;
-    run(Command::new("vhs").arg("scripts/vhs/browse.tape"))
 }
 
 /// A `KEY: value` from the `env:` blocks of ci.yml or, for the fuzzing toolchain, fuzz.yml.

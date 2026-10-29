@@ -254,10 +254,11 @@ jobs:
       - name: Load the fuse kernel module
         run: sudo modprobe fuse || true
       - name: Build tests
-        run: cargo test --profile ci --locked --no-run -p dfdu-hangfs -p dfdu-engine -p dfdu
+        run: cargo test --profile ci --locked --no-run -p dfdu-hangfs -p dfdu-demofs -p dfdu-engine -p dfdu
       - name: Run FUSE tests as root
         run: |
           cargo test --profile ci --locked -p dfdu-hangfs --lib
+          cargo test --profile ci --locked -p dfdu-demofs --test mount
           cargo test --profile ci --locked -p dfdu-engine -p dfdu --test fuse
         env:
           DFDU_FUSE_REQUIRED: "1"

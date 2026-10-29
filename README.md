@@ -2,7 +2,7 @@
 
 A disk usage browser for the terminal, written in Rust. It starts from what `ncdu` does well (a fast, keyboard-driven list of the biggest directories) and adds the things ncdu does not do: a UI that is usable while the scan is still running, parallel scanning tuned to the storage device, categories for what it finds (caches, build outputs, emulators, simulators, containers), and a cleanup view that recommends what to delete and how much space that will actually free.
 
-![Browsing a home directory, the treemap and the cleanup view](assets/screenshots/browse.gif)
+![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
 
 ## Install
 
@@ -76,6 +76,7 @@ cargo xtask crash --rounds 40                     # kill dfdu while it writes an
 cargo xtask coverage --html                       # line coverage, failing below CI's floor
 cargo xtask linux --privileged                    # the workspace tests in a Linux container
 cargo xtask windows                               # type-check for x86_64-pc-windows-msvc
+cargo xtask demo                                  # record the demo GIFs (demo/README.md)
 DFDU_CHECK=1 cargo run --release -- scan /usr     # check every invariant after every slice
 ```
 

@@ -1,0 +1,71 @@
+# The root the recording shell runs in (`run.sh` mounts it with the tape's fixture at
+# home/demo): only what bash, clear, dfdu and libfaketime need, copied from the image, so the
+# disk list shows the fixture's disks and none of the Docker host's.
+# /dev, /proc, /dev/pts and /dev/shm are mounted on top (kernel filesystems, which the disk
+# list leaves out), and the fixtures a tape names in `# mount:` lines.
+now = "2026-10-01T09:00:00Z"
+age = "120d"
+uid = 0
+gid = 0
+
+import = [
+    "/usr/bin/bash",
+    "/usr/bin/dash",
+    "/usr/bin/sh",
+    "/usr/bin/clear",
+    "/usr/lib64/ld-linux-x86-64.so.2",
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "/usr/lib/x86_64-linux-gnu/libc.so.6",
+    "/usr/lib/x86_64-linux-gnu/libm.so.6",
+    "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+    "/usr/lib/x86_64-linux-gnu/libtinfo.so.6",
+    "/usr/lib/x86_64-linux-gnu/libtinfo.so.6.5",
+    "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1",
+    "/usr/local/lib/libfaketime.so.1",
+    "/usr/share/terminfo",
+    "/etc/inputrc",
+    "/opt/dfdu/bin/dfdu",
+]
+
+[[entry]]
+path = "bin"
+target = "usr/bin"
+
+[[entry]]
+path = "lib"
+target = "usr/lib"
+
+[[entry]]
+path = "lib64"
+target = "usr/lib64"
+
+[[entry]]
+path = "etc/passwd"
+text = "root:x:0:0:root:/root:/bin/bash\ndemo:x:1000:1000:Demo:/home/demo:/bin/bash\n"
+
+[[entry]]
+path = "etc/group"
+text = "root:x:0:\ndemo:x:1000:\n"
+
+[[entry]]
+path = "tmp"
+kind = "dir"
+mode = 0o1777
+
+[[entry]]
+path = "root"
+kind = "dir"
+mode = 0o700
+
+# Mount points.
+[[entry]]
+path = "dev"
+kind = "dir"
+
+[[entry]]
+path = "proc"
+kind = "dir"
+
+[[entry]]
+path = "home"
+kind = "dir"
