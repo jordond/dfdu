@@ -89,10 +89,11 @@ fn caches() -> Caches {
     fx
 }
 
+/// The entries' paths, written with `/` whatever this host's separator is.
 fn names(fx: &Caches, ixs: &[Ix]) -> Vec<String> {
     let mut v: Vec<String> = ixs
         .iter()
-        .map(|&i| String::from_utf8_lossy(&fx.tree.path(i)).into_owned())
+        .map(|&i| String::from_utf8_lossy(&fx.tree.path(i)).replace(std::path::MAIN_SEPARATOR, "/"))
         .collect();
     v.sort();
     v

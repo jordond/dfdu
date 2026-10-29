@@ -448,13 +448,14 @@ fn changes_inside<B: Backend>(backend: fn() -> B, mode: Mode) {
     fs::remove_dir_all(root.join("swapped/x/y")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(elsewhere_dir.path(), root.join("swapped/x/y")).unwrap();
+    // cmd reads a `/` anywhere in an argument as a switch: the path has `\` only.
     #[cfg(windows)]
     assert!(
         std::process::Command::new("cmd")
             .arg("/C")
             .arg("mklink")
             .arg("/J")
-            .arg(root.join("swapped/x/y"))
+            .arg(root.join("swapped").join("x").join("y"))
             .arg(elsewhere_dir.path())
             .output()
             .unwrap()

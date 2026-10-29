@@ -126,9 +126,13 @@ impl Meta {
         // FILETIME counts 100 ns intervals since 1601; std's `modified()` rounds the same way
         // and has no time before 1970. Whole seconds fit an `i64` with room to spare.
         let secs = (w.last_write / 10_000_000).cast_signed() - 11_644_473_600;
+        let kind = w.kind();
         Meta {
-            kind: w.kind(),
-            apparent: w.size,
+            kind,
+            // A directory's listing reports 0; a handle reports its index's `EndOfFile`. Always
+            // 0, so a directory measured as a scan root (or a rescan) is the size it is listed
+            // as.
+            apparent: if kind == Kind::Dir { 0 } else { w.size },
             alloc: w.alloc,
             mtime: secs.max(0),
             dev: u64::from(w.volume),
@@ -345,5 +349,14 @@ mod tests {
             ..WinStat::default()
         });
         assert_eq!(old.mtime, 0);
+        // A directory has no apparent size, whatever its handle says; its index's clusters
+        // still count.
+        let dir = Meta::from_windows(&WinStat {
+            attributes: 0x10,
+            size: 4096,
+            alloc: 4096,
+            ..WinStat::default()
+        });
+        assert_eq!((dir.kind, dir.apparent, dir.alloc), (Kind::Dir, 0, 4096));
     }
 }
