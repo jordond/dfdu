@@ -1,11 +1,11 @@
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Condvar, Mutex};
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::unbounded;
 use dfdu_scan::{Limits, PortableBackend, Shared};
 use dfdu_tree::{DirState, Meta};
 
 use super::*;
-use crate::{EngineOptions, WaitIdle};
+use crate::WaitIdle;
 
 const AT: JournalPosition = JournalPosition {
     volume: [1; 16],
@@ -13,15 +13,32 @@ const AT: JournalPosition = JournalPosition {
     time: 0,
 };
 
-fn engine() -> Engine<PortableBackend> {
-    Engine::start(
-        PortableBackend::default(),
-        EngineOptions {
-            workers: 2,
-            journal_dir: None,
-            ..Default::default()
-        },
-    )
+/// Holds a query's answer until opened: a journal that answers late. A [`Query`] is a plain
+/// function, so each test's is a static.
+struct Gate {
+    open: Mutex<bool>,
+    opened: Condvar,
+}
+
+impl Gate {
+    const fn new() -> Gate {
+        Gate {
+            open: Mutex::new(false),
+            opened: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) {
+        let mut open = self.open.lock().unwrap();
+        while !*open {
+            open = self.opened.wait(open).unwrap();
+        }
+    }
+
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
 }
 
 /// The tree of the directory `root` as loaded from a file that saw nothing in it: the root,
@@ -106,7 +123,7 @@ fn a_root_that_is_gone_is_listed_again() {
     let own = tree.own(f);
     tree.propagate_add(r, &own);
     std::fs::remove_dir_all(&root).unwrap();
-    let e = engine();
+    let e = Engine::portable(2);
     e.resume_with(tree, Some(AT), JobOptions::default(), |_, _, _| {
         Some(vec![])
     });
@@ -152,21 +169,17 @@ fn a_cancelled_or_unsent_resume_is_uncounted() {
     assert_eq!(sent.load(SeqCst), 0);
 }
 
-/// Holds the late answer of the test below until set.
-static ANSWER: AtomicBool = AtomicBool::new(false);
-
 /// Waiting for idle waits for a resume whose journal answers late; once it answered, the
 /// resume is applied and the engine is idle.
 #[test]
 fn idle_waits_for_a_late_journal_answer() {
+    static ANSWER: Gate = Gate::new();
     let tmp = tempfile::tempdir().unwrap();
     let root = dunce::canonicalize(tmp.path()).unwrap();
     std::fs::write(root.join("new"), b"data").unwrap();
-    let e = engine();
+    let e = Engine::portable(2);
     e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _, _| {
-        while !ANSWER.load(Relaxed) {
-            thread::sleep(Duration::from_millis(1));
-        }
+        ANSWER.wait();
         Some(vec![PathBuf::new()])
     });
     assert_eq!(
@@ -174,7 +187,7 @@ fn idle_waits_for_a_late_journal_answer() {
         WaitIdle::TimedOut
     );
     assert_eq!(e.asking.lock().len(), 1);
-    ANSWER.store(true, Relaxed);
+    ANSWER.open();
     assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
     let items = e.read(|m| m.tree.roots().next().map(|r| m.tree.total(r).items));
     assert_eq!(items, Some(2), "the root and the file the resume listed");
@@ -184,14 +197,53 @@ fn idle_waits_for_a_late_journal_answer() {
 /// Shutting down before the journal answered waits for it no longer than the bound.
 #[test]
 fn shutdown_does_not_wait_for_the_journal() {
+    static ANSWER: Gate = Gate::new();
     let tmp = tempfile::tempdir().unwrap();
     let root = dunce::canonicalize(tmp.path()).unwrap();
-    let e = engine();
+    let e = Engine::portable(2);
     e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _, _| {
-        thread::sleep(Duration::from_secs(2));
+        ANSWER.wait();
         Some(vec![])
     });
     let t0 = Instant::now();
     e.shutdown(Duration::from_millis(100));
-    assert!(t0.elapsed() < Duration::from_secs(1), "{:?}", t0.elapsed());
+    let took = t0.elapsed();
+    ANSWER.open();
+    assert!(took < Duration::from_secs(1), "{took:?}");
+}
+
+/// Stopping a query that has ended joins its thread at once; one still running is left behind
+/// at the deadline.
+#[test]
+fn stopping_waits_for_the_thread_until_the_deadline() {
+    static ANSWER: Gate = Gate::new();
+    let spawn = |query: Query| {
+        let (ending, done) = bounded::<()>(0);
+        let (ask, _rx) = ask(query);
+        let cancel = ask.cancel.clone();
+        let thread = thread::spawn(move || {
+            let _ending = ending;
+            ask.run();
+        });
+        Asking {
+            thread: Some(thread),
+            cancel,
+            done,
+        }
+    };
+    let mut ended = spawn(|_, _, _| None);
+    let t0 = Instant::now();
+    ended.stop(Instant::now() + Duration::from_secs(10));
+    assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+    assert!(ended.finished() && ended.cancel.load(SeqCst));
+
+    let mut late = spawn(|_, _, _| {
+        ANSWER.wait();
+        None
+    });
+    let deadline = Instant::now() + Duration::from_millis(50);
+    late.stop(deadline);
+    assert!(Instant::now() >= deadline);
+    assert!(late.thread.is_none(), "left behind");
+    ANSWER.open();
 }

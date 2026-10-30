@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 use dfdu_scan::journal::{JournalPosition, changed_since_cancellable};
 use dfdu_scan::{Backend, JobOptions, Shared};
 use dfdu_tree::{NodeRef, Tree};
@@ -35,6 +35,9 @@ const DROP_WAIT: Duration = Duration::from_millis(200);
 pub(super) struct Asking {
     thread: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
+    /// Nothing is sent on it: it disconnects as the thread ends, which [`Asking::stop`] waits
+    /// for.
+    done: Receiver<()>,
 }
 
 /// What the thread needs to ask, to stat the root and to send the resume.
@@ -120,16 +123,20 @@ impl<B: Backend> Engine<B> {
             scan: self.link.is_none().then(|| self.shared.clone()),
         };
         let (inline, cancel) = (ask.clone(), ask.cancel.clone());
+        let (ending, done) = bounded::<()>(0);
         match thread::Builder::new()
             .name("dfdu-journal".into())
-            .spawn(move || ask.run())
-        {
+            .spawn(move || {
+                let _ending = ending;
+                ask.run();
+            }) {
             Ok(t) => {
                 let mut asking = self.asking.lock();
                 asking.retain(|a| !a.finished());
                 asking.push(Asking {
                     thread: Some(t),
                     cancel,
+                    done,
                 });
             }
             Err(_) => inline.run(),
@@ -189,10 +196,7 @@ impl Asking {
         let Some(t) = self.thread.take() else {
             return;
         };
-        while !t.is_finished() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-        if t.is_finished() {
+        if let Err(RecvTimeoutError::Disconnected) = self.done.recv_deadline(deadline) {
             let _ = t.join();
         }
     }

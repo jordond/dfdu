@@ -2,11 +2,63 @@
 //! of tests and simulation and for debugging.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use dfdu_tree::{Ix, NodeRef, Tree};
 
 use super::{ExtentTable, Inode, lca};
+
+/// A way the table disagrees with the tree, found by its checks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mismatch {
+    /// A measured inode is counted at a node that is not visible: one in a rescan's shadow, or
+    /// one `gone` (detached or freed).
+    NotVisible { inode: Inode, gone: bool },
+    /// The home of segment `start..end` is not the lowest common ancestor of its references,
+    /// though none of them is out of sight: the paths of both, and where each reference is
+    /// counted.
+    Home {
+        start: u64,
+        end: u64,
+        home: String,
+        lca: Option<String>,
+        refs: Vec<String>,
+    },
+    /// The shared bytes the tree homes at `path` are not the table's.
+    Bytes { path: String, tree: u64, table: u64 },
+}
+
+impl fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Mismatch::NotVisible { inode, gone } => write!(
+                f,
+                "inode {inode:?} is counted at a node that is not visible ({})",
+                if *gone {
+                    "detached or freed"
+                } else {
+                    "in a shadow"
+                }
+            ),
+            Mismatch::Home {
+                start,
+                end,
+                home,
+                lca,
+                refs,
+            } => write!(
+                f,
+                "segment {start}..{end}: home {home}, lowest common ancestor {lca:?}; refs \
+                 {refs:?}"
+            ),
+            Mismatch::Bytes { path, tree, table } => {
+                write!(f, "{path}: home {tree} bytes, table {table}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Mismatch {}
 
 impl ExtentTable {
     /// The table's view of one inode, for debugging.
@@ -43,17 +95,13 @@ impl ExtentTable {
     }
 
     /// Checks that every measured inode is counted at a visible node.
-    pub fn check_settled(&self, tree: &Tree) -> Result<(), String> {
-        for (k, r) in &self.inodes {
+    pub fn check_settled(&self, tree: &Tree) -> Result<(), Mismatch> {
+        for (&inode, r) in &self.inodes {
             if tree.resolve_visible(r.counted_at).is_none() {
-                return Err(format!(
-                    "inode {k:?} is counted at a node that is not visible ({})",
-                    if tree.resolve(r.counted_at).is_some() {
-                        "detached"
-                    } else {
-                        "freed"
-                    }
-                ));
+                return Err(Mismatch::NotVisible {
+                    inode,
+                    gone: tree.resolve(r.counted_at).is_none(),
+                });
             }
         }
         Ok(())
@@ -61,7 +109,8 @@ impl ExtentTable {
 
     /// Checks every home against a full recomputation, and every node's home bytes against
     /// the table. For the invariant checks of tests and simulation.
-    pub fn check(&self, tree: &Tree) -> Result<(), String> {
+    pub fn check(&self, tree: &Tree) -> Result<(), Mismatch> {
+        let path = |ix: Ix| String::from_utf8_lossy(&tree.path(ix)).into_owned();
         let mut expect: HashMap<Ix, u64> = HashMap::new();
         for (&(_, s), seg) in &self.segs {
             if let Some(h) = seg.home.and_then(|h| tree.resolve_visible(h)) {
@@ -76,28 +125,24 @@ impl ExtentTable {
                             .is_some_and(|rec| tree.resolve_visible(rec.counted_at).is_none())
                     });
                     if !stale {
-                        let path = |ix: Ix| String::from_utf8_lossy(&tree.path(ix)).into_owned();
-                        let refs: Vec<String> = seg
-                            .refs
-                            .iter()
-                            .map(|r| match self.inodes.get(r) {
-                                Some(rec) => match tree.resolve(rec.counted_at) {
-                                    Some(ix) => format!(
-                                        "{r:?} at {} visible {}",
-                                        path(ix),
-                                        tree.resolve_visible(rec.counted_at).is_some()
-                                    ),
-                                    None => format!("{r:?} at a freed node"),
-                                },
-                                None => format!("{r:?} not in the table"),
-                            })
-                            .collect();
-                        return Err(format!(
-                            "segment {s}..{}: home {}, lowest common ancestor {:?}; refs {refs:?}",
-                            seg.end,
-                            path(h),
-                            full.map(path)
-                        ));
+                        let refs = seg.refs.iter().map(|r| match self.inodes.get(r) {
+                            Some(rec) => match tree.resolve(rec.counted_at) {
+                                Some(ix) => format!(
+                                    "{r:?} at {} visible {}",
+                                    path(ix),
+                                    tree.resolve_visible(rec.counted_at).is_some()
+                                ),
+                                None => format!("{r:?} at a freed node"),
+                            },
+                            None => format!("{r:?} not in the table"),
+                        });
+                        return Err(Mismatch::Home {
+                            start: s,
+                            end: seg.end,
+                            home: path(h),
+                            lca: full.map(path),
+                            refs: refs.collect(),
+                        });
                     }
                 }
                 *expect.entry(h).or_default() += seg.end - s;
@@ -110,13 +155,16 @@ impl ExtentTable {
         }
         for (&ix, &bytes) in &expect {
             if tree.shared_here(ix) != bytes {
-                return Err(format!(
-                    "{}: home {} bytes, table {bytes}",
-                    String::from_utf8_lossy(&tree.path(ix)),
-                    tree.shared_here(ix)
-                ));
+                return Err(Mismatch::Bytes {
+                    path: path(ix),
+                    tree: tree.shared_here(ix),
+                    table: bytes,
+                });
             }
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

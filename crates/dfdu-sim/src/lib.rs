@@ -24,14 +24,20 @@ mod check;
 mod config;
 mod deleter;
 mod end;
+mod error;
 mod random;
 mod resume;
 mod spec;
+#[cfg(test)]
+mod test_util;
+#[cfg(test)]
+mod tests;
 
 use backend::mount_key;
 pub use backend::{SimBackend, SimClock, SimSink, SimStream};
 pub use check::sim_check;
 pub use config::{SimConfig, SimReport, sim_rules};
+pub use error::SimError;
 pub use resume::run_resumed;
 pub use spec::{
     CACHEDIR_TAG, Fault, ROOT, ROOT_NAME, Rng, SimPiece, Spec, SpecBuilder, SpecConfig, SpecNode,
@@ -89,7 +95,7 @@ pub fn quiet_injected_panics() {
 /// # Errors
 ///
 /// When a check of the run fails; the message names the seed and what went wrong.
-pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
+pub fn run(seed: u64, cfg: &SimConfig) -> Result<SimReport, SimError> {
     Sim::new(seed, cfg).run_to_end()
 }
 
@@ -196,14 +202,16 @@ impl Sim {
         }
     }
 
-    fn fail(&self, what: impl std::fmt::Display) -> String {
-        format!(
-            "seed {}: {what} (after {} ticks)",
-            self.seed, self.report.ticks
-        )
+    /// A check made as the run steps that did not hold.
+    fn fail(&self, what: impl std::fmt::Display) -> SimError {
+        SimError {
+            seed: self.seed,
+            ticks: Some(self.report.ticks),
+            what: what.to_string(),
+        }
     }
 
-    fn check(&self, after: &str) -> Result<(), String> {
+    fn check(&self, after: &str) -> Result<(), SimError> {
         let wrong = self.shared.backend.wrong_storage.load(SeqCst);
         if wrong != 0 {
             return Err(self.fail(format!(
@@ -228,7 +236,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn check_mount_limits(&mut self) -> Result<(), String> {
+    pub fn check_mount_limits(&mut self) -> Result<(), SimError> {
         let gates: HashMap<(u64, u64), dfdu_scan::GateStats> = self
             .shared
             .gate_stats()
@@ -343,7 +351,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn command(&mut self, cmd: Command) -> Result<(), String> {
+    pub fn command(&mut self, cmd: Command) -> Result<(), SimError> {
         self.applier.apply_command(&mut self.model, cmd);
         self.plans
             .extend(self.applier.take_plans().into_iter().map(|p| (p, 0)));
@@ -386,7 +394,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn apply_next(&mut self) -> Result<Option<ScanMsg>, String> {
+    pub fn apply_next(&mut self) -> Result<Option<ScanMsg>, SimError> {
         loop {
             if self.cur.is_none() {
                 match self.sink.q.lock().pop_front() {
@@ -417,7 +425,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn apply_all(&mut self) -> Result<(), String> {
+    pub fn apply_all(&mut self) -> Result<(), SimError> {
         while self.apply_next()?.is_some() {}
         Ok(())
     }
@@ -427,7 +435,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn applier_work(&mut self) -> Result<(), String> {
+    pub fn applier_work(&mut self) -> Result<(), SimError> {
         while self.applier.has_work() {
             self.applier.work_step(&mut self.model);
             self.applier.refresh_status(&mut self.model);
@@ -444,7 +452,7 @@ impl Sim {
     /// # Errors
     ///
     /// The duplicate request, with the seed.
-    pub fn queue_measurements(&mut self) -> Result<(), String> {
+    pub fn queue_measurements(&mut self) -> Result<(), SimError> {
         for r in self.applier.take_measure_requests() {
             for f in r.files {
                 let tree = &self.model.tree;
@@ -474,7 +482,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn answer_measurements(&mut self) -> Result<u64, String> {
+    pub fn answer_measurements(&mut self) -> Result<u64, SimError> {
         let mut measured = 0;
         loop {
             self.queue_measurements()?;

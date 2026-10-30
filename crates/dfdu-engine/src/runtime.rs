@@ -125,6 +125,20 @@ pub struct Engine<B: Backend> {
 }
 
 impl Engine<PortableBackend> {
+    /// An engine on the portable backend with `workers` scan workers and otherwise the
+    /// [`EngineOptions`] defaults, which read nothing from the environment: no deletion
+    /// journal (deletes are refused) and no crash reports.
+    #[must_use]
+    pub fn portable(workers: usize) -> Self {
+        Self::start(
+            PortableBackend::default(),
+            EngineOptions {
+                workers,
+                ..EngineOptions::default()
+            },
+        )
+    }
+
     /// An engine over a tree read from a file, whose paths may be another machine's or no
     /// longer exist: nothing is scanned, rescanned, deleted or run on them.
     #[must_use]

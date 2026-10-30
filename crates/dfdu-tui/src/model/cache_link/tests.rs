@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::Ordering::Relaxed;
 
-use dfdu_engine::EngineOptions;
 use dfdu_scan::PortableBackend;
 use dfdu_store::cache::{Cache, Key};
 
@@ -32,17 +31,6 @@ fn cacher(link: &CacheLink) -> Cacher {
     c.min_scan_ms = 0;
     c.position = |_| None;
     c
-}
-
-fn engine() -> Engine<PortableBackend> {
-    Engine::start(
-        PortableBackend::default(),
-        EngineOptions {
-            workers: 2,
-            journal_dir: None,
-            ..Default::default()
-        },
-    )
 }
 
 /// Polls until `done` holds, at most 10 s.
@@ -80,7 +68,7 @@ fn ages_are_short() {
 fn a_complete_scan_is_saved_and_opened_next_time() {
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     assert!(c.poll(&mut app, &e), "the scan is sent at once");
@@ -94,7 +82,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     drop(c);
     e.shutdown(Duration::from_millis(200));
 
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
@@ -124,7 +112,7 @@ fn nothing_is_saved_before_the_resume_ended() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
@@ -138,7 +126,7 @@ fn nothing_is_saved_before_the_resume_ended() {
     // Changed since, as the journal will say.
     fs::write(link.path.join("new"), b"new").unwrap();
 
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
@@ -200,7 +188,7 @@ fn a_damaged_cache_is_reported_and_scanned_instead() {
     let link = link(tmp.path());
     fs::create_dir_all(link.slot.path.parent().unwrap()).unwrap();
     fs::write(&link.slot.path, b"DFDUSNAP\x04\0\0\0cut").unwrap();
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
@@ -224,7 +212,7 @@ fn quick_or_read_only_scans_are_not_saved() {
             save,
             ..link(tmp.path())
         };
-        let e = engine();
+        let e = Engine::portable(2);
         let mut app = App::new(Theme::no_color(), Instant::now());
         let mut c = cacher(&link);
         c.min_scan_ms = min;
@@ -299,7 +287,7 @@ fn measure_opening_a_million() {
         .save(&header, |f| f(&t), &AtomicBool::new(false))
         .unwrap();
     drop(t);
-    let e = engine();
+    let e = Engine::portable(2);
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let mut c = Cacher::new(Some(link.clone()));
