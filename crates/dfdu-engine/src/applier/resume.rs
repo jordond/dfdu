@@ -45,8 +45,9 @@ impl Kept {
 /// one has, the tree may be out of date anywhere below `ix`, which the identity the deleter
 /// checks again does not show. Deletes and native commands refuse such nodes.
 ///
-/// What a resume guarantees once it has: a directory listed again is as it is now; one it
-/// kept as loaded is trusted on the journal's word that its entries did not change, and, when
+/// What a resume guarantees once it has: nothing is deleted while it walks the tree, nor in a
+/// directory one of its rescans is listing again; a directory listed again is as it is now; one
+/// it kept as loaded is trusted on the journal's word that its entries did not change, and, when
 /// its parent was listed again, on its own mtime being the one it was loaded with. A change
 /// deeper below a kept directory that the journal lost is seen only by a rescan of it (the
 /// cache's periodic full scan is one).
