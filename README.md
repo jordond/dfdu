@@ -3,7 +3,7 @@
   <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
 </picture>
 
-A disk usage browser for the terminal. Browse, sort and delete while the scan is still running, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
+A disk usage browser for the terminal. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
 ![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
 
