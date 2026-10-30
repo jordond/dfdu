@@ -99,6 +99,7 @@ impl<B: Backend> Worker<B> {
                     mount: c.mount,
                     probe_subvol: c.probe_subvol,
                     chunk: None,
+                    verify: None,
                     gate: c.gate,
                     storage: c.storage,
                     class: class.as_mut().and_then(|c| c.subdirs[i].take()),

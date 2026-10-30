@@ -3,11 +3,14 @@
 //! subdirectories it still has are kept as loaded.
 //!
 //! The resume first walks the loaded tree a step at a time ([`Work::Resume`]): it classifies
-//! it, takes it over for a job of this session and registers its hard links. Until the walk
-//! ends, nothing in the tree is deleted, rescanned or cleaned. Then the changed directories
-//! are listed again by rescans that keep the loaded subdirectories they find.
+//! it, takes it over for a job of this session and registers its hard links, and the scan
+//! workers stat each directory it reaches that the journal does not name, to find what the
+//! journal lost (`verify`). Until both end, nothing in the tree is deleted, rescanned or
+//! cleaned. Then the changed directories are listed again by rescans that keep the loaded
+//! subdirectories they find.
 
 mod graft;
+mod verify;
 mod walk;
 
 use std::collections::{HashMap, HashSet};
@@ -21,6 +24,7 @@ use super::work::Work;
 use super::{Applier, Command, Job, JobKind, JobPhase, Model};
 use crate::links::VISIBLE;
 use crate::reclassify::ClassifyLoaded;
+use verify::Verify;
 pub(in crate::applier) use walk::ResumeWalk;
 
 /// What a resume's rescan keeps from the loaded tree: the loaded directories by device and
@@ -43,14 +47,17 @@ impl Kept {
 /// Whether `ix` was loaded from a file ([`Engine::load`](crate::Engine::load)) and no resume has
 /// taken it over yet: its directory (a file's parent) belongs to no job of this session. Until
 /// one has, the tree may be out of date anywhere below `ix`, which the identity the deleter
-/// checks again does not show. Deletes and native commands refuse such nodes.
+/// checks again does not show. Deletes, native commands and rescans refuse such nodes (a
+/// rescan would scan with options no job of this session has: the resume's are not known yet).
 ///
-/// What a resume guarantees once it has: nothing is deleted while it walks the tree, nor in a
-/// directory one of its rescans is listing again; a directory listed again is as it is now; one
-/// it kept as loaded is trusted on the journal's word that its entries did not change, and, when
-/// its parent was listed again, on its own mtime being the one it was loaded with. A change
-/// deeper below a kept directory that the journal lost is seen only by a rescan of it (the
-/// cache's periodic full scan is one).
+/// What a resume guarantees once it has: nothing is deleted while it walks the tree and checks
+/// the directories it keeps, nor in a directory one of its rescans is listing again; a
+/// directory listed again is as it is now; one it kept as loaded is trusted on its own stat,
+/// taken after the journal was asked, being the one it was loaded with (device, inode and an
+/// mtime older than the journal position), and on the journal's word that its entries did not
+/// change within the same second as that mtime when the position's time is not known. A file
+/// changed in place below a kept directory, which moves no directory's mtime, is seen only when
+/// the journal names its directory, or by a rescan (the cache's periodic full scan is one).
 #[must_use]
 pub fn unrefreshed(tree: &Tree, ix: Ix) -> bool {
     let dir = if tree.dir(ix).is_some() {
@@ -169,14 +176,16 @@ impl<B: Backend> Applier<B> {
     /// device and inode, with the mtime it was loaded with) are kept as loaded unless listed
     /// again themselves, and new ones are scanned in full. The root is listed again when its
     /// own mtime changed, whatever the journal says, and scanned again in full when it was
-    /// replaced. Volumes mounted below keep journals of their own (or none): their mount roots
-    /// are scanned again in full.
+    /// replaced; any other loaded directory is listed again when its stat shows it changed
+    /// since `since` ([`Verify`]), and its parent when it is gone. Volumes mounted below keep
+    /// journals of their own (or none): their mount roots are scanned again in full.
     pub(super) fn resume_changed(
         &mut self,
         m: &mut Model,
         node: NodeRef,
         opts: JobOptions,
         changed: &[PathBuf],
+        since: u64,
     ) {
         let Some(root) = m
             .tree
@@ -226,15 +235,19 @@ impl<B: Backend> Applier<B> {
                 kept: None,
             },
         );
+        let verify = self
+            .remote
+            .is_none()
+            .then(|| Verify::new(&m.tree, root, &wanted, since));
         let wanted = wanted.into_iter().map(|w| m.tree.node_ref(w)).collect();
         self.work.push_back(Work::Resume(Box::new(ResumeWalk::new(
-            id, node, wanted, class, stack,
+            id, node, wanted, class, stack, verify,
         ))));
     }
 
     /// Why `cmd` is refused on a loaded tree, if it is: everything that would touch the tree
-    /// while a resume walks it, and a native command on what no resume has taken over yet
-    /// (deletes check each item, [`unrefreshed`]).
+    /// while a resume walks it or checks what it keeps, and a native command or a rescan of
+    /// what no resume has taken over yet (deletes check each item, [`unrefreshed`]).
     pub(super) fn resume_refusal(&self, m: &Model, cmd: &Command) -> Option<&'static str> {
         let touches = matches!(
             cmd,
@@ -260,6 +273,15 @@ impl<B: Backend> Applier<B> {
         {
             return Some(
                 "native command: not refreshed yet: loaded from a file, and no resume has taken it over",
+            );
+        }
+        if let Command::Rescan { node } | Command::Enter { node } = cmd
+            && m.tree
+                .resolve_visible(*node)
+                .is_some_and(|ix| unrefreshed(&m.tree, ix))
+        {
+            return Some(
+                "rescan: not refreshed yet: loaded from a file, and no resume has taken it over",
             );
         }
         None

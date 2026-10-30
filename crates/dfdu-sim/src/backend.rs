@@ -191,6 +191,9 @@ impl Backend for SimBackend {
     }
 
     fn stat_root(&self, loc: &u32) -> io::Result<Meta> {
+        if self.spec.is_deleted(*loc) {
+            return Err(io::ErrorKind::NotFound.into());
+        }
         Ok(self.spec.meta(*loc))
     }
 

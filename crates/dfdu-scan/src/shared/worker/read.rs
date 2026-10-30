@@ -167,6 +167,7 @@ impl<B: Backend> Worker<B> {
                 parts,
                 class: r.class.clone(),
             })),
+            verify: None,
             gate: r.task.gate.clone(),
             storage: r.task.storage,
             class: None,

@@ -508,6 +508,25 @@ pub(super) fn enc_msg(e: &mut Enc, m: &ScanMsg) {
             e.u8(3);
             e.var(*submitted_seq);
         }
+        // An agent runs no resume, but the message has its form like any other.
+        ScanMsg::Verified {
+            job,
+            batch,
+            changed,
+            gone,
+            complete,
+        } => {
+            e.u8(4);
+            e.var(job.0.into());
+            e.var((*batch).into());
+            for list in [changed, gone] {
+                e.var(list.len() as u64);
+                for &i in list {
+                    e.var(i.into());
+                }
+            }
+            e.u8(u8::from(*complete));
+        }
     }
 }
 
@@ -553,6 +572,29 @@ pub(super) fn dec_msg(d: &mut Dec, rules: Option<&RuleSet>) -> R<ScanMsg> {
         3 => ScanMsg::Quiescent {
             submitted_seq: d.var()?,
         },
+        4 => {
+            let (job, batch) = (JobId(d.u32()?), d.u32()?);
+            let mut lists = [Vec::new(), Vec::new()];
+            for list in &mut lists {
+                let n = d.count(1)?;
+                list.reserve(n);
+                for _ in 0..n {
+                    list.push(d.u32()?);
+                }
+            }
+            let [changed, gone] = lists;
+            ScanMsg::Verified {
+                job,
+                batch,
+                changed,
+                gone,
+                complete: match d.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return bad("verified flag"),
+                },
+            }
+        }
         _ => return bad("scanner message"),
     })
 }

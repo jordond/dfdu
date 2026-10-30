@@ -16,6 +16,7 @@ use crate::proto::{Batch, DirId, JobId, ListingStatus, ScanMsg};
 use crate::sync::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Injector, Mutex, RwLock};
 
 mod slot;
+mod verify;
 mod watchdog;
 mod worker;
 
@@ -23,6 +24,7 @@ mod worker;
 mod test_util;
 
 pub use slot::{Outbox, WorkerSlot};
+pub use verify::VerifyDir;
 pub use watchdog::WatchdogReport;
 pub use worker::{StepResult, Worker};
 
@@ -120,6 +122,9 @@ pub struct Task<L> {
     /// Set for a chunk task: one block of the directory to stat. Otherwise this is the
     /// directory's listing task.
     chunk: Option<Box<ChunkWork<L>>>,
+    /// Set for a batch of a resume's check of the directories it keeps ([`Shared::verify`]):
+    /// no directory is listed, each of the batch's is stat'ed.
+    verify: Option<Box<verify::VerifyWork<L>>>,
     /// The limit of the directory's mount, if it has one. Set for a job root once it is opened;
     /// the root task itself runs without a permit.
     gate: Option<Arc<TaskGate<L>>>,
@@ -235,6 +240,16 @@ struct JobState {
 }
 
 impl JobState {
+    fn new(opts: JobOptions, dup_mounts: Option<HashSet<u64>>) -> Self {
+        JobState {
+            ended: AtomicBool::new(false),
+            next_dir: AtomicU32::new(1),
+            early_stop: RwLock::new(FixedBitSet::new()),
+            dup_mounts,
+            mount_roots: Mutex::new(HashSet::new()),
+            opts,
+        }
+    }
     fn stopped(&self, dir: DirId) -> bool {
         self.early_stop.read().contains(dir.0 as usize)
     }
@@ -396,19 +411,13 @@ impl<B: Backend> Shared<B> {
     /// Submits the root task of a job. The applier creates the root placeholder first. Returns
     /// the `submitted_seq` value that covers this job.
     pub fn start_job(&self, job: JobId, root: &Path, opts: JobOptions) -> u64 {
-        let st = Arc::new(JobState {
-            ended: AtomicBool::new(false),
-            next_dir: AtomicU32::new(1),
-            early_stop: RwLock::new(FixedBitSet::new()),
-            dup_mounts: (opts.cross_mounts || opts.network)
-                .then(|| {
-                    self.backend
-                        .duplicate_mounts(opts.scope.as_deref().unwrap_or(root))
-                })
-                .flatten(),
-            mount_roots: Mutex::new(HashSet::new()),
-            opts,
-        });
+        let dup_mounts = (opts.cross_mounts || opts.network)
+            .then(|| {
+                self.backend
+                    .duplicate_mounts(opts.scope.as_deref().unwrap_or(root))
+            })
+            .flatten();
+        let st = Arc::new(JobState::new(opts, dup_mounts));
         self.jobs.write().insert(job.0, st);
         self.outstanding.fetch_add(1, SeqCst);
         let seq = self.submitted_seq.fetch_add(1, SeqCst) + 1;
@@ -427,6 +436,7 @@ impl<B: Backend> Shared<B> {
             mount: 0,
             probe_subvol: true,
             chunk: None,
+            verify: None,
             gate: None,
             storage: dfdu_sys::Storage::Unknown,
             class,

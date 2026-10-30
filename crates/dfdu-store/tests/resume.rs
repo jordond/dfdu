@@ -108,6 +108,7 @@ fn resumed_snapshot_is_classified() {
             ..JobOptions::default()
         },
         changed: None,
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| {
@@ -167,6 +168,7 @@ fn resume_rescans_only_changed_directories() {
             "a/b/c".into(),
             "a/b/node_modules/dep".into(),
         ]),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let find = |m: &dfdu_engine::Model, rel: &str| {
@@ -298,6 +300,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
         node,
         opts: opts(),
         changed: Some(vec![]),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert_eq!(marks(&e), scanned);
@@ -327,6 +330,7 @@ fn classify_loaded_cost() {
             ..JobOptions::default()
         },
         changed: Some(vec![]),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let n = e.read(|m| m.tree.live_nodes());
@@ -400,6 +404,7 @@ fn btrfs_generations_tell_what_changed() {
         node,
         opts: JobOptions::default(),
         changed: Some(changed),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let resumed = root_total(&e);

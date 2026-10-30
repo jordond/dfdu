@@ -39,6 +39,13 @@ pub enum Event {
     Quiescent {
         submitted_seq: u64,
     },
+    Verified {
+        job: u32,
+        batch: u32,
+        changed: u32,
+        gone: u32,
+        complete: bool,
+    },
     Command(&'static str),
 }
 
@@ -77,6 +84,19 @@ impl Event {
             },
             ScanMsg::Quiescent { submitted_seq } => Event::Quiescent {
                 submitted_seq: *submitted_seq,
+            },
+            ScanMsg::Verified {
+                job,
+                batch,
+                changed,
+                gone,
+                complete,
+            } => Event::Verified {
+                job: job.0,
+                batch: *batch,
+                changed: count(changed.len()),
+                gone: count(gone.len()),
+                complete: *complete,
             },
         }
     }

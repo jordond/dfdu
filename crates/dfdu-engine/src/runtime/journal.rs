@@ -81,6 +81,7 @@ impl<B: Backend> Engine<B> {
                 node,
                 opts,
                 changed: None,
+                since: 0,
             });
             return;
         };
@@ -130,6 +131,7 @@ impl Ask {
             node: self.node,
             opts: self.opts,
             changed,
+            since: self.at.time,
         };
         if self.tx.send(resume).is_err() {
             self.sent.fetch_sub(1, SeqCst);

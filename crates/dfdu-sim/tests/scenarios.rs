@@ -18,7 +18,7 @@ fn is_dir_msg(m: &ScanMsg, id: (JobId, DirId)) -> bool {
     match m {
         ScanMsg::Chunk(c) => (c.job, c.dir) == id,
         ScanMsg::Close { job, dir, .. } | ScanMsg::Stalled { job, dir } => (*job, *dir) == id,
-        ScanMsg::Quiescent { .. } => false,
+        ScanMsg::Quiescent { .. } | ScanMsg::Verified { .. } => false,
     }
 }
 

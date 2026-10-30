@@ -500,6 +500,7 @@ impl Sim {
         out == ab
             && self.model.status.running() == 0
             && !self.applier.has_work()
+            && !self.model.status.settling
             && self.cur.is_none()
             && self.sink.q.lock().is_empty()
             && self.model.status.commands_applied > 0

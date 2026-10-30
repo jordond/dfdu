@@ -81,6 +81,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         node,
         opts: opts.clone(),
         changed: answer,
+        since: 0,
     })?;
     sim.settle()?;
     // A cancelled resume leaves what it had not listed again as loaded, out of date where it
@@ -95,6 +96,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
             node,
             opts: opts.clone(),
             changed: None,
+            since: 0,
         })?;
         sim.settle()?;
     }

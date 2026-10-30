@@ -1,9 +1,11 @@
-//! A resume's walk over the loaded tree, a step at a time, and the rescans that end it.
+//! A resume's walk over the loaded tree, a step at a time, the check of the directories it
+//! keeps that runs beside it, and the rescans that end both.
 
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, DirId, JobId};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::verify::Verify;
 use super::{kept_by_target, topmost};
 use crate::applier::work::{STEP_UNITS, Work};
 use crate::applier::{Applier, Model};
@@ -25,8 +27,13 @@ pub(in crate::applier) struct ResumeWalk {
     class: Option<(ClassOpts, ClassifyLoaded)>,
     /// The directories still to take over when it does not.
     stack: Vec<NodeRef>,
-    /// Cancelled while it walked: its rescans are cancelled as they start.
+    /// Cancelled while it walked or checked: its rescans are cancelled as they start.
     cancelled: bool,
+    /// It has taken the whole tree over.
+    walked: bool,
+    /// The check of the directories it keeps, which its rescans wait for; none for a remote
+    /// scan, whose directories this host cannot stat.
+    verify: Option<Verify>,
 }
 
 impl ResumeWalk {
@@ -36,6 +43,7 @@ impl ResumeWalk {
         wanted: Vec<NodeRef>,
         class: Option<(ClassOpts, ClassifyLoaded)>,
         stack: Vec<NodeRef>,
+        verify: Option<Verify>,
     ) -> Self {
         ResumeWalk {
             id,
@@ -45,6 +53,8 @@ impl ResumeWalk {
             class,
             stack,
             cancelled: false,
+            walked: false,
+            verify,
         }
     }
 }
@@ -90,22 +100,51 @@ fn own(
 }
 
 impl<B: Backend> Applier<B> {
-    /// One step of a resume's walk; once it has taken the whole tree over, starts its rescans.
+    /// One step of a resume's walk, which hands the directories it reaches to the check; once
+    /// it has taken the whole tree over and the check has ended, starts its rescans. Until the
+    /// check ends the walk waits aside ([`Applier::resume_waiting`]).
     pub(in crate::applier) fn resume_step(&mut self, m: &mut Model, mut walk: Box<ResumeWalk>) {
         let Some(root) = m.tree.resolve_visible(walk.root) else {
+            if walk.verify.is_some() {
+                self.scan.end_job(JobId(walk.id));
+            }
             return;
         };
+        if !walk.walked {
+            walk.walked = self.walk_step(m, root, &mut walk);
+        }
+        if !walk.walked {
+            self.work.push_front(Work::Resume(walk));
+        } else if walk.verify.as_ref().is_some_and(Verify::waiting) && !walk.cancelled {
+            self.resume_waiting = Some(walk);
+        } else {
+            if walk.verify.is_some() {
+                self.scan.end_job(JobId(walk.id));
+            }
+            self.resume_rescans(m, root, &walk);
+        }
+    }
+
+    /// Takes a step's worth of the loaded tree over; whether it has all of it.
+    fn walk_step(&mut self, m: &mut Model, root: Ix, walk: &mut ResumeWalk) -> bool {
         let ResumeWalk {
             id,
             mounts,
             class,
             stack,
+            cancelled,
+            verify,
             ..
-        } = &mut *walk;
+        } = walk;
         let (id, links) = (*id, &mut self.links);
+        // Nothing more is checked once cancelled: the rescans that would use it are not run.
+        let mut verify = verify.as_mut().filter(|_| !*cancelled);
         let done = match class {
             Some((c, w)) => w.step(&mut m.tree, c, &self.scan.backend, STEP_UNITS, |t, ix| {
                 own(t, links, id, root, ix, mounts);
+                if let Some(v) = verify.as_deref_mut() {
+                    v.add(t, ix);
+                }
             }),
             None => {
                 let mut n = 0;
@@ -117,6 +156,9 @@ impl<B: Backend> Applier<B> {
                     };
                     own(&mut m.tree, links, id, root, ix, mounts);
                     let t = &m.tree;
+                    if let Some(v) = verify.as_deref_mut() {
+                        v.add(t, ix);
+                    }
                     n += 1 + t.children(ix).count();
                     stack.extend(
                         t.children(ix)
@@ -127,11 +169,57 @@ impl<B: Backend> Applier<B> {
                 stack.is_empty()
             }
         };
-        if done {
-            self.resume_rescans(m, root, &walk);
-        } else {
-            self.work.push_front(Work::Resume(walk));
+        if let Some(v) = verify {
+            v.send(&m.tree, &self.scan, id, done);
         }
+        done
+    }
+
+    /// Applies what a batch of the check of resume `job` found: what changed is listed again
+    /// by its rescans. The last answer lets a walk that waits for it go on.
+    pub(in crate::applier) fn resume_verified(
+        &mut self,
+        m: &mut Model,
+        job: u32,
+        batch: u32,
+        (changed, gone): (&[u32], &[u32]),
+        complete: bool,
+    ) {
+        let Some(walk) = self.resume_walk(job) else {
+            return;
+        };
+        let Some(v) = walk.verify.as_mut() else {
+            return;
+        };
+        let again = v.answer(&m.tree, batch, changed, gone, complete);
+        let waiting = v.waiting();
+        walk.wanted.extend(again);
+        if !waiting
+            && let Some(w) = self.resume_waiting.take_if(|w| w.id == job)
+        {
+            self.work.push_front(Work::Resume(w));
+        }
+    }
+
+    /// Whether resume `job` is walking or waiting, with a check.
+    pub(in crate::applier) fn resume_checks(&self, job: u32) -> bool {
+        let walking = self.work.iter().find_map(|w| match w {
+            Work::Resume(walk) if walk.id == job => Some(&**walk),
+            _ => None,
+        });
+        let waiting = self.resume_waiting.as_deref().filter(|w| w.id == job);
+        waiting.or(walking).is_some_and(|w| w.verify.is_some())
+    }
+
+    /// The walk of resume `job`, walking or waiting for its check.
+    fn resume_walk(&mut self, job: u32) -> Option<&mut ResumeWalk> {
+        let waiting = self.resume_waiting.as_deref_mut().filter(|w| w.id == job);
+        waiting.or_else(|| {
+            self.work.iter_mut().find_map(|w| match w {
+                Work::Resume(walk) if walk.id == job => Some(&mut **walk),
+                _ => None,
+            })
+        })
     }
 
     /// Ends a resume's walk: the loaded files are measured where files can share extents, and
@@ -185,19 +273,28 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    /// Whether a resume's walk is still going.
+    /// Whether a resume's walk or its check is still going.
     pub(in crate::applier) fn resuming(&self) -> bool {
-        self.work.iter().any(|w| matches!(w, Work::Resume(_)))
+        self.resume_waiting.is_some() || self.work.iter().any(|w| matches!(w, Work::Resume(_)))
     }
 
-    /// Marks the resume walking as cancelled, if `job` is its job (all when `None`).
+    /// Marks the resume walking or checking as cancelled, if `job` is its job (all when
+    /// `None`): its check ends at once, its walk goes on.
     pub(in crate::applier) fn cancel_resume(&mut self, job: Option<u32>) {
-        for w in &mut self.work {
-            if let Work::Resume(walk) = w
-                && job.is_none_or(|j| j == walk.id)
-            {
+        let walking = self.work.iter_mut().filter_map(|w| match w {
+            Work::Resume(walk) => Some(&mut **walk),
+            _ => None,
+        });
+        for walk in walking.chain(self.resume_waiting.as_deref_mut()) {
+            if job.is_none_or(|j| j == walk.id) {
                 walk.cancelled = true;
+                if walk.verify.is_some() {
+                    self.scan.end_job(JobId(walk.id));
+                }
             }
+        }
+        if let Some(w) = self.resume_waiting.take_if(|w| w.cancelled) {
+            self.work.push_front(Work::Resume(w));
         }
     }
 }

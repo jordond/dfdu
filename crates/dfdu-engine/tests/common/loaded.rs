@@ -108,6 +108,7 @@ pub fn resume_with(tree: Tree, opts: JobOptions, changed: &[&str]) -> Engine<Por
         node,
         opts,
         changed: Some(changed.iter().map(PathBuf::from).collect()),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e

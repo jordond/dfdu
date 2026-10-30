@@ -76,11 +76,16 @@ pub enum Command {
     /// with these options, which no scan job of this session holds. With `changed` (paths
     /// relative to the root, as [`changed_since`](crate::changed_since) gives them), the tree
     /// is classified as loaded and only those directories, and those above them, are listed
-    /// again: the subdirectories they still have are kept as loaded.
+    /// again, with every other loaded directory whose stat shows it changed since it was
+    /// loaded: the subdirectories they still have are kept as loaded. `since` is when the
+    /// journal position `changed` counts from was read
+    /// ([`JournalPosition::time`](crate::JournalPosition::time)), 0 when not known: a directory
+    /// changed in that second or later is listed again whatever its mtime says.
     Resume {
         node: NodeRef,
         opts: JobOptions,
         changed: Option<Vec<PathBuf>>,
+        since: u64,
     },
     Cancel {
         job: JobId,
@@ -217,6 +222,9 @@ pub struct Applier<B: Backend> {
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
+    /// A resume's walk that has taken the tree over and waits for the check of the directories
+    /// it keeps to end.
+    resume_waiting: Option<Box<resume::ResumeWalk>>,
     /// Rescans waiting for their parent's listing to close, and whether each enters a mount:
     /// a directory's class can depend on its siblings, which a listing still being read does
     /// not have yet.
@@ -298,6 +306,7 @@ impl<B: Backend> Applier<B> {
             next_plan: 1,
             deferred_rescans: Vec::new(),
             rescans_after_listing: Vec::new(),
+            resume_waiting: None,
             read_only: false,
             imported: false,
             measure: true,
@@ -355,7 +364,7 @@ impl<B: Backend> Applier<B> {
             }
         }
         m.status.stalled = stalled;
-        m.status.settling = !self.work.is_empty();
+        m.status.settling = !self.work.is_empty() || self.resume_waiting.is_some();
         if self.measure_idle() {
             m.status.measuring = None;
         }
@@ -403,12 +412,14 @@ impl<B: Backend> Applier<B> {
                 node,
                 opts,
                 changed: None,
+                ..
             } => self.rescan(m, node, Some(opts), false),
             Command::Resume {
                 node,
                 opts,
                 changed: Some(dirs),
-            } => self.resume_changed(m, node, opts, &dirs),
+                since,
+            } => self.resume_changed(m, node, opts, &dirs, since),
             Command::Cancel { job } => self.cancel_jobs(Some(job.0)),
             Command::CancelAll => self.cancel_jobs(None),
             Command::Abandon { node } => self.abandon(m, node),

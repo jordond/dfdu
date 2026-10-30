@@ -111,6 +111,7 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
             node: root,
             opts: JobOptions::default(),
             changed: Some(vec![PathBuf::from("a/b"), PathBuf::from("c")]),
+            since: 0,
         },
     );
     assert!(ap.resuming());

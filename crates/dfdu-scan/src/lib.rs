@@ -71,5 +71,5 @@ pub use proto::{
 };
 pub use shared::{
     Clock, JobOptions, Limits, MAX_MOUNT_WORKERS, Outbox, Shared, Sink, StepResult, Task, TaskGate,
-    WatchdogReport, Worker, WorkerSlot, panic_message,
+    VerifyDir, WatchdogReport, Worker, WorkerSlot, panic_message,
 };

@@ -31,6 +31,24 @@ impl<B: Backend> Applier<B> {
                 status,
                 classes,
             } => self.apply_close(m, job, dir, chunks, (status, classes)),
+            // A batch of a resume's check that stalls is not waited for: what it was to stat
+            // is listed again, where a stall is handled as in any scan.
+            ScanMsg::Stalled { job, dir } if self.resume_checks(job.0) => {
+                m.status.stats.stalled += 1;
+                self.resume_verified(m, job.0, dir.0, (&[], &[]), false);
+                self.scanner_abandon(job, dir);
+                self.refresh_status(m);
+            }
+            ScanMsg::Verified {
+                job,
+                batch,
+                changed,
+                gone,
+                complete,
+            } => {
+                self.resume_verified(m, job.0, batch, (&changed, &gone), complete);
+                self.refresh_status(m);
+            }
             ScanMsg::Stalled { job, dir } => {
                 m.status.stats.stalled += 1;
                 match self.gate(m, job, dir, None) {

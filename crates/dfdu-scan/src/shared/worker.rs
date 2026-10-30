@@ -19,6 +19,7 @@ use crate::sync::{Injector, Steal};
 
 mod emit;
 mod read;
+mod verify;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StepResult {
@@ -111,6 +112,10 @@ impl<B: Backend> Worker<B> {
         let Some(mut r) = self.running.take() else {
             return;
         };
+        if let Some(work) = r.task.verify.take() {
+            self.report_verify(&r.task, *work, false, clock);
+            return;
+        }
         let now = clock.now();
         if let Some(work) = r.task.chunk.take() {
             let chunk = empty_chunk(&r.task, work.seq, ChunkStatus::Panicked(msg));
@@ -323,6 +328,9 @@ impl<B: Backend> Worker<B> {
         let Some(r) = self.running.as_ref() else {
             return self.start_task(sh, sink, clock);
         };
+        if r.task.verify.is_some() {
+            return self.verify_step(sh, clock);
+        }
         if r.task.chunk.is_some() {
             return self.chunk_step(sh, clock);
         }
@@ -350,7 +358,7 @@ impl<B: Backend> Worker<B> {
             .job(task.job)
             .filter(|j| !j.ended.load(SeqCst) && !j.stopped(task.dir));
         let Some(job) = job else {
-            self.cancel_task(&task, clock);
+            self.cancel_task(task, clock);
             return StepResult::Progress;
         };
         let class = match (&task.chunk, task.class.take(), &job.opts.class) {
@@ -376,8 +384,14 @@ impl<B: Backend> Worker<B> {
     }
 
     /// Ends a task that will not run: a chunk task still sends its one chunk, so the
-    /// directory's count is right; a listing task closes its directory as cancelled.
-    fn cancel_task(&self, task: &Task<B::Loc>, clock: &dyn Clock) {
+    /// directory's count is right; a listing task closes its directory as cancelled; a batch
+    /// of a resume's check reports that it stat'ed nothing.
+    fn cancel_task(&self, mut task: Task<B::Loc>, clock: &dyn Clock) {
+        if let Some(work) = task.verify.take() {
+            self.report_verify(&task, *work, false, clock);
+            return;
+        }
+        let task = &task;
         let mut ob = self.slot.outbox.lock();
         let now = clock.now();
         if let Some(work) = &task.chunk {

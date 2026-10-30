@@ -466,6 +466,11 @@ impl Backend for WindowsBackend {
         Ok(Meta::from_windows(&st))
     }
 
+    fn stat_dir(&self, loc: &WinLoc) -> io::Result<Meta> {
+        // Not a new job: the volume's table is kept.
+        Ok(Meta::from_windows(&dfdu_sys::stat_path(&loc.path, true)?))
+    }
+
     fn open(&self, loc: &WinLoc, _storage: dfdu_sys::Storage) -> io::Result<WindowsStream> {
         if let Some(cache) = &self.mft {
             let at = match loc.mft {

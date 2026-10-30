@@ -118,6 +118,7 @@ pub(crate) fn task<L>(dir: DirId, loc: L, dev: u64, mount: u64) -> Task<L> {
         mount,
         probe_subvol: false,
         chunk: None,
+        verify: None,
         gate: None,
         storage: Storage::Unknown,
         class: None,

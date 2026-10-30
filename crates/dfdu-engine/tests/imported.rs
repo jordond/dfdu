@@ -106,6 +106,7 @@ fn imported_trees_cannot_delete() {
             node,
             opts: dfdu_scan::JobOptions::default(),
             changed: Some(vec![]),
+            since: 0,
         });
         assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
         e.send(Command::Delete {

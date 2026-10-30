@@ -147,6 +147,16 @@ pub trait Backend: Send + Sync + 'static {
     ///
     /// The root could not be stat'ed.
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta>;
+    /// Stat of a directory a resume keeps from the tree it loaded, to compare with what was
+    /// loaded ([`Shared::verify`](crate::Shared::verify)): as [`Backend::stat_root`], without
+    /// what a backend does when a job starts.
+    ///
+    /// # Errors
+    ///
+    /// The directory could not be stat'ed.
+    fn stat_dir(&self, loc: &Self::Loc) -> io::Result<Meta> {
+        self.stat_root(loc)
+    }
     /// Opens a directory for listing. `storage` is what the directory's mount is stored on
     /// ([`Backend::mount_storage`], read once when the scan enters the mount, `Unknown` when
     /// not known), so a backend can read the directory in the order that suits it (inode order
@@ -237,6 +247,9 @@ impl<W: Forward> Backend for W {
     }
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
         self.inner().stat_root(loc)
+    }
+    fn stat_dir(&self, loc: &Self::Loc) -> io::Result<Meta> {
+        self.inner().stat_dir(loc)
     }
     fn open(&self, loc: &Self::Loc, storage: Storage) -> io::Result<W::Stream> {
         Forward::open(self, loc, storage)

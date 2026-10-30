@@ -160,6 +160,19 @@ pub enum ScanMsg {
     Quiescent {
         submitted_seq: u64,
     },
+    /// What a batch of a resume's check of the directories it keeps found
+    /// ([`Shared::verify`](crate::Shared::verify)), one per batch: the directories, by their
+    /// index in the batch, whose entries may have changed (`changed`: the same directory, with
+    /// another mtime or one that cannot vouch for it) and those that are gone, replaced or could
+    /// not be stat'ed (`gone`). Not `complete` when the batch was cancelled or panicked before
+    /// it stat'ed every directory: nothing is known of those it did not.
+    Verified {
+        job: JobId,
+        batch: u32,
+        changed: Vec<u32>,
+        gone: Vec<u32>,
+        complete: bool,
+    },
 }
 
 impl ScanMsg {
@@ -167,6 +180,9 @@ impl ScanMsg {
     pub fn size(&self) -> usize {
         match self {
             ScanMsg::Chunk(c) => c.size(),
+            ScanMsg::Verified { changed, gone, .. } => {
+                std::mem::size_of::<ScanMsg>() + (changed.capacity() + gone.capacity()) * 4
+            }
             _ => std::mem::size_of::<ScanMsg>(),
         }
     }

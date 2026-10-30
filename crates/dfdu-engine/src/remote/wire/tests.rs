@@ -148,6 +148,13 @@ fn sample() -> Vec<FromAgent> {
             ScanMsg::Quiescent {
                 submitted_seq: u64::MAX,
             },
+            ScanMsg::Verified {
+                job: JobId(3),
+                batch: 7,
+                changed: vec![0, u32::MAX],
+                gone: vec![5],
+                complete: false,
+            },
         ]),
         FromAgent::Heartbeat,
         FromAgent::Started {

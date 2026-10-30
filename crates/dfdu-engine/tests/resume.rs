@@ -155,6 +155,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
         node,
         opts: JobOptions::default(),
         changed: Some(vec![]),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.send(Command::Delete {
@@ -252,6 +253,7 @@ fn resume_lock_hold_on_a_large_tree() {
             ..JobOptions::default()
         },
         changed: Some(vec![]),
+        since: 0,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let took = started.elapsed();
