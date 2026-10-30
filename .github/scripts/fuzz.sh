@@ -15,6 +15,11 @@ targets=$(cargo "+$toolchain" fuzz list) || exit 1
 # cargo-fuzz defaults to the triple it was built for, and a prebuilt binary may be musl,
 # which the sanitizers reject; build for the toolchain's host instead.
 host=$(rustc "+$toolchain" -vV | sed -n 's/^host: //p')
+# A target that does not build is not a crash: say so, and run none.
+if ! cargo "+$toolchain" fuzz build --target "$host"; then
+    echo "::error::The fuzz targets do not build"
+    exit 1
+fi
 failed=()
 rows=()
 for t in $targets; do

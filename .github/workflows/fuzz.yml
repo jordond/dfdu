@@ -65,8 +65,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cd fuzz
+          # For the toolchain's host, as fuzz.sh builds: cargo-fuzz's own default may be musl.
+          host=$(rustc "+$NIGHTLY" -vV | sed -n 's/^host: //p')
           for t in $(cargo "+$NIGHTLY" fuzz list); do
-            cargo "+$NIGHTLY" fuzz cmin "$t" "corpus/$t" -- -rss_limit_mb=2048 -timeout=10 || true
+            cargo "+$NIGHTLY" fuzz cmin --target "$host" "$t" "corpus/$t" -- -rss_limit_mb=2048 -timeout=10 || true
           done
       - name: Save the corpus
         if: ${{ !cancelled() }}

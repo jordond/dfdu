@@ -82,6 +82,10 @@ jobs:
       - name: Check the workspace builds on the MSRV
         if: ${{ !cancelled() }}
         run: cargo xtask msrv
+      # The fuzz crate is not a workspace member, and only the nightly fuzz run builds it.
+      - name: Check the fuzz targets build
+        if: ${{ !cancelled() }}
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
 
   clippy:
     name: Clippy (${{ matrix.os }})

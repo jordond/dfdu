@@ -16,6 +16,7 @@ dfdu-tui = { path = "../crates/dfdu-tui" }
 dfdu-engine = { path = "../crates/dfdu-engine" }
 dfdu-clean = { path = "../crates/dfdu-clean" }
 dfdu-scan = { path = "../crates/dfdu-scan" }
+dfdu-tree = { path = "../crates/dfdu-tree" }
 tempfile = "3.27.0"
 
 # Not a member of the dfdu workspace: it builds with nightly only.
