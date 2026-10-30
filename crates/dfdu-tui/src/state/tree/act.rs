@@ -176,7 +176,9 @@ mod tests {
         app.tree = Some(TreeState::default());
         let mut entries = sample();
         for e in &mut entries {
-            e.is_dir = ["a", "y", "b", "only"].iter().any(|d| e.name[..] == *d.as_bytes());
+            e.is_dir = ["a", "y", "b", "only"]
+                .iter()
+                .any(|d| e.name[..] == *d.as_bytes());
         }
         let mut snap = snap_with_totals(entries, 1);
         snap.root_path = HostPath::from("/r");
@@ -186,7 +188,11 @@ mod tests {
     }
 
     fn expanded(app: &App, name: &str) -> bool {
-        let e = app.snap.entries.iter().find(|e| e.name[..] == *name.as_bytes());
+        let e = app
+            .snap
+            .entries
+            .iter()
+            .find(|e| e.name[..] == *name.as_bytes());
         let node = e.expect("an entry").node;
         app.tree.as_ref().is_some_and(|t| t.is_expanded(node))
     }
@@ -210,7 +216,11 @@ mod tests {
         assert!(right(&mut app));
         assert_eq!(selected_name(&app), "p");
         assert!(left(&mut app));
-        assert_eq!(selected_name(&app), "y", "the row of the directory it is in");
+        assert_eq!(
+            selected_name(&app),
+            "y",
+            "the row of the directory it is in"
+        );
         assert!(left(&mut app));
         assert!(!expanded(&app, "y"), "collapsed");
         select(&mut app, "a");
@@ -249,7 +259,11 @@ mod tests {
         let mut app = browser();
         select(&mut app, "p");
         chain(&mut app);
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("* expands")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("* expands"))
+        );
         toggle(&mut app);
         app.move_to(6);
         chain(&mut app);

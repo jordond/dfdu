@@ -345,8 +345,8 @@ mod tests {
             assert_eq!(t.bound, AREA);
             assert_eq!(t.level, 0, "depth 1 lays out the top level only");
         }
-        let cells: u32 = l.tiles.iter().map(|t| u32::from(t.rect.area())).sum();
-        assert!(cells <= u32::from(AREA.area()));
+        let cells: u32 = l.tiles.iter().map(|t| t.rect.area()).sum();
+        assert!(cells <= AREA.area());
         // The rest of the rows is one merged tile.
         let merged: Vec<&Tile> = l.tiles.iter().filter(|t| t.small > 0).collect();
         assert!(merged.len() <= 1, "{merged:?}");

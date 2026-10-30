@@ -247,7 +247,11 @@ mod tests {
         assert_eq!(name, "photos/");
         assert_eq!(sizes.both, "50 B  25%");
         assert_eq!(sizes.fit(20), "50 B  25%");
-        assert_eq!(sizes.fit(7), "50 B", "a share that does not fit is left out");
+        assert_eq!(
+            sizes.fit(7),
+            "50 B",
+            "a share that does not fit is left out"
+        );
         assert_eq!(sizes.fit(4), "", "a size is not cut");
         let merged = Tile {
             small: 3,

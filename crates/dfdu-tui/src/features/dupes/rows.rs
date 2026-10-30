@@ -150,7 +150,10 @@ mod tests {
     }
 
     fn paths(files: &[(Candidate, NodeRef)]) -> Vec<String> {
-        files.iter().map(|(c, _)| c.path.display().to_string()).collect()
+        files
+            .iter()
+            .map(|(c, _)| c.path.display().to_string())
+            .collect()
     }
 
     #[test]

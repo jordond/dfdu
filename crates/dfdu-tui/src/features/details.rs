@@ -17,8 +17,8 @@ use crate::features::marks_pane;
 use crate::theme::{count, human};
 use crate::view::cells;
 
-pub use read::{Facts, Info, Largest, Matched, read};
 use read::subject;
+pub use read::{Facts, Info, Largest, Matched, read};
 use text::lines;
 #[cfg(test)]
 use text::{state, wrap};

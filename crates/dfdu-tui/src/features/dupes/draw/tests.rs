@@ -43,10 +43,17 @@ fn candidate(links: u32, private: Option<u64>) -> Candidate {
 fn paths_are_below_the_root_and_the_directory_they_share() {
     let root = Path::new("/r");
     assert_eq!(shown(Path::new("/r/a/b"), root), PathBuf::from("a/b"));
-    assert_eq!(shown(root, root), PathBuf::from("/r"), "the root itself stays whole");
+    assert_eq!(
+        shown(root, root),
+        PathBuf::from("/r"),
+        "the root itself stays whole"
+    );
     assert_eq!(shown(Path::new("/x/y"), root), PathBuf::from("/x/y"));
     let paths = |ps: &[&str]| ps.iter().map(PathBuf::from).collect::<Vec<_>>();
-    assert_eq!(shared_dir(&paths(&["a/b/x", "a/b/y", "a/c"])), PathBuf::from("a"));
+    assert_eq!(
+        shared_dir(&paths(&["a/b/x", "a/b/y", "a/c"])),
+        PathBuf::from("a")
+    );
     assert_eq!(shared_dir(&paths(&["x", "y"])), PathBuf::new());
     assert_eq!(shared_dir(&[]), PathBuf::new());
 
@@ -130,7 +137,11 @@ fn rows_show_the_copy_kept_and_the_keep_rule() {
         )
     );
     let keep = keep_line(&app.theme, Keep::Newest);
-    let current = keep.spans.iter().find(|s| s.content == "newest").expect("newest");
+    let current = keep
+        .spans
+        .iter()
+        .find(|s| s.content == "newest")
+        .expect("newest");
     assert!(current.style.add_modifier.contains(Modifier::REVERSED));
     assert!(text(&keep).ends_with("K change"), "{}", text(&keep));
 }
@@ -143,12 +154,16 @@ fn the_detail_pane_says_which_copy_is_kept_and_which_go() {
         .iter()
         .map(text)
         .collect();
-    assert!(lines[1].starts_with("1.0 MiB · modified 1970-01-01"), "{}", lines[1]);
+    assert!(
+        lines[1].starts_with("1.0 MiB · modified 1970-01-01"),
+        "{}",
+        lines[1]
+    );
     assert_eq!(lines[2], "deleting it frees 1.0 MiB");
     let labels: Vec<&str> = lines[4..].iter().map(|l| &l[..4]).collect();
     assert_eq!(labels, ["kept", "goes", "goes"]);
     // On a group's row, its copies only.
     let group = detail_lines(&app, f, Some(&Row::Group(1)), Path::new("/r"));
     assert_eq!(group.len(), 2);
-    assert!(detail_lines(&app, f, None, Path::new("/r")).is_empty());
+    assert_eq!(detail_lines(&app, f, None, Path::new("/r")), Vec::<Line>::new());
 }

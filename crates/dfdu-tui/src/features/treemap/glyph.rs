@@ -8,11 +8,11 @@ use ratatui::symbols::border;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Widget};
 
+use super::paint;
+use super::place::Tile;
 use super::tile::{
     LABEL_MIN, SLIVER, base_style, candidate, fit_name, hatch, put, texts, third_line,
 };
-use super::paint;
-use super::place::Tile;
 use crate::app::App;
 use crate::theme::Bars;
 
@@ -203,13 +203,22 @@ mod tests {
     fn slivers_are_shaded_only_when_wide_enough_or_selected() {
         let narrow = |w| [Tile::of(Rect::new(0, 0, w, 6), "s", 1)];
         let shade = paint::shade(Bars::Unicode, 0);
-        assert_eq!(drawn(Theme::no_color(), &narrow(3), false)[(1, 2)].symbol(), shade);
-        assert_eq!(drawn(Theme::no_color(), &narrow(2), false)[(1, 2)].symbol(), " ");
+        assert_eq!(
+            drawn(Theme::no_color(), &narrow(3), false)[(1, 2)].symbol(),
+            shade
+        );
+        assert_eq!(
+            drawn(Theme::no_color(), &narrow(2), false)[(1, 2)].symbol(),
+            " "
+        );
         let node = test_entry(0, "s", 1).node;
         let selected = [Tile {
             entry: Some((node, 0)),
             ..narrow(2)[0].clone()
         }];
-        assert_eq!(drawn(Theme::no_color(), &selected, true)[(1, 2)].symbol(), shade);
+        assert_eq!(
+            drawn(Theme::no_color(), &selected, true)[(1, 2)].symbol(),
+            shade
+        );
     }
 }

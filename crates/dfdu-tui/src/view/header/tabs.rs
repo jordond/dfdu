@@ -125,9 +125,17 @@ mod tests {
         let app = app(theme);
         let bar = tabs(&app, true, false);
         assert!(text(&bar.spans).starts_with("| 1 Files |"));
-        let files = bar.spans.iter().find(|s| s.content == " 1 Files ").expect("Files");
+        let files = bar
+            .spans
+            .iter()
+            .find(|s| s.content == " 1 Files ")
+            .expect("Files");
         assert_eq!(files.style, active_tab(&app.theme));
-        let map = bar.spans.iter().find(|s| s.content == " 2 Map ").expect("Map");
+        let map = bar
+            .spans
+            .iter()
+            .find(|s| s.content == " 2 Map ")
+            .expect("Map");
         assert_eq!(map.style, app.theme.fg_dim);
     }
 }

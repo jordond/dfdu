@@ -127,7 +127,9 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t0);
         let mut entries = sample();
         for e in &mut entries {
-            e.is_dir = ["a", "y", "b", "only"].iter().any(|d| e.name[..] == *d.as_bytes());
+            e.is_dir = ["a", "y", "b", "only"]
+                .iter()
+                .any(|d| e.name[..] == *d.as_bytes());
         }
         let mut tree = TreeState::default();
         tree.expand(crate::model::snapshot::Target {
@@ -176,10 +178,17 @@ mod tests {
         let rows = rows(&app, &[0, 1]).expect("a tree");
         let es = app.snap.entries.clone();
         assert_eq!(share(&app, &es[1], &rows[1], 1000), "50.0%", "x of a");
-        assert_eq!(share(&app, &es[0], &rows[0], 1000), "10.0%", "a of the directory");
+        assert_eq!(
+            share(&app, &es[0], &rows[0], 1000),
+            "10.0%",
+            "a of the directory"
+        );
         let [filled, shadow] = bar(&app, &es[1], &rows[1], 100, 10);
         assert_eq!(filled.width() + shadow.width(), 10);
-        assert!(filled.width() < 10, "the shadow runs on to the parent's length");
+        assert!(
+            filled.width() < 10,
+            "the shadow runs on to the parent's length"
+        );
         let base = Style::new();
         assert_eq!(size_style(&app, &es[1], base), base);
         app.snap.entries[1].fold = 3;

@@ -177,11 +177,7 @@ fn only_in(app: &mut App, a: Action, views: &[View]) {
     let names: Vec<String> = (views.iter())
         .map(|v| format!("{} ({})", v.name(), first_key(v.action())))
         .collect();
-    app.status = Some(format!(
-        "{} works in {}",
-        first_key(a),
-        names.join(" and ")
-    ));
+    app.status = Some(format!("{} works in {}", first_key(a), names.join(" and ")));
 }
 
 /// Switches to `mode`, or back to disk usage if `mode` is shown already.
@@ -253,7 +249,11 @@ mod tests {
         );
         app.move_to(1);
         assert!(enter_mount(&mut app).is_none());
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("m scans")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("m scans"))
+        );
     }
 
     #[test]
@@ -261,7 +261,11 @@ mod tests {
         let (mut app, _) = browser();
         only_in(&mut app, Action::CleanupFilter, &[View::Cleanup]);
         assert_eq!(app.status.as_deref(), Some("f works in Cleanup (3)"));
-        only_in(&mut app, Action::TickSuggested, &[View::Cleanup, View::Duplicates]);
+        only_in(
+            &mut app,
+            Action::TickSuggested,
+            &[View::Cleanup, View::Duplicates],
+        );
         assert_eq!(
             app.status.as_deref(),
             Some("A works in Cleanup (3) and Duplicates (4)")

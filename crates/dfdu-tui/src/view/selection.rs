@@ -177,7 +177,10 @@ mod tests {
         let app = browser();
         let line = line(&app, 80).expect("a selection");
         let shown = text(&line);
-        assert!(shown.starts_with(" ▸ Library/  3.0 GiB · 1.2k items"), "{shown}");
+        assert!(
+            shown.starts_with(" ▸ Library/  3.0 GiB · 1.2k items"),
+            "{shown}"
+        );
         assert!(shown.ends_with("1/2 "), "{shown}");
         assert_eq!(line.width(), 80);
         // Short of room the items go first.
@@ -219,7 +222,10 @@ mod tests {
         app.move_to(1);
         let shown = text(&line_of(&app, 100));
         let path = crate::tests::below("/r", "a/x").to_string();
-        assert!(shown.starts_with(&format!(" ▸ {path}  100 B · 25.0% of a/")), "{shown}");
+        assert!(
+            shown.starts_with(&format!(" ▸ {path}  100 B · 25.0% of a/")),
+            "{shown}"
+        );
         app.move_to(0);
         let top = text(&line_of(&app, 100));
         assert!(top.contains("80.0% of r/"), "{top}");

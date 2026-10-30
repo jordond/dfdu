@@ -142,7 +142,10 @@ mod tests {
                 Row::Group { safety, .. } => format!("  {safety:?}"),
                 Row::Item(i) => {
                     let path = &app.extras.cleanup.items[i].path;
-                    format!("    {}", String::from_utf8_lossy(path.file_name().unwrap_or_default()))
+                    format!(
+                        "    {}",
+                        String::from_utf8_lossy(path.file_name().unwrap_or_default())
+                    )
                 }
             })
             .collect()
@@ -152,7 +155,10 @@ mod tests {
     fn sections_are_open_and_categories_closed_by_default() {
         let fx = classified();
         let mut app = opened(&fx.m, Instant::now());
-        assert_eq!(shown(&app), ["Safe", "  Safe", "Regenerable", "  Regenerable"]);
+        assert_eq!(
+            shown(&app),
+            ["Safe", "  Safe", "Regenerable", "  Regenerable"]
+        );
         assert_eq!(enter_does(&app), "close", "on the open section");
         let group = rows(&app)[3];
         assert!(!is_open(&app, group));
@@ -188,7 +194,7 @@ mod tests {
         assert_eq!(shown(&app), ["Safe", "  Safe"]);
         // Without rules there is nothing to group.
         app.snap.rules = None;
-        assert!(rows(&app).is_empty());
-        assert!(group_items(&app, cat, safety).is_empty());
+        assert_eq!(rows(&app), []);
+        assert_eq!(group_items(&app, cat, safety), Vec::<usize>::new());
     }
 }

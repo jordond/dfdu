@@ -26,14 +26,14 @@ use crate::input::mouse;
 use crate::model::extras::Extras;
 use crate::model::snapshot::{EntryData, Snapshot, Target};
 
-pub use cursor::Selection;
-use cursor::Cursor;
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::motion::Motion;
 use crate::state::order::{Order, SortSpec};
 use crate::state::{filter, marks};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
+use cursor::Cursor;
+pub use cursor::Selection;
 
 /// Automatic re-sort after this long without input...
 pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);

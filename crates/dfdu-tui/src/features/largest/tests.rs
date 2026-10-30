@@ -160,7 +160,12 @@ fn keys_move_mark_and_refuse() {
     app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), t0);
     assert_eq!(app.largest.cursor, 0);
     // Without marks, `d` deletes nothing: not the list's selection hidden behind the view.
-    refused(&mut app, KeyCode::Char('d'), "tick items with Space first", t0);
+    refused(
+        &mut app,
+        KeyCode::Char('d'),
+        "tick items with Space first",
+        t0,
+    );
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks.items().len(), 1);
     let huge = HostPath::from("/r").join(b".cache").join(b"huge");

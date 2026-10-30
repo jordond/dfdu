@@ -6,12 +6,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::Span;
 
-use super::tile::{
-    LABEL_MIN, base_style, candidate, cells_of, fit_name, hatch, put, rgb_of, texts, third_line,
-};
 use super::glyph::ASCII_SELECTED;
 use super::paint::{self, Colors, Shades};
 use super::place::Tile;
+use super::tile::{
+    LABEL_MIN, base_style, candidate, cells_of, fit_name, hatch, put, rgb_of, texts, third_line,
+};
 use crate::app::App;
 use crate::theme::{Bars, color_rgb};
 
@@ -242,7 +242,11 @@ mod tests {
             ..Tile::of(AREA, "", 4096)
         }];
         let buf = filled(&app, &tiles, false);
-        assert!(row(&buf, 0)[3..].starts_with("12 more · 4.0 KiB"), "{:?}", row(&buf, 0));
+        assert!(
+            row(&buf, 0)[3..].starts_with("12 more · 4.0 KiB"),
+            "{:?}",
+            row(&buf, 0)
+        );
         assert_eq!(buf[(5, 3)].symbol(), paint::shade(app.theme.bars, 3));
     }
 }

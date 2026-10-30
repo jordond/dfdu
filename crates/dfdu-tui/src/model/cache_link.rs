@@ -7,9 +7,9 @@
 //! before stays) and waits at most [`CANCEL_WAIT`] for it to stop.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 

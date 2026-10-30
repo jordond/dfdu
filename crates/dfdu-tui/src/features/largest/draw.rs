@@ -195,7 +195,10 @@ mod tests {
         let check = " ".repeat(CHECK_WIDTH + 1);
         assert_eq!(
             line,
-            format!("{check}{:>10}  {:4}  {:>6}  {:20}", "size", "", "share", "path")
+            format!(
+                "{check}{:>10}  {:4}  {:>6}  {:20}",
+                "size", "", "share", "path"
+            )
         );
     }
 
@@ -210,7 +213,11 @@ mod tests {
         assert!(shown.contains("25.0%"), "{shown}");
         // The part every path shares is dimmed, the rest is not.
         let t = &app.theme;
-        assert!(line.spans.iter().any(|s| s.content == "a/" && s.style == t.fg_dim));
+        assert!(
+            line.spans
+                .iter()
+                .any(|s| s.content == "a/" && s.style == t.fg_dim)
+        );
         assert!(line.spans.iter().any(|s| s.content == "big.iso"));
         app.move_to(0);
         crate::state::marks::toggle(&mut app);

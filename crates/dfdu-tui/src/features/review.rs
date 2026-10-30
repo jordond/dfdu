@@ -204,7 +204,10 @@ mod tests {
         let text = |app: &App, width| {
             let line = summary(app, tally, "files", " · 3 groups", width);
             assert_eq!(line.width(), usize::from(width));
-            line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+            line.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
         };
         let wide = text(&app, 80);
         assert!(

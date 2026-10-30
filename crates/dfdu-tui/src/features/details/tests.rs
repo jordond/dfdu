@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use dfdu_scan::Budget;
 use dfdu_engine::{Model, SizeMode};
+use dfdu_scan::Budget;
 use dfdu_tree::{DirState, ErrKind, Ix, Meta, NodeFlags, Tree};
 use ratatui::crossterm::event::KeyCode;
 

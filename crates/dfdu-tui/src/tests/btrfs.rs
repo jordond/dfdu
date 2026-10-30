@@ -60,7 +60,6 @@ fn line_with<'a>(out: &'a str, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{name} missing:\n{out}"))
 }
 
-
 /// Unprivileged: compressed files are labelled as upper bounds and the header says
 /// so. As root: sizes are exact, so neither appears, and subvolumes show their quota groups.
 #[test]

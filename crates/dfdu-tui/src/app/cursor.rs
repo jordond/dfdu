@@ -215,7 +215,10 @@ mod tests {
         app.move_to(2);
         app.enter(app.rows[2]);
         assert_eq!(app.target.path, HostPath::from("/r").join(b"d2"));
-        assert!(app.selected.is_none(), "a directory not seen before starts at the top");
+        assert!(
+            app.selected.is_none(),
+            "a directory not seen before starts at the top"
+        );
         let inside = Snapshot {
             dir_path: HostPath::from("/r").join(b"d2"),
             at_root: false,
@@ -236,7 +239,10 @@ mod tests {
         let path = root.join(b"d1").join(b"deep.bin");
         app.go_to(&path, &root);
         assert_eq!(app.target.path, root.join(b"d1"));
-        assert_eq!(app.selected.as_ref().map(|s| &s.name[..]), Some(&b"deep.bin"[..]));
+        assert_eq!(
+            app.selected.as_ref().map(|s| &s.name[..]),
+            Some(&b"deep.bin"[..])
+        );
         // The root itself has no parent to open below the scan.
         app.go_to(&root, &root);
         assert_eq!(app.target.path, root.join(b"d1"));

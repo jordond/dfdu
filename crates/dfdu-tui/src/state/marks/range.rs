@@ -140,7 +140,11 @@ mod tests {
         assert!(!on(&app));
         assert_eq!(app.status.as_deref(), Some("range mark ended"));
         move_to(&mut app, 4);
-        assert_eq!(app.marks.items().len(), 4, "moves after the end mark nothing");
+        assert_eq!(
+            app.marks.items().len(),
+            4,
+            "moves after the end mark nothing"
+        );
         assert!(!end(&mut app), "none to end");
     }
 
@@ -157,7 +161,11 @@ mod tests {
         app.move_to(0);
         toggle(&mut app);
         move_to(&mut app, 1);
-        assert_eq!(marked_names(&app), ["f1"], "only some of d0's files are shown");
+        assert_eq!(
+            marked_names(&app),
+            ["f1"],
+            "only some of d0's files are shown"
+        );
     }
 
     #[test]
@@ -173,7 +181,10 @@ mod tests {
         app.treemap.shown = true;
         toggle(&mut app);
         assert!(!on(&app));
-        assert_eq!(app.status.as_deref(), Some("a range is marked in Files (1)"));
+        assert_eq!(
+            app.status.as_deref(),
+            Some("a range is marked in Files (1)")
+        );
         assert!(app.marks.is_empty());
     }
 }

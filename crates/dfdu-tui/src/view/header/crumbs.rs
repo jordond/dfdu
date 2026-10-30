@@ -172,6 +172,6 @@ mod tests {
         // The last one is always shown, shortened when it does not fit by itself.
         let (text, hits) = shown(5);
         assert!(text.starts_with("… › ") && text.ends_with('…'), "{text}");
-        assert!(hits.is_empty());
+        assert_eq!(hits, []);
     }
 }
