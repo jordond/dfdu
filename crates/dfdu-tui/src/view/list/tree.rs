@@ -5,11 +5,10 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
-use super::name::cut_end;
 use crate::app::App;
 use crate::model::snapshot::EntryData;
 use crate::state::{motion, tree};
-use crate::theme::{bar_with_shadow, percent, ratio};
+use crate::theme::{bar_with_shadow, cut_end, percent, ratio};
 
 /// What a row of a tree needs besides its entry.
 pub(super) struct TreeRow {

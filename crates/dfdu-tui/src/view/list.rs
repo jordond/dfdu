@@ -14,7 +14,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use super::columns::{self, CATEGORY_MAX, Col, ColSet, cursor, left, right};
+use super::columns::{self, CATEGORY_MAX, Col, ColSet, blank, cursor, gaps, left, right};
 use crate::app::App;
 use crate::model::growth::{self, RowNote};
 use crate::model::snapshot::{EntryData, Mark};
@@ -119,14 +119,12 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
 /// The cells before the name column of `cols`.
 fn name_offset(cols: &[(Col, u16)]) -> u16 {
     let mut x = 0;
-    let mut prev = None;
-    for &(c, w) in cols {
-        x += c.gap(prev);
+    for (gap, c, w) in gaps(cols) {
+        x += gap;
         if c == Col::Name {
             break;
         }
         x += w;
-        prev = Some(c);
     }
     x
 }
@@ -166,10 +164,8 @@ fn present(app: &App, visible: &[usize], changes: &[Option<RowNote>]) -> ColSet 
 /// The dim line above the rows that names the columns.
 fn header(app: &App, cols: &[(Col, u16)]) -> Line<'static> {
     let mut spans = Vec::new();
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         let title = match c {
             Col::Delta => growth::column_title(app),
             c => c.title().to_owned(),
@@ -225,10 +221,8 @@ fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
     let e = &app.snap.entries[row.index];
     let mut spans = Vec::new();
     let mut notes = Vec::new();
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         match c {
             Col::Gutter => {
                 // A fold row stands for many entries: it has no mark of its own.

@@ -138,40 +138,64 @@ pub fn spinner(frame: u64) -> char {
 /// `screen-recording-2026-10…hrough-final.mov`. A string that fits is returned unchanged.
 #[must_use]
 pub fn truncate_middle(s: &str, width: usize) -> String {
-    let w = |c: char| c.width().unwrap_or(0);
-    if s.chars().map(w).sum::<usize>() <= width {
+    shorten(s, width, |room| {
+        let tail_room = room * 2 / 5;
+        let mut tail = Vec::new();
+        let mut used = 0;
+        for c in s.chars().rev() {
+            if used + cells_of(c) > tail_room {
+                break;
+            }
+            used += cells_of(c);
+            tail.push(c);
+        }
+        // A combining mark cut off from its base would land on the `…`.
+        while tail.last().is_some_and(|&c| cells_of(c) == 0) {
+            tail.pop();
+        }
+        let mut out = head(s, room - used);
+        out.push('…');
+        out.extend(tail.iter().rev());
+        out
+    })
+}
+
+/// `s` cut to at most `width` cells, ending in `…` when cut.
+#[must_use]
+pub fn cut_end(s: &str, width: usize) -> String {
+    shorten(s, width, |room| {
+        let mut out = head(s, room);
+        out.push('…');
+        out
+    })
+}
+
+/// The cells `c` takes in a terminal.
+fn cells_of(c: char) -> usize {
+    c.width().unwrap_or(0)
+}
+
+/// `s` in at most `width` cells: whole when it fits, else what `cut` makes of it in the
+/// `width - 1` cells the `…` leaves; empty when not even the `…` fits.
+fn shorten(s: &str, width: usize, cut: impl FnOnce(usize) -> String) -> String {
+    if s.chars().map(cells_of).sum::<usize>() <= width {
         return s.to_owned();
     }
-    let Some(room) = width.checked_sub(1) else {
-        return String::new();
-    };
-    let tail_room = room * 2 / 5;
-    let mut tail = Vec::new();
+    width.checked_sub(1).map_or_else(String::new, cut)
+}
+
+/// The longest start of `s` that fits in `room` cells.
+fn head(s: &str, room: usize) -> String {
+    let mut out = String::with_capacity(s.len());
     let mut used = 0;
-    for c in s.chars().rev() {
-        if used + w(c) > tail_room {
-            break;
-        }
-        used += w(c);
-        tail.push(c);
-    }
-    // A combining mark cut off from its base would land on the `…`.
-    while tail.last().is_some_and(|&c| w(c) == 0) {
-        tail.pop();
-    }
-    let head_room = room - used;
-    let mut head = String::with_capacity(s.len());
-    used = 0;
     for c in s.chars() {
-        if used + w(c) > head_room {
+        if used + cells_of(c) > room {
             break;
         }
-        used += w(c);
-        head.push(c);
+        used += cells_of(c);
+        out.push(c);
     }
-    head.push('…');
-    head.extend(tail.iter().rev());
-    head
+    out
 }
 
 #[cfg(test)]
@@ -228,6 +252,15 @@ mod tests {
                 assert_eq!(a.chars().count() + b.chars().count(), 12, "{f} {p:?}");
             }
         }
+    }
+
+    #[test]
+    fn notes_are_cut_at_the_end() {
+        assert_eq!(cut_end("  not responding", 20), "  not responding");
+        assert_eq!(cut_end("  not responding", 8), "  not r…");
+        assert_eq!(cut_end("  日本語", 5), "  日…");
+        assert_eq!(cut_end("abc", 1), "…");
+        assert_eq!(cut_end("abc", 0), "");
     }
 
     #[test]
