@@ -26,10 +26,10 @@ fn engine() -> Engine<PortableBackend> {
 }
 
 /// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
-fn stat(root: &Path) -> Option<dfdu_tree::Meta> {
+fn stat(root: &Path) -> Option<Box<dfdu_tree::Meta>> {
     fs::metadata(root)
         .ok()
-        .map(|m| dfdu_tree::Meta::from_metadata(&m))
+        .map(|m| Box::new(dfdu_tree::Meta::from_metadata(&m)))
 }
 
 fn root_total(e: &Engine<PortableBackend>) -> Totals {

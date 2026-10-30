@@ -151,7 +151,7 @@ impl<B: Backend> Applier<B> {
             v
         };
         // Whether the rules above differ, for the last two parents: siblings come together.
-        let mut last: Option<((Option<Ix>, Option<Ix>), bool)> = None;
+        let (mut last, mut differ) = (None, false);
         let mut n = 0;
         while n < PER_STEP
             && let Some(&p) = kept.placeholders.get(f.next)
@@ -173,20 +173,15 @@ impl<B: Backend> Applier<B> {
             };
             let r = t.node_ref(kx);
             f.taken.insert(r);
-            let parents = (t.parent(px), t.parent(kx));
-            let other_rules = match last {
-                Some((at, differ)) if at == parents => differ,
-                _ => {
-                    let differ = above(px) != above(kx);
-                    last = Some((parents, differ));
-                    differ
-                }
-            };
+            let parents = Some((t.parent(px), t.parent(kx)));
+            if last != parents {
+                (last, differ) = (parents, above(px) != above(kx));
+            }
             let moved = t.name(px) != t.name(kx)
                 || parent(px) != parent(kx)
                 || rule(px).is_some_and(|r| rule(kx) != Some(r))
                 || marks(px) != marks(kx)
-                || other_rules;
+                || differ;
             f.found.push(if moved {
                 Found::Moved(p, r)
             } else {

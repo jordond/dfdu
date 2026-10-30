@@ -148,7 +148,8 @@ impl<B: Backend> Ask<B> {
                 (Some(_), Some(s)) if !self.cancel.load(SeqCst) => s
                     .backend
                     .stat_root(&s.backend.loc_from_path(&self.path))
-                    .ok(),
+                    .ok()
+                    .map(Box::new),
                 _ => None,
             };
             (changed, root)

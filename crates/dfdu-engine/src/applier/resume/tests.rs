@@ -271,7 +271,7 @@ fn a_cancelled_rescan_of_a_resume_leaves_its_directory_refused() {
             opts: JobOptions::default(),
             changed: Some(vec![PathBuf::from("a")]),
             since: 0,
-            root: Some(stat),
+            root: Some(Box::new(stat)),
         },
     );
     while ap.has_work() {
@@ -470,7 +470,7 @@ fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
                 opts: JobOptions::default(),
                 changed: Some(vec![]),
                 since,
-                root: now.map(|mtime| Meta { mtime, ..loaded }),
+                root: now.map(|mtime| Box::new(Meta { mtime, ..loaded })),
             },
         );
         while ap.has_work() {
@@ -512,7 +512,7 @@ fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
             opts: JobOptions::default(),
             changed: Some(vec![]),
             since: 0,
-            root: Some(meta(Kind::Dir, 0, 77)),
+            root: Some(Box::new(meta(Kind::Dir, 0, 77))),
         },
     );
     assert!(!ap.resuming());

@@ -90,7 +90,7 @@ pub enum Command {
         opts: JobOptions,
         changed: Option<Vec<PathBuf>>,
         since: u64,
-        root: Option<Meta>,
+        root: Option<Box<Meta>>,
     },
     Cancel {
         job: JobId,
@@ -424,7 +424,7 @@ impl<B: Backend> Applier<B> {
                 changed: Some(dirs),
                 since,
                 root,
-            } => self.resume_changed(m, node, opts, &dirs, (since, root)),
+            } => self.resume_changed(m, node, opts, &dirs, (since, root.as_deref())),
             Command::Cancel { job } => self.cancel_jobs(Some(job.0)),
             Command::CancelAll => self.cancel_jobs(None),
             Command::Abandon { node } => self.abandon(m, node),

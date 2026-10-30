@@ -163,7 +163,7 @@ impl<B: Backend> Applier<B> {
         node: NodeRef,
         opts: JobOptions,
         changed: &[PathBuf],
-        (since, now): (u64, Option<Meta>),
+        (since, now): (u64, Option<&Meta>),
     ) {
         let Some(root) = m
             .tree

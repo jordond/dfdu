@@ -69,8 +69,10 @@ pub fn loaded(root: &Path) -> Tree {
 }
 
 /// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
-pub fn stat(root: &Path) -> Option<Meta> {
-    fs::metadata(root).ok().map(|m| Meta::from_metadata(&m))
+pub fn stat(root: &Path) -> Option<Box<Meta>> {
+    fs::metadata(root)
+        .ok()
+        .map(|m| Box::new(Meta::from_metadata(&m)))
 }
 
 /// The node at `rel` below the root, if there is one.

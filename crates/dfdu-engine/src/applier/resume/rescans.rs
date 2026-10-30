@@ -131,7 +131,7 @@ pub(super) fn kept_by_target(
     wanted: &[Ix],
     targets: &[Ix],
     mounts: &[Ix],
-) -> Vec<Box<Kept>> {
+) -> Vec<Kept> {
     let dev = tree.dev_ino(root).0;
     let listed = listed_by_target(tree, wanted, targets);
     targets
@@ -140,7 +140,7 @@ pub(super) fn kept_by_target(
         .map(|(t, l)| {
             let mut g = Gather::new(if mounts.contains(t) { Vec::new() } else { l });
             while !g.step(tree, dev, usize::MAX).1 {}
-            g.kept
+            *g.kept
         })
         .collect()
 }

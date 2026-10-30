@@ -90,7 +90,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     sim.report.full_resumes = u64::from(answer.is_none());
     let opts = sim.scan_opts();
     // Stat'ed after the journal was asked, as the engine's journal thread does.
-    let stat = sim.shared.backend.stat_root(&ROOT).ok();
+    let stat = sim.shared.backend.stat_root(&ROOT).ok().map(Box::new);
     sim.command(Command::Resume {
         node,
         opts: opts.clone(),
