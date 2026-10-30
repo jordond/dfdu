@@ -574,6 +574,14 @@ pub(crate) fn classified() -> Fixture {
     fx
 }
 
+/// A browser of [`classified`] read once at `t0`, and the fixture it reads.
+pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
+    let fx = classified();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    (fx, app)
+}
+
 #[test]
 fn category_color_hatches_cleanup_candidates() {
     let fx = classified();

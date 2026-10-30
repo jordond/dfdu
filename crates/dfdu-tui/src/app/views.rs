@@ -164,7 +164,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::features::treemap::tests::{classified, sync};
+    use crate::features::treemap::tests::classified_app;
     use crate::tests::{library_snap, press};
     use crate::theme::Theme;
 
@@ -181,10 +181,7 @@ mod tests {
 
     #[test]
     fn brackets_step_through_the_views_round_the_ends() {
-        let fx = classified();
-        let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        sync(&mut app, &fx.m, t0);
+        let (_fx, mut app) = classified_app(Instant::now());
         let next = [KeyCode::Char(']'); 5];
         assert_eq!(
             after(&mut app, &next),

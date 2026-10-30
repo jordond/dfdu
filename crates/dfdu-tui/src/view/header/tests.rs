@@ -381,11 +381,9 @@ fn the_day_of_the_last_scan_matches_the_column_and_the_selection_line() {
 #[test]
 fn every_view_has_its_tab_and_scope_at_each_width() {
     use crate::app::views::{self, View};
-    use crate::features::treemap::tests::{classified, sync};
-    let fx = classified();
+    use crate::features::treemap::tests::{classified_app, sync};
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
+    let (fx, mut app) = classified_app(t0);
     let mid = app
         .rows
         .iter()
@@ -432,11 +430,9 @@ fn the_active_tab_is_reversed_and_bold_in_every_theme() {
 #[test]
 fn cleanup_shows_what_it_would_free_once_read() {
     use crate::app::views::{View, badge};
-    use crate::features::treemap::tests::{classified, sync};
-    let mut fx = classified();
+    use crate::features::treemap::tests::{classified_app, sync};
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
+    let (mut fx, mut app) = classified_app(t0);
     // Counted with the scan done, before the view was ever opened.
     let size = badge(&app, View::Cleanup).expect("a badge");
     let first = first_line(&render_buffer(&mut app, t0, 120, 8));
