@@ -41,18 +41,23 @@ fn changes_after_an_id_are_reported() {
     assert!(volume_uuid(dev).is_some());
 }
 
-/// A change made just before the call is reported, without waiting or asking again.
+/// A change made just before the call is reported, without waiting or asking again, in a
+/// directory created just before the position was taken.
 #[test]
 fn a_change_just_before_the_call_is_reported() {
+    use std::os::unix::fs::MetadataExt;
     let _one = ONE_AT_A_TIME
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
+    let dev = std::fs::metadata(&root).unwrap().dev();
     for i in 0..5 {
         let d = root.join(format!("d{i}"));
         std::fs::create_dir(&d).unwrap();
-        let since = current_event_id();
+        // Not the bare current id: the write below could fold into the event the daemon
+        // still holds for the new directory, with an id before it.
+        let since = flushed_event_id(dev, Duration::from_secs(5));
         std::fs::write(d.join("f"), b"x").unwrap();
         let got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
         assert!(!got.full);
