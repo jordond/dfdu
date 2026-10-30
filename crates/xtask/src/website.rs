@@ -30,8 +30,7 @@ pub(crate) enum Website {
     Ci,
     /// Render public/og.png, the social card, from the logo.
     Og,
-    /// Build and deploy to dfdu.app, and the www.dfdu.app redirect (needs `wrangler login` or
-    /// `CLOUDFLARE_API_TOKEN`).
+    /// Build and deploy to dfdu.app (needs `wrangler login` or `CLOUDFLARE_API_TOKEN`).
     Deploy {
         /// Upload a preview version under this alias instead (pr-12 serves at pr-12-dfdu-web.*.workers.dev).
         #[arg(long, value_name = "ALIAS")]
@@ -59,8 +58,7 @@ pub(crate) fn website(w: Website) -> anyhow::Result<()> {
         Website::Og => bun(&["run", "og"]),
         Website::Deploy { preview: None } => {
             build(false)?;
-            bun(&["x", "wrangler", "deploy"])?;
-            bun(&["x", "wrangler", "deploy", "--config", "www/wrangler.jsonc"])
+            bun(&["x", "wrangler", "deploy"])
         }
         Website::Deploy {
             preview: Some(alias),

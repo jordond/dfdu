@@ -12,6 +12,6 @@
   "workers_dev": false,
   "preview_urls": true,
   "observability": { "enabled": true },
-  // www.dfdu.app redirects here from its own Worker (www/).
+  // www.dfdu.app is redirected here by a Redirect Rule on the dfdu.app zone (CONTRIBUTING.md).
   "routes": [{ "pattern": "dfdu.app", "custom_domain": true }],
 }

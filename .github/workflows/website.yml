@@ -98,7 +98,6 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             website/wrangler.jsonc
-            website/www
             .github/scripts
           sparse-checkout-cone-mode: false
       - &download
@@ -109,12 +108,11 @@ jobs:
           path: website/dist
       - *node
       - *bun
-      - name: Deploy the site and the www redirect
+      - name: Deploy the site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           bun x "wrangler@$WRANGLER_VERSION" deploy
-          bun x "wrangler@$WRANGLER_VERSION" deploy --config www/wrangler.jsonc
 
   preview:
     name: Preview
