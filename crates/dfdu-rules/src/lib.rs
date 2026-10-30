@@ -6,6 +6,8 @@
 //! directory listing, which rule an entry matches; conditions on the entry's own contents
 //! (`child`, `marker`) are checked when its listing arrives ([`RuleSet::check_inside`]).
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
+//! [`dirs`] also owns where dfdu keeps its files: the config, state, cache, crash and rule
+//! directories every other crate asks for.
 
 pub mod dirs;
 mod glob;
