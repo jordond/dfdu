@@ -1,6 +1,7 @@
 //! The engine: its threads, the inbox the applier reads from, and the API over them.
 
 mod applier_loop;
+mod journal;
 mod options;
 
 pub(crate) use options::default_measurers;
@@ -15,11 +16,10 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use dfdu_clean::{DeleterMsg, spawn_deleter};
-use dfdu_scan::journal::{JournalPosition, changed_since};
 use dfdu_scan::runtime::Pool;
-use dfdu_scan::{Backend, Batch, Budget, JobOptions, PortableBackend, ScanMsg, Shared, Sink};
+use dfdu_scan::{Backend, Batch, Budget, PortableBackend, ScanMsg, Shared, Sink};
 use dfdu_tree::{Host, HostPath, Tree};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::applier::{Command, Model};
 use crate::classifier::{CheckMsg, spawn_classifiers};
@@ -109,7 +109,9 @@ pub struct Engine<B: Backend> {
     model: Arc<RwLock<Model>>,
     shared: Arc<Shared<B>>,
     cmd_tx: Sender<Command>,
-    commands_sent: AtomicU64,
+    commands_sent: Arc<AtomicU64>,
+    /// The resumes waiting for the change journal's answer ([`Engine::resume`]).
+    asking: Mutex<Vec<journal::Asking>>,
     changes_rx: Receiver<()>,
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
@@ -300,7 +302,8 @@ impl<B: Backend> Engine<B> {
             model,
             shared,
             cmd_tx,
-            commands_sent: AtomicU64::new(0),
+            commands_sent: Arc::new(AtomicU64::new(0)),
+            asking: Mutex::new(Vec::new()),
             changes_rx,
             stop,
             applier: Some(applier),
@@ -354,41 +357,6 @@ impl<B: Backend> Engine<B> {
         m.tree.bump_version();
     }
 
-    /// Loads `tree`, read from a file ([`Engine::load`]), and brings its root up to date with
-    /// `opts` ([`Command::Resume`]): only the directories changed since `journal` when the
-    /// volume's change journal can tell, otherwise all of it. A tree without a root is only
-    /// loaded.
-    ///
-    /// The journal is asked on a thread of its own (it can take a second or more), so this
-    /// returns once the tree is loaded; [`Engine::wait_idle`] waits for the resume as for any
-    /// command sent.
-    pub fn resume(&self, tree: Tree, journal: Option<JournalPosition>, opts: JobOptions) {
-        let Some(root) = tree.roots().next() else {
-            self.load(tree);
-            return;
-        };
-        let node = tree.node_ref(root);
-        let path = tree.path_buf(root);
-        self.load(tree);
-        let Some(at) = journal else {
-            self.send(Command::Resume {
-                node,
-                opts,
-                changed: None,
-            });
-            return;
-        };
-        // Counted as sent now, so that waiting for idle waits for it.
-        self.commands_sent.fetch_add(1, SeqCst);
-        let (tx, p, o) = (self.cmd_tx.clone(), path.clone(), opts.clone());
-        let spawned = thread::Builder::new()
-            .name("dfdu-journal".into())
-            .spawn(move || resume_since(&tx, node, o, &p, at));
-        if spawned.is_err() {
-            resume_since(&self.cmd_tx, node, opts, &path, at);
-        }
-    }
-
     /// Receives a message whenever the model changed.
     pub fn changes(&self) -> &Receiver<()> {
         &self.changes_rx
@@ -440,10 +408,16 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Cancels everything and stops the threads. The applier is joined; the workers and
-    /// the deleter share what is left of `wait`, counted from the call. Threads stuck in a filesystem call are left behind.
+    /// Cancels everything and stops the threads. The applier is joined; the workers, the
+    /// deleter and a change journal query of a resume share what is left of `wait`, counted
+    /// from the call. Threads stuck in a filesystem call are left behind.
     pub fn shutdown(mut self, wait: Duration) {
         let deadline = Instant::now() + wait;
+        // A resume the journal has not answered yet is not sent.
+        let mut asking = std::mem::take(&mut *self.asking.lock());
+        for a in &asking {
+            a.cancel();
+        }
         self.send(Command::CancelAll);
         self.stop.store(true, SeqCst);
         let _ = self.cmd_tx.send(Command::CancelAll);
@@ -468,24 +442,10 @@ impl<B: Backend> Engine<B> {
                 let _ = d.join();
             }
         }
+        for a in &mut asking {
+            a.stop(deadline);
+        }
     }
-}
-
-/// Asks the change journal what changed below `path` since `at`, and sends the resume of the
-/// loaded root `node` with what it said.
-fn resume_since(
-    tx: &Sender<Command>,
-    node: dfdu_tree::NodeRef,
-    opts: JobOptions,
-    path: &std::path::Path,
-    at: JournalPosition,
-) {
-    let changed = changed_since(path, at);
-    let _ = tx.send(Command::Resume {
-        node,
-        opts,
-        changed,
-    });
 }
 
 /// Where an engine's tree comes from, for [`Engine::start_inner`].
