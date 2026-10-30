@@ -149,35 +149,34 @@ impl<B: Backend> Applier<B> {
         let (id, links) = (*id, &mut self.links);
         // Nothing more is checked once cancelled: the rescans that would use it are not run.
         let mut verify = verify.as_mut().filter(|_| !*cancelled);
-        let done = match class {
-            Some((c, w)) => w.step(&mut m.tree, c, &self.scan.backend, STEP_UNITS, |t, ix| {
+        let done = if let Some((c, w)) = class {
+            w.step(&mut m.tree, c, &self.scan.backend, STEP_UNITS, |t, ix| {
                 own(t, links, id, root, ix, mounts);
                 if let Some(v) = verify.as_deref_mut() {
                     v.add(t, ix);
                 }
-            }),
-            None => {
-                let mut n = 0;
-                while n < STEP_UNITS
-                    && let Some(r) = stack.pop()
-                {
-                    let Some(ix) = m.tree.resolve_visible(r) else {
-                        continue;
-                    };
-                    own(&mut m.tree, links, id, root, ix, mounts);
-                    let t = &m.tree;
-                    if let Some(v) = verify.as_deref_mut() {
-                        v.add(t, ix);
-                    }
-                    n += 1 + t.children(ix).count();
-                    stack.extend(
-                        t.children(ix)
-                            .filter(|&c| t.dir(c).is_some())
-                            .map(|c| t.node_ref(c)),
-                    );
+            })
+        } else {
+            let mut n = 0;
+            while n < STEP_UNITS
+                && let Some(r) = stack.pop()
+            {
+                let Some(ix) = m.tree.resolve_visible(r) else {
+                    continue;
+                };
+                own(&mut m.tree, links, id, root, ix, mounts);
+                let t = &m.tree;
+                if let Some(v) = verify.as_deref_mut() {
+                    v.add(t, ix);
                 }
-                stack.is_empty()
+                n += 1 + t.children(ix).count();
+                stack.extend(
+                    t.children(ix)
+                        .filter(|&c| t.dir(c).is_some())
+                        .map(|c| t.node_ref(c)),
+                );
             }
+            stack.is_empty()
         };
         if let Some(v) = verify {
             v.send(&m.tree, &self.scan, id, done);
@@ -256,3 +255,6 @@ impl<B: Backend> Applier<B> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

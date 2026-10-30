@@ -12,7 +12,7 @@ mod cancel;
     clippy::many_single_char_names,
     reason = "nodes named as in the fixture's diagram"
 )]
-fn tree() -> (Tree, [Ix; 4]) {
+pub(super) fn tree() -> (Tree, [Ix; 4]) {
     let mut t = Tree::new();
     let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     let add = |t: &mut Tree, p: Ix, ix: Ix| {

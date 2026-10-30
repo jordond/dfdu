@@ -100,6 +100,34 @@ fn left_out(tree: &Tree, ix: Ix) -> bool {
         && !f.has(NodeFlags::KERNEL)
 }
 
+/// The job that scanned directory `ix`, whose options its rescan takes, or why it is not
+/// rescanned: with `enter`, unless it is a mount the scan left out ([`left_out`]); otherwise
+/// when it is not a directory, is counted at another mount of it, or is on a filesystem the
+/// scan does not enter (a kernel or network one, or another filesystem).
+fn rescan_owner(tree: &Tree, ix: Ix, enter: bool) -> Result<u32, &'static str> {
+    if enter && !left_out(tree, ix) {
+        return Err("enter: that is not a mount the scan left out");
+    }
+    let f = tree.flags(ix);
+    match tree.dir(ix) {
+        Some(d) if enter => Ok(d.job.0),
+        None => Err("rescan: not a directory"),
+        Some(_) if f.has(NodeFlags::DUP_MOUNT) => {
+            Err("rescan: that directory is counted at another mount of it")
+        }
+        Some(_) if f.has(NodeFlags::KERNEL) => {
+            Err("rescan: that is a kernel filesystem, which is never scanned")
+        }
+        Some(_) if f.has(NodeFlags::NETWORK) => {
+            Err("rescan: that is a network filesystem; start dfdu with --network to scan it")
+        }
+        Some(d) if d.state == DirState::Skipped => {
+            Err("rescan: that directory is on another filesystem")
+        }
+        Some(d) => Ok(d.job.0),
+    }
+}
+
 impl<B: Backend> Applier<B> {
     /// Adds `entered` (a mount root's device and inode) to the mounts entered this session,
     /// and has `opts` enter all of them.
@@ -142,40 +170,12 @@ impl<B: Backend> Applier<B> {
             m.status.notice("rescan: that directory is gone".into());
             return;
         };
-        if enter && !left_out(&m.tree, ix) {
-            m.status
-                .notice("enter: that is not a mount the scan left out".into());
-            return;
-        }
-        let owner_id = match m.tree.dir(ix) {
-            Some(d) if enter => d.job.0,
-            None => {
-                m.status.notice("rescan: not a directory".into());
+        let owner_id = match rescan_owner(&m.tree, ix, enter) {
+            Ok(id) => id,
+            Err(why) => {
+                m.status.notice(why.into());
                 return;
             }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::DUP_MOUNT) => {
-                m.status
-                    .notice("rescan: that directory is counted at another mount of it".into());
-                return;
-            }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::KERNEL) => {
-                m.status
-                    .notice("rescan: that is a kernel filesystem, which is never scanned".into());
-                return;
-            }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::NETWORK) => {
-                m.status.notice(
-                    "rescan: that is a network filesystem; start dfdu with --network to scan it"
-                        .into(),
-                );
-                return;
-            }
-            Some(d) if d.state == DirState::Skipped => {
-                m.status
-                    .notice("rescan: that directory is on another filesystem".into());
-                return;
-            }
-            Some(d) => d.job.0,
         };
         // Overlap with deletes and other rescans.
         if self.plan_overlaps(&m.tree, ix) {
@@ -310,3 +310,6 @@ impl<B: Backend> Applier<B> {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;
