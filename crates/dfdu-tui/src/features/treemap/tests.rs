@@ -87,7 +87,7 @@ pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
     panic!("the extras stay stale");
 }
 
-fn treemap_app(m: &Model, now: Instant) -> App {
+pub(crate) fn treemap_app(m: &Model, now: Instant) -> App {
     let mut app = App::new(Theme::no_color(), now);
     app.key(press(KeyCode::Char('2')), now);
     sync(&mut app, m, now);
@@ -319,7 +319,7 @@ fn category_colour_follows_matches_found_later_and_deep_inside() {
         render(app, t0, 100, 30);
         let l = app.treemap.layout.as_ref().expect("layout");
         let i = (l.tiles.iter().position(|t| t.name == name)).expect(name);
-        super::draw::base_style(app, &l.tiles, i, 0).1
+        super::tile::base_style(app, &l.tiles, i, 0).1
     };
     assert_eq!(slot_of(&mut app, "dev"), None, "nothing matched yet");
     assert!(!render(&mut app, t0, 100, 30).contains("■ build"));
@@ -572,6 +572,14 @@ pub(crate) fn classified() -> Fixture {
     };
     fx.m.tree.set_class(m0, Some(class));
     fx
+}
+
+/// A browser of [`classified`] read once at `t0`, and the fixture it reads.
+pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
+    let fx = classified();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    (fx, app)
 }
 
 #[test]

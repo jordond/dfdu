@@ -257,4 +257,4 @@ pub fn guide(entries: &[EntryData], last: &[bool], i: usize) -> String {
 pub mod act;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

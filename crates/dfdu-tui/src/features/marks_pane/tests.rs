@@ -9,7 +9,7 @@ use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
 use crate::features::details;
 use crate::model::snapshot::{EntryData, Snapshot, test_entry};
-use crate::tests::{press, render, snap_with_totals};
+use crate::tests::{marked_names, press, refused, render, snap_with_totals};
 use crate::theme::Theme;
 
 const GIB: u64 = 1 << 30;
@@ -197,10 +197,7 @@ fn star_inverts_the_marks_of_the_directory() {
     );
     // Again, back to the first mark. In the list `*` is tree mode's, not the marks'.
     app.key(press(KeyCode::Char('*')), t0);
-    let names: Vec<_> = (app.marks.items().iter())
-        .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
-        .collect();
-    assert_eq!(names, ["target"]);
+    assert_eq!(marked_names(&app), ["target"]);
 }
 
 #[test]
@@ -212,9 +209,7 @@ fn star_marks_nothing_in_a_read_only_browser() {
     assert!(app.marks.is_empty());
     assert_eq!(app.status.as_deref(), Some(READ_ONLY));
     // `d` there deletes nothing either.
-    app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+    refused(&mut app, KeyCode::Char('d'), READ_ONLY, t0);
 }
 
 #[test]
@@ -222,13 +217,7 @@ fn d_asks_to_delete_the_marks_as_the_list_does() {
     let (mut app, t0) = browser();
     // With nothing marked, `d` in the pane does not fall back to the list's selection.
     app.key(press(KeyCode::Tab), t0);
-    app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::None));
-    assert!(
-        app.status
-            .as_deref()
-            .is_some_and(|s| s.contains("nothing is marked"))
-    );
+    refused(&mut app, KeyCode::Char('d'), "nothing is marked", t0);
     app.key(press(KeyCode::Esc), t0);
     mark(&mut app, 2, t0);
     app.key(press(KeyCode::Tab), t0);

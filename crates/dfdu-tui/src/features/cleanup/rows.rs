@@ -125,3 +125,76 @@ pub(super) fn set_open(app: &mut App, row: Row, open: bool) {
         Row::Item(_) => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::features::cleanup::tests::opened;
+    use crate::features::treemap::tests::classified;
+
+    /// The safety of each section and group row, and `Item` with the item's path for the rest.
+    fn shown(app: &App) -> Vec<String> {
+        (rows(app).iter())
+            .map(|&r| match r {
+                Row::Section(s) => format!("{s:?}"),
+                Row::Group { safety, .. } => format!("  {safety:?}"),
+                Row::Item(i) => {
+                    let path = &app.extras.cleanup.items[i].path;
+                    format!(
+                        "    {}",
+                        String::from_utf8_lossy(path.file_name().unwrap_or_default())
+                    )
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sections_are_open_and_categories_closed_by_default() {
+        let fx = classified();
+        let mut app = opened(&fx.m, Instant::now());
+        assert_eq!(
+            shown(&app),
+            ["Safe", "  Safe", "Regenerable", "  Regenerable"]
+        );
+        assert_eq!(enter_does(&app), "close", "on the open section");
+        let group = rows(&app)[3];
+        assert!(!is_open(&app, group));
+        set_open(&mut app, group, true);
+        assert!(is_open(&app, group));
+        assert_eq!(
+            shown(&app),
+            ["Safe", "  Safe", "Regenerable", "  Regenerable", "    big"]
+        );
+        app.cleanup.cursor = 4;
+        assert_eq!(enter_does(&app), "show in Files");
+        let item = selected_item(&app).expect("the item selected");
+        assert!(item.path.to_local().ends_with("big"));
+        // A closed section hides its categories.
+        set_open(&mut app, Row::Section(Safety::Safe), false);
+        assert_eq!(shown(&app)[..2], ["Safe", "Regenerable"]);
+        app.cleanup.cursor = 0;
+        assert_eq!(enter_does(&app), "open");
+        assert!(selected_item(&app).is_none());
+    }
+
+    #[test]
+    fn the_filter_keeps_the_safer_levels_and_items_go_by_group() {
+        let fx = classified();
+        let mut app = opened(&fx.m, Instant::now());
+        let Row::Group { cat, safety } = rows(&app)[3] else {
+            panic!("a group row");
+        };
+        assert_eq!(group_items(&app, cat, safety).len(), 1);
+        assert_eq!(section_items(&app, Safety::Regenerable).len(), 1);
+        assert_eq!(group_items(&app, cat, Safety::Safe), Vec::<usize>::new());
+        app.cleanup.filter = Some(Safety::Safe);
+        assert_eq!(shown(&app), ["Safe", "  Safe"]);
+        // Without rules there is nothing to group.
+        app.snap.rules = None;
+        assert_eq!(rows(&app), []);
+        assert_eq!(group_items(&app, cat, safety), Vec::<usize>::new());
+    }
+}

@@ -20,6 +20,7 @@ mod glyph;
 pub mod layout;
 mod paint;
 mod place;
+mod tile;
 
 use std::collections::HashMap;
 use std::sync::Arc;

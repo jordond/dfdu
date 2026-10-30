@@ -6,12 +6,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::Span;
 
-use super::draw::{
-    LABEL_MIN, base_style, candidate, cells_of, fit_name, hatch, put, rgb_of, texts, third_line,
-};
 use super::glyph::ASCII_SELECTED;
 use super::paint::{self, Colors, Shades};
 use super::place::Tile;
+use super::tile::{
+    LABEL_MIN, base_style, candidate, cells_of, fit_name, hatch, put, rgb_of, texts, third_line,
+};
 use crate::app::App;
 use crate::theme::{Bars, color_rgb};
 
@@ -165,5 +165,88 @@ fn edge(buf: &mut Buffer, r: Rect, header: bool, style: Style, bars: Bars) {
         }
         buf[(left, top)].set_symbol(set.top_left).set_style(style);
         buf[(right, top)].set_symbol(set.top_right).set_style(style);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use ratatui::style::Color;
+
+    use super::*;
+    use crate::model::snapshot::test_entry;
+    use crate::theme::{ColorLevel, Theme};
+
+    const AREA: Rect = Rect::new(0, 0, 20, 6);
+
+    fn app() -> App {
+        let theme = Theme::named("dark", ColorLevel::TrueColor, None).expect("dark");
+        App::new(theme, Instant::now())
+    }
+
+    /// `tiles` filled in a buffer of [`AREA`], tile 0 selected when `selected`.
+    fn filled(app: &App, tiles: &[Tile], selected: bool) -> Buffer {
+        let mut buf = Buffer::empty(AREA);
+        let mut colors = Colors::new(ColorLevel::TrueColor);
+        let sel = selected.then_some(0);
+        fill_tile(&mut buf, app, tiles, 0, sel, &mut colors, 0);
+        buf
+    }
+
+    fn row(buf: &Buffer, y: u16) -> String {
+        (AREA.left()..AREA.right())
+            .map(|x| buf[(x, y)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn a_tile_is_filled_under_a_header_with_its_name_and_size() {
+        let app = app();
+        let tiles = [Tile::of(AREA, "photos", 2048)];
+        let buf = filled(&app, &tiles, false);
+        assert!(row(&buf, 0).starts_with(" photos "), "{:?}", row(&buf, 0));
+        assert!(buf[(1, 0)].modifier.contains(Modifier::BOLD));
+        // No share: the directory shown has no total yet.
+        assert_eq!(row(&buf, 1).trim_end(), " 2.0 KiB");
+        // The header row and the body each have a fill of their own.
+        let (head, body) = (buf[(0, 0)].bg, buf[(0, 4)].bg);
+        assert!(matches!(head, Color::Rgb(..)) && matches!(body, Color::Rgb(..)));
+        assert_ne!(head, body);
+        // Not selected: no edge.
+        assert_eq!(buf[(0, 5)].symbol(), " ");
+    }
+
+    #[test]
+    fn the_selected_tile_has_an_edge_below_its_header() {
+        let app = app();
+        let node = test_entry(0, "photos", 2048).node;
+        let tiles = [Tile {
+            entry: Some((node, 0)),
+            ..Tile::of(AREA, "photos", 2048)
+        }];
+        let buf = filled(&app, &tiles, true);
+        assert_eq!(buf[(0, 1)].symbol(), "┃");
+        assert_eq!(buf[(19, 3)].symbol(), "┃");
+        assert_eq!(buf[(0, 5)].symbol(), "┗");
+        assert_eq!(row(&buf, 5)[3..6].to_owned(), "━");
+        // The header row is the top of the edge.
+        assert_eq!(buf[(0, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn the_merged_tile_is_shaded_and_labelled_when_that_fits() {
+        let app = app();
+        let tiles = [Tile {
+            small: 12,
+            ..Tile::of(AREA, "", 4096)
+        }];
+        let buf = filled(&app, &tiles, false);
+        assert!(
+            row(&buf, 0)[3..].starts_with("12 more · 4.0 KiB"),
+            "{:?}",
+            row(&buf, 0)
+        );
+        assert_eq!(buf[(5, 3)].symbol(), paint::shade(app.theme.bars, 3));
     }
 }

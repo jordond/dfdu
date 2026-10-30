@@ -16,7 +16,7 @@ use crate::features::review::{self, CHECK_WIDTH, Tally, Tick};
 use crate::model::outside::tilde;
 use crate::theme::{bar, count, percent, ratio, truncate_middle};
 use crate::view::cells;
-use crate::view::columns::{self, Col, ColSet, cursor, left, right};
+use crate::view::columns::{self, Col, ColSet, blank, cursor, gaps, left, right};
 use crate::view::empty::{self, Empty};
 
 /// Rows above the files: the summary bar and the column names.
@@ -100,10 +100,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 /// The line naming the columns `cols`, after the checkbox's; the name column holds the path.
 fn header(cols: &[(Col, u16)]) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw(" ".repeat(CHECK_WIDTH + 1))];
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         spans.push(match c {
             Col::Name => left("path".into(), w, Style::new()),
             Col::Size | Col::Share => right(c.title().into(), w, Style::new()),
@@ -131,10 +129,8 @@ fn row(
         Tick::Off
     };
     let mut spans = vec![Span::raw(" "), review::checkbox(t, tick)];
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         match c {
             Col::Size => spans.push(right(crate::theme::human(file.size), w, Style::new())),
             Col::Bar => {
@@ -146,8 +142,98 @@ fn row(
                 spans.push(right(share, w, Style::new()));
             }
             Col::Name => spans.extend(review::path(t, path, shared, w.into(), Style::new())),
-            _ => spans.push(Span::raw(" ".repeat(w.into()))),
+            _ => spans.push(blank(w)),
         }
     }
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use dfdu_tree::HostPath;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::model::snapshot::test_entry;
+    use crate::tests::{snap_with_totals, text};
+    use crate::theme::Theme;
+
+    const COLS: [(Col, u16); 4] = [
+        (Col::Size, 10),
+        (Col::Bar, 4),
+        (Col::Share, 6),
+        (Col::Name, 20),
+    ];
+
+    fn joined(spans: &[Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// A browser of `/r` holding `big.iso` and `x`, 4000 bytes each, and the file of `big.iso`
+    /// at `a/big.iso`.
+    fn browser() -> (App, File) {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let entries = vec![test_entry(0, "big.iso", 4000), test_entry(1, "x", 4000)];
+        app.refresh(snap_with_totals(entries, 1), t0);
+        let file = File {
+            node: app.snap.entries[0].node,
+            path: HostPath::from("a/big.iso"),
+            size: 4000,
+            dev_ino: (1, 10),
+            shared_out: 0,
+        };
+        (app, file)
+    }
+
+    #[test]
+    fn the_header_names_the_path_column_after_the_checkbox() {
+        let line = joined(&header(&COLS));
+        let check = " ".repeat(CHECK_WIDTH + 1);
+        assert_eq!(
+            line,
+            format!(
+                "{check}{:>10}  {:4}  {:>6}  {:20}",
+                "size", "", "share", "path"
+            )
+        );
+    }
+
+    #[test]
+    fn a_row_has_its_tick_size_bar_share_and_path() {
+        let (mut app, file) = browser();
+        let row_of = |app: &App| row(app, &file, "a/big.iso", 2, &COLS, 8000, 16_000);
+        let line = row_of(&app);
+        let shown = joined(&line.spans);
+        assert!(shown.starts_with(" [ ] "), "{shown}");
+        assert!(shown.contains(&crate::theme::human(4000)), "{shown}");
+        assert!(shown.contains("25.0%"), "{shown}");
+        // The part every path shares is dimmed, the rest is not.
+        let t = &app.theme;
+        assert!(
+            line.spans
+                .iter()
+                .any(|s| s.content == "a/" && s.style == t.fg_dim)
+        );
+        assert!(line.spans.iter().any(|s| s.content == "big.iso"));
+        app.move_to(0);
+        crate::state::marks::toggle(&mut app);
+        assert!(joined(&row_of(&app).spans).starts_with(" [x] "));
+    }
+
+    #[test]
+    fn before_the_walk_it_says_what_it_reads() {
+        let (mut app, _) = browser();
+        app.largest.cursor = 5;
+        let mut term = Terminal::new(TestBackend::new(60, 4)).expect("terminal");
+        term.draw(|f| draw(f, &mut app, f.area())).expect("draw");
+        let out = text(term.backend().buffer());
+        assert!(out.starts_with(" reading the files below /r…"), "{out}");
+        // The list has room for the rows below the summary bar and the column names.
+        assert_eq!(app.list_height, 2);
+        assert_eq!(app.largest.cursor, 0, "kept within the files");
+    }
 }

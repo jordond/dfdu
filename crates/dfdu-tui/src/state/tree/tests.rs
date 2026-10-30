@@ -3,7 +3,13 @@ use crate::model::snapshot::{EntryData, test_entry};
 use crate::state::order::{SortSpec, tree_order};
 
 /// Row `i` named `name` of `size` bytes, below row `parent`.
-fn row(i: u32, name: &str, size: u64, parent: Option<usize>, entries: &[EntryData]) -> EntryData {
+pub(crate) fn row(
+    i: u32,
+    name: &str,
+    size: u64,
+    parent: Option<usize>,
+    entries: &[EntryData],
+) -> EntryData {
     let (depth, parent) = match parent {
         Some(p) => (entries[p].depth + 1, u32::try_from(p).expect("small")),
         None => (0, u32::MAX),
@@ -27,7 +33,7 @@ fn row(i: u32, name: &str, size: u64, parent: Option<usize>, entries: &[EntryDat
 /// └─only
 ///   └─deep
 /// ```
-fn sample() -> Vec<EntryData> {
+pub(crate) fn sample() -> Vec<EntryData> {
     let mut es: Vec<EntryData> = Vec::new();
     for (name, size, parent) in [
         ("a", 100, None),

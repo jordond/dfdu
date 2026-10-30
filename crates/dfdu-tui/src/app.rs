@@ -7,6 +7,7 @@
 //! `debug`, `motion`, `mouse`); what they read from the engine model arrives in
 //! [`App::extras`].
 
+mod cursor;
 pub mod keys;
 mod refresh;
 pub mod views;
@@ -17,19 +18,22 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, ErrorList, SizeMode};
-use dfdu_tree::{HostPath, NodeRef};
+use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
 use crate::input::mouse;
 use crate::model::extras::Extras;
 use crate::model::snapshot::{EntryData, Snapshot, Target};
+
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::motion::Motion;
 use crate::state::order::{Order, SortSpec};
 use crate::state::{filter, marks};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
+use cursor::Cursor;
+pub use cursor::Selection;
 
 /// Automatic re-sort after this long without input...
 pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -67,32 +71,6 @@ pub enum Overlay {
     Types(type_filter::TypePicker),
     /// The glob that marks the names it matches.
     MarkPattern(mark_pattern::Prompt),
-}
-
-/// The selected entry: its reference, plus name and identity to find it again after a rescan.
-#[derive(Clone, Debug)]
-pub struct Selection {
-    /// `None` when only the name is known (going up to the parent directory).
-    pub node: Option<NodeRef>,
-    pub name: Vec<u8>,
-    pub dev_ino: (u64, u64),
-}
-
-impl Selection {
-    fn of(e: &EntryData) -> Self {
-        Selection {
-            node: Some(e.node),
-            name: e.name.to_vec(),
-            dev_ino: e.dev_ino,
-        }
-    }
-}
-
-/// Remembered position in a directory, restored when the user comes back to it.
-#[derive(Clone, Debug)]
-struct Cursor {
-    selected: Option<Selection>,
-    scroll: usize,
 }
 
 #[expect(
@@ -186,39 +164,6 @@ fn shown(hide_hidden: bool, e: &EntryData) -> bool {
     !e.ghost && (!hide_hidden || !e.hidden())
 }
 
-/// One line describing a finished delete plan. On btrfs the freed space shows up in the free
-/// space only after the transaction commits, and for snapshots after the cleaner ran.
-pub fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
-    let done = match d.mode {
-        Some(dfdu_engine::Mode::Trash) => "moved to the Trash",
-        Some(dfdu_engine::Mode::Stage) => "staged",
-        _ => "deleted",
-    };
-    let mut parts = vec![format!(
-        "{done} {} ({})",
-        d.deleted,
-        crate::theme::human(d.bytes)
-    )];
-    for (n, what) in [
-        (d.stale, "changed since the scan"),
-        (d.refused, "refused"),
-        (d.failed, "failed"),
-        (d.aborted, "stopped"),
-    ] {
-        if n > 0 {
-            parts.push(format!("{n} {what}"));
-        }
-    }
-    let mut s = parts.join(", ");
-    if d.deleted > 0 && d.mode.is_some_and(dfdu_engine::Mode::undoable) {
-        s.push_str("; U puts it back");
-    }
-    if d.btrfs {
-        s.push_str("; btrfs frees the space when it commits (snapshots: in the background)");
-    }
-    s
-}
-
 impl App {
     /// An empty browser drawn with `theme`, on a terminal with the theme's colour level and
     /// background.
@@ -281,24 +226,6 @@ impl App {
         }
     }
 
-    pub fn selected_index(&self) -> Option<usize> {
-        let node = self.selected.as_ref()?.node?;
-        let is_sel = |&i: &usize| self.snap.entries[i].node == node;
-        // Usually the row found last time; a directory can have a million rows.
-        let hint = self.sel_hint.get();
-        if self.rows.get(hint).is_some_and(is_sel) {
-            return Some(hint);
-        }
-        let found = self.rows.iter().position(is_sel)?;
-        self.sel_hint.set(found);
-        Some(found)
-    }
-
-    pub fn selected_entry(&self) -> Option<&EntryData> {
-        self.selected_index()
-            .map(|i| &self.snap.entries[self.rows[i]])
-    }
-
     /// True when an automatic re-sort is waiting for the user to be idle.
     pub fn sort_pending(&self) -> bool {
         self.new_count > 0 || self.changed_since_sort
@@ -351,101 +278,9 @@ impl App {
         self.last_input = now;
     }
 
-    pub(crate) fn select(&mut self, index: usize) {
-        if let Some(&i) = self.rows.get(index) {
-            self.selected = Some(Selection::of(&self.snap.entries[i]));
-            self.sel_hint.set(index);
-        }
-    }
-
-    /// Selects row `index` as a cursor move of the user's, so re-sorts follow the selected row.
-    pub(crate) fn move_to(&mut self, index: usize) {
-        self.moved = true;
-        self.select(index);
-    }
-
-    pub(crate) fn move_by(&mut self, delta: isize) {
-        if self.rows.is_empty() {
-            return;
-        }
-        self.moved = true;
-        let cur = self.selected_index().unwrap_or(0);
-        let next = cur.saturating_add_signed(delta).min(self.rows.len() - 1);
-        self.select(next);
-    }
-
-    fn save_cursor(&mut self) {
-        let c = Cursor {
-            selected: self.selected.clone(),
-            scroll: self.scroll,
-        };
-        self.cursors.insert(self.snap.dir_path.clone(), c);
-    }
-
-    /// Opens the directory of entry `index` of the snapshot: in tree mode a row at any depth,
-    /// and the expanded directories stay expanded.
-    fn enter(&mut self, index: usize) {
-        self.save_cursor();
-        let target = crate::state::tree::target_of(&self.snap, index);
-        let saved = self.cursors.get(&target.path).cloned();
-        self.target = target;
-        self.moved = saved.is_some();
-        self.selected = saved.as_ref().and_then(|c| c.selected.clone());
-        self.scroll = saved.map_or(0, |c| c.scroll);
-    }
-
-    fn up(&mut self) {
-        if self.snap.at_root {
-            return;
-        }
-        self.save_cursor();
-        let path = &self.snap.dir_path;
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return;
-        };
-        let name = name.to_vec();
-        let saved = self.cursors.get(&parent).cloned();
-        self.target = Target {
-            node: None,
-            path: parent,
-            ident: None,
-        };
-        self.moved = true;
-        self.scroll = saved.as_ref().map_or(0, |c| c.scroll);
-        // Select the directory we came from, found again by name after the refresh.
-        self.selected = Some(Selection {
-            node: None,
-            name,
-            dev_ino: (0, 0),
-        });
-    }
-
     /// Opens the error list read by the run loop for [`Effect::ShowErrors`].
     pub fn show_errors(&mut self, list: ErrorList) {
         self.overlay = Overlay::Errors { list, cursor: 0 };
-    }
-
-    /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
-    pub(crate) fn go_to(&mut self, path: &HostPath, root: &HostPath) {
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return;
-        };
-        if path == root {
-            return;
-        }
-        self.save_cursor();
-        self.target = Target {
-            node: None,
-            path: parent,
-            ident: None,
-        };
-        self.moved = true;
-        self.scroll = 0;
-        self.selected = Some(Selection {
-            node: None,
-            name: name.to_vec(),
-            dev_ino: (0, 0),
-        });
     }
 
     /// Handles a key: the open overlay takes it first, then the filter input while it is

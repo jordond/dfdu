@@ -7,35 +7,13 @@ use super::*;
 use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
 use crate::features::treemap::tests::sync;
-use crate::tests::{meta, press, render};
+use crate::tests::{add_dir, add_file, press, refused, render, root_model};
 use crate::theme::Theme;
-
-fn add_dir(m: &mut Model, parent: Ix, name: &str, ino: u64) -> Ix {
-    let d = m
-        .tree
-        .add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
-    let own = m.tree.own(d);
-    m.tree.propagate_add(d, &own);
-    d
-}
-
-fn add_file(m: &mut Model, parent: Ix, name: &str, size: u64, ino: u64) {
-    let f = m.tree.add_file(
-        parent,
-        name.as_bytes(),
-        &meta(Kind::File, size, ino),
-        false,
-        None,
-    );
-    let own = m.tree.own(f);
-    m.tree.propagate_add(parent, &own);
-}
 
 /// `/r` with files at three depths, the largest in a hidden directory:
 /// `.cache/huge` 9000, `a/big.iso` 5000, `top.txt` 4000, `a/deep/x.bin` 3000.
 fn model() -> Model {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     let a = add_dir(&mut m, root, "a", 2);
     let deep = add_dir(&mut m, a, "deep", 3);
     let cache = add_dir(&mut m, root, ".cache", 4);
@@ -106,8 +84,7 @@ fn lists_the_largest_files_below_with_their_paths_relative() {
 
 #[test]
 fn a_directory_without_files_has_an_empty_state() {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     add_dir(&mut m, root, "empty", 2);
     let (mut app, t0) = opened(&m);
     let frame = render(&mut app, t0, 100, 20);
@@ -141,8 +118,7 @@ fn enter_goes_to_the_file_in_its_directory() {
 
 #[test]
 fn the_heap_keeps_only_the_largest() {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     let n = TOP as u64 + 5;
     for i in 1..=n {
         add_file(&mut m, root, &format!("f{i}"), i, 10 + i);
@@ -184,12 +160,11 @@ fn keys_move_mark_and_refuse() {
     app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), t0);
     assert_eq!(app.largest.cursor, 0);
     // Without marks, `d` deletes nothing: not the list's selection hidden behind the view.
-    app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::None));
-    assert!(
-        app.status
-            .as_deref()
-            .is_some_and(|s| s.contains("tick items with Space first"))
+    refused(
+        &mut app,
+        KeyCode::Char('d'),
+        "tick items with Space first",
+        t0,
     );
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks.items().len(), 1);

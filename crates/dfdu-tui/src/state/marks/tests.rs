@@ -12,7 +12,8 @@ use super::*;
 use crate::app::Effect;
 use crate::model::snapshot::{self, Snapshot, test_entry};
 use crate::tests::{
-    meta, press, render, render_buffer, snap_without_totals, style_at, styled, text,
+    add_dir, add_file, press, render, render_buffer, root_model, select, snap_without_totals,
+    style_at, styled, text,
 };
 use crate::theme::Theme;
 
@@ -27,17 +28,6 @@ fn sync(app: &mut App, m: &Model, now: Instant) {
     apply(app);
 }
 
-/// Selects the row named `name`.
-#[track_caller]
-fn select(app: &mut App, name: &str) {
-    let at = app
-        .rows
-        .iter()
-        .position(|&i| app.snap.entries[i].name[..] == *name.as_bytes())
-        .unwrap_or_else(|| panic!("{name} is not listed"));
-    app.move_to(at);
-}
-
 /// The line of `frame` that shows `name`.
 #[track_caller]
 fn line<'a>(frame: &'a str, name: &str) -> &'a str {
@@ -45,28 +35,6 @@ fn line<'a>(frame: &'a str, name: &str) -> &'a str {
         .lines()
         .find(|l| l.contains(name))
         .unwrap_or_else(|| panic!("{name} missing:\n{frame}"))
-}
-
-fn add_dir(m: &mut Model, parent: Ix, name: &str, ino: u64) -> Ix {
-    let d = m
-        .tree
-        .add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
-    let own = m.tree.own(d);
-    m.tree.propagate_add(d, &own);
-    d
-}
-
-fn add_file(m: &mut Model, parent: Ix, name: &str, size: u64, ino: u64) -> Ix {
-    let f = m.tree.add_file(
-        parent,
-        name.as_bytes(),
-        &meta(Kind::File, size, ino),
-        false,
-        None,
-    );
-    let own = m.tree.own(f);
-    m.tree.propagate_add(parent, &own);
-    f
 }
 
 fn complete(m: &mut Model, dir: Ix) {
@@ -251,8 +219,7 @@ fn marks_survive_navigation_and_rescan_swap() {
 
 #[test]
 fn nested_marks_count_once() {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     let a = add_dir(&mut m, root, "a", 2);
     add_file(&mut m, a, "b", 6000, 3);
     add_file(&mut m, a, "c", 2000, 4);
@@ -310,8 +277,7 @@ fn nested_marks_count_once() {
 
 #[test]
 fn totals_follow_live_sizes() {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     let big = add_dir(&mut m, root, "big", 2);
     add_file(&mut m, big, "f1", 100_000, 3);
     let t = Instant::now();
@@ -443,8 +409,7 @@ fn many_marks_index_quickly() {
 
 #[test]
 fn lost_references_are_found_by_path() {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let (mut m, root) = root_model();
     let big = add_dir(&mut m, root, "big", 2);
     let files: Vec<Ix> = (0..1000)
         .map(|i| add_file(&mut m, big, &format!("f{i}"), 10, 100 + i))

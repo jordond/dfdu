@@ -7,7 +7,7 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
 use super::*;
-use crate::model::snapshot;
+use crate::model::snapshot::{self, Target};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 
@@ -96,7 +96,7 @@ fn duplicates_are_found_marked_and_shown() {
 
 /// A comparison done with `groups` found: files below `/r` with their dates, each still in the
 /// tree.
-fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
+pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
     let mut bits = 0;
     let mut file = |path: &str, mtime: i64| {
         bits += 1;

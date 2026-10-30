@@ -3,16 +3,26 @@ use std::time::Instant;
 use ratatui::crossterm::event::KeyCode;
 
 use super::*;
-use crate::features::treemap::tests::{classified, sync};
+use crate::features::treemap::tests::{classified, classified_app, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 
+mod native;
+
+/// A browser of `m` read at `t0`, then with the view opened and read again, as the run loop
+/// does.
+pub(crate) fn opened(m: &Model, t0: Instant) -> App {
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, m, t0);
+    app.key(press(KeyCode::Char('3')), t0);
+    sync(&mut app, m, t0);
+    app
+}
+
 #[test]
 fn groups_by_category_and_safety_and_marks_the_recommended() {
-    let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
+    let (fx, mut app) = classified_app(t0);
     let fx_out = app.key(press(KeyCode::Char('3')), t0);
     assert!(
         matches!(fx_out.as_slice(), [Effect::Send(Command::NativeSizes)]),
@@ -155,10 +165,7 @@ fn a_read_only_browser_never_marks() {
 fn group_columns_fit_the_categories_shown() {
     let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     let rules = app.snap.rules.clone().unwrap();
     let base = app.extras.cleanup.items[0].clone();
     // Three and a half days old, so the age shown stays the same during the test.
@@ -213,10 +220,7 @@ fn group_columns_fit_the_categories_shown() {
 fn details_follow_the_cleanup_selection() {
     let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
@@ -238,10 +242,7 @@ fn no_matches_have_an_empty_state() {
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
     fx.m.rules = Some(std::sync::Arc::new(dfdu_rules::builtin(&env).0));
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     assert!(active(&app) && app.extras.cleanup.items.is_empty());
     let frame = render(&mut app, t0, 100, 20);
     assert!(frame.contains("╭ Cleanup ─"), "{frame}");
@@ -257,10 +258,7 @@ fn no_matches_have_an_empty_state() {
 fn a_short_terminal_still_shows_the_groups() {
     let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     let frame = render(&mut app, t0, 100, 10);
     assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
 }
@@ -269,10 +267,7 @@ fn a_short_terminal_still_shows_the_groups() {
 fn recommended_items() {
     let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let app = opened(&fx.m, t0);
     let rules = app.snap.rules.clone().unwrap();
     let base = app.extras.cleanup.items[0].clone();
     let rule = |id: &str| rules.index(id).unwrap();
@@ -333,10 +328,7 @@ fn recommended_items() {
 fn rows_say_why_and_the_rule_is_explained_below() {
     let fx = with_recommended();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     for row in rows(&app) {
         if let Row::Group { cat, safety } = row {
             app.cleanup.open.insert((cat, safety));
@@ -388,114 +380,6 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     assert!(line.contains(" │ "), "{wide}");
 }
 
-#[test]
-fn native_commands_start_with_their_dry_run() {
-    let fx = classified();
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
-    // The regenerable group holds `big`, a Rust target/ cleaned with `cargo clean`.
-    let groups = rows(&app);
-    let at = groups
-        .iter()
-        .position(|r| {
-            matches!(
-                r,
-                Row::Group {
-                    safety: Safety::Regenerable,
-                    ..
-                }
-            )
-        })
-        .unwrap();
-    app.cleanup.cursor = at;
-    app.key(press(KeyCode::Enter), t0);
-    app.key(press(KeyCode::Down), t0);
-    let out = app.key(press(KeyCode::Char('N')), t0);
-    assert!(
-        matches!(
-            out.as_slice(),
-            [Effect::Send(Command::RunNative {
-                dry_run: true,
-                variant: None,
-                ..
-            })]
-        ),
-        "{out:?}"
-    );
-    // While it runs, `y` does nothing.
-    assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
-    let id = app.cleanup.pane.as_ref().unwrap().id;
-    app.extras.cleanup.native = Some(NativeView {
-        id,
-        command: "cargo clean --dry-run".into(),
-        lines: vec!["Summary 3 files".into()],
-        done: Some(Ok(())),
-    });
-    let frame = render(&mut app, t0, 100, 24);
-    assert!(frame.contains("That was the dry run"), "{frame}");
-    let out = app.key(press(KeyCode::Char('y')), t0);
-    assert!(
-        matches!(
-            out.as_slice(),
-            [Effect::Send(Command::RunNative { dry_run: false, .. })]
-        ),
-        "{out:?}"
-    );
-}
-
-/// A read-only browser runs a native command's dry run, but not the command.
-#[test]
-fn read_only_runs_only_the_dry_run() {
-    let fx = classified();
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    app.read_only = true;
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
-    let at = rows(&app)
-        .iter()
-        .position(|r| {
-            matches!(
-                r,
-                Row::Group {
-                    safety: Safety::Regenerable,
-                    ..
-                }
-            )
-        })
-        .unwrap();
-    app.cleanup.cursor = at;
-    app.key(press(KeyCode::Enter), t0);
-    app.key(press(KeyCode::Down), t0);
-    let out = app.key(press(KeyCode::Char('N')), t0);
-    assert!(
-        matches!(
-            out.as_slice(),
-            [Effect::Send(Command::RunNative { dry_run: true, .. })]
-        ),
-        "{out:?}"
-    );
-    let id = app.cleanup.pane.as_ref().unwrap().id;
-    app.extras.cleanup.native = Some(NativeView {
-        id,
-        command: "cargo clean --dry-run".into(),
-        lines: vec!["Summary 3 files".into()],
-        done: Some(Ok(())),
-    });
-    let frame = render(&mut app, t0, 100, 24);
-    assert!(
-        frame.contains("read-only mode runs nothing more"),
-        "{frame}"
-    );
-    assert!(!frame.contains("y run it"), "{frame}");
-    assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
-    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
-}
-
 /// The user caches yield to the caches inside them: listed for the rest, and marking them
 /// marks that rest, not the folder whole.
 #[test]
@@ -508,10 +392,7 @@ fn marking_a_container_marks_its_rest() {
         ..Model::default()
     };
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &m, t0);
+    let mut app = opened(&m, t0);
     let items = app.extras.cleanup.items.clone();
     let at = items
         .iter()
@@ -550,10 +431,7 @@ fn marking_a_container_marks_its_rest() {
 fn half_pages_move_the_cursor() {
     let fx = classified();
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = opened(&fx.m, t0);
     let ctrl = |c| {
         KeyEvent::new(
             KeyCode::Char(c),

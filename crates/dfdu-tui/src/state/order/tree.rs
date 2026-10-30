@@ -120,3 +120,75 @@ fn siblings(
     out.extend(group.iter().copied().filter(|&i| entries[i].fold > 0));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::SortKey;
+    use super::*;
+    use crate::state::tree::tests::sample;
+
+    /// The names of `rows` of `es`.
+    fn names(es: &[EntryData], rows: &[usize]) -> Vec<String> {
+        rows.iter()
+            .map(|&i| String::from_utf8_lossy(&es[i].name).into_owned())
+            .collect()
+    }
+
+    const ALL: [&str; 9] = ["a", "x", "y", "p", "q", "z", "b", "only", "deep"];
+
+    #[test]
+    fn siblings_sort_within_their_parent_in_preorder() {
+        let es = sample();
+        assert_eq!(names(&es, &tree_order(&es, SortSpec::default())), ALL);
+        let z_to_a = SortSpec {
+            key: SortKey::Name,
+            desc: true,
+        };
+        assert_eq!(
+            names(&es, &tree_order(&es, z_to_a)),
+            ["b", "only", "deep", "a", "z", "y", "q", "p", "x"]
+        );
+        let mut es = es;
+        es[5].size = 60;
+        assert_eq!(
+            names(&es, &tree_order(&es, SortSpec::default())),
+            ["a", "z", "x", "y", "p", "q", "b", "only", "deep"]
+        );
+    }
+
+    #[test]
+    fn a_row_shows_only_with_every_row_above_it() {
+        let es = sample();
+        let hide_y = |i: usize, _: &EntryData| i != 2;
+        let rows = tree_rows(&es, hide_y, SortSpec::default(), &[], Siblings::Exact);
+        assert_eq!(names(&es, &rows), ["a", "x", "z", "b", "only", "deep"]);
+    }
+
+    #[test]
+    fn kept_siblings_hold_their_places_and_new_ones_follow() {
+        let es = sample();
+        // Below `a`, z was first and x second before; y is new.
+        let mut prev = vec![u32::MAX; es.len()];
+        (prev[0], prev[5], prev[1], prev[6]) = (0, 1, 2, 3);
+        let rows = tree_rows(&es, |_, _| true, SortSpec::default(), &prev, Siblings::Keep);
+        assert_eq!(
+            names(&es, &rows),
+            ["a", "z", "x", "y", "p", "q", "b", "only", "deep"]
+        );
+        // A group none of which had a place gets an exact sort: p before q.
+        let exact = tree_rows(&es, |_, _| true, SortSpec::default(), &[], Siblings::Keep);
+        assert_eq!(names(&es, &exact), ALL);
+    }
+
+    #[test]
+    fn fold_rows_come_last_among_their_siblings() {
+        let mut es = sample();
+        // `x`, the largest below `a`, stands for a fold row.
+        es[1].fold = 4;
+        let rows = tree_order(&es, SortSpec::default());
+        assert_eq!(
+            names(&es, &rows),
+            ["a", "y", "p", "q", "z", "x", "b", "only", "deep"]
+        );
+    }
+}

@@ -10,7 +10,7 @@ use ratatui::style::Modifier;
 use super::{Fx, sync};
 use crate::app::App;
 use crate::input::mouse;
-use crate::tests::{press, render, render_buffer, row_names, style_at};
+use crate::tests::{press, render, render_buffer, row_names, select, style_at};
 use crate::theme::Theme;
 
 /// `/r` with `a/` (`a1/` holding `x` of 500 bytes, `a2` of 300, and `s` of 1 byte that could
@@ -41,15 +41,6 @@ pub(crate) fn tree_app(fx: &Fx, t0: Instant) -> App {
 pub(crate) fn key(app: &mut App, fx: &Fx, code: KeyCode, t0: Instant) {
     app.key(press(code), t0);
     sync(app, &fx.m, t0);
-}
-
-/// Selects the row named `name`.
-pub(crate) fn select(app: &mut App, name: &str) {
-    let row = row_names(app)
-        .iter()
-        .position(|n| n == name)
-        .unwrap_or_else(|| panic!("{name} is not a row: {:?}", row_names(app)));
-    app.move_to(row);
 }
 
 pub(crate) fn selected(app: &App) -> String {

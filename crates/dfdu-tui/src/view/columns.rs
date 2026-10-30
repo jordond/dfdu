@@ -216,13 +216,25 @@ pub fn layout(width: u16, present: ColSet) -> Vec<(Col, u16)> {
 
 /// The cells left for the name after `cols` and their gaps.
 fn name_width(width: u16, cols: &[(Col, u16)]) -> u16 {
-    let mut used = 0u16;
+    let used = gaps(cols).fold(0u16, |used, (gap, _, w)| used.saturating_add(gap + w));
+    let last = cols.last().map(|&(c, _)| c);
+    width.saturating_sub(used + Col::Name.gap(last))
+}
+
+/// The columns `cols` from left to right, each with the blank cells before it ([`Col::gap`]):
+/// `(gap, column, width)`.
+pub fn gaps(cols: &[(Col, u16)]) -> impl Iterator<Item = (u16, Col, u16)> + '_ {
     let mut prev = None;
-    for &(c, w) in cols {
-        used = used.saturating_add(c.gap(prev) + w);
+    cols.iter().map(move |&(c, w)| {
+        let gap = c.gap(prev);
         prev = Some(c);
-    }
-    width.saturating_sub(used + Col::Name.gap(prev))
+        (gap, c, w)
+    })
+}
+
+/// `n` blank cells.
+pub fn blank(n: u16) -> Span<'static> {
+    Span::raw(" ".repeat(n.into()))
 }
 
 /// `s` right-aligned in `w` cells.
@@ -233,7 +245,7 @@ pub fn right(s: String, w: u16, style: Style) -> Span<'static> {
 
 /// `s` left-aligned in `w` cells, cut to fit.
 pub fn left(s: String, w: u16, style: Style) -> Span<'static> {
-    let s = super::list::name::cut_end(&s, w.into());
+    let s = crate::theme::cut_end(&s, w.into());
     let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
     Span::styled(format!("{s}{}", " ".repeat(pad)), style)
 }
@@ -275,12 +287,7 @@ mod tests {
     /// The columns and their widths, as `size10 bar24 ... name50`.
     fn shown(width: u16, present: ColSet) -> String {
         let cols = layout(width, present);
-        let mut used = 0;
-        let mut prev = None;
-        for &(c, w) in &cols {
-            used += c.gap(prev) + w;
-            prev = Some(c);
-        }
+        let used: u16 = gaps(&cols).map(|(gap, _, w)| gap + w).sum();
         assert_eq!(used, width, "{cols:?}");
         cols.iter()
             .map(|(c, w)| format!("{c:?}{w}"))

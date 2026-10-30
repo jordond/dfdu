@@ -7,7 +7,9 @@ use std::time::Instant;
 use dfdu_tree::{Host, HostPath, Kind};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{below, library_snap, meta, press, render, snap_with_totals, typed};
+use super::{
+    below, library_snap, marked_names as marked, meta, press, render, snap_with_totals, typed,
+};
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect};
 use crate::features::treemap::tests::sync;
@@ -28,14 +30,6 @@ fn twenty() -> (App, Instant) {
     app.refresh(snap_with_totals(entries, 1), t0);
     app.list_height = 10;
     (app, t0)
-}
-
-fn marked(app: &App) -> Vec<String> {
-    (app.marks.items().iter())
-        .map(|it| {
-            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
-        })
-        .collect()
 }
 
 #[test]

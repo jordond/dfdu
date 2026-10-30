@@ -276,3 +276,136 @@ pub(super) fn chain(r: &Read<'_>, start: Ix, ratio: f64) -> Vec<Ix> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use dfdu_tree::DirState;
+
+    use super::*;
+    use crate::model::snapshot::build_view;
+    use crate::tests::{add_dir, add_file, root_model};
+
+    /// `/r` with `a/` (`big` 600, `mid` 300, `t1` 5 and `t2` 4 bytes) and `b/` (`x` 50 bytes),
+    /// and `a`.
+    fn model() -> (Model, Ix) {
+        let (mut m, root) = root_model();
+        let a = add_dir(&mut m, root, "a", 2);
+        for (i, (name, size)) in [("big", 600), ("mid", 300), ("t1", 5), ("t2", 4)]
+            .into_iter()
+            .enumerate()
+        {
+            add_file(&mut m, a, name, size, 10 + i as u64);
+        }
+        let b = add_dir(&mut m, root, "b", 3);
+        add_file(&mut m, b, "x", 50, 20);
+        for d in [root, a, b] {
+            m.tree.dir_mut(d).expect("directory").state = DirState::Complete;
+        }
+        (m, a)
+    }
+
+    fn read<'a>(m: &'a Model, types: &'a TypeFilter, rescanning: &'a HashSet<NodeRef>) -> Read<'a> {
+        Read {
+            m,
+            mode: SizeMode::Apparent,
+            types,
+            rescanning,
+            dir_class: None,
+        }
+    }
+
+    fn names(snap: &Snapshot) -> Vec<(String, u8)> {
+        (snap.entries.iter())
+            .map(|e| (String::from_utf8_lossy(&e.name).into_owned(), e.depth))
+            .collect()
+    }
+
+    #[test]
+    fn an_expanded_directory_gets_its_children_and_a_fold_row() {
+        let (m, a) = model();
+        let mut state = TreeState::default();
+        state.expand(Target::of(&m.tree, a));
+        let snap = build_view(
+            &m,
+            &mut Target::root(),
+            SizeMode::Apparent,
+            &TypeFilter::default(),
+            false,
+            Some(&state),
+        );
+        let mut rows = names(&snap);
+        rows[..2].sort();
+        assert_eq!(
+            rows,
+            [
+                ("a".into(), 0),
+                ("b".into(), 0),
+                ("big".into(), 1),
+                ("mid".into(), 1),
+                ("… 2 more".into(), 1)
+            ]
+        );
+        let a_row = snap.entries.iter().position(|e| e.name[..] == *b"a");
+        let fold = snap.entries.last().expect("the fold row");
+        assert_eq!((fold.fold, fold.size, fold.items), (2, 9, 2));
+        assert!(fold.pseudo && !fold.is_dir);
+        assert_eq!(fold.parent as usize, a_row.expect("a's row"));
+        let found = snap.tree.expect("what the read found");
+        assert_eq!(found.generation, state.generation);
+        assert!(found.gone.is_empty() && !found.truncated);
+    }
+
+    #[test]
+    fn the_rows_budget_folds_the_rest() {
+        let (m, a) = model();
+        let (types, rescanning) = (TypeFilter::default(), HashSet::new());
+        let r = read(&m, &types, &rescanning);
+        let o = Open {
+            row: 0,
+            ix: a,
+            class: None,
+        };
+        let mut found = Found::default();
+        let mut budget = 1;
+        let shown = children(&r, &o, 909, 0.0, &mut budget, &mut found);
+        let kept: Vec<&[u8]> = shown.kept.iter().map(|&(c, _)| m.tree.name(c)).collect();
+        assert_eq!(kept, [b"big"]);
+        assert_eq!(budget, 0);
+        assert!(found.truncated);
+        let fold = shown.fold.expect("the rest in a fold row");
+        assert_eq!((fold.fold, fold.size), (3, 309));
+        // Its reference is the largest one's.
+        let mid = m.tree.children(a).find(|&c| m.tree.name(c) == b"mid");
+        assert_eq!(Some(fold.node), mid.map(|c| m.tree.node_ref(c)));
+    }
+
+    #[test]
+    fn the_chain_follows_the_largest_directory() {
+        let (m, a) = model();
+        let (types, rescanning) = (TypeFilter::default(), HashSet::new());
+        let r = read(&m, &types, &rescanning);
+        let root = m.tree.roots().next().expect("root");
+        // `a` holds most of the root; its largest child is a file, where the chain ends.
+        assert_eq!(chain(&r, root, 0.5), [root, a]);
+        assert_eq!(chain(&r, root, 0.99), [root]);
+    }
+
+    #[test]
+    fn problems_weigh_more_than_work_and_notes() {
+        let order = [
+            Mark::None,
+            Mark::OtherFs,
+            Mark::Scanning,
+            Mark::Rescanning,
+            Mark::Deleting,
+            Mark::ErrorsInside,
+            Mark::Incomplete,
+            Mark::Stalled,
+            Mark::Error,
+        ];
+        assert!(order.windows(2).all(|w| severity(w[0]) < severity(w[1])));
+        for note in [Mark::DupMount, Mark::Network, Mark::Kernel] {
+            assert_eq!(severity(note), severity(Mark::OtherFs));
+        }
+    }
+}

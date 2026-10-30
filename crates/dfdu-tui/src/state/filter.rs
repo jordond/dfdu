@@ -257,11 +257,7 @@ pub fn clear(app: &mut App) -> bool {
         && !e.ghost
         && !(app.hide_hidden && e.hidden())
     {
-        app.selected = Some(Selection {
-            node: Some(e.node),
-            name: e.name.to_vec(),
-            dev_ino: e.dev_ino,
-        });
+        app.selected = Some(Selection::of(e));
     }
     had
 }
