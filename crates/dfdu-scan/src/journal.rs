@@ -283,11 +283,10 @@ mod firmlink_tests {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::MetadataExt;
-    use std::time::Duration;
 
-    /// Directories changed after the position come back relative to the root; a position in
-    /// another volume's journal tells nothing.
+    /// Directories changed after the position come back relative to the root, also those
+    /// written to just before it was taken, and at once; a position in another volume's journal
+    /// tells nothing.
     #[test]
     fn changes_come_back_relative_to_the_root() {
         let tmp = tempfile::tempdir().unwrap();
@@ -295,29 +294,11 @@ mod tests {
         let root = tmp.path().join("r");
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::create_dir_all(root.join("quiet")).unwrap();
-        std::thread::sleep(Duration::from_millis(1500));
-        let dev = std::fs::metadata(&root).unwrap().dev() as u64;
-        let Some(volume) = dfdu_sys::fsevents::volume_uuid(dev) else {
+        let Some(since) = journal_position(&root) else {
             return;
         };
-        let since = JournalPosition {
-            volume,
-            event_id: dfdu_sys::fsevents::current_event_id(),
-            time: 0,
-        };
         std::fs::write(root.join("a/b/new"), b"x").unwrap();
-        let mut got = None;
-        for _ in 0..40 {
-            got = changed_since(&root, since);
-            if got
-                .as_ref()
-                .is_some_and(|d| d.contains(&PathBuf::from("a/b")))
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        let got = got.expect("the journal can tell");
+        let got = changed_since(&root, since).expect("the journal can tell");
         assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
         assert!(!got.iter().any(|d| d.starts_with("quiet")), "{got:?}");
         // The same directory named in the Data volume, where events name it through the
