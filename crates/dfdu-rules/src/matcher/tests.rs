@@ -531,12 +531,11 @@ fn fingerprints_cover_the_path_patterns() {
 
 #[test]
 fn every_builtin_rule_is_in_the_verification_table() {
-    // docs/ is kept out of git, so checkouts without it (CI) skip this check.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/rules.md");
-    let Ok(doc) = std::fs::read_to_string(path) else {
-        eprintln!("skipped: {path} not found");
-        return;
-    };
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../website/src/content/docs/docs/rules.md"
+    );
+    let doc = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let ids: Vec<String> = crate::load::BUILTIN
         .lines()
         .filter_map(|l| l.strip_prefix("id = \""))
@@ -546,7 +545,7 @@ fn every_builtin_rule_is_in_the_verification_table() {
     for id in ids {
         assert!(
             doc.contains(&format!("| `{id}` ")),
-            "{id} is missing from docs/rules.md"
+            "{id} is missing from the rules guide ({path})"
         );
     }
 }

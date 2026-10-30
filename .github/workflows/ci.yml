@@ -207,6 +207,11 @@ jobs:
     permissions:
       pull-requests: write
     steps:
+      - name: Check out the comment script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
       - name: Download the comment sections
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -218,12 +223,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          cd "$RUNNER_TEMP/pr"
           for part in coverage bench; do
-            if [[ -f $part.md ]]; then cat "$part.md"; else echo "No $part result: the job failed."; fi
+            f=$RUNNER_TEMP/pr/$part.md
+            if [[ -f $f ]]; then cat "$f"; else echo "No $part result: the job failed."; fi
             echo
-          done > comment.md
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last --create-if-none
+          done > "$RUNNER_TEMP/comment.md"
+          .github/scripts/sticky-comment.sh ci "$RUNNER_TEMP/comment.md"
 
   simulation:
     name: Simulation

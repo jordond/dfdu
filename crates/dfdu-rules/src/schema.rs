@@ -1,4 +1,4 @@
-//! The rule file format as written (`docs/rules.md`). Unknown fields are
+//! The rule file format as written (<https://dfdu.app/docs/rules/>). Unknown fields are
 //! errors, so a misspelt key is reported instead of silently ignored.
 //! [`crate::load`](mod@crate::load) checks the values and compiles a file into
 //! [`crate::Rule`]s.
@@ -60,7 +60,7 @@ pub struct RuleDef {
     pub name: Option<String>,
     pub platforms: Option<Vec<String>>,
     /// Built-in rules only: the platforms whose paths were checked on a real machine. The
-    /// rule is enabled by default only there (`docs/rules.md`).
+    /// rule is enabled by default only there (<https://dfdu.app/docs/rules/>).
     pub verified: Option<Vec<String>>,
     pub safety: Option<String>,
     pub action: Option<String>,

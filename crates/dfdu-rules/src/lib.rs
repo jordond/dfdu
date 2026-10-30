@@ -1,4 +1,4 @@
-//! Categories and cleanup rules (format: `docs/rules.md`).
+//! Categories and cleanup rules (format: <https://dfdu.app/docs/rules/>).
 //!
 //! A rule names a kind of disk use (a Rust `target/`, the npm cache), how safe it is to delete
 //! and how. Rules are TOML: a built-in pack ships in the binary ([`builtin`]) and users add or

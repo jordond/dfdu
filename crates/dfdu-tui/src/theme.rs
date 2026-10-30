@@ -240,7 +240,8 @@ impl Spec {
 pub type Palette = [Spec; Token::COUNT];
 
 /// A theme resolved for one colour level. Each field is the style of the token of the same
-/// name, with `_` for `.` (`fg_dim` is `fg.dim`); docs/themes.md says what each is used for.
+/// name, with `_` for `.` (`fg_dim` is `fg.dim`); <https://dfdu.app/docs/themes/> says what
+/// each is used for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub fg: Style,

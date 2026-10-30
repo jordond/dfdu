@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+.wrangler/
+# Copied from ../assets by scripts/sync-assets.mjs.
+public/demos/
+public/favicon.ico
+public/favicon.svg
+public/apple-touch-icon.png
+public/icon-512.png

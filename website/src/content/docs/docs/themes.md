@@ -1,4 +1,7 @@
-# Themes
+---
+title: Themes
+description: "dfdu's five built-in themes and how to write your own in TOML."
+---
 
 dfdu ships with five themes and can load your own from a small TOML file.
 
@@ -140,7 +143,7 @@ title = { modifiers = ["bold", "underlined"] }
 
 ### Category colours
 
-Entries matched by a [cleanup rule](rules.md) are tagged with their category. Categories share eight colours:
+Entries matched by a [cleanup rule](/docs/rules/) are tagged with their category. Categories share eight colours:
 
 | Token           | Categories                                                                                     |
 | --------------- | ---------------------------------------------------------------------------------------------- |

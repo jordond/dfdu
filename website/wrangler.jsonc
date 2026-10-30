@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dfdu-web",
+  "account_id": "bca591069b9efc9b82571ab6301ca60c",
+  "compatibility_date": "2026-10-30",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+  },
+  // Pull requests get a preview version (`wrangler versions upload --preview-alias pr-N`) on a
+  // workers.dev preview URL; the site itself is only served on dfdu.app.
+  "workers_dev": false,
+  "preview_urls": true,
+  "observability": { "enabled": true },
+  // www.dfdu.app redirects here from its own Worker (www/).
+  "routes": [{ "pattern": "dfdu.app", "custom_domain": true }],
+}

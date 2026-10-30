@@ -13,10 +13,14 @@ use clap::{Args, Parser, Subcommand};
 mod cmd;
 mod demo;
 mod release;
+mod website;
 
-use cmd::{Step, cargo, docker_run, has_cargo, need, need_cargo, output, quote, root, run, steps};
+use cmd::{
+    Step, cargo, docker_run, has, has_cargo, need, need_cargo, output, quote, root, run, steps,
+};
 use demo::{DemoArgs, demo};
 use release::{Release, release};
+use website::{Website, website};
 
 #[derive(Parser)]
 #[command(about, bin_name = "cargo xtask")]
@@ -97,6 +101,9 @@ enum Cmd {
     /// Release tasks.
     #[command(subcommand)]
     Release(Release),
+    /// The dfdu.app site in website/ (needs Bun).
+    #[command(subcommand)]
+    Website(Website),
 }
 
 #[derive(Args)]
@@ -197,6 +204,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Assets => assets(),
         Cmd::Demo(a) => demo(&a),
         Cmd::Release(r) => release(r),
+        Cmd::Website(w) => website(w),
     }
 }
 
@@ -485,6 +493,13 @@ fn ci(a: &CiArgs) -> anyhow::Result<()> {
             ("machete", Box::new(machete)),
             ("zizmor", Box::new(zizmor)),
         ]);
+        // The site needs Bun and Node, which a Rust-only checkout may not have; CI checks it in
+        // website.yml either way.
+        if has("bun") && has("node") {
+            list.push(("website", Box::new(|| website(Website::Ci))));
+        } else {
+            eprintln!("skipping the website check: Bun or Node is not installed");
+        }
     }
     if a.full {
         list.extend::<Vec<Step>>(vec![

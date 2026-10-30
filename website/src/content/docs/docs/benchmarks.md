@@ -1,4 +1,7 @@
-# Benchmarks
+---
+title: Benchmarks
+description: "Scan time and memory of dfdu next to dua, gdu, pdu, Dust, ncdu and du."
+---
 
 How long dfdu takes to scan a large tree, and how much memory it uses, next to other disk usage tools: [dua](https://github.com/Byron/dua-cli), [gdu](https://github.com/dundee/gdu), [pdu](https://github.com/KSXGitHub/parallel-disk-usage), [Dust](https://github.com/bootandy/dust), [ncdu](https://dev.yorhel.nl/ncdu) and `du`.
 

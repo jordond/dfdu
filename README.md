@@ -10,8 +10,8 @@ A disk usage browser for the terminal. Browse, sort and delete while the scan is
 ## Features
 
 - **Browse while it scans.** The list fills in and re-sorts as the scan runs. Nothing to wait for.
-- **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](docs/benchmarks.md).
-- **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](docs/rules.md) are extendable.
+- **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](https://dfdu.app/docs/benchmarks/).
+- **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](https://dfdu.app/docs/rules/) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
 - **History.** Every scan is recorded, so you can ask what grew since last week.
@@ -31,7 +31,7 @@ A disk usage browser for the terminal. Browse, sort and delete while the scan is
 | Scan history and diffs       | ✓    |      |      |      |      |
 | Reads ncdu exports           | ✓    | ✓    | ✓    |      |      |
 
-Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](docs/benchmarks.md) have the full numbers.
+Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](https://dfdu.app/docs/benchmarks/) have the full numbers.
 
 ## Install
 
@@ -98,9 +98,9 @@ dfdu -f home.snap                           # browse a saved scan or an ncdu exp
 
 ## Docs
 
-- [Cleanup rules](docs/rules.md): the built-in rules and how to write your own
-- [Themes](docs/themes.md): five built-in themes and custom TOML themes
-- [Benchmarks](docs/benchmarks.md): scan time and memory against other tools
+- [Cleanup rules](https://dfdu.app/docs/rules/): the built-in rules and how to write your own
+- [Themes](https://dfdu.app/docs/themes/): five built-in themes and custom TOML themes
+- [Benchmarks](https://dfdu.app/docs/benchmarks/): scan time and memory against other tools
 - [Contributing](CONTRIBUTING.md): building, testing and releasing
 
 ## License

@@ -1,0 +1,75 @@
+---
+// The contents of the Details pane for one row. Rendered once into the pane for the first row
+// and once into a <template> per row, which the client script clones on selection.
+import type { Detail } from '../data/landing'
+
+interface Props {
+  detail: Detail
+}
+
+const { detail: d } = Astro.props
+---
+
+<div>
+  <h2>{d.title}</h2>
+  <div class="t-dim">{d.sub}</div>
+</div>
+{
+  d.lines.length > 0 && (
+    <div>
+      {d.lines.map((l) => (
+        <p class:list={[`t-${l.tone}`, { b: l.bold }]}>{l.t}</p>
+      ))}
+    </div>
+  )
+}
+{
+  d.gif && (
+    <div class="gif">
+      {d.videos.length > 0 ? (
+        // No autoplay: the client script starts it unless reduced motion is asked for.
+        <video data-media loop muted playsinline poster={d.still} width="1440" height="900" aria-label={d.gifAlt}>
+          {d.videos.map((v) => (
+            <source src={v.src} type={v.type} />
+          ))}
+          <img src={d.gif} alt={d.gifAlt} width="1440" height="900" />
+        </video>
+      ) : (
+        <picture data-media data-gif={d.gif} data-still={d.still ?? d.gif}>
+          {d.still && <source srcset={d.still} media="(prefers-reduced-motion: reduce)" />}
+          <img src={d.gif} alt={d.gifAlt} width="1440" height="900" decoding="async" />
+        </picture>
+      )}
+    </div>
+    <div>
+      <button type="button" class="btn btn-line btn-small" data-pause aria-pressed="false" hidden>p · pause</button>
+    </div>
+  )
+}
+{
+  d.cmd && (
+    <div class="cmd">
+      <div class="t-dim">command</div>
+      <code><span class="t-dim">$ </span>{d.cmd}</code>
+      <div class="cmd-actions">
+        <button type="button" class="btn btn-fill btn-small" data-copy={d.cmd}>
+          c · copy
+        </button>
+        <span class="copied" role="status" hidden>
+          ✓ copied to clipboard
+        </span>
+      </div>
+    </div>
+  )
+}
+<div class="spacer"></div>
+<div>
+  <div class="b t-header">docs</div>
+  <div class="docs-links">
+    <a href="/docs/rules/">cleanup rules</a>
+    <a href="/docs/themes/">themes</a>
+    <a href="/docs/benchmarks/">benchmarks</a>
+    <a href="https://github.com/jordond/dfdu/releases">releases</a>
+    <a href="https://github.com/jordond/dfdu/blob/main/CONTRIBUTING.md">contributing</a>
+  </div>
+</div>

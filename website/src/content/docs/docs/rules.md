@@ -1,4 +1,7 @@
-# Cleanup rules
+---
+title: Cleanup rules
+description: "How dfdu recognises caches, build output and other cleanable files, the built-in rules, and how to write your own."
+---
 
 Rules are how dfdu recognises what it finds: a Rust `target/` folder, the npm cache, an Android emulator, an old installer in Downloads. Each rule gives what it matches a category, a safety level and a way to clean it up. The results show up in the browser's cleanup view (`3`), in `dfdu report` and in `dfdu clean`.
 
@@ -124,7 +127,7 @@ These look through your home folder, leaving out hidden folders and `~/Library` 
 | `content.empty-dirs`           | Empty folders                                                                                           | review | trash   | Off     |
 | `content.broken-links`         | Symbolic links whose target no longer exists                                                            | review | delete  | macOS, Linux |
 
-The full definitions, with every path and threshold, are in [`crates/dfdu-rules/src/builtin.toml`](../crates/dfdu-rules/src/builtin.toml). They use the same format as your own rule files, so they are also a good source of examples.
+The full definitions, with every path and threshold, are in [`crates/dfdu-rules/src/builtin.toml`](https://github.com/jordond/dfdu/blob/main/crates/dfdu-rules/src/builtin.toml). They use the same format as your own rule files, so they are also a good source of examples.
 
 ## Writing rules
 
@@ -193,7 +196,7 @@ To turn off every rule for one run, pass `--no-rules`.
 
 ### Replacing a built-in rule
 
-A rule with the same `id` as an earlier one replaces it completely. Copy the rule from [`builtin.toml`](../crates/dfdu-rules/src/builtin.toml) into your own file and change what you need.
+A rule with the same `id` as an earlier one replaces it completely. Copy the rule from [`builtin.toml`](https://github.com/jordond/dfdu/blob/main/crates/dfdu-rules/src/builtin.toml) into your own file and change what you need.
 
 ### Matching
 

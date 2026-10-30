@@ -1,4 +1,5 @@
-//! Matching entries against a rule set, in the evaluation order of `docs/rules.md`.
+//! Matching entries against a rule set, in the evaluation order of
+//! <https://dfdu.app/docs/rules/>.
 //!
 //! [`Dir::classify`] runs for each entry of a directory listing, with the listing at hand for
 //! `sibling` checks: the protected-path check, then the name and path prefilter, then

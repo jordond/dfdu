@@ -1,0 +1,10 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "dfdu-www",
+  "account_id": "bca591069b9efc9b82571ab6301ca60c",
+  "compatibility_date": "2026-10-30",
+  "main": "index.js",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "www.dfdu.app", "custom_domain": true }],
+}

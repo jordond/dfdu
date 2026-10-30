@@ -78,4 +78,17 @@ build_root "$fixture"
 DEMO_FAKETIME=$(dfdu-demofs now "$fixture")
 export DEMO_FAKETIME
 mkdir -p out
+# DEMO_FORMATS (`cargo xtask demo --format`): the extensions to record, comma-separated. The
+# tapes write out/NAME.gif; for anything else a copy of the tape writes each format instead.
+formats=${DEMO_FORMATS:-gif}
+if [ "$formats" != gif ]; then
+    generated=tapes/.$name.tape
+    {
+        for ext in ${formats//,/ }; do
+            echo "Output out/$name.$ext"
+        done
+        grep -v '^Output ' "$tape"
+    } >"$generated"
+    tape=$generated
+fi
 vhs "$tape"

@@ -1,0 +1,14 @@
+# Cloudflare Workers Static Assets honours this file; a static build has no server to set headers.
+# 'unsafe-inline' scripts cover the theme boot in the landing layout, Starlight's theme and
+# JSON-LD; 'wasm-unsafe-eval' lets the docs search (Pagefind) compile its WebAssembly. Nothing
+# on the site loads from another origin.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable

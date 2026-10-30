@@ -1,0 +1,46 @@
+/* Starlight in dfdu's palette (the TUI's dark and light themes, as on the landing page). */
+
+:root {
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  --sl-color-accent-low: #2a3a42;
+  --sl-color-accent: #88c0d0;
+  --sl-color-accent-high: #d4ecf3;
+
+  --sl-color-white: #eceff4;
+  --sl-color-gray-1: #d8dee9;
+  --sl-color-gray-2: #c0c7d4;
+  --sl-color-gray-3: #959eb1;
+  --sl-color-gray-4: #7b8394;
+  --sl-color-gray-5: #4c566a;
+  --sl-color-gray-6: #2b313c;
+  --sl-color-black: #1f232b;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #d3e8f0;
+  --sl-color-accent: #1b6b8c;
+  --sl-color-accent-high: #0f3f53;
+
+  --sl-color-white: #1f2329;
+  --sl-color-gray-1: #2e3440;
+  --sl-color-gray-2: #434b5a;
+  --sl-color-gray-3: #626776;
+  --sl-color-gray-4: #80868f;
+  --sl-color-gray-5: #c3c9d3;
+  --sl-color-gray-6: #e4e8ee;
+  --sl-color-gray-7: #f1f3f6;
+  --sl-color-black: #ffffff;
+}
+
+/* Headings in the TUI's typeface; body text stays in the system sans for long reading. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+h1#_top {
+  font-family: var(--sl-font-mono);
+  letter-spacing: -0.01em;
+}
+
+.sl-markdown-content img {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 4px;
+}
