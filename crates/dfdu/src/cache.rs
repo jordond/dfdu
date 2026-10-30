@@ -30,14 +30,13 @@ fn open() -> Option<Cache> {
         eprintln!("dfdu: no cache directory");
         return None;
     };
-    let cache = Cache::at(dir.clone());
-    if cache.is_none() {
-        eprintln!(
-            "dfdu: {} belongs to another user; the scan cache is not used",
-            dir.display()
-        );
+    match Cache::at(dir) {
+        Ok(cache) => Some(cache),
+        Err(e) => {
+            eprintln!("dfdu: {e}; the scan cache is not used");
+            None
+        }
     }
-    cache
 }
 
 pub fn run(cmd: &CacheCmd) -> ExitCode {

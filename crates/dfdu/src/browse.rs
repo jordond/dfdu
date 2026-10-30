@@ -108,10 +108,17 @@ pub fn run(cli: Cli) -> ExitCode {
 }
 
 /// Where the scan of `path` with the options of `local` is cached; `None` when the cache is
-/// off ([`dfdu_store::cache::OFF_VAR`]) or not this user's, or `path` is not a directory (the
-/// scan then says why).
+/// off ([`dfdu_store::cache::OFF_VAR`]), refused (said on standard error before the browser
+/// takes the terminal: another user's directory, or one others can write to), or `path` is not
+/// a directory (the scan then says why).
 fn cache_slot(path: &Path, local: &Local) -> Option<dfdu_store::cache::Slot> {
-    let cache = dfdu_store::cache::Cache::open_default()?;
+    let cache = match dfdu_store::cache::Cache::open_default()? {
+        Ok(cache) => cache,
+        Err(e) => {
+            eprintln!("dfdu: {e}; the scan cache is not used");
+            return None;
+        }
+    };
     let key =
         dfdu_store::cache::Key::new(path, local.job.cross_mounts, local.job.network, local.mft)
             .ok()?;
