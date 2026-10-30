@@ -302,7 +302,7 @@ impl App {
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k, now),
             Overlay::Types(_) => return type_filter::key(self, k),
-            Overlay::MarkPattern(_) => return mark_pattern::key(self, &k),
+            Overlay::MarkPattern(_) => return mark_pattern::key(self, k),
         }
         if filter::editing(self) {
             return filter::key(self, k, now);

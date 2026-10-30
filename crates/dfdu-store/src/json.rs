@@ -47,7 +47,7 @@ impl<R: BufRead> Reader<R> {
 
     pub fn error(&self, msg: impl Into<String>) -> ImportError {
         ImportError::Format {
-            offset: self.pos,
+            offset: Some(self.pos),
             msg: msg.into(),
         }
     }

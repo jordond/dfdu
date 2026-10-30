@@ -75,8 +75,18 @@ pub fn run(args: &DupesArgs) -> ExitCode {
         if show {
             eprint!("\r\x1b[K");
         }
-        job.join().unwrap_or_default()
+        job.join()
     });
+    let found = match found {
+        Ok(f) => f,
+        Err(p) => {
+            eprintln!(
+                "dfdu: duplicate search failed: {}",
+                dfdu_scan::panic_message(&*p)
+            );
+            return ExitCode::from(1);
+        }
+    };
     let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
     let r = match args.format {
         Format::Table => {

@@ -20,7 +20,7 @@ pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<S
     let e = &app.snap.entries[index];
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let style = if e.is_dir { t.dir } else { Style::new() };
-    let mut spans = filter::name_spans(app, index, name, style);
+    let mut spans = filter::name_spans(app, name, style);
     if e.is_dir {
         spans.push(Span::styled("/", style));
     }

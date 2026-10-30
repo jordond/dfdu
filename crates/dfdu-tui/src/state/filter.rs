@@ -135,9 +135,9 @@ impl Filter {
         &self.query
     }
 
-    /// Whether entry `index` (`e`) passes the filter: it matches, or in tree mode a match is
-    /// inside it. A lookup into what [`Filter::prepare`] computed.
-    pub fn matches(&self, index: usize, _e: &EntryData) -> bool {
+    /// Whether entry `index` passes the filter: it matches, or in tree mode a match is inside
+    /// it. A lookup into what [`Filter::prepare`] computed.
+    pub fn matches(&self, index: usize) -> bool {
         !self.active || self.hit(index) || self.around.get(index).copied().unwrap_or(false)
     }
 
@@ -294,8 +294,8 @@ pub fn line(app: &App) -> Option<Line<'static>> {
     Some(Line::from(spans))
 }
 
-/// The name of entry `index` drawn in `style`, with the matched characters highlighted.
-pub fn name_spans(app: &App, _index: usize, name: String, style: Style) -> Vec<Span<'static>> {
+/// `name` drawn in `style`, with the characters the query matches highlighted.
+pub fn name_spans(app: &App, name: String, style: Style) -> Vec<Span<'static>> {
     let f = &app.filter;
     if !f.active {
         return vec![Span::styled(name, style)];

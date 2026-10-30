@@ -43,7 +43,7 @@ const INDEX: u32 = 1;
 
 fn bad(offset: u64, msg: impl Into<String>) -> ImportError {
     ImportError::Format {
-        offset,
+        offset: Some(offset),
         msg: msg.into(),
     }
 }

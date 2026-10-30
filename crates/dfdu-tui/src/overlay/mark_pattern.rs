@@ -54,11 +54,11 @@ pub fn open(app: &mut App) {
 }
 
 /// Typing edits the glob; `Enter` marks what it matches and closes the prompt, `Esc` closes it.
-pub fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
+pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let Overlay::MarkPattern(p) = &mut app.overlay else {
         return Vec::new();
     };
-    match p.input.key(k) {
+    match p.input.key(&k) {
         Edit::Changed => {
             let text = p.input.text().trim().to_owned();
             let matches = (!text.is_empty()).then(|| glob(&text).map(|g| matched(app, &g).len()));
