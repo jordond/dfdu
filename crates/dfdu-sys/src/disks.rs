@@ -172,14 +172,17 @@ pub(crate) fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
 ///
 /// # Errors
 ///
-/// When no thread can be started for the listing, or `TimedOut` when it takes longer than
-/// `timeout`.
+/// When no thread can be started for the listing, when `sysinfo` cannot list the disks, or
+/// `TimedOut` when the listing takes longer than `timeout`.
 #[cfg(not(target_os = "linux"))]
 pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
     let deadline = Instant::now() + timeout;
     let rx = on_thread(|| {
-        sysinfo::Disks::new_with_refreshed_list()
-            .list()
+        let disks = sysinfo::Disks::new_with_refreshed_list().map_err(|e| match e {
+            sysinfo::Error::Io(e) => e,
+            e => io::Error::other(e),
+        })?;
+        let list = disks
             .iter()
             .map(|d| {
                 let fstype = d.file_system().to_string_lossy().into_owned();
@@ -199,12 +202,13 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
                     shares_space_with: vec![],
                 }
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        Ok::<_, io::Error>(list)
     })
     .ok_or_else(|| io::Error::other("could not start a thread"))?;
     let mut out = rx
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the disk list did not answer"))?;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the disk list did not answer"))??;
     out.retain(|d| d.class != FsClass::Kernel && d.space.is_some_and(|s| s.total > 0));
     out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
     #[cfg(target_os = "macos")]
