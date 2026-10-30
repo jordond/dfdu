@@ -104,5 +104,5 @@ pub fn extract(archive: &[u8], target: &str) -> io::Result<Vec<u8>> {
     )))
 }
 
-#[cfg(all(test, feature = "agent-download"))]
+#[cfg(test)]
 pub(super) mod tests;

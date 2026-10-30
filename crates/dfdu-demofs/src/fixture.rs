@@ -1,4 +1,5 @@
-//! The fixture file: what the filesystem serves, read from TOML and built into a [`Tree`].
+//! The fixture file: what the filesystem serves, read from TOML and built into a
+//! [`Tree`](crate::Tree).
 //!
 //! ```toml
 //! now = "2026-10-01T09:00:00Z"     # the time the recording runs at; ages count back from it
