@@ -5,7 +5,7 @@
 use anyhow::Context as _;
 use serde::Deserialize;
 
-use crate::fixture::{Amount, parse_age};
+use crate::fixture::{Amount, insert, mkdir_p, parse_age};
 use crate::tree::{Kind, Tree, mix, seed_of};
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +72,18 @@ const NPM: &[&str] = &[
     "undici",
 ];
 
+/// The files of each package, one a pass through [`NPM`]; later passes add chunks.
+const NPM_FILES: &[&str] = &[
+    "package.json",
+    "index.js",
+    "dist/index.js",
+    "README.md",
+    "dist/index.min.js",
+    "LICENSE",
+    "dist/index.cjs",
+    "types/index.d.ts",
+];
+
 const CRATES: &[&str] = &[
     "serde",
     "tokio",
@@ -136,17 +148,7 @@ fn layout(f: &Fill, rng: &mut u64) -> Vec<String> {
             Style::Npm => {
                 let pkg = NPM[i % NPM.len()];
                 let pass = i / NPM.len();
-                const FILES: &[&str] = &[
-                    "package.json",
-                    "index.js",
-                    "dist/index.js",
-                    "README.md",
-                    "dist/index.min.js",
-                    "LICENSE",
-                    "dist/index.cjs",
-                    "types/index.d.ts",
-                ];
-                FILES.get(pass).map_or_else(
+                NPM_FILES.get(pass).map_or_else(
                     || format!("{pkg}/lib/chunk-{pass}.js"),
                     |f| format!("{pkg}/{f}"),
                 )
@@ -213,30 +215,13 @@ pub(crate) fn fill(
         let age = i64::try_from(next(&mut rng) % u64::try_from(spread)?)?;
         let t = mtime - age;
         let (sub, file) = name.rsplit_once('/').unwrap_or(("", name));
-        let d = if sub.is_empty() {
-            dir
-        } else {
-            sub_dir(tree, dir, sub, t)?
-        };
+        let d = mkdir_p(tree, dir, sub, t)?;
         let seed = seed_of(format!("{path}/{name}").as_bytes());
-        tree.insert(d, file.as_bytes(), Kind::seeded(size, seed), t, 0o644)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))
+        insert(tree, d, file, Kind::seeded(size, seed), t, 0o644)
             .with_context(|| format!("fill file {name:?}"))?;
     }
     Ok(())
 }
 
-/// The directory `rel` below `dir`, made when missing.
-fn sub_dir(tree: &mut Tree, dir: usize, rel: &str, mtime: i64) -> anyhow::Result<usize> {
-    let mut d = dir;
-    for part in rel.split('/') {
-        d = match tree.lookup(d, part.as_bytes()) {
-            Ok(n) if tree.nodes[n].is_dir() => n,
-            Ok(_) => anyhow::bail!("{part:?} in {rel:?} is not a directory"),
-            Err(_) => tree
-                .insert(d, part.as_bytes(), Kind::dir(), mtime, 0o755)
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?,
-        };
-    }
-    Ok(d)
-}
+#[cfg(test)]
+mod tests;

@@ -3,10 +3,12 @@
 
 use std::time::Duration;
 
+mod data;
+
+pub(crate) use data::{mix, seed_of};
+
 /// Size reported for a directory, and what it allocates.
 pub const DIR_SIZE: u64 = 4096;
-/// Largest file a write may turn from generated into stored bytes.
-const MAX_STORED: u64 = 64 << 20;
 
 /// What an operation failed with; the filesystem answers the matching errno.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +106,16 @@ impl Kind {
         }
     }
 
+    /// A file of the stored bytes `b`.
+    #[must_use]
+    pub fn stored(b: Vec<u8>) -> Kind {
+        Kind::File {
+            size: b.len() as u64,
+            alloc: None,
+            data: Data::Bytes(b),
+        }
+    }
+
     /// A file of `size` bytes generated from `seed`.
     #[must_use]
     pub fn seeded(size: u64, seed: u64) -> Kind {
@@ -149,15 +161,7 @@ impl Tree {
     #[must_use]
     pub fn new(root_mtime: i64, owner: (u32, u32)) -> Tree {
         Tree {
-            nodes: vec![Inode::new(
-                Kind::Dir {
-                    parent: 0,
-                    entries: vec![],
-                },
-                root_mtime,
-                0o755,
-                owner,
-            )],
+            nodes: vec![Inode::new(Kind::dir(), root_mtime, 0o755, owner)],
             owner,
             next_cookie: 3,
         }
@@ -460,6 +464,13 @@ impl Tree {
         (0..self.nodes.len()).map(|n| self.alloc(n)).sum()
     }
 
+    /// Length of every node below the root added up, each counted once however many links
+    /// it has.
+    #[must_use]
+    pub fn apparent(&self) -> u64 {
+        (1..self.nodes.len()).map(|n| self.size(n)).sum()
+    }
+
     /// Nodes that exist.
     #[must_use]
     pub fn live(&self) -> usize {
@@ -476,136 +487,7 @@ impl Tree {
             e.iter().filter(|e| self.nodes[e.node].is_dir()).count()
         })
     }
-
-    /// Up to `len` bytes of file `n` from `offset`.
-    ///
-    /// # Errors
-    ///
-    /// `n` is not a file.
-    pub fn read(&self, n: usize, offset: u64, len: u32) -> Result<Vec<u8>, FsError> {
-        let Some(Kind::File { size, data, .. }) = self.get(n).map(|i| &i.kind) else {
-            return Err(FsError::IsDir);
-        };
-        let end = (*size).min(offset.saturating_add(u64::from(len)));
-        if offset >= end {
-            return Ok(vec![]);
-        }
-        Ok(match data {
-            Data::Bytes(b) => {
-                // Stored bytes can be shorter than the size after a truncate that grew the file.
-                let mut out = vec![0; usize::try_from(end - offset).unwrap_or(0)];
-                let have = b
-                    .get(usize::try_from(offset).unwrap_or(usize::MAX)..)
-                    .unwrap_or(&[]);
-                let k = have.len().min(out.len());
-                out[..k].copy_from_slice(&have[..k]);
-                out
-            }
-            Data::Seeded { seed, len } => {
-                let mut out = seeded(*seed, offset, end.min(*len).max(offset));
-                out.resize(usize::try_from(end - offset).unwrap_or(0), 0);
-                out
-            }
-        })
-    }
-
-    /// The bytes of file `n` as stored, generated ones made stored first.
-    fn stored(&mut self, n: usize) -> Result<&mut Vec<u8>, FsError> {
-        let size = self.size(n);
-        let Some(Kind::File { data, .. }) = self.nodes.get_mut(n).map(|i| &mut i.kind) else {
-            return Err(FsError::IsDir);
-        };
-        if let Data::Seeded { seed, len } = *data {
-            if size > MAX_STORED {
-                return Err(FsError::TooBig);
-            }
-            let mut b = seeded(seed, 0, len.min(size));
-            b.resize(usize::try_from(size).unwrap_or(0), 0);
-            *data = Data::Bytes(b);
-        }
-        match data {
-            Data::Bytes(b) => Ok(b),
-            Data::Seeded { .. } => Err(FsError::Io),
-        }
-    }
-
-    /// Writes `buf` into file `n` at `offset`.
-    ///
-    /// # Errors
-    ///
-    /// `n` is not a file, or is a large generated one.
-    pub fn write(&mut self, n: usize, offset: u64, buf: &[u8], t: i64) -> Result<(), FsError> {
-        let end = offset + buf.len() as u64;
-        if end > MAX_STORED {
-            return Err(FsError::TooBig);
-        }
-        let b = self.stored(n)?;
-        let (o, e) = (offset as usize, end as usize);
-        if b.len() < e {
-            b.resize(e, 0);
-        }
-        b[o..e].copy_from_slice(buf);
-        let len = b.len() as u64;
-        if let Kind::File { size, alloc, .. } = &mut self.nodes[n].kind {
-            *size = (*size).max(len);
-            *alloc = None;
-        }
-        self.nodes[n].mtime = t;
-        Ok(())
-    }
-
-    /// Sets the length of file `n`.
-    ///
-    /// # Errors
-    ///
-    /// `n` is not a file.
-    pub fn truncate(&mut self, n: usize, to: u64, t: i64) -> Result<(), FsError> {
-        let Some(Kind::File { size, alloc, data }) = self.nodes.get_mut(n).map(|i| &mut i.kind)
-        else {
-            return Err(FsError::IsDir);
-        };
-        match data {
-            // Shorter keeps a prefix of the generated bytes; longer reads zeros after them.
-            Data::Seeded { len, .. } => *len = (*len).min(to),
-            Data::Bytes(b) => b.truncate(usize::try_from(to).unwrap_or(usize::MAX)),
-        }
-        if to == 0 {
-            *data = Data::Bytes(vec![]);
-        }
-        *size = to;
-        *alloc = None;
-        self.nodes[n].mtime = t;
-        Ok(())
-    }
 }
 
-/// FNV-1a of `b`: the seed of a file's generated bytes.
-#[must_use]
-pub fn seed_of(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &c| {
-        (h ^ u64::from(c)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
-/// SplitMix64: the generator behind seeded bytes and the fixture's random choices.
-#[must_use]
-pub fn mix(mut z: u64) -> u64 {
-    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
-
-/// Bytes `start..end` of the file generated from `seed`: word `i` is `mix(seed ^ i * k)`.
-fn seeded(seed: u64, start: u64, end: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(usize::try_from(end - start).unwrap_or(0));
-    let mut at = start;
-    while at < end {
-        let word = mix(seed ^ (at / 8).wrapping_mul(0xd6e8_feb8_6659_fd93)).to_le_bytes();
-        let from = (at % 8) as usize;
-        let take = (8 - from).min(usize::try_from(end - at).unwrap_or(8));
-        out.extend_from_slice(&word[from..from + take]);
-        at += take as u64;
-    }
-    out
-}
+#[cfg(test)]
+mod tests;
