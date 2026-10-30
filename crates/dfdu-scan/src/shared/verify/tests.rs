@@ -59,7 +59,7 @@ fn batches_share_the_job_of_the_resume() {
     let sh = Shared::new(Local::default(), Limits::default());
     sh.verify(JobId(3), 0, PathBuf::from("/r"), vec![dir(1)]);
     let first = sh.job(JobId(3)).expect("a job");
-    assert!(first.opts.enter.is_empty());
+    assert_eq!(first.opts.enter, Vec::<(u64, u64)>::new());
     sh.verify(JobId(3), 1, PathBuf::from("/r"), vec![dir(2)]);
     assert!(Arc::ptr_eq(&first, &sh.job(JobId(3)).unwrap()));
     assert_eq!(sh.outstanding.load(SeqCst), 2);

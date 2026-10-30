@@ -72,7 +72,7 @@ fn keys_follow_the_directory_and_the_options() {
     assert_eq!(k.root(), dunce::canonicalize(&dir).unwrap());
     let name = k.file_name();
     assert_eq!(name.len(), 16 + ".snap".len(), "{name}");
-    assert!(name.ends_with(".snap"));
+    assert_eq!(Path::new(&name).extension(), Some("snap".as_ref()));
     let names: std::collections::HashSet<String> = [
         (false, false, false),
         (true, false, false),

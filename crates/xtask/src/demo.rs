@@ -197,7 +197,7 @@ mod tests {
         assert!(all.contains(&"browse".to_owned()), "{all:?}");
         assert!(
             all.iter()
-                .all(|t| !t.starts_with('_') && !t.ends_with(".tape"))
+                .all(|t| !t.starts_with('_') && Path::new(t).extension().is_none())
         );
         assert!(all.is_sorted());
         assert!(tapes(&dir.join("no-such-dir")).is_err());
