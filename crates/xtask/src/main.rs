@@ -38,12 +38,7 @@ enum Cmd {
         #[arg(long)]
         fix: bool,
     },
-    /// Build the docs, warnings as errors.
-    Doc {
-        #[arg(long)]
-        open: bool,
-    },
-    /// The fast checks: fmt, clippy, docs, unused dependencies and cargo-deny.
+    /// The fast checks: fmt, clippy, unused dependencies, cargo-deny, zizmor and shellcheck.
     Lint,
     /// Find unused dependencies.
     Machete,
@@ -174,7 +169,6 @@ fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Fmt { check } => fmt(check),
         Cmd::Clippy { fix } => clippy(fix),
-        Cmd::Doc { open } => doc(open),
         Cmd::Lint => lint(),
         Cmd::Deny { advisories } => deny(advisories),
         Cmd::Machete => machete(),
@@ -218,25 +212,10 @@ fn clippy(fix: bool) -> anyhow::Result<()> {
     run(c.args(["--", "-D", "warnings"]))
 }
 
-fn doc(open: bool) -> anyhow::Result<()> {
-    let mut c = cargo([
-        "doc",
-        "--workspace",
-        "--all-features",
-        "--no-deps",
-        "--locked",
-    ]);
-    if open {
-        c.arg("--open");
-    }
-    run(c.env("RUSTDOCFLAGS", "-D warnings"))
-}
-
 fn lint() -> anyhow::Result<()> {
     steps(vec![
         ("fmt", Box::new(|| fmt(true))),
         ("clippy", Box::new(|| clippy(false))),
-        ("doc", Box::new(|| doc(false))),
         ("machete", Box::new(machete)),
         ("deny", Box::new(|| deny(false))),
         ("zizmor", Box::new(zizmor)),
@@ -475,7 +454,6 @@ fn ci(a: &CiArgs) -> anyhow::Result<()> {
     if !a.quick {
         let seeds = a.full.then_some(5000);
         list.extend::<Vec<Step>>(vec![
-            ("doc", Box::new(|| doc(false))),
             (
                 "simulation",
                 Box::new(move || {

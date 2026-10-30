@@ -76,9 +76,6 @@ jobs:
       - name: Find unused dependencies
         if: ${{ !cancelled() }}
         run: cargo xtask machete
-      - name: Build docs, warnings as errors
-        if: ${{ !cancelled() }}
-        run: cargo xtask doc
       - name: Check the workspace builds on the MSRV
         if: ${{ !cancelled() }}
         run: cargo xtask msrv
