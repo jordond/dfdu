@@ -23,8 +23,8 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 type CFAllocatorRef = *const c_void;
@@ -250,20 +250,89 @@ fn sync_dir(dev: u64) -> Option<PathBuf> {
 /// `InvalidInput` when `since` is not a real event id or a path holds a NUL byte, the error of
 /// reading `root`'s metadata, and an error when the stream cannot be created or started.
 pub fn changes_since(root: &Path, since: u64, timeout: Duration) -> io::Result<Changes> {
+    changes(root, since, timeout, None)
+}
+
+/// [`changes_since`], given up as soon as `cancel` is set (it is looked at every 50 ms): the
+/// call then returns `Interrupted`, with its sync directory removed.
+///
+/// # Errors
+///
+/// Those of [`changes_since`], and `Interrupted` when cancelled.
+pub fn changes_since_cancellable(
+    root: &Path,
+    since: u64,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> io::Result<Changes> {
+    changes(root, since, timeout, Some(cancel))
+}
+
+fn changes(
+    root: &Path,
+    since: u64,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> io::Result<Changes> {
     if since == SINCE_NOW {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let deadline = Instant::now() + timeout;
     let dev = std::fs::metadata(root)?.dev() as u64;
     let sync = sync_dir(dev);
-    let result = replay(root, since, deadline, sync.as_deref());
+    let result = replay(root, since, deadline, sync.as_deref(), cancel);
     if let Some(d) = &sync {
         let _ = std::fs::remove_dir_all(d);
     }
     result
 }
 
-fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io::Result<Changes> {
+/// The id of the newest event once the daemon has sent out every event of device `dev` it
+/// held: a position for a later [`changes_since`]. The daemon folds a change into an event
+/// it still holds for the same directory, which keeps its earlier id, so a change made just
+/// after [`current_event_id`] can carry an id before it and never be replayed (seen under
+/// load: a directory written to shortly before the position was taken). Waits, at most
+/// `timeout`, for a file written in a directory of its own to arrive live, as
+/// [`changes_since`] does; events come in order, so the held ones went out before it. Without
+/// such a directory on the volume, or on timeout, the id is taken as it stands.
+#[must_use]
+pub fn flushed_event_id(dev: u64, timeout: Duration) -> u64 {
+    if let Some(d) = sync_dir(dev) {
+        let deadline = Instant::now() + timeout;
+        let _ = replay(&d, current_event_id(), deadline, Some(&d), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    current_event_id()
+}
+
+/// How often a cancellable wait looks at its flag.
+const POLL: Duration = Duration::from_millis(50);
+
+/// Waits for `rx` until `deadline`, or until `cancel` is set; whether it received.
+fn wait(rx: &mpsc::Receiver<()>, deadline: Instant, cancel: Option<&AtomicBool>) -> bool {
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let Some(cancel) = cancel else {
+        return rx.recv_timeout(left()).is_ok();
+    };
+    loop {
+        if cancel.load(SeqCst) {
+            return false;
+        }
+        match rx.recv_timeout(left().min(POLL)) {
+            Ok(()) => return true,
+            Err(mpsc::RecvTimeoutError::Timeout) if !left().is_zero() => {}
+            Err(_) => return false,
+        }
+    }
+}
+
+fn replay(
+    root: &Path,
+    since: u64,
+    deadline: Instant,
+    sync: Option<&Path>,
+    cancel: Option<&AtomicBool>,
+) -> io::Result<Changes> {
     let mut paths = vec![CString::new(root.as_os_str().as_bytes())?];
     if let Some(d) = sync {
         paths.push(CString::new(d.as_os_str().as_bytes())?);
@@ -332,14 +401,17 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
         let queue = dispatch_queue_create(c"dfdu.fsevents".as_ptr(), std::ptr::null());
         FSEventStreamSetDispatchQueue(stream, queue);
         let started = FSEventStreamStart(stream) != 0;
-        let mut finished = started && rx.recv_timeout(left()).is_ok();
+        let mut finished = started && wait(&rx, deadline, cancel);
         if finished {
             match sync {
                 Some(d) => {
                     finished = std::fs::write(d.join("sync"), b"").is_ok()
-                        && synced_rx.recv_timeout(left()).is_ok();
+                        && wait(&synced_rx, deadline, cancel);
                 }
-                None => std::thread::sleep(SETTLE.min(left())),
+                None => {
+                    let (_never, rx) = mpsc::channel();
+                    wait(&rx, Instant::now() + SETTLE.min(left()), cancel);
+                }
             }
         }
         if started {
@@ -353,6 +425,9 @@ fn replay(root: &Path, since: u64, deadline: Instant, sync: Option<&Path>) -> io
         dispatch_release(queue);
         if !started {
             return Err(io::Error::other("FSEventStreamStart failed"));
+        }
+        if cancel.is_some_and(|c| c.load(SeqCst)) {
+            return Err(io::ErrorKind::Interrupted.into());
         }
         let mut c = (*collect)
             .into_inner()
@@ -389,9 +464,12 @@ mod tests {
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::create_dir_all(root.join("quiet")).unwrap();
         std::fs::write(root.join("quiet/x"), b"x").unwrap();
-        // Let the writes above get ids before the one taken now.
-        std::thread::sleep(Duration::from_millis(1500));
-        let since = current_event_id();
+        let dev = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&root).unwrap().dev()
+        };
+        // The writes above went out with ids before this one, so `quiet` is not reported.
+        let since = flushed_event_id(dev, Duration::from_secs(5));
         std::fs::write(root.join("a/b/new"), b"hello").unwrap();
         std::fs::write(root.join("a/top"), b"hi").unwrap();
         let mut got = Changes::default();
@@ -407,10 +485,6 @@ mod tests {
         assert!(got.dirs.contains(&root.join("a")), "{got:?}");
         assert!(!got.dirs.contains(&root.join("quiet")), "{got:?}");
         assert!(got.last_id > since);
-        let dev = {
-            use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(&root).unwrap().dev()
-        };
         assert!(volume_uuid(dev).is_some());
     }
 
@@ -441,5 +515,72 @@ mod tests {
             })
             .collect();
         assert!(left.is_empty(), "sync directories are removed");
+    }
+
+    /// A cancelled call returns at once, as interrupted, and leaves no sync directory behind.
+    #[test]
+    fn a_cancelled_call_cleans_up() {
+        let _one = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let cancel = AtomicBool::new(true);
+        let t = Instant::now();
+        let got = changes_since_cancellable(&root, 1, Duration::from_secs(30), &cancel);
+        assert_eq!(got.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let prefix = format!("dfdu-fsevents-{}-", std::process::id());
+        let left = std::fs::read_dir(std::env::temp_dir().canonicalize().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
+        assert!(!left, "the sync directory is removed");
+    }
+
+    /// Changes made right after the position is taken, to directories written to just before,
+    /// are all replayed (`--ignored`; `DFDU_ROUNDS`, default 200). Run it with the machine
+    /// loaded (the workspace tests, or a few busy loops): with the bare `current_event_id` as
+    /// the position about one round in 60 lost a change there, the daemon having folded it
+    /// into the event it still held, with its older id.
+    #[test]
+    #[ignore = "a stress run, meant for a loaded machine"]
+    fn changes_right_after_a_flushed_position_are_replayed() {
+        use std::os::unix::fs::MetadataExt;
+        let _one = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let dev = std::fs::metadata(&root).unwrap().dev();
+        let rounds = std::env::var("DFDU_ROUNDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(200);
+        let (mut lost, mut longest, mut all) = (Vec::new(), Duration::ZERO, Duration::ZERO);
+        for i in 0..rounds {
+            let d = root.join(format!("t{i}"));
+            std::fs::create_dir_all(d.join("a/b")).unwrap();
+            std::fs::write(d.join("a/one"), b"x").unwrap();
+            let t = Instant::now();
+            let since = flushed_event_id(dev, Duration::from_secs(2));
+            longest = longest.max(t.elapsed());
+            all += t.elapsed();
+            std::fs::remove_file(d.join("a/one")).unwrap();
+            std::fs::create_dir(d.join("a/b/c")).unwrap();
+            std::fs::write(d.join("a/b/c/new"), b"y").unwrap();
+            let got = changes_since(&d, since, Duration::from_secs(10)).unwrap();
+            if !got.full
+                && !(got.dirs.contains(&d.join("a")) && got.dirs.contains(&d.join("a/b/c")))
+            {
+                lost.push((i, got));
+            }
+        }
+        eprintln!("flush: longest {longest:?}, mean {:?}", all / rounds);
+        assert!(
+            lost.is_empty(),
+            "{} of {rounds} lost a change: {lost:?}",
+            lost.len()
+        );
     }
 }

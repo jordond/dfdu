@@ -8,9 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use dfdu_engine::{Command, Engine, EngineOptions, Mode};
+use dfdu_engine::{Command, Engine, EngineOptions, Mode, Timing};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::{DirState, Ix, Meta, NodeRef, Totals, Tree};
+use dfdu_tree::{DirState, Ix, Kind, Meta, NodeRef, Totals, Tree};
 
 mod common;
 use common::tempdir;
@@ -255,6 +255,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
         opts: JobOptions::default(),
         changed: Some(vec![]),
     });
+    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.send(Command::Delete {
         items: vec![junk],
         mode: Mode::Permanent,
@@ -263,5 +264,107 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     let s = e.read(|m| m.status.last_delete.clone()).unwrap();
     assert_eq!((s.deleted, s.refused), (1, 0), "{s:?}");
     assert!(!root.join("junk").exists());
+    e.shutdown(Duration::from_secs(1));
+}
+
+/// The longest write-lock slice while a resume takes over a loaded tree of about a million
+/// entries that the journal says did not change (`--ignored`, release): the resume walks the
+/// whole tree, classifying it, a step at a time.
+#[test]
+#[ignore = "a timing run"]
+fn resume_lock_hold_on_a_large_tree() {
+    let dir = tempdir();
+    let root = dir.path().to_path_buf();
+    let mut t = Tree::default();
+    let meta = Meta::from_metadata(&fs::metadata(&root).unwrap());
+    let r = t.new_root(&dfdu_tree::name_bytes(root.as_os_str()), &meta, true);
+    let names = ["target", "node_modules", "src", "build", ".git", "cache"];
+    let files = [
+        "Cargo.toml",
+        "package.json",
+        "a.rs",
+        "b.o",
+        "c.txt",
+        "d",
+        "e",
+        "f",
+        "g",
+    ];
+    let mut ino = 10;
+    let mut m = |kind| {
+        ino += 1;
+        Meta {
+            kind,
+            apparent: 100,
+            alloc: 4096,
+            mtime: 1,
+            dev: meta.dev,
+            ino,
+            nlink: 1,
+            mount: 0,
+        }
+    };
+    let mut dirs = vec![r];
+    for i in 0..100 {
+        let a = t.add_dir(r, format!("d{i}").as_bytes(), &m(Kind::Dir));
+        dirs.push(a);
+        for j in 0..100 {
+            let b = t.add_dir(a, format!("e{j}").as_bytes(), &m(Kind::Dir));
+            dirs.push(b);
+            for k in 0..10 {
+                let name = format!("{}{}", names[k % names.len()], k / names.len());
+                let c = t.add_dir(b, name.as_bytes(), &m(Kind::Dir));
+                dirs.push(c);
+                for f in files {
+                    t.add_file(c, f.as_bytes(), &m(Kind::File), true, None);
+                }
+            }
+        }
+    }
+    for d in dirs {
+        let r = t.dir_mut(d).unwrap();
+        r.state = DirState::Complete;
+        r.outcome = r.state;
+        r.listing_closed = true;
+        r.reported = true;
+    }
+    let n = t.live_nodes();
+    let node = t.node_ref(r);
+    let e = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 2,
+            journal_dir: None,
+            measure_workers: 0,
+            ..Default::default()
+        },
+    );
+    e.load(t);
+    let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
+    let class = dfdu_scan::classify::ClassOpts::for_root(std::sync::Arc::new(rules), &root);
+    let before = e.read(|m| m.status.timing.clone());
+    let started = std::time::Instant::now();
+    e.send(Command::Resume {
+        node,
+        opts: JobOptions {
+            class: Some(class),
+            ..JobOptions::default()
+        },
+        changed: Some(vec![]),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
+    let took = started.elapsed();
+    let timing = e.read(|m| m.status.timing.clone());
+    let mut hold = timing.hold;
+    for (h, b) in hold.iter_mut().zip(before.hold) {
+        *h -= b;
+    }
+    let longest = Timing::percentile(&hold, 1.0);
+    let p99 = Timing::percentile(&hold, 0.99);
+    eprintln!(
+        "{n} nodes resumed in {took:?}: {} slices, longest write-lock hold under {longest:?}, \
+         p99 under {p99:?}",
+        timing.slices - before.slices
+    );
     e.shutdown(Duration::from_secs(1));
 }

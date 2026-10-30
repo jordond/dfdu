@@ -123,7 +123,7 @@ impl<B: Backend> Applier<B> {
             }
             if super::unrefreshed(&m.tree, ix) {
                 m.status.notice(format!(
-                    "delete: {} is not refreshed yet: loaded from a file, and the resume has not reached it",
+                    "delete: {} is not refreshed yet: loaded from a file, and no resume has taken it over",
                     String::from_utf8_lossy(m.tree.name(ix))
                 ));
                 continue;

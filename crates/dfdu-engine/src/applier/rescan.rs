@@ -12,7 +12,12 @@ use super::{Applier, JobKind, JobPhase, Kept, Model, meta_of};
 /// What a rescan of directory `ix` classifies against: the rules decided above it, whether it
 /// is protected, and its own hits, from its parent's listing as the tree has it. `job` is what
 /// the job that scanned `ix` classified against, and `job_root` that job's root.
-fn rescan_class(tree: &Tree, ix: Ix, job_root: Option<Ix>, job: &ClassOpts) -> ClassOpts {
+pub(super) fn rescan_class(
+    tree: &Tree,
+    ix: Ix,
+    job_root: Option<Ix>,
+    job: &ClassOpts,
+) -> ClassOpts {
     let rules = job.rules.clone();
     // The rule path: the job root's, then the names below it.
     let mut names = Vec::new();

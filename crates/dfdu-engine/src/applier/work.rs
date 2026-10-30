@@ -43,6 +43,8 @@ pub(super) enum Work {
     FinishJob {
         job: u32,
     },
+    /// A resume's walk over the loaded tree.
+    Resume(Box<super::resume::ResumeWalk>),
 }
 
 /// Units of incremental work per step (nodes freed, nodes walked).
@@ -125,6 +127,7 @@ impl<B: Backend> Applier<B> {
             Work::CancelWalk { job, stack } => self.cancel_walk_step(m, job, stack),
             Work::LostWalk { job, stack } => self.lost_walk_step(m, job, stack),
             Work::FinishJob { job } => self.finish_job(m, job),
+            Work::Resume(walk) => self.resume_step(m, walk),
         }
         self.refresh_status(m);
     }

@@ -2,8 +2,9 @@
 //! the USN journal on Windows, btrfs generations on Linux as root),
 //! so a resume lists only those again (the engine's `Command::Resume`).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use crate::sync::Mutex;
 
@@ -11,26 +12,33 @@ use crate::sync::Mutex;
 #[cfg(target_os = "macos")]
 const REPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long taking a position waits for the `FSEvents` daemon to send out the events it holds.
+#[cfg(target_os = "macos")]
+const FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Where macOS mounts the Data volume, which the firmlinks of the system volume join.
 #[cfg(any(target_os = "macos", test))]
 const DATA_VOLUME: &str = "/System/Volumes/Data";
 
-/// Directories a resume keeps from the tree it loaded, by device and inode
-/// ([`JobOptions::keep`](crate::JobOptions::keep)): the journal says their entries did not
-/// change, so a scan that meets one does not read it but reports it skipped as
-/// [`SkipReason::Kept`](crate::SkipReason::Kept), at most once, and the applier puts the
-/// loaded subtree in its place.
-pub struct Keep(Mutex<HashSet<(u64, u64)>>);
+/// Directories a resume keeps from the tree it loaded, by device and inode, with the mtime
+/// each was loaded with ([`JobOptions::keep`](crate::JobOptions::keep)): the journal says
+/// their entries did not change, so a scan that meets one with that mtime does not read it but
+/// reports it skipped as [`SkipReason::Kept`](crate::SkipReason::Kept), at most once, and the
+/// applier puts the loaded subtree in its place. One whose mtime changed is read: its entries
+/// changed whatever the journal said (an event it lost, or another directory that reuses the
+/// inode).
+pub struct Keep(Mutex<HashMap<(u64, u64), i64>>);
 
 impl Keep {
     #[must_use]
-    pub fn new(dirs: impl IntoIterator<Item = (u64, u64)>) -> Keep {
+    pub fn new(dirs: impl IntoIterator<Item = ((u64, u64), i64)>) -> Keep {
         Keep(Mutex::new(dirs.into_iter().collect()))
     }
 
-    /// Whether directory `(dev, ino)` is kept; true for the first scan of it to ask only.
-    pub fn take(&self, dev: u64, ino: u64) -> bool {
-        self.0.lock().remove(&(dev, ino))
+    /// Whether directory `(dev, ino)`, now with `mtime`, is kept; true for the first scan of
+    /// it to ask only.
+    pub fn take(&self, dev: u64, ino: u64, mtime: i64) -> bool {
+        self.0.lock().remove(&(dev, ino)) == Some(mtime)
     }
 }
 
@@ -61,6 +69,22 @@ pub struct JournalPosition {
 /// everything must then be scanned again.
 #[must_use]
 pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
+    changed(root, at, None)
+}
+
+/// [`changed_since`], given up with `None` as soon as `cancel` is set: the `FSEvents` replay,
+/// which can take seconds, looks at it every 50 ms and removes its sync directory on the way
+/// out. The USN journal and btrfs are read without looking at it.
+#[must_use]
+pub fn changed_since_cancellable(
+    root: &Path,
+    at: JournalPosition,
+    cancel: &AtomicBool,
+) -> Option<Vec<PathBuf>> {
+    changed(root, at, Some(cancel))
+}
+
+fn changed(root: &Path, at: JournalPosition, cancel: Option<&AtomicBool>) -> Option<Vec<PathBuf>> {
     let JournalPosition {
         volume,
         event_id,
@@ -68,6 +92,8 @@ pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
     } = at;
     #[cfg(not(target_os = "linux"))]
     let _ = time;
+    #[cfg(not(target_os = "macos"))]
+    let _ = cancel;
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::fs::MetadataExt;
@@ -76,7 +102,13 @@ pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
         if dfdu_sys::fsevents::volume_uuid(dev)? != volume {
             return None;
         }
-        let c = dfdu_sys::fsevents::changes_since(&root, event_id, REPLAY).ok()?;
+        let c = match cancel {
+            Some(cancel) => {
+                dfdu_sys::fsevents::changes_since_cancellable(&root, event_id, REPLAY, cancel)
+            }
+            None => dfdu_sys::fsevents::changes_since(&root, event_id, REPLAY),
+        }
+        .ok()?;
         if c.full {
             return None;
         }
@@ -147,7 +179,9 @@ fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
 }
 
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
-/// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`).
+/// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS this waits for
+/// the `FSEvents` daemon to send out the events it holds (about 0.1 s, at most 2 s), so that
+/// every change after it is replayed.
 #[must_use]
 pub fn journal_position(path: &Path) -> Option<JournalPosition> {
     // Read before the position, so that whatever changes after it has a ctime no older.
@@ -169,7 +203,9 @@ fn position(path: &Path) -> Option<([u8; 16], u64)> {
         use std::os::unix::fs::MetadataExt;
         let dev = std::fs::metadata(path).ok()?.dev() as u64;
         let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
-        Some((volume, dfdu_sys::fsevents::current_event_id()))
+        // Not the bare current id: a change made soon after it to a directory the daemon still
+        // holds an event for would carry an older id, and be lost to the resume.
+        Some((volume, dfdu_sys::fsevents::flushed_event_id(dev, FLUSH)))
     }
     #[cfg(windows)]
     {
@@ -231,14 +267,16 @@ mod firmlink_tests {
         );
     }
 
-    /// A kept directory is handed out once.
+    /// A kept directory is handed out once, and only with the mtime it was loaded with.
     #[test]
     fn a_kept_directory_is_taken_once() {
-        let k = Keep::new([(1, 2), (1, 3)]);
-        assert!(k.take(1, 2));
-        assert!(!k.take(1, 2));
-        assert!(!k.take(2, 2));
-        assert!(k.take(1, 3));
+        let k = Keep::new([((1, 2), 10), ((1, 3), 10), ((1, 4), 10)]);
+        assert!(k.take(1, 2, 10));
+        assert!(!k.take(1, 2, 10));
+        assert!(!k.take(2, 2, 10));
+        assert!(k.take(1, 3, 10));
+        assert!(!k.take(1, 4, 11), "its entries changed");
+        assert!(!k.take(1, 4, 10));
     }
 }
 

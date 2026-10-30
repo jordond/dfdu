@@ -216,6 +216,7 @@ impl<B: Backend> Applier<B> {
         j.map = Pages::default();
         j.held_close.clear();
         let kept = j.kept.take();
+        let class = kept.as_ref().and_then(|_| j.opts.class.clone());
         let stalled: Vec<DirId> = j.stalled.drain().map(|(d, _)| DirId(d)).collect();
         self.scanner_end_job(job);
         for d in stalled {
@@ -234,6 +235,7 @@ impl<B: Backend> Applier<B> {
                     let keys = self.links.keys_in(scope);
                     self.work.push_back(Work::Free);
                     self.work.push_back(Work::Merge { keys, from: scope });
+                    let again = again.map(|g| g.rescans(&m.tree, class.as_ref()));
                     for r in again.into_iter().flatten() {
                         self.rescan(m, r, None, false);
                     }

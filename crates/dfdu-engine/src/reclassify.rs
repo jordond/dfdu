@@ -2,30 +2,85 @@
 //! rescans only what changed, so the rest must get its classes another way). Each directory's
 //! children go through the scan workers' [`Listing`] as one whole block, so the classes and
 //! protection come out as a scan would set them; only the marker files a rule reads a prefix
-//! of are read from disk.
+//! of are read from disk. It runs a step at a time between the applier's other work, so the
+//! model's write lock is held for one bounded step at a time.
 
 use std::cell::OnceCell;
 
 use dfdu_scan::classify::{BlockParts, ClassOpts, Listing, TaskClass};
 use dfdu_scan::{Backend, DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
-use dfdu_tree::{Ix, Kind, Tree};
+use dfdu_tree::{Ix, Kind, NodeRef, Tree};
 
 use crate::applier::meta_of;
 
-/// Classifies the subtree at `root` against `opts`, calling `each_dir` on every directory.
-pub(crate) fn classify_loaded<B: Backend>(
-    tree: &mut Tree,
-    root: Ix,
-    opts: &ClassOpts,
-    backend: &B,
-    mut each_dir: impl FnMut(&mut Tree, Ix),
-) {
-    let mut stack = vec![(root, TaskClass::root(opts))];
-    let mut names = Vec::new();
-    let (mut files, mut subdirs, mut others) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut file_ix, mut subdir_ix) = (Vec::new(), Vec::new());
-    while let Some((dir, task)) = stack.pop() {
-        each_dir(tree, dir);
+/// Classifies a subtree against a job's [`ClassOpts`] a step at a time, top down.
+pub(crate) struct ClassifyLoaded {
+    stack: Vec<(NodeRef, TaskClass)>,
+    names: Vec<u8>,
+    files: Vec<FileRec>,
+    subdirs: Vec<SubdirRec>,
+    others: Vec<NameSpan>,
+    file_ix: Vec<Ix>,
+    subdir_ix: Vec<Ix>,
+}
+
+impl ClassifyLoaded {
+    /// The classification of the subtree at `root` against `opts`.
+    pub(crate) fn new(tree: &Tree, root: Ix, opts: &ClassOpts) -> Self {
+        ClassifyLoaded {
+            stack: vec![(tree.node_ref(root), TaskClass::root(opts))],
+            names: Vec::new(),
+            files: Vec::new(),
+            subdirs: Vec::new(),
+            others: Vec::new(),
+            file_ix: Vec::new(),
+            subdir_ix: Vec::new(),
+        }
+    }
+
+    /// Classifies whole directories, calling `each_dir` on each as it is reached, until their
+    /// entries reach `units`; whether none is left. A directory no longer visible is passed
+    /// over with what is below it.
+    pub(crate) fn step<B: Backend>(
+        &mut self,
+        tree: &mut Tree,
+        opts: &ClassOpts,
+        backend: &B,
+        units: usize,
+        mut each_dir: impl FnMut(&mut Tree, Ix),
+    ) -> bool {
+        let mut done = 0;
+        while done < units
+            && let Some((dir, task)) = self.stack.pop()
+        {
+            let Some(dir) = tree.resolve_visible(dir) else {
+                continue;
+            };
+            each_dir(tree, dir);
+            done += 1 + self.dir(tree, dir, task, opts, backend);
+        }
+        self.stack.is_empty()
+    }
+
+    /// Classifies the entries of `dir` and queues its subdirectories; returns how many entries
+    /// it has.
+    fn dir<B: Backend>(
+        &mut self,
+        tree: &mut Tree,
+        dir: Ix,
+        task: TaskClass,
+        opts: &ClassOpts,
+        backend: &B,
+    ) -> usize {
+        let ClassifyLoaded {
+            stack,
+            names,
+            files,
+            subdirs,
+            others,
+            file_ix,
+            subdir_ix,
+        } = self;
         names.clear();
         files.clear();
         subdirs.clear();
@@ -76,10 +131,10 @@ pub(crate) fn classify_loaded<B: Backend>(
         };
         let listing = Listing::new(opts.rules.clone(), DirId(0), task);
         let parts = BlockParts {
-            names: &names,
-            files: &files,
-            subdirs: &subdirs,
-            others: &others,
+            names,
+            files,
+            subdirs,
+            others,
             first_subdir: DirId(1),
             whole: true,
         };
@@ -105,8 +160,9 @@ pub(crate) fn classify_loaded<B: Backend>(
         }
         for (&s, t) in subdir_ix.iter().zip(out.subdirs) {
             if let Some(t) = t {
-                stack.push((s, *t));
+                stack.push((tree.node_ref(s), *t));
             }
         }
+        files.len() + subdirs.len() + others.len()
     }
 }

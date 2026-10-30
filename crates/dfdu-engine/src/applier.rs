@@ -45,6 +45,7 @@ use delete::ActivePlan;
 use jobs::JobStart;
 use measure::MeasureAt;
 use resume::Kept;
+pub use resume::unrefreshed;
 use undo::Undoable;
 use work::Work;
 
@@ -263,22 +264,6 @@ pub(crate) fn meta_of(tree: &Tree, ix: Ix) -> Meta {
     }
 }
 
-/// Whether `ix` was loaded from a file ([`Engine::load`](crate::Engine::load)) and nothing has
-/// brought it up to date yet: its directory (a file's parent) belongs to no job of this
-/// session. A resume takes over what the change journal says did not change and rescans the
-/// rest; until it has, the tree may be out of date anywhere below `ix`, which the identity
-/// the deleter checks again does not show. Deletes and native commands refuse such nodes.
-#[must_use]
-pub fn unrefreshed(tree: &Tree, ix: Ix) -> bool {
-    let dir = if tree.dir(ix).is_some() {
-        Some(ix)
-    } else {
-        tree.parent(ix)
-    };
-    dir.and_then(|d| tree.dir(d))
-        .is_some_and(|d| d.job == JobId(0))
-}
-
 fn empty_dir_meta() -> Meta {
     Meta {
         kind: Kind::Dir,
@@ -424,8 +409,12 @@ impl<B: Backend> Applier<B> {
                 opts,
                 changed: Some(dirs),
             } => self.resume_changed(m, node, opts, &dirs),
-            Command::Cancel { job } => self.cancel(job.0),
+            Command::Cancel { job } => {
+                self.cancel_resume(Some(job.0));
+                self.cancel(job.0);
+            }
             Command::CancelAll => {
+                self.cancel_resume(None);
                 let ids: Vec<u32> = self.jobs.keys().copied().collect();
                 for id in ids {
                     self.cancel(id);
@@ -504,20 +493,7 @@ impl<B: Backend> Applier<B> {
         if scans && m.status.disconnected.is_some() {
             return Some("the link to the agent is gone: nothing more is scanned");
         }
-        if let Command::RunNative {
-            node,
-            dry_run: false,
-            ..
-        } = cmd
-            && m.tree
-                .resolve_visible(*node)
-                .is_some_and(|ix| unrefreshed(&m.tree, ix))
-        {
-            return Some(
-                "native command: not refreshed yet: loaded from a file, and the resume has not reached it",
-            );
-        }
-        None
+        self.resume_refusal(m, cmd)
     }
 
     fn is_ancestor(tree: &Tree, a: Ix, mut b: Ix) -> bool {
