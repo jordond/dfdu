@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_util::meta;
+use dfdu_scan::JobId;
 use dfdu_tree::Kind;
 
 /// /r/{a/{b/, f}, c/}, every directory read to the end, as loaded; returns the tree and r,
@@ -148,6 +149,176 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
         "{rescans:?}"
     );
     assert!(!unrefreshed(&m.tree, m.tree.resolve_visible(c).unwrap()));
+}
+
+/// Once the walk has taken the tree over, the resume waits for the check of the directories
+/// it keeps, refusing what would touch the tree as while it walks; a cancel then ends the
+/// wait, cancelling the rescans, and an answer that comes late changes nothing.
+#[test]
+fn a_resume_checking_refuses_and_cancels_what_follows() {
+    use std::sync::Arc;
+
+    use dfdu_clean::Mode;
+    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
+
+    use crate::applier::Applier;
+
+    let (t, [r, a, _, c]) = tree();
+    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let mut ap = Applier::new(shared.clone());
+    let mut m = Model::default();
+    let (root, a, c) = (t.node_ref(r), t.node_ref(a), t.node_ref(c));
+    m.tree = t;
+    ap.apply_command(
+        &mut m,
+        Command::Resume {
+            node: root,
+            opts: JobOptions::default(),
+            changed: Some(vec![]),
+            since: 0,
+        },
+    );
+    while ap.has_work() {
+        ap.work_step(&mut m);
+    }
+    // No worker runs here: the check's one batch waits.
+    assert_eq!(shared.outstanding(), (1, 0));
+    assert!(ap.resuming() && m.status.settling && m.status.busy());
+    ap.apply_command(&mut m, Command::Rescan { node: c });
+    ap.apply_command(
+        &mut m,
+        Command::Delete {
+            items: vec![a],
+            mode: Mode::Permanent,
+        },
+    );
+    let refused = m
+        .status
+        .notices
+        .iter()
+        .filter(|n| n.contains("still being taken over"))
+        .count();
+    assert_eq!(refused, 2, "{:?}", m.status.notices);
+    ap.apply_command(&mut m, Command::CancelAll);
+    while ap.has_work() {
+        ap.work_step(&mut m);
+        ap.check(&m).unwrap();
+    }
+    assert!(!ap.resuming());
+    let rescans: Vec<JobPhase> = ap
+        .jobs
+        .values()
+        .filter(|j| j.kind == JobKind::Rescan)
+        .map(|j| j.phase)
+        .collect();
+    assert!(!rescans.is_empty());
+    assert!(
+        rescans.iter().all(|&p| p == JobPhase::Cancelled),
+        "{rescans:?}"
+    );
+    let job = ap.jobs.keys().next().copied().unwrap();
+    ap.apply(
+        &mut m,
+        ScanMsg::Verified {
+            job: JobId(job),
+            batch: 0,
+            changed: vec![0, 1],
+            gone: vec![],
+            complete: true,
+        },
+        1,
+    );
+    assert!(!ap.has_work() && !ap.resuming());
+    ap.check(&m).unwrap();
+}
+
+/// What the check finds is listed again: a directory whose mtime moved, and the parent of one
+/// gone; a batch that could not be stat'ed to the end lists all of its directories and their
+/// parents. The rescans start once the last batch is answered.
+#[test]
+fn what_the_check_finds_is_listed_again() {
+    use std::sync::Arc;
+
+    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
+
+    use crate::applier::Applier;
+
+    let (t, [r, a, b, c]) = tree();
+    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let mut ap = Applier::new(shared);
+    let mut m = Model::default();
+    let root = t.node_ref(r);
+    m.tree = t;
+    ap.apply_command(
+        &mut m,
+        Command::Resume {
+            node: root,
+            opts: JobOptions::default(),
+            changed: Some(vec![]),
+            since: 0,
+        },
+    );
+    while ap.has_work() {
+        ap.work_step(&mut m);
+    }
+    let job = ap.jobs.keys().next().copied().unwrap();
+    let mut v = Verify::new(&m.tree, r, &[], 0);
+    for ix in [a, b, c] {
+        v.add(&m.tree, ix);
+    }
+    v.add(&m.tree, r);
+    assert_eq!(v.next.len(), 3, "the root is not checked");
+    v.batches
+        .push(Some(vec![m.tree.node_ref(a), m.tree.node_ref(b)]));
+    v.waiting = 1;
+    let refs = |ixs: &[Ix]| ixs.iter().map(|&i| m.tree.node_ref(i)).collect::<Vec<_>>();
+    assert_eq!(v.answer(&m.tree, 0, &[0], &[1], true), refs(&[a, a]));
+    assert!(!v.waiting());
+    v.batches.push(Some(refs(&[b, c])));
+    v.waiting = 1;
+    assert_eq!(v.answer(&m.tree, 1, &[], &[], false), refs(&[b, c, a, r]));
+    assert!(v.answer(&m.tree, 1, &[0], &[], true).is_empty(), "answered");
+
+    // Where the walk's batches order the directories: by the walk, from the root down.
+    let order = ap
+        .resume_waiting
+        .as_ref()
+        .and_then(|w| w.verify.as_ref())
+        .and_then(|v| v.batches[0].clone())
+        .unwrap();
+    let at = |ix: Ix| {
+        order
+            .iter()
+            .position(|&o| o == m.tree.node_ref(ix))
+            .unwrap()
+    };
+    let (gone, moved) = (u32::try_from(at(b)).unwrap(), u32::try_from(at(c)).unwrap());
+    ap.apply(
+        &mut m,
+        ScanMsg::Verified {
+            job: JobId(job),
+            batch: 0,
+            changed: vec![moved],
+            gone: vec![gone],
+            complete: true,
+        },
+        1,
+    );
+    assert!(ap.resume_waiting.is_none() && ap.has_work());
+    let Some(Work::Resume(walk)) = ap.work.front() else {
+        panic!("the walk goes on");
+    };
+    assert!(
+        [a, c]
+            .iter()
+            .all(|&d| walk.wanted.contains(&m.tree.node_ref(d))),
+        "listed again"
+    );
+    assert!(!walk.wanted.contains(&m.tree.node_ref(b)));
+    while ap.has_work() {
+        ap.work_step(&mut m);
+    }
+    assert!(!ap.resuming());
 }
 
 /// A kept directory goes to its scanner with the mtime it was loaded with.

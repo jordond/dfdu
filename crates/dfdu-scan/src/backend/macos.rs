@@ -399,6 +399,16 @@ impl Backend for MacBackend {
         }
     }
 
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
+        let name = CString::new(path.as_os_str().as_bytes())?;
+        match stat_at(CWD, &name, AtFlags::SYMLINK_NOFOLLOW) {
+            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
+                Ok(meta_of(&rustix::fs::fstat(open_dir(path)?)?))
+            }
+            r => r,
+        }
+    }
+
     fn open(&self, loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<MacStream> {
         Ok(MacStream {
             fd: Arc::new(open_dir(loc)?),

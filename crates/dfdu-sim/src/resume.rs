@@ -2,8 +2,8 @@
 //! changed (entries created and removed, their directories' mtimes moved on), and a resume of
 //! the loaded tree with what a change journal would say, among random rescans, deletes and
 //! cancels. The journal sometimes cannot tell (everything is scanned again), names directories
-//! that did not change or are not there, and loses changed directories whose parent is listed
-//! again, which the resume must find by their mtimes. The end is checked as any run's end,
+//! that did not change or are not there, and loses changed directories anywhere, or all of
+//! them, which the resume must find by their mtimes. The end is checked as any run's end,
 //! against the spec: what a fresh scan of it gives.
 
 use std::collections::HashSet;
@@ -160,33 +160,23 @@ fn rel_path(spec: &Spec, mut i: u32) -> PathBuf {
 }
 
 /// What the journal says about the `changed` directories, and how many it lost. With 1 in 10
-/// it cannot tell. Otherwise it names them, loses some whose parent is listed again (the
-/// root's change is found by its mtime too), and names a few more that did not change or do
-/// not exist.
+/// it cannot tell. Otherwise it names them, loses some anywhere (with 1 in 10 all of them, as
+/// `FSEvents` can on a loaded machine), and names a few more that did not change or do not
+/// exist.
 fn journal(spec: &Spec, rng: &mut Rng, mut changed: Vec<u32>) -> (Option<Vec<PathBuf>>, u64) {
     if rng.chance(100) {
         return (None, 0);
     }
-    let depth = |mut i: u32| {
-        let mut d = 0;
-        while i != ROOT {
-            i = spec.parent[i as usize];
-            d += 1;
-        }
-        d
-    };
-    changed.sort_unstable_by_key(|&d| (depth(d), d));
+    changed.sort_unstable();
     changed.dedup();
+    let all = rng.chance(100);
     let (mut out, mut lost) = (Vec::new(), 0);
-    let mut listed: HashSet<u32> = HashSet::new();
     for d in changed {
-        let found = d == ROOT || listed.contains(&spec.parent[d as usize]);
-        if found && rng.chance(250) {
+        if all || rng.chance(250) {
             lost += 1;
         } else {
             out.push(rel_path(spec, d));
         }
-        listed.insert(d);
     }
     for _ in 0..rng.below(3) {
         let i = id(rng.index(spec.nodes.len()));

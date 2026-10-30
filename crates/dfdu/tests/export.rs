@@ -95,23 +95,12 @@ fn resumed_export_matches_a_new_scan() {
         ok(dfdu(&args));
     };
     export(&[], &old);
-    let before = dfdu_engine::journal_position(&tree);
 
+    // Made just before the resume, which FSEvents on a loaded machine may not have yet: the
+    // resume's check of the directories it keeps finds them by their stat.
     fs::remove_file(tree.join("a/one")).unwrap();
     fs::create_dir(tree.join("a/b/c")).unwrap();
     fs::write(tree.join("a/b/c/new"), vec![1u8; 50_000]).unwrap();
-    // On a loaded machine FSEvents can take seconds to have changes made just before (a resume
-    // then misses them, and the next one lists them): wait until it has the new directory, so
-    // that what is compared is the resume.
-    for _ in 0..40 {
-        let new_dir = std::path::Path::new("a/b/c");
-        match before.and_then(|at| dfdu_engine::changed_since(&tree, at)) {
-            Some(d) if !d.iter().any(|p| p == new_dir) => {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-            }
-            _ => break,
-        }
-    }
     export(&["--resume-from".as_ref(), old.as_os_str()], &new);
     let total = |f: &std::path::Path| {
         ok(dfdu(&[

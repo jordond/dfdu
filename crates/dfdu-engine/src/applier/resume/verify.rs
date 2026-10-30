@@ -13,6 +13,7 @@
 //! seen only when the journal names it.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use dfdu_scan::{Backend, JobId, Shared, VerifyDir};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
@@ -22,22 +23,25 @@ const BATCH: usize = 256;
 
 /// The check of the directories a resume keeps, as its walk reaches them.
 pub(in crate::applier) struct Verify {
-    /// The root's device: directories on other devices are below mounts, scanned in full.
+    /// The root, where the batches say they are, and its device: directories on other
+    /// devices are below mounts, scanned in full.
+    root: PathBuf,
     dev: u64,
     /// Seconds since the epoch from which a directory's mtime cannot vouch for it; 0 for none.
     since: i64,
     /// The directories the journal names, listed again anyway.
     named: HashSet<NodeRef>,
     /// Reached and not sent yet.
-    next: Vec<NodeRef>,
+    pub(super) next: Vec<NodeRef>,
     /// The directories of each batch sent, until it is answered.
-    batches: Vec<Option<Vec<NodeRef>>>,
-    waiting: usize,
+    pub(super) batches: Vec<Option<Vec<NodeRef>>>,
+    pub(super) waiting: usize,
 }
 
 impl Verify {
     pub(in crate::applier) fn new(tree: &Tree, root: Ix, named: &[Ix], since: u64) -> Self {
         Verify {
+            root: tree.path_buf(root),
             dev: tree.dev_ino(root).0,
             since: i64::try_from(since).unwrap_or(i64::MAX),
             named: named.iter().map(|&d| tree.node_ref(d)).collect(),
@@ -81,7 +85,7 @@ impl Verify {
                 let mtime = tree.mtime(ix);
                 refs.push(r);
                 dirs.push(VerifyDir {
-                    loc: scan.backend.loc_from_path(&tree.path_buf(ix)),
+                    path: tree.path_buf(ix),
                     dev,
                     ino,
                     mtime: (self.since == 0 || mtime < self.since).then_some(mtime),
@@ -93,7 +97,12 @@ impl Verify {
             let batch = u32::try_from(self.batches.len()).unwrap_or(u32::MAX);
             self.batches.push(Some(refs));
             self.waiting += 1;
-            scan.verify(JobId(job), batch, dirs);
+            scan.verify(
+                JobId(job),
+                batch,
+                scan.backend.loc_from_path(&self.root),
+                dirs,
+            );
         }
     }
 
@@ -112,11 +121,7 @@ impl Verify {
         gone: &[u32],
         complete: bool,
     ) -> Vec<NodeRef> {
-        let Some(refs) = self
-            .batches
-            .get_mut(batch as usize)
-            .and_then(Option::take)
-        else {
+        let Some(refs) = self.batches.get_mut(batch as usize).and_then(Option::take) else {
             return Vec::new();
         };
         self.waiting -= 1;

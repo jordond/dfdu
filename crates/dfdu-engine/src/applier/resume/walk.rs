@@ -20,7 +20,7 @@ pub(in crate::applier) struct ResumeWalk {
     /// The loaded root.
     root: NodeRef,
     /// The directories to list again.
-    wanted: Vec<NodeRef>,
+    pub(super) wanted: Vec<NodeRef>,
     /// Mount roots and subvolumes met so far, scanned again in full.
     mounts: Vec<NodeRef>,
     /// The classification, when the job classifies, which takes the walk's directories in turn.
@@ -33,7 +33,7 @@ pub(in crate::applier) struct ResumeWalk {
     walked: bool,
     /// The check of the directories it keeps, which its rescans wait for; none for a remote
     /// scan, whose directories this host cannot stat.
-    verify: Option<Verify>,
+    pub(super) verify: Option<Verify>,
 }
 
 impl ResumeWalk {
@@ -194,9 +194,7 @@ impl<B: Backend> Applier<B> {
         let again = v.answer(&m.tree, batch, changed, gone, complete);
         let waiting = v.waiting();
         walk.wanted.extend(again);
-        if !waiting
-            && let Some(w) = self.resume_waiting.take_if(|w| w.id == job)
-        {
+        if !waiting && let Some(w) = self.resume_waiting.take_if(|w| w.id == job) {
             self.work.push_front(Work::Resume(w));
         }
     }

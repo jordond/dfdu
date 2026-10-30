@@ -466,9 +466,10 @@ impl Backend for WindowsBackend {
         Ok(Meta::from_windows(&st))
     }
 
-    fn stat_dir(&self, loc: &WinLoc) -> io::Result<Meta> {
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
         // Not a new job: the volume's table is kept.
-        Ok(Meta::from_windows(&dfdu_sys::stat_path(&loc.path, true)?))
+        let path = dfdu_sys::verbatim_path(path).unwrap_or_else(|_| path.to_path_buf());
+        Ok(Meta::from_windows(&dfdu_sys::stat_path(&path, false)?))
     }
 
     fn open(&self, loc: &WinLoc, _storage: dfdu_sys::Storage) -> io::Result<WindowsStream> {

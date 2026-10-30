@@ -12,7 +12,9 @@ use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::{DirState, Kind, Meta, NodeRef, Tree};
 
 mod common;
-use common::loaded::{find, loaded, resume, scanned, totals, write};
+#[cfg(unix)]
+use common::loaded::{OLD, age, set_mtime};
+use common::loaded::{find, loaded, resume, resume_since, scanned, totals, write};
 use common::tempdir;
 
 /// A change in the root lists the root again: what was removed goes, what is new is scanned,
@@ -71,8 +73,11 @@ fn a_changed_root_keeps_its_unchanged_subdirectories() {
     assert_eq!(got, scanned(&root));
 }
 
-/// What the journal does not name is not read: a file added there stays unseen, also in a
-/// directory above a named one, which a rescan of the named one does not list.
+/// What the journal does not name is read only when its stat shows it changed: a file
+/// rewritten in place stays as loaded, and so does a directory whose mtime is the one it was
+/// loaded with (as after a change within the same second), also above a named one, which a
+/// rescan of the named one does not list.
+#[cfg(unix)]
 #[test]
 fn what_the_journal_does_not_name_stays_as_loaded() {
     let dir = tempdir();
@@ -80,13 +85,14 @@ fn what_the_journal_does_not_name_stays_as_loaded() {
     write(&root.join("quiet/q"), 3_000);
     write(&root.join("a/b/c/f"), 1_000);
     write(&root.join("a/other/o"), 2_000);
+    age(&root);
     let tree = loaded(&root);
     let other = tree.node_ref(find(&tree, "a/other").unwrap());
 
-    write(&root.join("quiet/unseen"), 40_000);
-    write(&root.join("a/other/unseen"), 40_000);
+    write(&root.join("quiet/q"), 40_000);
     write(&root.join("a/b/c/new"), 5_000);
     write(&root.join("a/top"), 5_000);
+    set_mtime(&root.join("a"), OLD);
 
     let e = resume(tree, &["a/b/c"]);
     e.read(|m| {
@@ -96,15 +102,80 @@ fn what_the_journal_does_not_name_stays_as_loaded() {
             "a named directory is listed"
         );
         assert!(find(t, "a/top").is_none(), "the directory above it is not");
-        assert!(find(t, "quiet/unseen").is_none());
-        assert!(find(t, "a/other/unseen").is_none());
+        assert_eq!(t.raw_size(find(t, "quiet/q").unwrap()).0, 3_000);
         assert_eq!(t.resolve_visible(other), find(t, "a/other"));
     });
     e.shutdown(Duration::from_secs(1));
 }
 
-/// A tree loaded from a file refuses deletes and native commands until a resume has taken it
-/// over: its sizes may be old anywhere below. Then the delete goes ahead.
+/// A journal that lost every change (it answered with none): the check of the directories the
+/// resume keeps finds those deep in the tree by their stat (entries added and removed, a
+/// directory removed, another replaced), and the resume ends as a new scan would. What did not
+/// change stays as loaded.
+#[cfg(unix)]
+#[test]
+fn changes_the_journal_lost_are_found_by_their_mtimes() {
+    let dir = tempdir();
+    let root = dir.path().join("tree");
+    write(&root.join("quiet/deep/q"), 3_000);
+    write(&root.join("a/b/c/f"), 1_000);
+    write(&root.join("a/b/old/o"), 2_000);
+    write(&root.join("x/y/z/gone/g"), 4_000);
+    write(&root.join("x/y/swap/s"), 5_000);
+    age(&root);
+    let tree = loaded(&root);
+    let quiet = tree.node_ref(find(&tree, "quiet/deep").unwrap());
+
+    write(&root.join("a/b/c/new"), 6_000);
+    write(&root.join("a/b/c/d/e/deeper"), 8_000);
+    fs::remove_file(root.join("a/b/old/o")).unwrap();
+    fs::remove_dir_all(root.join("x/y/z/gone")).unwrap();
+    fs::remove_dir_all(root.join("x/y/swap")).unwrap();
+    write(&root.join("x/y/swap/t"), 7_000);
+
+    let e = resume(tree, &[]);
+    e.read(|m| {
+        let t = &m.tree;
+        for p in ["a/b/c/new", "a/b/c/d/e/deeper", "x/y/swap/t"] {
+            assert!(find(t, p).is_some(), "{p} is scanned");
+        }
+        for p in ["a/b/old/o", "x/y/z/gone", "x/y/swap/s"] {
+            assert!(find(t, p).is_none(), "{p} is gone");
+        }
+        assert_eq!(t.resolve_visible(quiet), find(t, "quiet/deep"));
+    });
+    let got = totals(&e);
+    e.shutdown(Duration::from_secs(1));
+    assert_eq!(got, scanned(&root));
+}
+
+/// A directory changed in the second the journal position was read or later is listed again
+/// whatever its mtime says: a change in that same second after its scan read it does not move
+/// it. Here every directory was, and the changes the journal lost are all found.
+#[test]
+fn what_changed_since_the_journal_position_is_listed_again() {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let dir = tempdir();
+    let root = dir.path().join("tree");
+    write(&root.join("a/b/f"), 1_000);
+    write(&root.join("a/c/g"), 2_000);
+    let tree = loaded(&root);
+
+    write(&root.join("a/b/new"), 6_000);
+    fs::remove_file(root.join("a/c/g")).unwrap();
+
+    let e = resume_since(tree, JobOptions::default(), &[], since);
+    let got = totals(&e);
+    e.shutdown(Duration::from_secs(1));
+    assert_eq!(got, scanned(&root));
+}
+
+/// A tree loaded from a file refuses deletes, native commands and rescans until a resume has
+/// taken it over: its sizes may be old anywhere below, and the options to scan it with are the
+/// resume's. Then the delete goes ahead.
 #[cfg(unix)]
 #[test]
 fn a_loaded_tree_is_not_deleted_from_until_resumed() {
@@ -137,6 +208,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
         variant: None,
         dry_run: false,
     });
+    e.send(Command::Rescan { node: junk });
     assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.read(|m| {
         let refused: Vec<_> = m
@@ -145,9 +217,10 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
             .iter()
             .filter(|n| n.contains("not refreshed yet"))
             .collect();
-        assert_eq!(refused.len(), 3, "{:?}", m.status.notices);
+        assert_eq!(refused.len(), 4, "{:?}", m.status.notices);
         assert!(refused[0].starts_with("delete: junk "), "{refused:?}");
         assert!(refused[2].starts_with("native command: "), "{refused:?}");
+        assert!(refused[3].starts_with("rescan: "), "{refused:?}");
     });
     assert!(root.join("junk/big").exists() && root.join("file").exists());
 
@@ -171,7 +244,8 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
 
 /// The longest write-lock slice while a resume takes over a loaded tree of about a million
 /// entries that the journal says did not change (`--ignored`, release): the resume walks the
-/// whole tree, classifying it, a step at a time.
+/// whole tree, classifying it, a step at a time, while the workers stat its 111,101
+/// directories, which are on disk (the files are not), and find them as loaded.
 #[test]
 #[ignore = "a timing run"]
 fn resume_lock_hold_on_a_large_tree() {
@@ -192,11 +266,19 @@ fn resume_lock_hold_on_a_large_tree() {
         "f",
         "g",
     ];
-    let mut ino = 10;
-    let mut m = |kind| {
+    let leaf = |k: usize| format!("{}{}", names[k % names.len()], k / names.len());
+    for i in 0..100 {
+        for j in 0..100 {
+            for k in 0..10 {
+                fs::create_dir_all(root.join(format!("d{i}/e{j}/{}", leaf(k)))).unwrap();
+            }
+        }
+    }
+    let mut ino = u64::MAX / 2;
+    let mut file = || {
         ino += 1;
         Meta {
-            kind,
+            kind: Kind::File,
             apparent: 100,
             alloc: 4096,
             mtime: 1,
@@ -206,19 +288,22 @@ fn resume_lock_hold_on_a_large_tree() {
             mount: 0,
         }
     };
+    let on_disk = |p: &std::path::Path| Meta::from_metadata(&fs::metadata(p).unwrap());
     let mut dirs = vec![r];
     for i in 0..100 {
-        let a = t.add_dir(r, format!("d{i}").as_bytes(), &m(Kind::Dir));
+        let pa = root.join(format!("d{i}"));
+        let a = t.add_dir(r, format!("d{i}").as_bytes(), &on_disk(&pa));
         dirs.push(a);
         for j in 0..100 {
-            let b = t.add_dir(a, format!("e{j}").as_bytes(), &m(Kind::Dir));
+            let pb = pa.join(format!("e{j}"));
+            let b = t.add_dir(a, format!("e{j}").as_bytes(), &on_disk(&pb));
             dirs.push(b);
             for k in 0..10 {
-                let name = format!("{}{}", names[k % names.len()], k / names.len());
-                let c = t.add_dir(b, name.as_bytes(), &m(Kind::Dir));
+                let pc = pb.join(leaf(k));
+                let c = t.add_dir(b, leaf(k).as_bytes(), &on_disk(&pc));
                 dirs.push(c);
                 for f in files {
-                    t.add_file(c, f.as_bytes(), &m(Kind::File), true, None);
+                    t.add_file(c, f.as_bytes(), &file(), true, None);
                 }
             }
         }
@@ -264,10 +349,13 @@ fn resume_lock_hold_on_a_large_tree() {
     }
     let longest = Timing::percentile(&hold, 1.0);
     let p99 = Timing::percentile(&hold, 0.99);
+    // The resume's own job, and the rescan of the root, whose mtime moved as it was filled.
+    let jobs = e.read(|m| m.status.jobs.len());
     eprintln!(
         "{n} nodes resumed in {took:?}: {} slices, longest write-lock hold under {longest:?}, \
-         p99 under {p99:?}",
+         p99 under {p99:?}, {jobs} jobs",
         timing.slices - before.slices
     );
+    assert!(jobs <= 2, "a directory found changed");
     e.shutdown(Duration::from_secs(1));
 }

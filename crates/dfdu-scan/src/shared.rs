@@ -124,7 +124,7 @@ pub struct Task<L> {
     chunk: Option<Box<ChunkWork<L>>>,
     /// Set for a batch of a resume's check of the directories it keeps ([`Shared::verify`]):
     /// no directory is listed, each of the batch's is stat'ed.
-    verify: Option<Box<verify::VerifyWork<L>>>,
+    verify: Option<Box<verify::VerifyWork>>,
     /// The limit of the directory's mount, if it has one. Set for a job root once it is opened;
     /// the root task itself runs without a permit.
     gate: Option<Arc<TaskGate<L>>>,

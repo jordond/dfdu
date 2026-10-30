@@ -195,6 +195,14 @@ impl Backend for PortableBackend {
         Ok(m)
     }
 
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
+        #[cfg(not(windows))]
+        let m = Meta::from_metadata(&fs::symlink_metadata(path)?);
+        #[cfg(windows)]
+        let m = Meta::from_windows(&dfdu_sys::stat_path(path, false)?);
+        Ok(m)
+    }
+
     fn open(&self, loc: &PathBuf, _storage: Storage) -> io::Result<PortableStream> {
         Ok(PortableStream {
             iter: fs::read_dir(loc)?,

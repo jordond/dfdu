@@ -147,15 +147,17 @@ pub trait Backend: Send + Sync + 'static {
     ///
     /// The root could not be stat'ed.
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta>;
-    /// Stat of a directory a resume keeps from the tree it loaded, to compare with what was
-    /// loaded ([`Shared::verify`](crate::Shared::verify)): as [`Backend::stat_root`], without
-    /// what a backend does when a job starts.
+    /// Stat of the directory at `path`, one a resume keeps from the tree it loaded, to compare
+    /// with what was loaded ([`Shared::verify`](crate::Shared::verify)): a symlink in its
+    /// place is not followed (where the backend can tell), and nothing is done of what a job's
+    /// start does. Called by the workers, for every directory of a large tree: the native
+    /// backends make one call.
     ///
     /// # Errors
     ///
     /// The directory could not be stat'ed.
-    fn stat_dir(&self, loc: &Self::Loc) -> io::Result<Meta> {
-        self.stat_root(loc)
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
+        self.stat_root(&self.loc_from_path(path))
     }
     /// Opens a directory for listing. `storage` is what the directory's mount is stored on
     /// ([`Backend::mount_storage`], read once when the scan enters the mount, `Unknown` when
@@ -248,8 +250,8 @@ impl<W: Forward> Backend for W {
     fn stat_root(&self, loc: &Self::Loc) -> io::Result<Meta> {
         self.inner().stat_root(loc)
     }
-    fn stat_dir(&self, loc: &Self::Loc) -> io::Result<Meta> {
-        self.inner().stat_dir(loc)
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
+        self.inner().stat_dir(path)
     }
     fn open(&self, loc: &Self::Loc, storage: Storage) -> io::Result<W::Stream> {
         Forward::open(self, loc, storage)

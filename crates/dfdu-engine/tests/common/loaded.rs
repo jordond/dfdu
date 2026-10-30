@@ -101,6 +101,16 @@ pub fn totals(e: &Engine<PortableBackend>) -> (u64, u64, u64) {
 
 /// Loads `tree` and resumes it with `opts` and `changed`, waiting until it is done.
 pub fn resume_with(tree: Tree, opts: JobOptions, changed: &[&str]) -> Engine<PortableBackend> {
+    resume_since(tree, opts, changed, 0)
+}
+
+/// [`resume_with`] a journal position read at `since` (seconds since the epoch).
+pub fn resume_since(
+    tree: Tree,
+    opts: JobOptions,
+    changed: &[&str],
+    since: u64,
+) -> Engine<PortableBackend> {
     let e = engine();
     let node = tree.node_ref(tree.roots().next().unwrap());
     e.load(tree);
@@ -108,10 +118,34 @@ pub fn resume_with(tree: Tree, opts: JobOptions, changed: &[&str]) -> Engine<Por
         node,
         opts,
         changed: Some(changed.iter().map(PathBuf::from).collect()),
-        since: 0,
+        since,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e
+}
+
+/// Sets the mtime of `dir` and of every directory below it to a time long past, so that any
+/// change in one moves it.
+#[cfg(unix)]
+pub fn age(dir: &Path) {
+    for e in fs::read_dir(dir).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            age(&e.path());
+        }
+    }
+    set_mtime(dir, OLD);
+}
+
+/// Seconds since the epoch that [`age`] sets.
+#[cfg(unix)]
+pub const OLD: u64 = 1_000_000_000;
+
+/// Sets the mtime of directory `dir`.
+#[cfg(unix)]
+pub fn set_mtime(dir: &Path, secs: u64) {
+    let t = std::time::UNIX_EPOCH + Duration::from_secs(secs);
+    fs::File::open(dir).unwrap().set_modified(t).unwrap();
 }
 
 /// [`resume_with`] the default options.

@@ -28,7 +28,9 @@ impl<B: Backend> Worker<B> {
             return StepResult::Progress;
         }
         let d = &work.dirs[work.at];
-        let res = self.slot.watch_io(clock.now(), || sh.backend.stat_dir(&d.loc));
+        let res = self
+            .slot
+            .watch_io(clock.now(), || sh.backend.stat_dir(&d.path));
         let i = u32::try_from(work.at).unwrap_or(u32::MAX);
         match res {
             // The call is still in progress as far as the watchdog is concerned.
@@ -60,7 +62,7 @@ impl<B: Backend> Worker<B> {
     pub(super) fn report_verify(
         &self,
         task: &Task<B::Loc>,
-        work: VerifyWork<B::Loc>,
+        work: VerifyWork,
         complete: bool,
         clock: &dyn Clock,
     ) {
@@ -78,3 +80,6 @@ impl<B: Backend> Worker<B> {
         self.end_part(&mut ob, task, LISTING_PART);
     }
 }
+
+#[cfg(test)]
+mod tests;

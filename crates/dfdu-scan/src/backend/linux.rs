@@ -247,6 +247,16 @@ impl Backend for LinuxBackend {
         }
     }
 
+    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
+        let name = CString::new(path.as_os_str().as_bytes())?;
+        match stat_at(CWD, &name, AtFlags::SYMLINK_NOFOLLOW) {
+            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
+                stat_at(open_dir(path)?.as_fd(), c"", AtFlags::EMPTY_PATH)
+            }
+            r => r,
+        }
+    }
+
     fn open(&self, loc: &PathBuf, storage: dfdu_sys::Storage) -> io::Result<LinuxStream> {
         let inode_order = match storage {
             dfdu_sys::Storage::Rotational => true,
