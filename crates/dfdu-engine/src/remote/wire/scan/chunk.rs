@@ -299,3 +299,6 @@ fn in_chunk(e: Entry, len: usize) -> R<Entry> {
         bad("mark of an entry not in the chunk")
     }
 }
+
+#[cfg(test)]
+mod tests;
