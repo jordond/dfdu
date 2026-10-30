@@ -6,12 +6,16 @@ use crate::features::details::tests::{app_on, child, model};
 use crate::tests::caches::caches;
 use crate::theme::Theme;
 
-/// The names and sizes `largest` lists, or why it lists none.
-fn listed(l: &Largest) -> Result<Vec<(String, u64)>, String> {
-    match l {
-        Largest::Listed(kids) => Ok(kids.iter().map(|k| (k.name.clone(), k.size)).collect()),
-        other => Err(format!("{other:?}")),
-    }
+/// The names and sizes `largest` lists.
+///
+/// # Panics
+///
+/// When it lists none.
+fn listed(l: &Largest) -> Vec<(String, u64)> {
+    let Largest::Listed(kids) = l else {
+        panic!("nothing listed: {l:?}");
+    };
+    kids.iter().map(|k| (k.name.clone(), k.size)).collect()
 }
 
 /// The five largest children are listed largest first; a file lists none, and a directory
@@ -20,7 +24,7 @@ fn listed(l: &Largest) -> Result<Vec<(String, u64)>, String> {
 fn the_five_largest_children_are_listed_largest_first() {
     let m = model();
     let proj = child(&m, b"proj");
-    let kids = listed(&largest::<100>(&m.tree, proj, SizeMode::Disk)).unwrap();
+    let kids = listed(&largest::<100>(&m.tree, proj, SizeMode::Disk));
     assert_eq!(
         kids,
         [
