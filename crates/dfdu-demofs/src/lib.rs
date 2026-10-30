@@ -12,19 +12,19 @@
 //! The fixture and the tree are plain data and build on every platform; mounting is Linux only
 //! (`mount`).
 
+mod error;
 mod fill;
 mod fixture;
 #[cfg(target_os = "linux")]
 mod fs;
 mod tree;
 
+pub use error::Error;
 pub use fill::{Fill, Style};
-pub use fixture::{
-    Amount, Disk, Entry, Fixture, format_time, parse_age, parse_duration, parse_size, parse_time,
-};
+pub use fixture::{Amount, Disk, Entry, Fixture, format_time, parse_age};
 #[cfg(target_os = "linux")]
 pub use fs::{mount, mount_tree};
 pub use tree::{Data, DirEntry, Fault, FsError, Inode, Kind, Tree};
 
 #[cfg(test)]
-mod tests;
+mod test_support;

@@ -42,7 +42,7 @@ enum Cmd {
 }
 
 fn read(path: &std::path::Path) -> anyhow::Result<Fixture> {
-    Fixture::load(path)
+    Ok(Fixture::load(path)?)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -68,21 +68,30 @@ fn main() -> anyhow::Result<()> {
             mount(&fixture, tree, &dir, ready)
         }
         Cmd::Now { fixture, minus } => {
-            let back = minus.as_deref().map_or(Ok(0), parse_age)?;
-            println!("@{}", format_time(read(&fixture)?.now()? - back));
+            println!("{}", faketime(&read(&fixture)?, minus.as_deref())?);
             Ok(())
         }
         Cmd::Check { fixture } => {
-            let tree = read(&fixture)?.build()?;
-            let apparent: u64 = (1..tree.nodes.len()).map(|n| tree.size(n)).sum();
-            println!(
-                "entries {}\napparent {apparent}\nalloc {}",
-                tree.live() - 1,
-                tree.used()
-            );
+            println!("{}", summary(&read(&fixture)?.build()?));
             Ok(())
         }
     }
+}
+
+/// The fixture's `now`, `minus` before it if given, as `FAKETIME` takes it.
+fn faketime(fixture: &Fixture, minus: Option<&str>) -> anyhow::Result<String> {
+    let back = minus.map_or(Ok(0), parse_age)?;
+    Ok(format!("@{}", format_time(fixture.now()? - back)))
+}
+
+/// What `check` prints: the entries below the root, their apparent size and allocated bytes.
+fn summary(tree: &Tree) -> String {
+    format!(
+        "entries {}\napparent {}\nalloc {}",
+        tree.live() - 1,
+        tree.apparent(),
+        tree.used()
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -104,4 +113,52 @@ fn mount(
 #[cfg(not(target_os = "linux"))]
 fn mount(_: &Fixture, _: Tree, _: &std::path::Path, _: Option<PathBuf>) -> anyhow::Result<()> {
     anyhow::bail!("mounting needs Linux; record the demos with `cargo xtask demo`")
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory as _;
+
+    use super::*;
+
+    const FIXTURE: &str = "now = \"2026-10-01T09:00:00Z\"\n[[entry]]\npath = \"a/b\"\nsize = 10\n";
+
+    #[test]
+    fn the_command_line_is_well_formed() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn root_and_at_come_together() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(["dfdu-demofs", "mount", "f", "d"].iter().chain(args))
+        };
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["--root", "r.toml", "--at", "home/demo"]).is_ok());
+        assert!(parse(&["--root", "r.toml"]).is_err());
+        assert!(parse(&["--at", "home/demo"]).is_err());
+    }
+
+    #[test]
+    fn faketime_counts_back_from_now() {
+        let f = Fixture::parse(FIXTURE).unwrap();
+        assert_eq!(faketime(&f, None).unwrap(), "@2026-10-01 09:00:00");
+        assert_eq!(faketime(&f, Some("7d")).unwrap(), "@2026-09-24 09:00:00");
+        assert!(faketime(&f, Some("a week")).is_err());
+    }
+
+    #[test]
+    fn summary_counts_entries_below_the_root() {
+        let tree = Fixture::parse(FIXTURE).unwrap().build().unwrap();
+        assert_eq!(summary(&tree), "entries 2\napparent 4106\nalloc 12288");
+    }
+
+    #[test]
+    fn a_fixture_is_read_from_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.toml");
+        std::fs::write(&path, FIXTURE).unwrap();
+        assert_eq!(read(&path).unwrap().now, "2026-10-01T09:00:00Z");
+        assert!(read(&dir.path().join("missing.toml")).is_err());
+    }
 }
