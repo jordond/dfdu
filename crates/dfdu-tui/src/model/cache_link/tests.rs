@@ -112,8 +112,9 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
 /// Holds the change journal's answer in the test below until set.
 static ANSWER: AtomicBool = AtomicBool::new(false);
 
-/// A rescan sent while the resume waits for the change journal ends first, and leaves the
-/// cached tree not yet brought up to date: nothing is saved until the resume has ended too.
+/// A rescan sent while the resume waits for the change journal is refused (no resume has
+/// taken the cached tree over yet), which leaves it not yet brought up to date: nothing is
+/// saved until the resume has ended.
 #[test]
 fn nothing_is_saved_before_the_resume_ended() {
     const AT: JournalPosition = JournalPosition {
@@ -155,14 +156,14 @@ fn nothing_is_saved_before_the_resume_ended() {
         Some(m.tree.node_ref(sub))
     });
     e.send(Command::Rescan { node: sub.unwrap() });
-    let rescanned = |m: &Model| {
+    let refused = |m: &Model| {
         m.status
-            .jobs
-            .first()
-            .is_some_and(|j| j.phase == JobPhase::Done)
-            && !m.status.busy()
+            .notices
+            .iter()
+            .any(|n| n.starts_with("rescan: not refreshed yet"))
+            && m.status.jobs.is_empty()
     };
-    poll_until(&mut c, &mut app, &e, |_, _| e.read(rescanned));
+    poll_until(&mut c, &mut app, &e, |_, _| e.read(refused));
     for _ in 0..20 {
         c.poll(&mut app, &e);
         thread::sleep(Duration::from_millis(2));

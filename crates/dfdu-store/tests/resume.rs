@@ -66,7 +66,12 @@ fn resumed_snapshot_is_rescanned() {
     let node = loaded.tree.node_ref(loaded.root);
     e.load(loaded.tree);
     assert_eq!(root_total(&e), before, "shown as saved");
-    e.send(Command::Rescan { node });
+    e.send(Command::Resume {
+        node,
+        opts: JobOptions::default(),
+        changed: None,
+        since: 0,
+    });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let t = root_total(&e);
     assert_eq!(
