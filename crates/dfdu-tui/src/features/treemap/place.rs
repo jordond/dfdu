@@ -294,3 +294,117 @@ pub(super) fn peek(app: &App, l: &Layout, at: usize) -> Vec<Tile> {
     );
     p.tiles
 }
+
+#[cfg(test)]
+impl Tile {
+    /// A top-level file tile named `name` of `size` bytes filling `rect`, alone in it.
+    pub(super) fn of(rect: Rect, name: &str, size: u64) -> Tile {
+        Tile {
+            rect,
+            bound: rect,
+            level: 0,
+            top: 0,
+            up: None,
+            entry: None,
+            name: name.into(),
+            is_dir: false,
+            size,
+            parent: size,
+            mtime: 0,
+            tag: None,
+            dominant: None,
+            small: 0,
+            nested: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use ratatui::crossterm::event::KeyCode;
+
+    use super::*;
+    use crate::features::treemap::tests::{sync, tree, treemap_app};
+    use crate::model::snapshot::test_entry;
+    use crate::tests::{press, snap_without_totals};
+    use crate::theme::Theme;
+
+    const AREA: Rect = Rect::new(0, 2, 80, 20);
+
+    #[test]
+    fn rows_become_tiles_inside_the_area_largest_first() {
+        let fx = tree();
+        let app = treemap_app(&fx.m, Instant::now());
+        let l = build(&app, AREA, false);
+        let names: Vec<&str> = l.tops.iter().map(|&t| l.tiles[t].name.as_str()).collect();
+        assert_eq!(names, ["big", "mid", "small", ".hid"]);
+        for t in &l.tiles {
+            assert!(AREA.contains(t.rect.as_position()), "{t:?}");
+            assert_eq!(t.bound, AREA);
+            assert_eq!(t.level, 0, "depth 1 lays out the top level only");
+        }
+        let cells: u32 = l.tiles.iter().map(|t| u32::from(t.rect.area())).sum();
+        assert!(cells <= u32::from(AREA.area()));
+        // The rest of the rows is one merged tile.
+        let merged: Vec<&Tile> = l.tiles.iter().filter(|t| t.small > 0).collect();
+        assert!(merged.len() <= 1, "{merged:?}");
+        assert_eq!(l.key, key_of(&app));
+        assert!(!l.framed);
+    }
+
+    #[test]
+    fn tiny_rows_merge_into_one_tile_and_the_largest_keeps_its_own() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.key(press(KeyCode::Char('2')), t0);
+        let mut entries = vec![test_entry(0, "huge", 1_000_000)];
+        entries.extend((1..200).map(|i| test_entry(i, &format!("t{i}"), 100)));
+        app.refresh(snap_without_totals(entries, 1), t0);
+        let l = build(&app, AREA, false);
+        let merged: Vec<&Tile> = l.tiles.iter().filter(|t| t.small > 0).collect();
+        assert_eq!(merged.len(), 1);
+        assert_eq!((merged[0].small, merged[0].size), (199, 19_900));
+        assert_eq!(l.tiles[l.tops[0]].name, "huge");
+        assert_eq!(l.tops.len(), 1, "the merged tile is not one of the rows");
+    }
+
+    #[test]
+    fn deeper_levels_nest_inside_their_tile() {
+        let fx = tree();
+        let t0 = Instant::now();
+        let mut app = treemap_app(&fx.m, t0);
+        app.key(press(KeyCode::Char('+')), t0);
+        sync(&mut app, &fx.m, t0);
+        let l = build(&app, AREA, true);
+        let big = l.tops[0];
+        assert!(l.tiles[big].nested, "big shows what is in it");
+        let inside: Vec<&Tile> = l.tiles.iter().filter(|t| t.up == Some(big)).collect();
+        assert!(!inside.is_empty());
+        let frame = l.tiles[big].rect;
+        for t in inside {
+            assert_eq!(t.level, 1);
+            assert_eq!(t.top, 0);
+            // Framed: inside the frame and below the label line.
+            assert!(t.rect.y >= frame.y + 2 && t.rect.x > frame.x, "{t:?}");
+            assert_eq!(t.parent, l.tiles[big].size);
+        }
+    }
+
+    #[test]
+    fn peek_lays_out_the_selected_tile_alone() {
+        let fx = tree();
+        let app = treemap_app(&fx.m, Instant::now());
+        let l = build(&app, AREA, false);
+        let big = l.tops[0];
+        let tiles = peek(&app, &l, big);
+        assert!(tiles[0].nested && tiles[0].rect == l.tiles[big].rect);
+        let names: Vec<&str> = tiles[1..].iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["a", "b"]);
+        assert!(tiles[1..].iter().all(|t| t.up == Some(0) && t.level == 1));
+        // A file has nothing to show.
+        let small = l.tops[2];
+        assert!(peek(&app, &l, small).is_empty());
+    }
+}
