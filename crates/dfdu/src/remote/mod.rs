@@ -194,12 +194,7 @@ impl boot::Supply for Supply<'_> {
             std::io::stdin().read_line(&mut line)?;
             Ok(line)
         })
-        .map_err(|hint| {
-            std::io::Error::other(format!(
-                "no dfdu {} agent there; {hint}",
-                env!("CARGO_PKG_VERSION")
-            ))
-        })
+        .map_err(std::io::Error::other)
     }
 
     fn send(&mut self, target: &'static str) -> std::io::Result<(String, Vec<u8>)> {

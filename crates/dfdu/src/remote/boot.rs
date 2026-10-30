@@ -164,20 +164,35 @@ fn status_error(status: &str) -> io::Error {
     }
 }
 
+/// An agent not sent: the user said no, or could not be asked.
+#[derive(Debug)]
+pub struct Declined;
+
+impl std::fmt::Display for Declined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no dfdu {} agent there; install dfdu there or pass --remote-agent upload",
+            env!("CARGO_PKG_VERSION")
+        )
+    }
+}
+
+impl std::error::Error for Declined {}
+
 /// Whether to send an agent in `mode`: `upload` always does, `auto` asks when `terminal`
 /// (`answer` reads the reply) and refuses otherwise, so scripts never upload unasked.
 pub fn decide(
     mode: AgentMode,
     terminal: bool,
     answer: impl FnOnce() -> io::Result<String>,
-) -> Result<(), &'static str> {
-    const HINT: &str = "install dfdu there or pass --remote-agent upload";
+) -> Result<(), Declined> {
     match mode {
         AgentMode::Upload => Ok(()),
-        _ if !terminal => Err(HINT),
+        _ if !terminal => Err(Declined),
         _ => match answer() {
             Ok(a) if matches!(a.trim(), "y" | "Y" | "yes" | "Yes") => Ok(()),
-            _ => Err(HINT),
+            _ => Err(Declined),
         },
     }
 }

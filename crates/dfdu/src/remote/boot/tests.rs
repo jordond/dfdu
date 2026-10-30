@@ -173,7 +173,9 @@ fn upload_decision() {
     assert!(decide(AgentMode::Upload, false, never).is_ok());
     assert!(decide(AgentMode::Upload, true, never).is_ok());
     let refused = decide(AgentMode::Auto, false, never).unwrap_err();
-    assert!(refused.contains("--remote-agent upload"));
+    let refused = refused.to_string();
+    assert!(refused.contains("--remote-agent upload"), "{refused}");
+    assert!(refused.contains(env!("CARGO_PKG_VERSION")), "{refused}");
     assert!(decide(AgentMode::Auto, true, || Ok("y\n".into())).is_ok());
     assert!(decide(AgentMode::Auto, true, || Ok("\n".into())).is_err());
     assert!(decide(AgentMode::Auto, true, || Ok("n".into())).is_err());
