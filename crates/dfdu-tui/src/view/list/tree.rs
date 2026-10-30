@@ -110,3 +110,84 @@ pub(super) fn size_style(app: &App, e: &EntryData, base: Style) -> Style {
         base
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::state::tree::TreeState;
+    use crate::state::tree::tests::sample;
+    use crate::tests::snap_with_totals;
+    use crate::theme::Theme;
+
+    /// A browser in tree mode of [`sample`], `y` (row 2) expanded and the leaves files.
+    fn browser() -> App {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let mut entries = sample();
+        for e in &mut entries {
+            e.is_dir = ["a", "y", "b", "only"].iter().any(|d| e.name[..] == *d.as_bytes());
+        }
+        let mut tree = TreeState::default();
+        tree.expand(crate::model::snapshot::Target {
+            node: Some(entries[2].node),
+            path: "/r/a/y".into(),
+            ident: None,
+        });
+        app.tree = Some(tree);
+        app.refresh(snap_with_totals(entries, 1), t0);
+        app.reorder(t0);
+        app
+    }
+
+    fn text(spans: &[Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn rows_have_their_guide_and_parent_only_in_a_tree() {
+        let mut app = browser();
+        let rows = rows(&app, &[0, 1, 3, 8]).expect("a tree");
+        let guides: Vec<&str> = rows.iter().map(|r| r.guide.as_str()).collect();
+        assert_eq!(guides, ["", "├─", "│ ├─", "  └─"]);
+        let parents: Vec<Option<usize>> = rows.iter().map(|r| r.parent).collect();
+        assert_eq!(parents, [None, Some(0), Some(2), Some(7)]);
+        app.tree = None;
+        assert!(super::rows(&app, &[0]).is_none());
+    }
+
+    #[test]
+    fn the_glyph_says_whether_a_directory_is_open() {
+        let app = browser();
+        let es = &app.snap.entries;
+        let rows = rows(&app, &[0, 2, 3]).expect("a tree");
+        let shown = |i: usize, row: &TreeRow, width| text(&prefix(&app, &es[i], row, width));
+        assert_eq!(shown(0, &rows[0], 40), "▸ ");
+        assert_eq!(shown(2, &rows[1], 40), "├─▾ ");
+        assert_eq!(shown(3, &rows[2], 40), "│ ├─  ");
+        // A guide longer than half the cell keeps its end.
+        assert_eq!(shown(3, &rows[2], 10), "…├─  ");
+    }
+
+    #[test]
+    fn shares_are_of_the_parent_and_fold_rows_are_dim() {
+        let mut app = browser();
+        let rows = rows(&app, &[0, 1]).expect("a tree");
+        let es = app.snap.entries.clone();
+        assert_eq!(share(&app, &es[1], &rows[1], 1000), "50.0%", "x of a");
+        assert_eq!(share(&app, &es[0], &rows[0], 1000), "10.0%", "a of the directory");
+        let [filled, shadow] = bar(&app, &es[1], &rows[1], 100, 10);
+        assert_eq!(filled.width() + shadow.width(), 10);
+        assert!(filled.width() < 10, "the shadow runs on to the parent's length");
+        let base = Style::new();
+        assert_eq!(size_style(&app, &es[1], base), base);
+        app.snap.entries[1].fold = 3;
+        app.snap.entries[1].name = "… 3 more".as_bytes().into();
+        let fold = &app.snap.entries[1];
+        assert_eq!(size_style(&app, fold, base), base.patch(app.theme.fg_dim));
+        let name = fold_name(&app, fold, 4);
+        assert_eq!(name.content, "… 3…");
+        assert!(name.style.add_modifier.contains(Modifier::ITALIC));
+    }
+}

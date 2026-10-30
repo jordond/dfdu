@@ -148,3 +148,80 @@ fn share_of_parent(app: &App, index: usize) -> Span<'static> {
     let slash = if name.ends_with('/') { "" } else { "/" };
     Span::styled(format!("{share:.1}% of {name}{slash}"), app.theme.fg_dim)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::model::snapshot::{EntryData, test_entry};
+    use crate::state::tree::TreeState;
+    use crate::tests::{library_snap, snap_with_totals};
+    use crate::theme::Theme;
+
+    fn text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn browser() -> App {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        let mut snap = library_snap();
+        snap.entries[0].items = 1200;
+        app.refresh(snap, t0);
+        app
+    }
+
+    #[test]
+    fn the_selected_row_in_full_with_its_place_on_the_right() {
+        let app = browser();
+        let line = line(&app, 80).expect("a selection");
+        let shown = text(&line);
+        assert!(shown.starts_with(" ▸ Library/  3.0 GiB · 1.2k items"), "{shown}");
+        assert!(shown.ends_with("1/2 "), "{shown}");
+        assert_eq!(line.width(), 80);
+        // Short of room the items go first.
+        let narrow = text(&line_of(&app, 32));
+        assert!(narrow.starts_with(" ▸ Library/  3.0 GiB"), "{narrow}");
+        assert!(!narrow.contains("items"), "{narrow}");
+    }
+
+    fn line_of(app: &App, width: u16) -> Line<'static> {
+        line(app, width).expect("a selection")
+    }
+
+    #[test]
+    fn nothing_selected_has_no_line() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.refresh(snap_with_totals(Vec::new(), 1), t0);
+        assert!(line(&app, 80).is_none());
+    }
+
+    #[test]
+    fn in_tree_mode_it_starts_with_the_path_and_the_share_of_the_parent() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.tree = Some(TreeState::default());
+        let a = EntryData {
+            is_dir: true,
+            ..test_entry(0, "a", 400)
+        };
+        let x = EntryData {
+            depth: 1,
+            parent: 0,
+            ..test_entry(1, "x", 100)
+        };
+        let mut snap = snap_with_totals(vec![a, x], 1);
+        snap.root_path = "/r".into();
+        app.refresh(snap, t0);
+        app.reorder(t0);
+        app.move_to(1);
+        let shown = text(&line_of(&app, 100));
+        let path = crate::tests::below("/r", "a/x").to_string();
+        assert!(shown.starts_with(&format!(" ▸ {path}  100 B · 25.0% of a/")), "{shown}");
+        app.move_to(0);
+        let top = text(&line_of(&app, 100));
+        assert!(top.contains("80.0% of r/"), "{top}");
+    }
+}
