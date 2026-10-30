@@ -59,3 +59,6 @@ impl ExtentTable {
         points.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests;
