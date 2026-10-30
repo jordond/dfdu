@@ -60,7 +60,11 @@ pub fn crash_state() -> Option<String> {
 /// terminal must leave these alone.
 #[must_use]
 pub fn panic_is_caught_by_engine(thread_name: Option<&str>) -> bool {
-    matches!(thread_name, Some("dfdu-worker" | "dfdu-applier"))
+    // scan-cache: a resume's journal query panic is caught too (it rescans everything).
+    matches!(
+        thread_name,
+        Some("dfdu-worker" | "dfdu-applier" | "dfdu-journal")
+    )
 }
 
 /// Writes a crash report into `dir`; returns its path.

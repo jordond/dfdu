@@ -6,8 +6,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::thread;
+use std::time::Duration;
 
-use dfdu_engine::Engine;
+use dfdu_engine::{Engine, WaitIdle};
 use dfdu_store::history::{self, Growth, Scanned};
 use dfdu_tree::now_secs;
 
@@ -142,6 +143,11 @@ impl Recorder {
         let Some(link) = &self.link else {
             return;
         };
+        // A resume waiting for the change journal is not applied yet, and a rescan sent
+        // meanwhile ends before it.
+        if engine.wait_idle(Some(Duration::ZERO)) == WaitIdle::TimedOut {
+            return;
+        }
         let scan = engine.read(|m| {
             let done = m
                 .status

@@ -6,13 +6,13 @@
 //! Nothing is saved on the way out: quitting cancels a save still running (the file cached
 //! before stays) and waits at most [`CANCEL_WAIT`] for it to stop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model};
+use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model, WaitIdle};
 use dfdu_scan::JobOptions;
 use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
 use dfdu_store::snapshot::Header;
@@ -106,7 +106,9 @@ pub(crate) struct Cacher {
     /// Scans quicker than this are not saved ([`MIN_SCAN_MS`]).
     min_scan_ms: u64,
     /// Where a directory's change journal stands ([`dfdu_engine::journal_position`]).
-    position: fn(&std::path::Path) -> Option<JournalPosition>,
+    position: fn(&Path) -> Option<JournalPosition>,
+    /// What changed below a directory since a position ([`dfdu_engine::changed_since`]).
+    changed_since: fn(&Path, JournalPosition) -> Option<Vec<PathBuf>>,
 }
 
 impl Cacher {
@@ -121,6 +123,7 @@ impl Cacher {
             changed: None,
             min_scan_ms: MIN_SCAN_MS,
             position: dfdu_engine::journal_position,
+            changed_since: dfdu_engine::changed_since,
         }
     }
 
@@ -223,7 +226,12 @@ impl Cacher {
                 let kept = journal.map(|_| (h.full_scan_at(), h.scan_ms));
                 app.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
-                engine.resume(hit.loaded.tree, journal, link.job.clone());
+                engine.resume_with(
+                    hit.loaded.tree,
+                    journal,
+                    link.job.clone(),
+                    self.changed_since,
+                );
             }
             Ok(None) => {
                 app.cached = None;
@@ -250,8 +258,7 @@ impl Cacher {
         let Some(run) = self.run.as_mut().filter(|r| r.saved_as.is_none()) else {
             return false;
         };
-        let Some((complete, version)) = engine.read(|m| finished(m).map(|c| (c, m.tree.version())))
-        else {
+        let Some((complete, version)) = ended(engine) else {
             return false;
         };
         let ms = u64::try_from(run.started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -341,8 +348,7 @@ impl Cacher {
         if !worth || self.writer.is_some() {
             return;
         }
-        let Some((true, version)) = engine.read(|m| finished(m).map(|c| (c, m.tree.version())))
-        else {
+        let Some((true, version)) = ended(engine) else {
             self.changed = None;
             return;
         };
@@ -381,6 +387,17 @@ impl Run {
             saved_as: None,
         }
     }
+}
+
+/// Whether the scan or resume ended with the tree complete, and the tree's version: `None` while
+/// it runs, and while a command sent is not applied yet. A resume is sent once the change
+/// journal answered, and a rescan or a mount entered meanwhile ends first: what it leaves is the
+/// cached tree, not yet brought up to date.
+fn ended<B: dfdu_scan::Backend>(engine: &Engine<B>) -> Option<(bool, u64)> {
+    if engine.wait_idle(Some(Duration::ZERO)) == WaitIdle::TimedOut {
+        return None;
+    }
+    engine.read(|m| finished(m).map(|c| (c, m.tree.version())))
 }
 
 /// Whether the scan or resume ended with the tree complete: `None` while it runs.

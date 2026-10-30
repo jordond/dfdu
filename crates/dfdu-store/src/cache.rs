@@ -5,7 +5,10 @@
 //!
 //! What is read is the user's own: the directory is created `0700` and the files `0600`, and a
 //! file or directory of another user (a `sudo dfdu` that kept `HOME`) is never read nor
-//! written. A damaged or cut-short file is removed, and the directory scanned instead.
+//! written. A directory that exists already (one named by `DFDU_CACHE_DIR`) is used as it is,
+//! and only when it is the user's and other users cannot write to it; its other files are left
+//! alone: only those named as the cache names them are read or removed. A damaged or cut-short
+//! file is removed, and the directory scanned instead.
 //!
 //! Expiry: a file is loaded only within [`MAX_AGE`] of being written; the sweep removes older
 //! ones, and keeps the files together under [`SIZE_CAP`] by removing the least recently
@@ -90,6 +93,55 @@ fn secs(t: std::time::SystemTime) -> u64 {
 #[must_use]
 pub fn now() -> u64 {
     secs(std::time::SystemTime::now())
+}
+
+/// Whether `name` is of a cached scan: the hash of its key in 16 hex digits
+/// ([`Key::file_name`]), then the extension.
+fn is_scan_name(name: &str) -> bool {
+    name.strip_suffix(EXT)
+        .and_then(|n| n.strip_suffix('.'))
+        .is_some_and(|h| h.len() == 16 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// Whether `name` is of the temporary file of a save ([`crate::write_replacing`]): `.`, the
+/// name of a cached scan, `.`, the writer's process id, `.tmp`.
+fn is_temp_name(name: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|n| n.strip_suffix(".tmp"))
+        .and_then(|n| n.rsplit_once('.'))
+        .is_some_and(|(scan, pid)| {
+            is_scan_name(scan) && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+/// `PermissionDenied`, saying why `dir` is not used.
+fn refused(dir: &Path, why: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("{} {why}", dir.display()),
+    )
+}
+
+/// Whether the directory `dir`, of metadata `m` (not followed through a symbolic link), may hold
+/// the cache as it is: a directory of the effective user that other users cannot write to.
+fn usable(dir: &Path, m: &fs::Metadata) -> io::Result<()> {
+    if m.is_symlink() {
+        return Err(refused(dir, "is a symbolic link"));
+    }
+    if !m.is_dir() {
+        return Err(refused(dir, "is not a directory"));
+    }
+    if !owned(m) {
+        return Err(refused(dir, "belongs to another user"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if m.permissions().mode() & 0o022 != 0 {
+            return Err(refused(dir, "is writable by other users"));
+        }
+    }
+    Ok(())
 }
 
 /// FNV-1a, 64 bits: stable across builds and platforms, as file names must be.
@@ -194,33 +246,40 @@ struct File {
 }
 
 impl Cache {
-    /// The cache in [`dfdu_rules::dirs::cache_dir`]; `None` when [`off_by_env`], without a
-    /// cache directory, or when it is not the effective user's ([`Cache::at`]).
+    /// The cache in [`dfdu_rules::dirs::cache_dir`]; `None` when [`off_by_env`] or without a
+    /// cache directory, and why it is not used when [`Cache::at`] refuses it.
     #[must_use]
-    pub fn open_default() -> Option<Cache> {
+    pub fn open_default() -> Option<io::Result<Cache>> {
         if off_by_env() {
             return None;
         }
-        Cache::at(dfdu_rules::dirs::cache_dir()?)
+        Some(Cache::at(dfdu_rules::dirs::cache_dir()?))
     }
 
-    /// The cache in `dir`, which need not exist yet; `None` when it, or the nearest directory
-    /// above it that exists, is another user's.
-    #[must_use]
-    pub fn at(dir: PathBuf) -> Option<Cache> {
-        let mut d = dir.as_path();
-        loop {
-            match fs::metadata(d) {
-                Ok(m) => {
-                    if !owned(&m) {
-                        return None;
+    /// The cache in `dir`, which need not exist yet: it is then created when a scan is saved.
+    ///
+    /// # Errors
+    ///
+    /// `PermissionDenied` when `dir` exists and may not hold the cache as it is (another user's,
+    /// writable by other users, not a directory), or when the nearest directory above it that
+    /// exists is another user's; `NotFound` when none above it exists.
+    pub fn at(dir: PathBuf) -> io::Result<Cache> {
+        match fs::symlink_metadata(&dir) {
+            Ok(m) => usable(&dir, &m)?,
+            Err(_) => {
+                let mut d = dir.as_path();
+                let m = loop {
+                    match fs::metadata(d) {
+                        Ok(m) => break m,
+                        Err(e) => d = d.parent().ok_or(e)?,
                     }
-                    break;
+                };
+                if !owned(&m) {
+                    return Err(refused(d, "belongs to another user"));
                 }
-                Err(_) => d = d.parent()?,
             }
         }
-        Some(Cache { dir })
+        Ok(Cache { dir })
     }
 
     #[must_use]
@@ -238,28 +297,20 @@ impl Cache {
         }
     }
 
-    /// Creates the directory, the user's alone; fails when it is another user's.
+    /// Creates the directory, the user's alone, when there is none; one that exists is used as
+    /// it is, and only when it may hold the cache ([`Cache::at`]).
     fn ensure_dir(&self) -> io::Result<()> {
+        match fs::symlink_metadata(&self.dir) {
+            Ok(m) => return usable(&self.dir, &m),
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            Err(_) => {}
+        }
         let mut b = fs::DirBuilder::new();
         b.recursive(true);
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
         b.create(&self.dir)?;
-        let m = fs::symlink_metadata(&self.dir)?;
-        if !m.is_dir() || !owned(&m) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("{} is not this user's directory", self.dir.display()),
-            ));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if m.permissions().mode() & 0o077 != 0 {
-                fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
-            }
-        }
-        Ok(())
+        usable(&self.dir, &fs::symlink_metadata(&self.dir)?)
     }
 
     /// The cached scans of the effective user, newest first.
@@ -271,9 +322,7 @@ impl Cache {
             .flatten()
             .filter_map(|e| {
                 let path = e.path();
-                let name = e.file_name();
-                let name = name.to_string_lossy();
-                if name.starts_with('.') || path.extension()? != EXT {
+                if !is_scan_name(&e.file_name().to_string_lossy()) {
                     return None;
                 }
                 let m = fs::symlink_metadata(&path).ok()?;
@@ -294,9 +343,7 @@ impl Cache {
             return;
         };
         for e in rd.flatten() {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            if !(name.starts_with('.') && name.ends_with(".tmp")) {
+            if !is_temp_name(&e.file_name().to_string_lossy()) {
                 continue;
             }
             let Ok(f) = fs::OpenOptions::new().write(true).open(e.path()) else {
