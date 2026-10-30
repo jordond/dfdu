@@ -18,16 +18,17 @@ use std::sync::{Arc, OnceLock};
 
 use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
 use dfdu_engine::Model;
-use dfdu_tree::{HostPath, Kind, NodeRef};
+use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 mod draw;
+mod rows;
 
 pub use draw::draw;
+use rows::{Row, copies, kept, live, mark_all, mark_of, open, rows};
 
 /// Files smaller than this are not compared: the size `dfdu dupes` starts from.
 pub fn min_size() -> u64 {
@@ -92,7 +93,6 @@ impl Keep {
     }
 }
 
-/// The next keep rule, with the status line saying so.
 /// The next keep rule, with the status line saying so. A copy the new rule keeps is unticked:
 /// the copy kept is never one that `d` deletes.
 pub fn cycle_keep(app: &mut App) {
@@ -329,107 +329,6 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
             (c.path.clone(), node)
         })
         .collect()
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Row {
-    Group(usize),
-    File(usize, usize),
-}
-
-/// A file still in the tree.
-fn live(app: &App, c: &Candidate) -> Option<NodeRef> {
-    app.extras.dupes.get(&c.path).copied().flatten()
-}
-
-/// Whether group `g` shows its files: by default unless it is clones, which free nothing.
-fn open(app: &App, g: usize, group: &Group) -> bool {
-    !group.all_clones() ^ app.dupes.toggled.contains(&g)
-}
-
-/// The groups with at least two files left, clones last; each open one followed by its files.
-fn rows(app: &App) -> Vec<Row> {
-    let Some(f) = found(app) else {
-        return Vec::new();
-    };
-    let mut order: Vec<usize> = (0..f.groups.len()).collect();
-    order.sort_by_key(|&g| f.groups[g].all_clones());
-    let mut out = Vec::new();
-    for g in order {
-        let group = &f.groups[g];
-        let left: Vec<usize> = (0..group.files.len())
-            .filter(|&i| live(app, &group.files[i]).is_some())
-            .collect();
-        if left.len() < 2 {
-            continue;
-        }
-        out.push(Row::Group(g));
-        if open(app, g, group) {
-            out.extend(left.into_iter().map(|i| Row::File(g, i)));
-        }
-    }
-    out
-}
-
-fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
-    marks::Item {
-        target: Target {
-            node: Some(node),
-            path: HostPath::local(&c.path),
-            ident: Some(Ident {
-                dev_ino: c.dev_ino,
-                kind: Kind::File,
-            }),
-        },
-        is_dir: false,
-        size: c.freed(),
-        items: 1,
-        shared_out: 0,
-        scanning: false,
-        inside: false,
-    }
-}
-
-/// The index in `group` of the file still in the tree that the keep rule keeps.
-fn kept(app: &App, group: &Group) -> Option<usize> {
-    let left = (group.files.iter().enumerate()).filter(|(_, c)| live(app, c).is_some());
-    // Compared by reference: this runs for every group on every frame.
-    let order = |a: &Candidate, b: &Candidate| match app.dupes.keep {
-        Keep::Oldest => a.mtime.cmp(&b.mtime),
-        Keep::Newest => b.mtime.cmp(&a.mtime),
-        Keep::ShortestPath => (a.path.as_os_str().len()).cmp(&b.path.as_os_str().len()),
-        Keep::FirstPath => std::cmp::Ordering::Equal,
-    };
-    left.min_by(|(_, a), (_, b)| order(a, b).then_with(|| a.path.cmp(&b.path)))
-        .map(|(i, _)| i)
-}
-
-/// The files of `group` still in the tree, but the one [`kept`].
-fn copies(app: &App, group: &Group) -> Vec<(Candidate, NodeRef)> {
-    let keep = kept(app, group);
-    (group.files.iter().enumerate())
-        .filter(|&(i, _)| Some(i) != keep)
-        .filter_map(|(_, c)| Some((c.clone(), live(app, c)?)))
-        .collect()
-}
-
-/// Marks every copy but the one kept in each group that frees something; returns how many were
-/// newly marked.
-fn mark_all(app: &mut App) -> usize {
-    let Some(f) = found(app) else {
-        return 0;
-    };
-    let picks: Vec<(Candidate, NodeRef)> = f
-        .groups
-        .iter()
-        .filter(|g| !g.all_clones())
-        .flat_map(|g| copies(app, g))
-        .filter(|(_, n)| !app.marks.contains(*n))
-        .collect();
-    for (c, n) in &picks {
-        marks::set(app, mark_of(c, *n), true);
-    }
-    picks.len()
 }
 
 /// The path of the selected file, for `y` and `o`; `None` on a group's row.

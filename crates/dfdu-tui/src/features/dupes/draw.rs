@@ -432,3 +432,6 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
     }
     out
 }
+
+#[cfg(test)]
+mod tests;
