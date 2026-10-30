@@ -55,12 +55,12 @@ pub fn crash_state() -> Option<String> {
 }
 
 /// Whether a panic on the thread with this name is caught and recorded by the engine: a scan
-/// worker's (recorded as a `Panicked` directory) or the applier's (recorded as the engine's fatal
-/// error, with its own crash report). A panic hook that writes a crash report or restores the
-/// terminal must leave these alone.
+/// worker's (recorded as a `Panicked` directory), the applier's (recorded as the engine's fatal
+/// error, with its own crash report) or a resume's change journal query's on `dfdu-journal`
+/// (the resume then rescans everything). A panic hook that writes a crash report or restores
+/// the terminal must leave these alone.
 #[must_use]
 pub fn panic_is_caught_by_engine(thread_name: Option<&str>) -> bool {
-    // scan-cache: a resume's journal query panic is caught too (it rescans everything).
     matches!(
         thread_name,
         Some("dfdu-worker" | "dfdu-applier" | "dfdu-journal")

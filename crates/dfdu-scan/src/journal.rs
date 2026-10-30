@@ -55,7 +55,10 @@ pub struct JournalPosition {
     pub event_id: u64,
     /// Seconds since the Unix epoch when the position was read, 0 when not known. btrfs
     /// resumes count an inode as changed only if its ctime is not older, so atime updates (the
-    /// scan's own among them) do not.
+    /// scan's own among them) do not. A resume is sent it (the engine's `Command::Resume`
+    /// `since`): a loaded directory, the root among them, whose mtime is not older is listed
+    /// again whatever its stat says, since a change in that same second after the scan read it
+    /// leaves the mtime as it was.
     pub time: u64,
 }
 
