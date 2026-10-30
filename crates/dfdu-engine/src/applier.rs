@@ -80,12 +80,17 @@ pub enum Command {
     /// loaded: the subdirectories they still have are kept as loaded. `since` is when the
     /// journal position `changed` counts from was read
     /// ([`JournalPosition::time`](crate::JournalPosition::time)), 0 when not known: a directory
-    /// changed in that second or later is listed again whatever its mtime says.
+    /// changed in that second or later is listed again whatever its mtime says. `root` is the
+    /// root's stat, taken after the journal was asked, off the applier, which does no I/O
+    /// ([`Engine::resume`](crate::Engine::resume)); `None` when it could not be taken (the
+    /// root is listed again, and its rescan says why). A remote scan's root is not judged on
+    /// it.
     Resume {
         node: NodeRef,
         opts: JobOptions,
         changed: Option<Vec<PathBuf>>,
         since: u64,
+        root: Option<Meta>,
     },
     Cancel {
         job: JobId,
@@ -222,9 +227,8 @@ pub struct Applier<B: Backend> {
     next_plan: u64,
     /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
     deferred_rescans: Vec<NodeRef>,
-    /// A resume's walk that has taken the tree over and waits for the check of the directories
-    /// it keeps to end.
-    resume_waiting: Option<Box<resume::ResumeWalk>>,
+    /// What is kept of resumes beside their walks.
+    resume: resume::Resumes,
     /// Rescans waiting for their parent's listing to close, and whether each enters a mount:
     /// a directory's class can depend on its siblings, which a listing still being read does
     /// not have yet.
@@ -306,7 +310,7 @@ impl<B: Backend> Applier<B> {
             next_plan: 1,
             deferred_rescans: Vec::new(),
             rescans_after_listing: Vec::new(),
-            resume_waiting: None,
+            resume: resume::Resumes::default(),
             read_only: false,
             imported: false,
             measure: true,
@@ -364,7 +368,7 @@ impl<B: Backend> Applier<B> {
             }
         }
         m.status.stalled = stalled;
-        m.status.settling = !self.work.is_empty() || self.resume_waiting.is_some();
+        m.status.settling = !self.work.is_empty() || self.resume.waiting.is_some();
         if self.measure_idle() {
             m.status.measuring = None;
         }
@@ -419,7 +423,8 @@ impl<B: Backend> Applier<B> {
                 opts,
                 changed: Some(dirs),
                 since,
-            } => self.resume_changed(m, node, opts, &dirs, since),
+                root,
+            } => self.resume_changed(m, node, opts, &dirs, (since, root)),
             Command::Cancel { job } => self.cancel_jobs(Some(job.0)),
             Command::CancelAll => self.cancel_jobs(None),
             Command::Abandon { node } => self.abandon(m, node),

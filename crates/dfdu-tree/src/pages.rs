@@ -241,6 +241,34 @@ impl KidArena {
         false
     }
 
+    /// Keeps the children `keep` says to, in order.
+    pub fn retain(&mut self, k: &mut Kids, mut keep: impl FnMut(u32) -> bool) {
+        let len = k.len as usize;
+        let seg = &mut self.seg_mut(k)[..len];
+        let mut n = 0;
+        for i in 0..len {
+            if keep(seg[i]) {
+                seg[n] = seg[i];
+                n += 1;
+            }
+        }
+        k.len = u32::try_from(n).unwrap_or(k.len);
+        for b in k.more.iter_mut().flat_map(|m| m.iter_mut()) {
+            b.retain(|&c| keep(c));
+        }
+    }
+
+    /// Puts what `with` gives in the place of each child.
+    pub fn replace_each(&mut self, k: &mut Kids, mut with: impl FnMut(u32) -> u32) {
+        let len = k.len as usize;
+        for c in &mut self.seg_mut(k)[..len] {
+            *c = with(*c);
+        }
+        for c in k.more.iter_mut().flat_map(|m| m.iter_mut()).flatten() {
+            *c = with(*c);
+        }
+    }
+
     /// Puts `new` in the place of `old`. Returns false if `old` is not a child.
     pub fn replace(&mut self, k: &mut Kids, old: u32, new: u32) -> bool {
         let len = k.len as usize;

@@ -229,6 +229,15 @@ impl<B: Backend> Applier<B> {
         let Some(j) = self.jobs.get_mut(&id) else {
             return;
         };
+        // A rescan that keeps loaded directories finds them first, a step at a time.
+        if j.phase == JobPhase::Finishing
+            && let Some(k) = j.kept.as_mut()
+            && let Some(t) = m.tree.resolve_visible(j.target)
+            && !Self::find_kept(m, k, t, j.opts.class.as_ref())
+        {
+            self.work.push_front(Work::FinishJob { job: id });
+            return;
+        }
         let cancelled = j.phase == JobPhase::Cancelled;
         let (job, kind, root, target, scope) = (j.id, j.kind, j.root, j.target, j.scope);
         j.phase = if cancelled {
@@ -252,27 +261,28 @@ impl<B: Backend> Applier<B> {
             let shadow = m.tree.resolve(root);
             match (cancelled, shadow, m.tree.resolve_visible(target)) {
                 (false, Some(s), Some(t)) => {
-                    let again = kept.map(|k| Self::graft_kept(m, &k, t, class.as_ref()));
+                    let grafted = kept.map(|mut k| Self::graft_kept(m, &mut k, t, class));
                     m.tree.replace(t, s);
-                    // What the kept directories share may have been homed in what went.
-                    if again.is_some() {
-                        self.extents.rehome_detached(&mut m.tree);
-                    }
                     self.start_measure(m, root);
                     let keys = self.links.keys_in(scope);
                     self.work.push_back(Work::Free);
                     self.work.push_back(Work::Merge { keys, from: scope });
-                    let again = again.map(|g| g.rescans(&m.tree, class.as_ref()));
-                    for r in again.into_iter().flatten() {
-                        self.rescan(m, r, None, false);
+                    if let Some(g) = grafted {
+                        self.resume.rehome |= g.rehome;
+                        self.work.push_back(Work::Grafted(Box::new(g)));
                     }
                 }
-                (_, Some(s), _) => {
+                (_, Some(s), t) => {
                     m.tree.detach(s);
                     self.work.push_back(Work::Free);
+                    // A resume's rescan cancelled: what it was to list again stays as loaded.
+                    if cancelled && kept.is_some() && t.is_some() {
+                        self.unverified_below(m, target);
+                    }
                 }
                 _ => {}
             }
+            self.rehome_when_swapped();
         }
         // Every job's end (done or cancelled) settles the visible charges to the lowest path, so
         // per-directory totals never depend on scan order.

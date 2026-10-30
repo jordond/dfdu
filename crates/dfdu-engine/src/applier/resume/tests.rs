@@ -1,7 +1,8 @@
+use super::rescans::kept_by_target;
 use super::*;
 use crate::test_util::meta;
 use dfdu_scan::JobId;
-use dfdu_tree::Kind;
+use dfdu_tree::{DirState, Kind};
 
 /// /r/{a/{b/, f}, c/}, every directory read to the end, as loaded; returns the tree and r,
 /// a, b, c.
@@ -54,8 +55,8 @@ fn only_the_topmost_changed_directories_are_kept() {
     assert_eq!(topmost(&t, vec![b, c, a, b]), want);
 }
 
-fn keys(k: &Option<Box<Kept>>) -> Vec<(u64, u64)> {
-    let mut v: Vec<(u64, u64)> = k.as_ref().unwrap().nodes.keys().copied().collect();
+fn keys(k: &Kept) -> Vec<(u64, u64)> {
+    let mut v: Vec<(u64, u64)> = k.nodes.keys().copied().collect();
     v.sort_unstable();
     v
 }
@@ -72,7 +73,7 @@ fn what_is_listed_again_keeps_the_rest() {
     let kept = kept_by_target(&t, r, &[b], &[b], &[]);
     assert!(keys(&kept[0]).is_empty());
     // A mount is scanned in full.
-    assert!(kept_by_target(&t, r, &[c], &[c], &[c])[0].is_none());
+    assert!(keys(&kept_by_target(&t, r, &[a], &[a], &[a])[0]).is_empty());
 }
 
 /// A directory whose listing was not read to the end is listed again.
@@ -84,8 +85,31 @@ fn an_incomplete_directory_is_not_kept() {
     assert_eq!(keys(&kept[0]), [t.dev_ino(a)]);
 }
 
+/// Deletes of `items` sent to `ap`, refused as not refreshed by a cancelled resume.
+fn refused_as_unverified<B: Backend>(
+    ap: &mut Applier<B>,
+    m: &mut Model,
+    items: Vec<NodeRef>,
+) -> usize {
+    let before = m.status.notices.len();
+    ap.apply_command(
+        m,
+        Command::Delete {
+            items,
+            mode: dfdu_clean::Mode::Permanent,
+        },
+    );
+    m.status
+        .notices
+        .iter()
+        .skip(before)
+        .filter(|n| n.contains("its resume was cancelled"))
+        .count()
+}
+
 /// While a resume walks the loaded tree, what would touch it is refused; a cancel while it
-/// walks cancels the rescans it starts once it has walked it, which leave the tree as loaded.
+/// walks starts none of its rescans, which leaves the tree as loaded: the scan is incomplete,
+/// and deletes refuse what the resume did not refresh, which a rescan may list again.
 #[test]
 fn a_resume_walking_refuses_and_cancels_what_follows() {
     use std::sync::Arc;
@@ -113,6 +137,7 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
             opts: JobOptions::default(),
             changed: Some(vec![PathBuf::from("a/b"), PathBuf::from("c")]),
             since: 0,
+            root: None,
         },
     );
     assert!(ap.resuming());
@@ -137,23 +162,18 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
         ap.work_step(&mut m);
         ap.check(&m).unwrap();
     }
-    let rescans: Vec<JobPhase> = ap
-        .jobs
-        .values()
-        .filter(|j| j.kind == JobKind::Rescan)
-        .map(|j| j.phase)
-        .collect();
-    assert!(!rescans.is_empty());
-    assert!(
-        rescans.iter().all(|&p| p == JobPhase::Cancelled),
-        "{rescans:?}"
-    );
+    assert!(!ap.jobs.values().any(|j| j.kind == JobKind::Rescan));
+    assert!(m.status.incomplete);
+    assert_eq!(refused_as_unverified(&mut ap, &mut m, vec![a, c]), 2);
     assert!(!unrefreshed(&m.tree, m.tree.resolve_visible(c).unwrap()));
+    command(&mut ap, &mut m, Command::Rescan { node: c });
+    assert!(ap.jobs.values().any(|j| j.kind == JobKind::Rescan));
 }
 
 /// Once the walk has taken the tree over, the resume waits for the check of the directories
 /// it keeps, refusing what would touch the tree as while it walks; a cancel then ends the
-/// wait, cancelling the rescans, and an answer that comes late changes nothing.
+/// wait, starting none of the rescans, and an answer that comes late changes nothing. What
+/// the check did not vouch for stays refused to deletes.
 #[test]
 fn a_resume_checking_refuses_and_cancels_what_follows() {
     use std::sync::Arc;
@@ -176,6 +196,7 @@ fn a_resume_checking_refuses_and_cancels_what_follows() {
             opts: JobOptions::default(),
             changed: Some(vec![]),
             since: 0,
+            root: None,
         },
     );
     while ap.has_work() {
@@ -205,17 +226,9 @@ fn a_resume_checking_refuses_and_cancels_what_follows() {
         ap.check(&m).unwrap();
     }
     assert!(!ap.resuming());
-    let rescans: Vec<JobPhase> = ap
-        .jobs
-        .values()
-        .filter(|j| j.kind == JobKind::Rescan)
-        .map(|j| j.phase)
-        .collect();
-    assert!(!rescans.is_empty());
-    assert!(
-        rescans.iter().all(|&p| p == JobPhase::Cancelled),
-        "{rescans:?}"
-    );
+    assert!(!ap.jobs.values().any(|j| j.kind == JobKind::Rescan));
+    assert!(m.status.incomplete);
+    assert_eq!(refused_as_unverified(&mut ap, &mut m, vec![a, c]), 2);
     let job = ap.jobs.keys().next().copied().unwrap();
     ap.apply(
         &mut m,
@@ -256,6 +269,7 @@ fn what_the_check_finds_is_listed_again() {
             opts: JobOptions::default(),
             changed: Some(vec![]),
             since: 0,
+            root: None,
         },
     );
     while ap.has_work() {
@@ -281,7 +295,8 @@ fn what_the_check_finds_is_listed_again() {
 
     // Where the walk's batches order the directories: by the walk, from the root down.
     let order = ap
-        .resume_waiting
+        .resume
+        .waiting
         .as_ref()
         .and_then(|w| w.verify.as_ref())
         .and_then(|v| v.batches[0].clone())
@@ -304,7 +319,7 @@ fn what_the_check_finds_is_listed_again() {
         },
         1,
     );
-    assert!(ap.resume_waiting.is_none() && ap.has_work());
+    assert!(ap.resume.waiting.is_none() && ap.has_work());
     let Some(Work::Resume(walk)) = ap.work.front() else {
         panic!("the walk goes on");
     };
@@ -326,7 +341,7 @@ fn what_the_check_finds_is_listed_again() {
 fn a_kept_directory_is_kept_with_its_loaded_mtime() {
     let (t, [r, a, _, c]) = tree();
     let kept = kept_by_target(&t, r, &[r], &[r], &[]);
-    let keep = kept[0].as_ref().unwrap().keep();
+    let keep = kept[0].keep();
     let (dev, ino) = t.dev_ino(c);
     assert!(!keep.take(dev, ino, t.mtime(c) + 1), "its entries changed");
     let (dev, ino) = t.dev_ino(a);

@@ -128,6 +128,13 @@ impl<B: Backend> Applier<B> {
                 ));
                 continue;
             }
+            if self.unverified(&m.tree, ix) {
+                m.status.notice(format!(
+                    "delete: {} is not refreshed yet: its resume was cancelled before listing it again; rescan it first",
+                    String::from_utf8_lossy(m.tree.name(ix))
+                ));
+                continue;
+            }
             if let Some(why) = Self::delete_refusal(&m.tree, ix, self.privileged) {
                 m.status.notice(format!(
                     "delete: {} {why}",

@@ -25,6 +25,13 @@ fn engine() -> Engine<PortableBackend> {
     )
 }
 
+/// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
+fn stat(root: &Path) -> Option<dfdu_tree::Meta> {
+    fs::metadata(root)
+        .ok()
+        .map(|m| dfdu_tree::Meta::from_metadata(&m))
+}
+
 fn root_total(e: &Engine<PortableBackend>) -> Totals {
     e.read(|m| m.tree.total(m.tree.roots().next().unwrap()))
 }
@@ -71,6 +78,7 @@ fn resumed_snapshot_is_rescanned() {
         opts: JobOptions::default(),
         changed: None,
         since: 0,
+        root: None,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let t = root_total(&e);
@@ -114,6 +122,7 @@ fn resumed_snapshot_is_classified() {
         },
         changed: None,
         since: 0,
+        root: None,
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| {
@@ -174,6 +183,7 @@ fn resume_rescans_only_changed_directories() {
             "a/b/node_modules/dep".into(),
         ]),
         since: 0,
+        root: stat(&root),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let find = |m: &dfdu_engine::Model, rel: &str| {
@@ -306,6 +316,7 @@ fn a_loaded_tree_is_classified_as_a_scan_would() {
         opts: opts(),
         changed: Some(vec![]),
         since: 0,
+        root: stat(&root),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     assert_eq!(marks(&e), scanned);
@@ -336,6 +347,7 @@ fn classify_loaded_cost() {
         },
         changed: Some(vec![]),
         since: 0,
+        root: stat(&root),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let n = e.read(|m| m.tree.live_nodes());
@@ -410,6 +422,7 @@ fn btrfs_generations_tell_what_changed() {
         opts: JobOptions::default(),
         changed: Some(changed),
         since: 0,
+        root: stat(&root),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let resumed = root_total(&e);

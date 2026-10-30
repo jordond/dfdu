@@ -1,5 +1,5 @@
 //! Incremental work done in bounded steps between messages: freeing, hard-link re-election
-//! and merging, and the walks that cancel a job or find lost directories.
+//! and merging, the walks that cancel a job or find lost directories, and a resume's.
 
 use dfdu_scan::Backend;
 use dfdu_tree::{DirState, ErrKind, NodeRef};
@@ -43,8 +43,12 @@ pub(super) enum Work {
     FinishJob {
         job: u32,
     },
-    /// A resume's walk over the loaded tree.
+    /// A resume's walk over the loaded tree, and the start of its rescans.
     Resume(Box<super::resume::ResumeWalk>),
+    /// The rescans of kept directories a resume's rescan left once it swapped in.
+    Grafted(Box<super::resume::Grafted>),
+    /// A pass over the extent table homing again what lost its home to a resume's rescan.
+    Rehome(Box<crate::extents::Rehome>),
 }
 
 /// Units of incremental work per step (nodes freed, nodes walked).
@@ -128,6 +132,12 @@ impl<B: Backend> Applier<B> {
             Work::LostWalk { job, stack } => self.lost_walk_step(m, job, stack),
             Work::FinishJob { job } => self.finish_job(m, job),
             Work::Resume(walk) => self.resume_step(m, walk),
+            Work::Grafted(g) => self.grafted_step(m, g),
+            Work::Rehome(mut r) => {
+                if !self.extents.rehome_step(&mut m.tree, &mut r, STEP_UNITS) {
+                    self.work.push_front(Work::Rehome(r));
+                }
+            }
         }
         self.refresh_status(m);
     }

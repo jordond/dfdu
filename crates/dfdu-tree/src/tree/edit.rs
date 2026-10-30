@@ -1,5 +1,7 @@
 //! Adding, changing, detaching and freeing nodes, and keeping their ancestors' totals.
 
+use std::collections::HashMap;
+
 use super::{Ix, NONE, Node, NodeFlags, NodeRef, Tree};
 use crate::pages::NameArena;
 use crate::{DirRec, ErrKind, Meta, Totals};
@@ -332,39 +334,91 @@ impl Tree {
         self.free_work.push(FreeWork::Node(old.0));
     }
 
-    /// Moves the subtree at `kept` into the place of the directory `placeholder`, under the
-    /// placeholder's name, and detaches the placeholder: a resume keeps a loaded directory
-    /// where its rescan found it again. The ancestors on both sides keep their totals.
+    /// Moves the subtree at each `kept` of `pairs` into the place of the directory
+    /// `placeholder`, under the placeholder's name, and detaches the placeholder: a resume
+    /// keeps a loaded directory where its rescan found it again. The ancestors on both sides
+    /// keep their totals. Each parent's children are gone through once, for all the pairs.
     ///
     /// # Panics
     ///
-    /// `kept` or `placeholder` is a root, or `placeholder` is not a child of its parent.
-    pub fn graft(&mut self, placeholder: Ix, kept: Ix) {
-        let from = self.nodes[kept.0 as usize].parent;
-        let to = self.nodes[placeholder.0 as usize].parent;
-        assert!(from != NONE && to != NONE, "neither is a root");
-        let (total, old_total) = (self.total(kept), self.total(placeholder));
-        self.remove_child(Ix(from), kept.0);
-        self.propagate_sub(Ix(from), &total);
-        let d = self.nodes[to as usize].dir as usize;
-        let found = self
-            .kids
-            .replace(&mut self.dirs[d].kids, placeholder.0, kept.0);
-        assert!(found, "child");
-        let names = (
-            self.nodes[kept.0 as usize].name,
-            self.nodes[placeholder.0 as usize].name,
-        );
-        let k = &mut self.nodes[kept.0 as usize];
-        k.parent = to;
-        k.name = names.1;
-        self.propagate_sub(Ix(to), &old_total);
-        self.propagate_add(Ix(to), &total);
-        let n = &mut self.nodes[placeholder.0 as usize];
-        n.name = names.0;
-        n.parent = NONE;
-        n.flags.set(NodeFlags::DETACHED, true);
-        self.free_work.push(FreeWork::Node(placeholder.0));
+    /// A `kept` or `placeholder` is a root, or a `placeholder` is not a child of its parent.
+    pub fn graft(&mut self, pairs: &[(Ix, Ix)]) {
+        // By the placeholders' parent, then the placeholder: each parent's are a run, looked up
+        // in as its children are gone through.
+        let mut to: Vec<(u32, u32, u32)> = pairs
+            .iter()
+            .map(|&(p, k)| (self.nodes[p.0 as usize].parent, p.0, k.0))
+            .collect();
+        to.sort_unstable();
+        // The totals that come to each run's parent and leave it, and those that leave each
+        // parent of the kept directories, siblings together.
+        let mut runs = Vec::new();
+        let mut from: HashMap<u32, Totals> = HashMap::new();
+        let mut last: Option<(u32, Totals)> = None;
+        for run in to.chunk_by(|a, b| a.0 == b.0) {
+            assert!(run[0].0 != NONE, "neither is a root");
+            let (mut sum, mut old) = (Totals::default(), Totals::default());
+            for &(_, p, k) in run {
+                let f = self.nodes[k as usize].parent;
+                assert!(f != NONE, "neither is a root");
+                let total = self.total(Ix(k));
+                sum.add(&total);
+                old.add(&self.total(Ix(p)));
+                match &mut last {
+                    Some((q, left)) if *q == f => left.add(&total),
+                    _ => {
+                        if let Some((q, left)) = last.replace((f, total)) {
+                            from.entry(q).or_default().add(&left);
+                        }
+                    }
+                }
+            }
+            runs.push((sum, old));
+        }
+        if let Some((q, left)) = last {
+            from.entry(q).or_default().add(&left);
+        }
+        // The kept directories leave their parents, which tell them by their parent.
+        for &(_, _, k) in &to {
+            self.nodes[k as usize].parent = NONE;
+        }
+        for (f, left) in from {
+            let d = self.nodes[f as usize].dir as usize;
+            let nodes = &self.nodes;
+            self.kids
+                .retain(&mut self.dirs[d].kids, |c| nodes[c as usize].parent == f);
+            self.propagate_sub(Ix(f), &left);
+        }
+        for (run, (sum, old)) in to.chunk_by(|a, b| a.0 == b.0).zip(runs) {
+            let t = run[0].0;
+            let d = self.nodes[t as usize].dir as usize;
+            // Placeholders are listed in the order they were added: the next is tried first.
+            let (mut next, mut found) = (0, 0);
+            self.kids.replace_each(&mut self.dirs[d].kids, |c| {
+                let at = match run.get(next) {
+                    Some(e) if e.1 == c => Some(next),
+                    _ => run.binary_search_by_key(&c, |e| e.1).ok(),
+                };
+                at.map_or(c, |i| {
+                    (next, found) = (i + 1, found + 1);
+                    run[i].2
+                })
+            });
+            assert_eq!(found, run.len(), "child");
+            self.propagate_sub(Ix(t), &old);
+            self.propagate_add(Ix(t), &sum);
+        }
+        for &(t, p, k) in &to {
+            let names = (self.nodes[k as usize].name, self.nodes[p as usize].name);
+            let n = &mut self.nodes[k as usize];
+            n.parent = t;
+            n.name = names.1;
+            let n = &mut self.nodes[p as usize];
+            n.name = names.0;
+            n.parent = NONE;
+            n.flags.set(NodeFlags::DETACHED, true);
+            self.free_work.push(FreeWork::Node(p));
+        }
     }
 
     fn remove_child(&mut self, parent: Ix, child: u32) {

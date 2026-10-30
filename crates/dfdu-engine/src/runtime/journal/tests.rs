@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering::Relaxed;
 
 use crossbeam_channel::{Receiver, unbounded};
-use dfdu_scan::PortableBackend;
+use dfdu_scan::{Limits, PortableBackend, Shared};
 use dfdu_tree::{DirState, Meta};
 
 use super::*;
@@ -37,7 +37,7 @@ fn loaded(root: &Path) -> Tree {
 }
 
 /// A query of `query` counted as sent, and where its resume goes.
-fn ask(query: Query) -> (Ask, Receiver<Command>) {
+fn ask(query: Query) -> (Ask<PortableBackend>, Receiver<Command>) {
     let (tx, rx) = unbounded();
     let ask = Ask {
         tx,
@@ -48,8 +48,76 @@ fn ask(query: Query) -> (Ask, Receiver<Command>) {
         path: PathBuf::from("/nowhere"),
         at: AT,
         query,
+        scan: None,
     };
     (ask, rx)
+}
+
+/// The root is stat'ed on the journal's thread once it answered, and sent with the resume; a
+/// root that is gone is sent as not stat'ed, and the resume is still counted, then applied.
+#[test]
+fn the_root_is_stat_ed_after_the_journal_answered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
+    let scan = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let (mut a, rx) = ask(|_, _, _| Some(vec![]));
+    a.path.clone_from(&root);
+    a.scan = Some(scan.clone());
+    let sent = a.sent.clone();
+    a.run();
+    let Ok(Command::Resume { root: Some(m), .. }) = rx.try_recv() else {
+        panic!("a resume with the root's stat");
+    };
+    let now = Meta::from_metadata(&std::fs::metadata(&root).unwrap());
+    assert_eq!((m.dev, m.ino, m.mtime), (now.dev, now.ino, now.mtime));
+
+    let (mut a, rx) = ask(|_, _, _| Some(vec![]));
+    a.path = root.join("gone");
+    a.scan = Some(scan);
+    a.run();
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Command::Resume {
+            changed: Some(_),
+            root: None,
+            ..
+        })
+    ));
+    assert_eq!(sent.load(SeqCst), 1);
+}
+
+/// A loaded tree whose root is gone by the time it is resumed ends as a scan of that path
+/// would: the root, with its error, and nothing below it.
+#[test]
+fn a_root_that_is_gone_is_listed_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap().join("tree");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("f"), b"data").unwrap();
+    let mut tree = loaded(&root);
+    let r = tree.roots().next().unwrap();
+    let f = tree.add_file(
+        r,
+        b"f",
+        &Meta::from_metadata(&std::fs::metadata(root.join("f")).unwrap()),
+        true,
+        None,
+    );
+    let own = tree.own(f);
+    tree.propagate_add(r, &own);
+    std::fs::remove_dir_all(&root).unwrap();
+    let e = engine();
+    e.resume_with(tree, Some(AT), JobOptions::default(), |_, _, _| {
+        Some(vec![])
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
+    let (items, error) = e.read(|m| {
+        let r = m.tree.roots().next().unwrap();
+        (m.tree.total(r).items, m.tree.error(r))
+    });
+    assert_eq!(items, 1, "the root alone");
+    assert!(error.is_some());
+    e.shutdown(Duration::from_millis(200));
 }
 
 /// A query that panics sends the resume without changes, so everything is rescanned, and the

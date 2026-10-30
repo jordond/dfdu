@@ -97,7 +97,7 @@ fn a_graft_moves_the_kept_subtree_into_the_placeholder() {
     let placeholder = add_dir(&mut t, shadow, "renamed");
     add_file(&mut t, shadow, "new", 30);
     let kept_ref = t.node_ref(kept);
-    t.graft(placeholder, kept);
+    t.graft(&[(placeholder, kept)]);
     t.check(&[shadow]).unwrap();
     assert_eq!(t.total(old).apparent, 10);
     assert_eq!(t.total(shadow).apparent, 10 + 10 + 100 + 30);
@@ -109,6 +109,44 @@ fn a_graft_moves_the_kept_subtree_into_the_placeholder() {
     t.check(&[]).unwrap();
     while !t.free_step(1, |_| {}) {}
     assert!(t.resolve_visible(kept_ref).is_some());
+    t.check(&[]).unwrap();
+}
+
+/// Many kept directories of one parent, in the segment and the blocks of a wide directory, go
+/// to their placeholders at once; the others stay in order.
+#[test]
+fn a_graft_of_many_keeps_both_sides_in_order() {
+    let mut t = Tree::new();
+    let root = t.new_root(b"/r", &dir_meta(), true);
+    let old = add_dir(&mut t, root, "a");
+    let shadow = t.new_root(b"a", &dir_meta(), false);
+    let mut pairs = Vec::new();
+    let mut stays = Vec::new();
+    for i in 0..3_000 {
+        let k = add_dir(&mut t, old, &format!("k{i}"));
+        add_file(&mut t, k, "f", 1);
+        let p = add_dir(&mut t, shadow, &format!("k{i}"));
+        if i % 3 == 0 {
+            stays.push(k);
+        } else {
+            pairs.push((p, k));
+        }
+    }
+    let before = (t.total(old).apparent, t.total(shadow).apparent);
+    t.graft(&pairs);
+    t.check(&[shadow]).unwrap();
+    assert_eq!(t.children(old).collect::<Vec<_>>(), stays);
+    let moved = 2_000 * (10 + 1);
+    assert_eq!(t.total(old).apparent, before.0 - moved);
+    assert_eq!(t.total(shadow).apparent, before.1 + 2_000);
+    let kids: Vec<Ix> = t.children(shadow).collect();
+    for (i, &c) in kids.iter().enumerate() {
+        assert_eq!(t.name(c), format!("k{i}").as_bytes());
+        assert_eq!(i % 3 != 0, pairs.iter().any(|&(_, k)| k == c));
+    }
+    t.replace(old, shadow);
+    t.check(&[]).unwrap();
+    while !t.free_step(64, |_| {}) {}
     t.check(&[]).unwrap();
 }
 

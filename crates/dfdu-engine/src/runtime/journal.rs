@@ -1,10 +1,13 @@
 //! The resume of a tree read from a file: the change journal asked what changed since, on a
-//! thread of its own (it can take a second or more), and [`Command::Resume`] sent with its
-//! answer.
+//! thread of its own (it can take a second or more), then the root stat'ed there, off the
+//! applier, which does no I/O (a root on a network filesystem that stopped answering stalls
+//! that thread alone), and [`Command::Resume`] sent with both.
 //!
 //! The resume is counted as sent before the journal is asked, so that waiting for idle waits
 //! for it, and uncounted on every path that does not send it: a query that panics sends it
-//! without changes (everything is rescanned), and an engine that stops cancels it.
+//! without changes (everything is rescanned), and an engine that stops cancels it. A root that
+//! is gone, or cannot be stat'ed, is sent as such: the resume lists it again, and its rescan
+//! says why.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -15,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 use dfdu_scan::journal::{JournalPosition, changed_since_cancellable};
-use dfdu_scan::{Backend, JobOptions};
+use dfdu_scan::{Backend, JobOptions, Shared};
 use dfdu_tree::{NodeRef, Tree};
 
 use super::Engine;
@@ -34,9 +37,8 @@ pub(super) struct Asking {
     cancel: Arc<AtomicBool>,
 }
 
-/// What the thread needs to ask and to send the resume.
-#[derive(Clone)]
-struct Ask {
+/// What the thread needs to ask, to stat the root and to send the resume.
+struct Ask<B: Backend> {
     tx: Sender<Command>,
     sent: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
@@ -45,6 +47,24 @@ struct Ask {
     path: PathBuf,
     at: JournalPosition,
     query: Query,
+    /// What stats the root: none for a remote scan, whose root is the agent's.
+    scan: Option<Arc<Shared<B>>>,
+}
+
+impl<B: Backend> Clone for Ask<B> {
+    fn clone(&self) -> Self {
+        Ask {
+            tx: self.tx.clone(),
+            sent: self.sent.clone(),
+            cancel: self.cancel.clone(),
+            node: self.node,
+            opts: self.opts.clone(),
+            path: self.path.clone(),
+            at: self.at,
+            query: self.query,
+            scan: self.scan.clone(),
+        }
+    }
 }
 
 impl<B: Backend> Engine<B> {
@@ -82,6 +102,7 @@ impl<B: Backend> Engine<B> {
                 opts,
                 changed: None,
                 since: 0,
+                root: None,
             });
             return;
         };
@@ -96,6 +117,7 @@ impl<B: Backend> Engine<B> {
             path,
             at,
             query,
+            scan: self.link.is_none().then(|| self.shared.clone()),
         };
         let (inline, cancel) = (ask.clone(), ask.cancel.clone());
         match thread::Builder::new()
@@ -115,14 +137,23 @@ impl<B: Backend> Engine<B> {
     }
 }
 
-impl Ask {
-    /// Asks the journal and sends the resume with its answer, unless cancelled by then.
+impl<B: Backend> Ask<B> {
+    /// Asks the journal, then stats the root when it answered, and sends the resume with
+    /// both, unless cancelled by then.
     fn run(self) {
-        // A query that panics cannot tell what changed: everything is rescanned.
-        let changed = catch_unwind(AssertUnwindSafe(|| {
-            (self.query)(&self.path, self.at, &self.cancel)
+        // A query (or stat) that panics cannot tell what changed: everything is rescanned.
+        let (changed, root) = catch_unwind(AssertUnwindSafe(|| {
+            let changed = (self.query)(&self.path, self.at, &self.cancel);
+            let root = match (&changed, &self.scan) {
+                (Some(_), Some(s)) if !self.cancel.load(SeqCst) => s
+                    .backend
+                    .stat_root(&s.backend.loc_from_path(&self.path))
+                    .ok(),
+                _ => None,
+            };
+            (changed, root)
         }))
-        .unwrap_or(None);
+        .unwrap_or((None, None));
         if self.cancel.load(SeqCst) {
             self.sent.fetch_sub(1, SeqCst);
             return;
@@ -132,6 +163,7 @@ impl Ask {
             opts: self.opts,
             changed,
             since: self.at.time,
+            root,
         };
         if self.tx.send(resume).is_err() {
             self.sent.fetch_sub(1, SeqCst);

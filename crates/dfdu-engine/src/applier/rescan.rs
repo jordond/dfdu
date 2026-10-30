@@ -128,7 +128,8 @@ impl<B: Backend> Applier<B> {
         self.rescan_keeping(m, node, given, enter, None);
     }
 
-    /// [`Applier::rescan`], keeping the loaded directories of `kept` where the scan meets them.
+    /// [`Applier::rescan`], keeping the loaded directories of `kept` where the scan meets them:
+    /// one of a resume's rescans, which has a `kept` even when it keeps nothing.
     pub(super) fn rescan_keeping(
         &mut self,
         m: &mut Model,
@@ -192,7 +193,9 @@ impl<B: Backend> Applier<B> {
             }
             return;
         }
-        if !self.supersede_rescans(m, ix) {
+        // A resume's rescans (those that keep) overlap neither one another nor any other:
+        // nothing else rescans the loaded tree until all of them have started.
+        if kept.is_none() && !self.supersede_rescans(m, ix) {
             return;
         }
         self.cut(m, ix, DirState::Superseded);

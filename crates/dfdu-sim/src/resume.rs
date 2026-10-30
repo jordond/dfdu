@@ -3,14 +3,17 @@
 //! the loaded tree with what a change journal would say, among random rescans, deletes and
 //! cancels. The journal sometimes cannot tell (everything is scanned again), names directories
 //! that did not change or are not there, and loses changed directories anywhere, or all of
-//! them, which the resume must find by their mtimes. The end is checked as any run's end,
-//! against the spec: what a fresh scan of it gives.
+//! them, which the resume must find by their mtimes. The journal position is read at a time
+//! (`since`) when it can tell: a directory whose mtime is not older may change within that
+//! same second without its mtime moving, which the resume must find all the same. The end is
+//! checked as any run's end, against the spec: what a fresh scan of it gives.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use dfdu_engine::Command;
+use dfdu_scan::Backend as _;
 use dfdu_tree::{DirState, Ix, Kind, Meta, NodeFlags, NodeRef, Tree};
 
 use crate::{ROOT, Rng, Sim, SimConfig, SimReport, Spec};
@@ -25,11 +28,14 @@ const CHANGES: u64 = 5;
 /// When a check of either run fails; the message names the seed and what went wrong.
 pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     let mut rng = Rng::new(seed);
-    let spec = Arc::new(Spec::generate(
-        &mut rng,
-        &cfg.spec,
-        cfg.limits.block_entries,
-    ));
+    let mut spec = Spec::generate(&mut rng, &cfg.spec, cfg.limits.block_entries);
+    // Directories last changed over a few seconds, around when the journal position is read.
+    for n in &mut spec.nodes {
+        if n.meta.kind == Kind::Dir {
+            n.meta.mtime = 1 + i64::from(rng.below(3) == 0) + i64::from(rng.below(3) == 0);
+        }
+    }
+    let spec = Arc::new(spec);
     // What is created after the snapshot does not exist yet.
     let added = pick(&spec, &mut rng, &[]);
     for &i in &added {
@@ -51,8 +57,11 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         ..cfg.clone()
     };
     let mut rng = first.rng;
+    // When the journal position was read, before the scan; 0 when not known.
+    let since = if rng.chance(250) { 0 } else { 1 + rng.below(3) };
 
-    // The changes since: each marks its directory's mtime.
+    // The changes since: each marks its directory's mtime, unless made within the second the
+    // position was read, in a directory whose mtime is that second or later.
     let mut changed = Vec::new();
     for &i in &added {
         restore_subtree(&spec, i);
@@ -63,7 +72,10 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         changed.push(spec.parent[i as usize]);
     }
     for &d in &changed {
-        spec.touch(d);
+        let mtime = u64::try_from(spec.nodes[d as usize].meta.mtime).unwrap_or(0);
+        if since == 0 || mtime < since || !rng.chance(500) {
+            spec.touch(d);
+        }
     }
     let (answer, lost) = journal(&spec, &mut rng, changed);
 
@@ -77,15 +89,19 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     sim.report.lost_events = lost;
     sim.report.full_resumes = u64::from(answer.is_none());
     let opts = sim.scan_opts();
+    // Stat'ed after the journal was asked, as the engine's journal thread does.
+    let stat = sim.shared.backend.stat_root(&ROOT).ok();
     sim.command(Command::Resume {
         node,
         opts: opts.clone(),
         changed: answer,
-        since: 0,
+        since,
+        root: stat,
     })?;
     sim.settle()?;
     // A cancelled resume leaves what it had not listed again as loaded, out of date where it
-    // changed: it is resumed again, in full, until one is not cancelled (the cancels run out).
+    // changed, refused to deletes and the scan incomplete: it is resumed again, in full, until
+    // one is not cancelled (the cancels run out).
     let mut cancels = 0;
     while sim.report.cancels > cancels {
         cancels = sim.report.cancels;
@@ -97,6 +113,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
             opts: opts.clone(),
             changed: None,
             since: 0,
+            root: None,
         })?;
         sim.settle()?;
     }

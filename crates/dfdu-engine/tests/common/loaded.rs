@@ -68,6 +68,11 @@ pub fn loaded(root: &Path) -> Tree {
     t
 }
 
+/// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
+pub fn stat(root: &Path) -> Option<Meta> {
+    fs::metadata(root).ok().map(|m| Meta::from_metadata(&m))
+}
+
 /// The node at `rel` below the root, if there is one.
 pub fn find(t: &Tree, rel: &str) -> Option<Ix> {
     let mut at = t.roots().next().unwrap();
@@ -112,13 +117,15 @@ pub fn resume_since(
     since: u64,
 ) -> Engine<PortableBackend> {
     let e = engine();
-    let node = tree.node_ref(tree.roots().next().unwrap());
+    let root = tree.roots().next().unwrap();
+    let (node, path) = (tree.node_ref(root), tree.path_buf(root));
     e.load(tree);
     e.send(Command::Resume {
         node,
         opts,
         changed: Some(changed.iter().map(PathBuf::from).collect()),
         since,
+        root: stat(&path),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e

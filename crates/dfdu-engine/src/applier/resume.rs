@@ -7,9 +7,12 @@
 //! workers stat each directory it reaches that the journal does not name, to find what the
 //! journal lost (`verify`). Until both end, nothing in the tree is deleted, rescanned or
 //! cleaned. Then the changed directories are listed again by rescans that keep the loaded
-//! subdirectories they find.
+//! subdirectories they find, started a few at a time (`rescans`), each putting what it kept in
+//! the place of its placeholders as it swaps in (`graft`). What a cancelled resume did not list
+//! again stays refused to deletes ([`Applier::unverified`]).
 
 mod graft;
+mod rescans;
 mod verify;
 mod walk;
 
@@ -18,23 +21,25 @@ use std::path::PathBuf;
 
 use dfdu_scan::journal::Keep;
 use dfdu_scan::{Backend, JobId, JobOptions};
-use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Pages, Tree};
+use dfdu_tree::{Ix, Meta, NodeRef, Pages, Tree};
 
 use super::work::Work;
 use super::{Applier, Command, Job, JobKind, JobPhase, Model};
 use crate::links::VISIBLE;
 use crate::reclassify::ClassifyLoaded;
+pub(in crate::applier) use graft::Grafted;
 use verify::Verify;
 pub(in crate::applier) use walk::ResumeWalk;
 
 /// What a resume's rescan keeps from the loaded tree: the loaded directories by device and
 /// inode, with the mtime each was loaded with, which its scanner does not read while the mtime
 /// holds ([`Keep`]), and the placeholders it added for those it met, which the loaded
-/// directories replace when it swaps in.
+/// directories replace when it swaps in, once each is found ([`graft::Finding`]).
 #[derive(Default)]
 pub(super) struct Kept {
     nodes: HashMap<(u64, u64), (NodeRef, i64)>,
     pub placeholders: Vec<NodeRef>,
+    finding: graft::Finding,
 }
 
 impl Kept {
@@ -42,6 +47,21 @@ impl Kept {
     pub(super) fn keep(&self) -> Keep {
         Keep::new(self.nodes.iter().map(|(&k, &(_, mtime))| (k, mtime)))
     }
+}
+
+/// What the applier keeps of resumes beside their walks.
+#[derive(Default)]
+pub(super) struct Resumes {
+    /// A walk that has taken the tree over and waits for the check of the directories it
+    /// keeps to end.
+    pub waiting: Option<Box<ResumeWalk>>,
+    /// Directories a cancelled resume did not list again, or check below, as it was to: what
+    /// its job still holds at or below them, as loaded, is not refreshed.
+    unverified: Vec<NodeRef>,
+    /// A rescan swapped in directories it kept from below one that held shared extents, whose
+    /// homes may have gone with what it replaced: they are homed again once no resume's rescan
+    /// is still to swap in.
+    pub(super) rehome: bool,
 }
 
 /// Whether `ix` was loaded from a file ([`Engine::load`](crate::Engine::load)) and no resume has
@@ -57,22 +77,31 @@ impl Kept {
 /// mtime older than the journal position), and on the journal's word that its entries did not
 /// change within the same second as that mtime when the position's time is not known. A file
 /// changed in place below a kept directory, which moves no directory's mtime, is seen only when
-/// the journal names its directory, or by a rescan (the cache's periodic full scan is one).
+/// the journal names its directory, or by a rescan (the cache's periodic full scan is one). A
+/// resume cancelled before it has listed again what it was to leaves that refused to deletes
+/// and native commands ([`Applier::unverified`]), rescans allowed.
 #[must_use]
 pub fn unrefreshed(tree: &Tree, ix: Ix) -> bool {
-    let dir = if tree.dir(ix).is_some() {
-        Some(ix)
-    } else {
-        tree.parent(ix)
-    };
-    dir.and_then(|d| tree.dir(d))
+    dir_of(tree, ix)
+        .and_then(|d| tree.dir(d))
         .is_some_and(|d| d.job == JobId(0))
 }
 
+/// `ix` if it is a directory, else its parent.
+fn dir_of(tree: &Tree, ix: Ix) -> Option<Ix> {
+    if tree.dir(ix).is_some() {
+        Some(ix)
+    } else {
+        tree.parent(ix)
+    }
+}
+
 /// The directories of the tree at `root` that `paths` (relative to it) name, or the nearest
-/// existing ancestor of one not in the tree.
+/// existing ancestor of one not in the tree. The subdirectories of a directory the paths go
+/// through are looked up by name, once for all of them.
 fn changed_dirs(tree: &Tree, root: Ix, paths: &[PathBuf]) -> Vec<Ix> {
-    let mut out = Vec::new();
+    let mut subdirs: HashMap<Ix, HashMap<&[u8], Ix>> = HashMap::new();
+    let mut out = Vec::with_capacity(paths.len());
     for p in paths {
         let mut at = root;
         for c in p.components() {
@@ -80,11 +109,14 @@ fn changed_dirs(tree: &Tree, root: Ix, paths: &[PathBuf]) -> Vec<Ix> {
                 continue;
             };
             let n = dfdu_tree::name_bytes(n);
-            match tree
-                .children(at)
-                .find(|&k| tree.dir(k).is_some() && tree.name(k) == &n[..])
-            {
-                Some(k) => at = k,
+            let names = subdirs.entry(at).or_insert_with(|| {
+                tree.children(at)
+                    .filter(|&k| tree.dir(k).is_some())
+                    .map(|k| (tree.name(k), k))
+                    .collect()
+            });
+            match names.get(&n[..]) {
+                Some(&k) => at = k,
                 None => break,
             }
         }
@@ -111,62 +143,6 @@ fn topmost(tree: &Tree, mut dirs: Vec<Ix>) -> Vec<Ix> {
     dirs
 }
 
-/// What the rescan of each of `targets` (the topmost of `wanted`) keeps: of the directories
-/// it lists again (those of `wanted` and every one above them up to the target), the loaded
-/// subdirectories that are not listed again themselves, were read to the end, and are on the
-/// root's volume and no mount. Nothing for a target in `mounts`, which is scanned in full.
-fn kept_by_target(
-    tree: &Tree,
-    root: Ix,
-    wanted: &[Ix],
-    targets: &[Ix],
-    mounts: &[Ix],
-) -> Vec<Option<Box<Kept>>> {
-    let dev = tree.dev_ino(root).0;
-    let at: HashMap<Ix, usize> = targets.iter().enumerate().map(|(i, &t)| (t, i)).collect();
-    // Each directory listed again, with the index of its target.
-    let mut listed: HashMap<Ix, usize> = HashMap::new();
-    for &d in wanted {
-        let mut path = Vec::new();
-        let mut cur = d;
-        let target = loop {
-            if let Some(&i) = listed.get(&cur).or_else(|| at.get(&cur)) {
-                break Some(i);
-            }
-            path.push(cur);
-            match tree.parent(cur) {
-                Some(p) => cur = p,
-                None => break None,
-            }
-        };
-        if let Some(i) = target {
-            listed.insert(cur, i);
-            listed.extend(path.into_iter().map(|p| (p, i)));
-        }
-    }
-    let mounts: HashSet<Ix> = mounts.iter().copied().collect();
-    let mut out: Vec<Option<Box<Kept>>> = targets
-        .iter()
-        .map(|t| (!mounts.contains(t)).then(Box::default))
-        .collect();
-    for (&l, &i) in &listed {
-        let Some(k) = out[i].as_mut().filter(|_| tree.dev_ino(l).0 == dev) else {
-            continue;
-        };
-        for c in tree.children(l) {
-            let keep = tree.dir(c).is_some_and(|d| d.state == DirState::Complete)
-                && !listed.contains_key(&c)
-                && tree.dev_ino(c).0 == dev
-                && !tree.flags(c).has(NodeFlags::MOUNT_ROOT);
-            if keep {
-                k.nodes
-                    .insert(tree.dev_ino(c), (tree.node_ref(c), tree.mtime(c)));
-            }
-        }
-    }
-    out
-}
-
 impl<B: Backend> Applier<B> {
     /// Takes over a tree loaded from a snapshot when the volume's change journal says which
     /// directories changed since (`changed`, relative to the root): the tree is classified as
@@ -174,18 +150,20 @@ impl<B: Backend> Applier<B> {
     /// Each changed directory, and every directory above it, is then listed again by a rescan
     /// of the topmost: the subdirectories those listings find that the loaded tree has (by
     /// device and inode, with the mtime it was loaded with) are kept as loaded unless listed
-    /// again themselves, and new ones are scanned in full. The root is listed again when its
-    /// own mtime changed, whatever the journal says, and scanned again in full when it was
-    /// replaced; any other loaded directory is listed again when its stat shows it changed
-    /// since `since` ([`Verify`]), and its parent when it is gone. Volumes mounted below keep
-    /// journals of their own (or none): their mount roots are scanned again in full.
+    /// again themselves, and new ones are scanned in full. The root is judged on `now`, its
+    /// stat taken after the journal was asked, as the other loaded directories are on theirs
+    /// ([`Verify`]): scanned again in full when it was replaced, listed again when its mtime
+    /// changed or is not older than `since`, or it could not be stat'ed (its rescan says why).
+    /// Any other loaded directory is listed again when its stat shows it changed, and its
+    /// parent when it is gone. Volumes mounted below keep journals of their own (or none):
+    /// their mount roots are scanned again in full.
     pub(super) fn resume_changed(
         &mut self,
         m: &mut Model,
         node: NodeRef,
         opts: JobOptions,
         changed: &[PathBuf],
-        since: u64,
+        (since, now): (u64, Option<Meta>),
     ) {
         let Some(root) = m
             .tree
@@ -196,16 +174,18 @@ impl<B: Backend> Applier<B> {
         };
         let mut wanted = changed_dirs(&m.tree, root, changed);
         if self.remote.is_none() {
-            let loc = self.scan.backend.loc_from_path(&m.tree.path_buf(root));
-            match self.scan.backend.stat_root(&loc) {
-                Ok(now) if (now.dev, now.ino) != m.tree.dev_ino(root) => {
+            let before = i64::try_from(since).unwrap_or(i64::MAX);
+            match now {
+                Some(now) if (now.dev, now.ino) != m.tree.dev_ino(root) => {
                     return self.rescan(m, node, Some(opts), false);
                 }
-                Ok(now) if now.mtime == m.tree.mtime(root) => {}
-                // Changed, or unreadable: its rescan says why.
+                Some(now)
+                    if now.mtime == m.tree.mtime(root) && (since == 0 || now.mtime < before) => {}
                 _ => wanted.push(root),
             }
         }
+        // This resume takes the whole tree over, and checks it again.
+        self.resume.unverified.clear();
         let id = self.next_job;
         self.next_job += 1;
         if let Some(c) = &opts.class {
@@ -245,9 +225,48 @@ impl<B: Backend> Applier<B> {
         ))));
     }
 
+    /// Records that a resume was cancelled before it listed again what it was to at or below
+    /// `r`, which leaves the scan incomplete: what its job holds there is not refreshed.
+    pub(super) fn unverified_below(&mut self, m: &mut Model, r: NodeRef) {
+        m.status.incomplete = true;
+        let tree = &m.tree;
+        let left = &mut self.resume.unverified;
+        left.retain(|&u| tree.resolve_visible(u).is_some());
+        if !left.contains(&r) {
+            left.push(r);
+        }
+    }
+
+    /// Whether `ix` is at or below a directory a cancelled resume did not list again or
+    /// check below, still held by that resume's job as loaded, or holds one: deletes and
+    /// native commands refuse it, as they refuse [`unrefreshed`] nodes, until a rescan has
+    /// listed it again.
+    pub(super) fn unverified(&self, tree: &Tree, ix: Ix) -> bool {
+        let left = &self.resume.unverified;
+        if left.is_empty() {
+            return false;
+        }
+        let Some(dir) = dir_of(tree, ix) else {
+            return false;
+        };
+        let job = tree.dir(dir).map(|d| d.job);
+        let mut cur = Some(dir);
+        while let Some(c) = cur {
+            if tree.dir(c).map(|d| d.job) == job && left.contains(&tree.node_ref(c)) {
+                return true;
+            }
+            cur = tree.parent(c);
+        }
+        left.iter()
+            .filter_map(|&u| tree.resolve_visible(u))
+            .any(|u| Self::is_ancestor(tree, ix, u))
+    }
+
     /// Why `cmd` is refused on a loaded tree, if it is: everything that would touch the tree
-    /// while a resume walks it or checks what it keeps, and a native command or a rescan of
-    /// what no resume has taken over yet (deletes check each item, [`unrefreshed`]).
+    /// while a resume walks it, checks what it keeps or starts its rescans, a native command
+    /// or a rescan of what no resume has taken over yet, and a native command on what a
+    /// cancelled resume did not refresh (deletes check each item, [`unrefreshed`] and
+    /// [`Applier::unverified`]).
     pub(super) fn resume_refusal(&self, m: &Model, cmd: &Command) -> Option<&'static str> {
         let touches = matches!(
             cmd,
@@ -267,13 +286,16 @@ impl<B: Backend> Applier<B> {
             dry_run: false,
             ..
         } = cmd
-            && m.tree
-                .resolve_visible(*node)
-                .is_some_and(|ix| unrefreshed(&m.tree, ix))
+            && let Some(ix) = m.tree.resolve_visible(*node)
         {
-            return Some(
-                "native command: not refreshed yet: loaded from a file, and no resume has taken it over",
-            );
+            if unrefreshed(&m.tree, ix) {
+                return Some(
+                    "native command: not refreshed yet: loaded from a file, and no resume has taken it over",
+                );
+            }
+            if self.unverified(&m.tree, ix) {
+                return Some(UNVERIFIED_NATIVE);
+            }
         }
         if let Command::Rescan { node } | Command::Enter { node } = cmd
             && m.tree
@@ -287,6 +309,9 @@ impl<B: Backend> Applier<B> {
         None
     }
 }
+
+/// Why a native command refuses what a cancelled resume did not refresh.
+const UNVERIFIED_NATIVE: &str = "native command: not refreshed yet: its resume was cancelled before listing it again; rescan it first";
 
 #[cfg(test)]
 mod tests;
