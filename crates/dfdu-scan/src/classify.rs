@@ -193,6 +193,16 @@ fn pick(chain: &[Hit], inside: &[bool], sib: Option<&[Sib]>) -> Option<Class> {
     })
 }
 
+/// The protection mark an entry with `verdict` gets: `Excepted` when its parent is protected
+/// and it is not protected itself, `Protected` when it starts a protected path.
+fn protection_mark(parent_protected: bool, verdict: &Verdict) -> Option<Mark> {
+    match verdict {
+        Verdict::None | Verdict::Hits(_) if parent_protected => Some(Mark::Excepted),
+        Verdict::Protected(_) if !parent_protected => Some(Mark::Protected),
+        _ => None,
+    }
+}
+
 fn class_of(h: &Hit) -> Class {
     Class {
         rule: h.rule,
@@ -392,16 +402,13 @@ impl Listing {
             let target_missing = || missing(n);
             let link =
                 (f.meta.kind == Kind::Symlink).then_some(&target_missing as &dyn Fn() -> bool);
-            match classify(n, false, Some(stat), link) {
-                Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
-                Verdict::Protected(_) if !parent_protected => {
-                    out.marks.push((entry, Mark::Protected));
-                }
+            let verdict = classify(n, false, Some(stat), link);
+            if let Some(m) = protection_mark(parent_protected, &verdict) {
+                out.marks.push((entry, m));
+            }
+            match verdict {
                 Verdict::None | Verdict::Protected(_) => {}
                 Verdict::Hits(chain) => {
-                    if parent_protected {
-                        out.marks.push((entry, Mark::Excepted));
-                    }
                     // Nothing to look inside a file, and a sibling not in the block is missing.
                     let sib: Vec<Sib> = chain
                         .iter()
@@ -428,19 +435,14 @@ impl Listing {
                 rv: None,
                 reach: reach.clone(),
             };
-            match classify(n, true, None, None) {
-                Verdict::None if parent_protected => out.marks.push((entry, Mark::Excepted)),
+            let verdict = classify(n, true, None, None);
+            if let Some(m) = protection_mark(parent_protected, &verdict) {
+                out.marks.push((entry, m));
+            }
+            match verdict {
                 Verdict::None => {}
-                Verdict::Protected(state) => {
-                    if !parent_protected {
-                        out.marks.push((entry, Mark::Protected));
-                    }
-                    task.protection = state;
-                }
+                Verdict::Protected(state) => task.protection = state,
                 Verdict::Hits(mut chain) => {
-                    if parent_protected {
-                        out.marks.push((entry, Mark::Excepted));
-                    }
                     // Hits after one that needs nothing more never apply.
                     if let Some(k) = chain
                         .iter()

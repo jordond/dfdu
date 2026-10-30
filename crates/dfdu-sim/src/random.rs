@@ -57,21 +57,7 @@ impl Sim {
             60..80 => {
                 for _ in 0..=self.rng.below(20) {
                     if let Some(d) = self.del_q.pop_front() {
-                        if let (Some(tr), DeleterMsg::Item { node, result, .. }) = (trace(), &d) {
-                            match self.model.tree.resolve(*node) {
-                                Some(ix) => {
-                                    let p = String::from_utf8_lossy(&self.model.tree.path(ix))
-                                        .into_owned();
-                                    if tr.starts_with(&p) || p.starts_with(&tr) {
-                                        eprintln!("[{}] result {p}: {result:?}", self.report.ticks);
-                                    }
-                                }
-                                None => eprintln!(
-                                    "[{}] result for unresolvable node: {result:?}",
-                                    self.report.ticks
-                                ),
-                            }
-                        }
+                        self.trace_delete_result(&d);
                         self.applier.apply_delete(&mut self.model, d);
                         self.applier.refresh_status(&mut self.model);
                         self.check("")?;
@@ -106,6 +92,26 @@ impl Sim {
         }
         self.check_q.extend(self.applier.take_check_requests());
         Ok(())
+    }
+
+    /// With `DFDU_SIM_TRACE` set, prints a deleter result for the traced path or one above or
+    /// below it.
+    fn trace_delete_result(&self, d: &DeleterMsg) {
+        let (Some(tr), DeleterMsg::Item { node, result, .. }) = (trace(), d) else {
+            return;
+        };
+        match self.model.tree.resolve(*node) {
+            Some(ix) => {
+                let p = String::from_utf8_lossy(&self.model.tree.path(ix)).into_owned();
+                if tr.starts_with(&p) || p.starts_with(&tr) {
+                    eprintln!("[{}] result {p}: {result:?}", self.report.ticks);
+                }
+            }
+            None => eprintln!(
+                "[{}] result for unresolvable node: {result:?}",
+                self.report.ticks
+            ),
+        }
     }
 
     /// Time passes, and maybe a cancel, a delete or a rescan is issued.
