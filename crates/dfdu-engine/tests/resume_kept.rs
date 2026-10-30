@@ -5,16 +5,21 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::SystemTime;
 
 use dfdu_scan::JobOptions;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_tree::NodeRef;
 
 mod common;
-use common::loaded::{find, loaded, resume, resume_with, scanned, totals, write};
+use common::loaded::{find, loaded, resume_with, write};
+#[cfg(unix)]
+use common::loaded::{resume, scanned, totals};
 use common::tempdir;
 
 /// Sets the mtime of directory `p` a minute ahead, so that it differs from the one loaded

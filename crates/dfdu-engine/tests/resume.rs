@@ -7,7 +7,9 @@
 use std::fs;
 use std::time::Duration;
 
-use dfdu_engine::{Command, Engine, EngineOptions, Mode, Timing};
+#[cfg(unix)]
+use dfdu_engine::Mode;
+use dfdu_engine::{Command, Engine, EngineOptions, Timing};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::{DirState, Kind, Meta, NodeRef, Tree};
 

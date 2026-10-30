@@ -184,7 +184,7 @@ fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
 
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
 /// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS the position is
-/// well back ([`dfdu_sys::fsevents::position_event_id`]), so that a change folded into an event
+/// well back (`dfdu_sys::fsevents::position_event_id`), so that a change folded into an event
 /// the `FSEvents` daemon still held is replayed.
 #[must_use]
 pub fn journal_position(path: &Path) -> Option<JournalPosition> {

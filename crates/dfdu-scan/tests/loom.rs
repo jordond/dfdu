@@ -374,6 +374,8 @@ fn check_order(log: &[ScanMsg], unclosed_ok: &[DirId]) -> (Seen, HashSet<DirId>)
                     );
                 }
             }
+            // A resume's check names directories by batch index, not by `DirId`.
+            ScanMsg::Verified { .. } => {}
         }
     }
     (s, named)

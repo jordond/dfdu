@@ -297,12 +297,12 @@ fn changes(
 /// read of that much history, a fraction of a second.
 const BACK: u64 = 1 << 20;
 
-/// A position for a later [`changes_since`]: [`BACK`] ids before [`current_event_id`]. While
+/// A position for a later [`changes_since`]: `BACK` ids before [`current_event_id`]. While
 /// it holds an event for a directory the daemon folds later changes there into it, keeping
 /// its id, so a change made just after [`current_event_id`] in a directory changed just
 /// before can carry an id before it and never be replayed (seen under load, and with
 /// `FSEventsGetLastEventIdForDeviceBeforeTime`, which gives an id a few hundred back whatever
-/// the time asked). An event the daemon holds now is younger than the last [`BACK`] ids; what
+/// the time asked). An event the daemon holds now is younger than the last `BACK` ids; what
 /// changed since is replayed too, which costs some directories listed again.
 #[must_use]
 pub fn position_event_id() -> u64 {
