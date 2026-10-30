@@ -12,3 +12,8 @@
 
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The recordings keep their names when re-recorded, so not immutable: a day fresh, then served
+# from cache for up to a week while the browser checks for a new one.
+/demos/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
