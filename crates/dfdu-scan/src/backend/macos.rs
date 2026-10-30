@@ -33,7 +33,7 @@
 //! without Full Disk Access (`EPERM`), are recorded as permission denied.
 
 use std::collections::{HashMap, VecDeque};
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, OsStr};
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -268,6 +268,15 @@ fn open_dir(path: &Path) -> io::Result<OwnedFd> {
     super::unix::open_dir(path, OFlags::NOFOLLOW)
 }
 
+/// `path`'s metadata, by path, or once it is open when the path is too long for one call.
+fn stat_path(path: &Path, flags: AtFlags) -> io::Result<Meta> {
+    super::unix::stat_path(
+        path,
+        |name| stat_at(CWD, name, flags),
+        |path| Ok(meta_of(&rustix::fs::fstat(open_dir(path)?)?)),
+    )
+}
+
 impl MacStream {
     /// One `getattrlistbulk` call, or calls to the end for a drained directory.
     fn fill(&mut self) {
@@ -389,24 +398,11 @@ impl Backend for MacBackend {
     }
 
     fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        let name = CString::new(loc.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::empty()) {
-            // Too long for one call: stat the directory once it is open.
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                Ok(meta_of(&rustix::fs::fstat(open_dir(loc)?)?))
-            }
-            r => r,
-        }
+        stat_path(loc, AtFlags::empty())
     }
 
     fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
-        let name = CString::new(path.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::SYMLINK_NOFOLLOW) {
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                Ok(meta_of(&rustix::fs::fstat(open_dir(path)?)?))
-            }
-            r => r,
-        }
+        stat_path(path, AtFlags::SYMLINK_NOFOLLOW)
     }
 
     fn open(&self, loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<MacStream> {

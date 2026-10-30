@@ -1,11 +1,13 @@
-//! What the Linux and macOS backends share: opening a directory by a path longer than the
-//! kernel accepts, and the buffer of NUL-terminated names a raw block keeps.
+//! What the Linux and macOS backends share: opening and stat'ing a directory by a path longer
+//! than the kernel accepts, and the buffer of NUL-terminated names a raw block keeps.
 
-use std::ffi::{CStr, OsStr};
+use std::ffi::{CStr, CString, OsStr};
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
+use dfdu_tree::Meta;
 use rustix::fs::{CWD, Mode, OFlags};
 
 /// Paths are opened in pieces of at most this many bytes when the whole is too long.
@@ -47,6 +49,22 @@ pub(crate) fn open_dir(path: &Path, last: OFlags) -> io::Result<OwnedFd> {
         flags | last,
         Mode::empty(),
     )?)
+}
+
+/// `path`'s metadata from `stat`, given the path as one C string; when it is too long for one
+/// call, from `stat_open`, which stats the directory once it is open ([`open_dir`]).
+pub(crate) fn stat_path(
+    path: &Path,
+    stat: impl FnOnce(&CStr) -> io::Result<Meta>,
+    stat_open: impl FnOnce(&Path) -> io::Result<Meta>,
+) -> io::Result<Meta> {
+    let name = CString::new(path.as_os_str().as_bytes())?;
+    match stat(&name) {
+        Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
+            stat_open(path)
+        }
+        r => r,
+    }
 }
 
 /// Appends `name` and its NUL to `names`; returns where it starts.

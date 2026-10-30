@@ -104,3 +104,6 @@ impl<B: Backend> Shared<B> {
         self.focus_epoch.fetch_add(1, SeqCst);
     }
 }
+
+#[cfg(test)]
+mod tests;
