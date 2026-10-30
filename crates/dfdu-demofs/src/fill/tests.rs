@@ -118,13 +118,15 @@ fn each_style_lays_out_its_own_names() {
         &format!("{}/lib/chunk-8.js", NPM[NPM.len() - 1])
     );
     let cargo = names(Style::Cargo, CRATES.len() * 4);
-    assert!(cargo[0].starts_with("deps/libserde-") && cargo[0].ends_with(".rlib"));
-    assert!(cargo[CRATES.len()].ends_with(".rmeta"));
-    assert!(cargo[2 * CRATES.len()].ends_with(".d"));
+    let ext = |name: &str| name.rsplit_once('.').unwrap().1.to_owned();
+    assert!(cargo[0].starts_with("deps/libserde-"));
+    assert_eq!(ext(&cargo[0]), "rlib");
+    assert_eq!(ext(&cargo[CRATES.len()]), "rmeta");
+    assert_eq!(ext(&cargo[2 * CRATES.len()]), "d");
     assert!(cargo[3 * CRATES.len()].starts_with("incremental/serde-"));
     let python = names(Style::Python, PYTHON.len() * 4);
     assert_eq!(python[0], "numpy/__init__.py");
-    assert!(python[PYTHON.len()].ends_with(".so"));
+    assert_eq!(ext(&python[PYTHON.len()]), "so");
     assert!(python[2 * PYTHON.len()].ends_with(".dist-info/RECORD"));
     assert_eq!(python[3 * PYTHON.len()], "numpy/_mod3.py");
     // Names do not repeat, so every file is made.

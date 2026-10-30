@@ -118,7 +118,7 @@ fn a_listing_resumes_after_its_offset() {
         .collect();
     assert_eq!(names, [rest[0].clone(), b"hard2".to_vec()]);
     assert_eq!(t.resolve("dev/shop/hard2"), Ok(pkg));
-    assert!(listing(&t, shop, u64::MAX).unwrap().is_empty());
+    assert_eq!(listing(&t, shop, u64::MAX).unwrap().len(), 0);
     assert_eq!(listing(&t, pkg, 0), Err(FsError::NotDir));
 }
 

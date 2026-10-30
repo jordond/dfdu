@@ -4,32 +4,32 @@ use crate::test_support::{names, small};
 /// A root with `a/` holding the files `f` (100 bytes) and `g`, and the empty directory `e/`.
 fn tiny() -> (Tree, [usize; 4]) {
     let mut t = Tree::new(0, (7, 8));
-    let a = t.insert(0, b"a", Kind::dir(), 1, 0o755).unwrap();
-    let f = t.insert(a, b"f", Kind::seeded(100, 1), 2, 0o644).unwrap();
-    let g = t.insert(a, b"g", Kind::seeded(10, 2), 3, 0o600).unwrap();
-    let e = t.insert(0, b"e", Kind::dir(), 1, 0o755).unwrap();
-    (t, [a, f, g, e])
+    let dir = t.insert(0, b"a", Kind::dir(), 1, 0o755).unwrap();
+    let file = t.insert(dir, b"f", Kind::seeded(100, 1), 2, 0o644).unwrap();
+    let other = t.insert(dir, b"g", Kind::seeded(10, 2), 3, 0o600).unwrap();
+    let empty = t.insert(0, b"e", Kind::dir(), 1, 0o755).unwrap();
+    (t, [dir, file, other, empty])
 }
 
 #[test]
 fn inserts_set_the_parent_owner_and_the_directory_time() {
-    let (t, [a, f, g, e]) = tiny();
-    assert_eq!(t.parent(a), 0);
+    let (t, [dir, file, other, empty]) = tiny();
+    assert_eq!(t.parent(dir), 0);
     assert_eq!(t.parent(0), 0);
-    assert_eq!(t.parent(f), 0, "a file has no parent of its own");
-    assert_eq!((t.nodes[f].uid, t.nodes[f].gid), (7, 8));
-    assert_eq!(t.nodes[a].mtime, 3, "the newest entry's time");
-    assert_eq!(t.lookup(a, b"g"), Ok(g));
-    assert_eq!(t.resolve("/a//f"), Ok(f));
+    assert_eq!(t.parent(file), 0, "a file has no parent of its own");
+    assert_eq!((t.nodes[file].uid, t.nodes[file].gid), (7, 8));
+    assert_eq!(t.nodes[dir].mtime, 3, "the newest entry's time");
+    assert_eq!(t.lookup(dir, b"g"), Ok(other));
+    assert_eq!(t.resolve("/a//f"), Ok(file));
     assert_eq!(t.resolve(""), Ok(0));
     assert_eq!(t.resolve("a/f/x"), Err(FsError::NotDir));
     assert_eq!(t.resolve("a/x"), Err(FsError::NoEnt));
     assert_eq!(t.subdirs(0), 2);
-    assert_eq!(t.subdirs(a), 0);
-    assert_eq!(t.subdirs(f), 0);
+    assert_eq!(t.subdirs(dir), 0);
+    assert_eq!(t.subdirs(file), 0);
     assert_eq!(names(&t, 0), [b"a", b"e"]);
-    assert_eq!(t.list(f).unwrap_err(), FsError::NotDir);
-    assert!(t.list(e).unwrap().is_empty());
+    assert_eq!(t.list(file).unwrap_err(), FsError::NotDir);
+    assert_eq!(t.list(empty).unwrap().len(), 0);
 }
 
 #[test]
@@ -58,21 +58,21 @@ fn a_failed_insert_leaves_nothing_behind() {
 
 #[test]
 fn sizes_allocation_and_counts() {
-    let (mut t, [a, f, g, e]) = tiny();
-    assert_eq!((t.size(a), t.alloc(a)), (DIR_SIZE, DIR_SIZE));
-    assert_eq!((t.size(f), t.alloc(f)), (100, 4096));
-    let s = t
+    let (mut t, [dir, file, other, empty]) = tiny();
+    assert_eq!((t.size(dir), t.alloc(dir)), (DIR_SIZE, DIR_SIZE));
+    assert_eq!((t.size(file), t.alloc(file)), (100, 4096));
+    let link = t
         .insert(0, b"s", Kind::Symlink(b"a/f".to_vec()), 0, 0o777)
         .unwrap();
-    assert_eq!((t.size(s), t.alloc(s)), (3, 0));
+    assert_eq!((t.size(link), t.alloc(link)), (3, 0));
     assert_eq!(t.used(), 3 * DIR_SIZE + 2 * 4096);
     assert_eq!(t.apparent(), 2 * DIR_SIZE + 100 + 10 + 3);
     assert_eq!(t.live(), 6);
-    t.unlink(a, b"g", 9).unwrap();
+    t.unlink(dir, b"g", 9).unwrap();
     t.rmdir(0, b"e", 9).unwrap();
     assert_eq!(t.live(), 4);
-    assert_eq!((t.size(g), t.alloc(g), t.size(e)), (0, 0, 0));
-    assert!(t.get(g).is_none() && t.get(99).is_none());
+    assert_eq!((t.size(other), t.alloc(other), t.size(empty)), (0, 0, 0));
+    assert!(t.get(other).is_none() && t.get(99).is_none());
 }
 
 #[test]
@@ -101,15 +101,15 @@ fn unlink_rmdir_and_used_space() {
 
 #[test]
 fn links_go_to_files_under_new_names() {
-    let (mut t, [a, f, _, e]) = tiny();
-    t.link(f, e, b"f2").unwrap();
-    assert_eq!(t.nodes[f].nlink, 2);
-    assert_eq!(t.resolve("e/f2"), Ok(f));
-    assert_eq!(t.link(a, e, b"a2"), Err(FsError::IsDir));
-    assert_eq!(t.link(f, e, b"f2"), Err(FsError::Exist));
-    assert_eq!(t.link(f, f, b"x"), Err(FsError::NotDir));
-    assert_eq!(t.link(99, e, b"x"), Err(FsError::NoEnt));
-    assert_eq!(t.nodes[f].nlink, 2);
+    let (mut t, [dir, file, _, empty]) = tiny();
+    t.link(file, empty, b"f2").unwrap();
+    assert_eq!(t.nodes[file].nlink, 2);
+    assert_eq!(t.resolve("e/f2"), Ok(file));
+    assert_eq!(t.link(dir, empty, b"a2"), Err(FsError::IsDir));
+    assert_eq!(t.link(file, empty, b"f2"), Err(FsError::Exist));
+    assert_eq!(t.link(file, file, b"x"), Err(FsError::NotDir));
+    assert_eq!(t.link(99, empty, b"x"), Err(FsError::NoEnt));
+    assert_eq!(t.nodes[file].nlink, 2);
 }
 
 #[test]
@@ -150,14 +150,14 @@ fn rename_moves_replaces_and_refuses_as_rename2_does() {
 
 #[test]
 fn rename_onto_a_directory_needs_an_empty_one() {
-    let (mut t, [a, f, _, e]) = tiny();
+    let (mut t, [dir, file, _, empty]) = tiny();
     // A file onto a directory, a directory onto a file or onto a non-empty directory.
     assert_eq!(
-        t.rename(a, b"f", 0, b"e", false, false, 4),
+        t.rename(dir, b"f", 0, b"e", false, false, 4),
         Err(FsError::IsDir)
     );
     assert_eq!(
-        t.rename(0, b"e", a, b"f", false, false, 4),
+        t.rename(0, b"e", dir, b"f", false, false, 4),
         Err(FsError::NotDir)
     );
     assert_eq!(
@@ -165,47 +165,47 @@ fn rename_onto_a_directory_needs_an_empty_one() {
         Err(FsError::NotEmpty)
     );
     // Onto an empty one, which goes.
-    let d = t.insert(a, b"d", Kind::dir(), 0, 0o755).unwrap();
-    t.rename(a, b"d", 0, b"e", false, false, 4).unwrap();
-    assert_eq!(t.resolve("e"), Ok(d));
-    assert_eq!(t.parent(d), 0);
-    assert!(t.get(e).is_none());
-    assert_eq!((t.nodes[0].mtime, t.nodes[a].mtime), (4, 4));
+    let moved = t.insert(dir, b"d", Kind::dir(), 0, 0o755).unwrap();
+    t.rename(dir, b"d", 0, b"e", false, false, 4).unwrap();
+    assert_eq!(t.resolve("e"), Ok(moved));
+    assert_eq!(t.parent(moved), 0);
+    assert!(t.get(empty).is_none());
+    assert_eq!((t.nodes[0].mtime, t.nodes[dir].mtime), (4, 4));
     // A name onto itself, and a missing source or target directory.
-    t.rename(a, b"f", a, b"f", true, false, 5).unwrap();
-    assert_eq!(t.resolve("a/f"), Ok(f));
+    t.rename(dir, b"f", dir, b"f", true, false, 5).unwrap();
+    assert_eq!(t.resolve("a/f"), Ok(file));
     assert_eq!(
-        t.rename(a, b"x", a, b"y", false, false, 5),
+        t.rename(dir, b"x", dir, b"y", false, false, 5),
         Err(FsError::NoEnt)
     );
     assert_eq!(
-        t.rename(a, b"f", f, b"y", false, false, 5),
+        t.rename(dir, b"f", file, b"y", false, false, 5),
         Err(FsError::NotDir)
     );
 }
 
 #[test]
 fn exchange_swaps_directories_and_their_parents() {
-    let (mut t, [a, f, _, e]) = tiny();
+    let (mut t, [dir, file, _, empty]) = tiny();
     assert_eq!(
-        t.rename(a, b"f", a, b"x", false, true, 0),
+        t.rename(dir, b"f", dir, b"x", false, true, 0),
         Err(FsError::NoEnt)
     );
     // Neither may end up below itself.
-    let inner = t.insert(a, b"inner", Kind::dir(), 0, 0o755).unwrap();
+    let inner = t.insert(dir, b"inner", Kind::dir(), 0, 0o755).unwrap();
     assert_eq!(
-        t.rename(0, b"a", a, b"inner", false, true, 0),
+        t.rename(0, b"a", dir, b"inner", false, true, 0),
         Err(FsError::Inval)
     );
     assert_eq!(
-        t.rename(a, b"inner", 0, b"a", false, true, 0),
+        t.rename(dir, b"inner", 0, b"a", false, true, 0),
         Err(FsError::Inval)
     );
-    t.rename(0, b"e", a, b"inner", false, true, 6).unwrap();
+    t.rename(0, b"e", dir, b"inner", false, true, 6).unwrap();
     assert_eq!(t.resolve("e"), Ok(inner));
-    assert_eq!(t.resolve("a/inner"), Ok(e));
-    assert_eq!((t.parent(inner), t.parent(e)), (0, a));
-    assert_eq!(t.resolve("a/f"), Ok(f));
+    assert_eq!(t.resolve("a/inner"), Ok(empty));
+    assert_eq!((t.parent(inner), t.parent(empty)), (0, dir));
+    assert_eq!(t.resolve("a/f"), Ok(file));
 }
 
 #[test]

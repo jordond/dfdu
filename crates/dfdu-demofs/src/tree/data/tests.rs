@@ -28,8 +28,8 @@ fn reads_stop_at_the_end_of_the_file() {
     let whole = read_all(&t, a);
     assert_eq!(t.read(a, 13, 100).unwrap(), whole[13..113]);
     assert_eq!(t.read(a, (1 << 20) - 3, 100).unwrap().len(), 3);
-    assert!(t.read(a, 1 << 20, 100).unwrap().is_empty());
-    assert!(t.read(a, u64::MAX, u32::MAX).unwrap().is_empty());
+    assert_eq!(t.read(a, 1 << 20, 100).unwrap(), b"");
+    assert_eq!(t.read(a, u64::MAX, u32::MAX).unwrap(), b"");
     let dl = t.resolve("Downloads").unwrap();
     assert_eq!(t.read(dl, 0, 1), Err(FsError::IsDir));
 }
