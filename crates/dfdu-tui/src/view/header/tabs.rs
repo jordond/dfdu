@@ -20,11 +20,20 @@ fn tab_separator(bars: Bars) -> &'static str {
     }
 }
 
-/// One form of the tab bar: its spans after the title, and the column offset and width of each
-/// tab in them.
+/// One form of the tab bar: its spans after the title, and where each tab is in them.
 pub struct Tabs {
     pub spans: Vec<Span<'static>>,
-    pub hits: Vec<(usize, usize, View)>,
+    pub hits: Vec<TabHit>,
+}
+
+/// Where a tab is in the bar's spans.
+#[derive(Clone, Copy, Debug)]
+pub struct TabHit {
+    /// Its column offset.
+    pub x: usize,
+    /// Its width in columns.
+    pub w: usize,
+    pub view: View,
 }
 
 /// The tab of the view shown: the focus colour as its background, bold. Reverse video carries
@@ -62,7 +71,7 @@ pub fn tabs(app: &App, named: bool, badges: bool) -> Tabs {
         x += Span::raw(&sep).width();
         spans.push(Span::styled(sep, t.fg_dim));
         let w = Span::raw(&text).width();
-        hits.push((x, w, view));
+        hits.push(TabHit { x, w, view });
         spans.push(Span::styled(
             text,
             if active { active_tab(t) } else { t.fg_dim },
@@ -100,7 +109,7 @@ mod tests {
         );
         let short = tabs(&app, false, false);
         assert_eq!(text(&short.spans), "│ [1 Files] 2 3 4 5");
-        let views: Vec<View> = short.hits.iter().map(|h| h.2).collect();
+        let views: Vec<View> = short.hits.iter().map(|h| h.view).collect();
         assert_eq!(views, View::ALL);
     }
 
@@ -110,7 +119,7 @@ mod tests {
         for named in [true, false] {
             let bar = tabs(&app, named, false);
             let line = text(&bar.spans);
-            for &(x, w, view) in &bar.hits {
+            for &TabHit { x, w, view } in &bar.hits {
                 let at: String = line.chars().skip(x).take(w).collect();
                 assert!(at.contains(first_key(view.action())), "{at:?} for {view:?}");
                 assert_eq!(Span::raw(&at).width(), w);

@@ -201,10 +201,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant, frame: u64) 
     left.extend(bar.spans.iter().cloned());
     let line1 = spread(left, state.clone(), area.width);
     let tab_hits: Vec<Tab> = (bar.hits.iter())
-        .filter(|&&(x, tw, _)| area.height > 0 && start + x + tw <= w)
-        .map(|&(x, tw, view)| Tab {
-            area: Rect::new(area.x + cells(start + x), area.y, cells(tw), 1),
-            view,
+        .filter(|h| area.height > 0 && start + h.x + h.w <= w)
+        .map(|h| Tab {
+            area: Rect::new(area.x + cells(start + h.x), area.y, cells(h.w), 1),
+            view: h.view,
         })
         .collect();
 

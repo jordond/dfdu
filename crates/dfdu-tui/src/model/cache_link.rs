@@ -98,11 +98,29 @@ struct Run {
     started_secs: u64,
     /// A resume from the change journal keeps the cached scan's last full scan and its
     /// duration; a full scan replaces them.
-    kept: Option<(u64, u64)>,
+    kept: Option<ScanTiming>,
     /// Where the change journal stood before it started.
     journal: Option<JournalPosition>,
-    /// Once it ended: the last full scan and its duration to save, when it is worth saving.
-    saved_as: Option<Option<(u64, u64)>>,
+    saved_as: SavedAs,
+}
+
+/// When the cached tree was last scanned in full, and how long that took.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScanTiming {
+    /// Seconds since the epoch.
+    last_full_scan: u64,
+    scan_ms: u64,
+}
+
+/// What a run is saved as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SavedAs {
+    /// It has not ended.
+    Pending,
+    /// It ended incomplete, or too quickly to be worth saving.
+    Skip,
+    /// It ended and is saved with this timing.
+    Save(ScanTiming),
 }
 
 /// A save running on its thread.
@@ -244,7 +262,10 @@ impl Cacher {
                 // Rescanned whole when the last full scan is old: asking the journal would
                 // keep what it missed.
                 let journal = h.journal.filter(|_| !hit.full_rescan);
-                let kept = journal.map(|_| (h.full_scan_at(), h.scan_ms));
+                let kept = journal.map(|_| ScanTiming {
+                    last_full_scan: h.full_scan_at(),
+                    scan_ms: h.scan_ms,
+                });
                 app.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
                 engine.resume_with(
@@ -276,16 +297,23 @@ impl Cacher {
         app: &mut App,
         engine: &Engine<B>,
     ) -> bool {
-        let Some(run) = self.run.as_mut().filter(|r| r.saved_as.is_none()) else {
+        let Some(run) = (self.run.as_mut()).filter(|r| r.saved_as == SavedAs::Pending) else {
             return false;
         };
         let Some((complete, version)) = ended(engine) else {
             return false;
         };
         let ms = u64::try_from(run.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let (last_full_scan, scan_ms) = run.kept.unwrap_or((run.started_secs, ms));
-        let worth = complete && link.save && scan_ms >= self.min_scan_ms;
-        run.saved_as = Some(worth.then_some((last_full_scan, scan_ms)));
+        let timing = run.kept.unwrap_or(ScanTiming {
+            last_full_scan: run.started_secs,
+            scan_ms: ms,
+        });
+        let worth = complete && link.save && timing.scan_ms >= self.min_scan_ms;
+        run.saved_as = if worth {
+            SavedAs::Save(timing)
+        } else {
+            SavedAs::Skip
+        };
         let shown = app.cached.take().is_some();
         if worth {
             self.save(link, engine, version);
@@ -298,7 +326,11 @@ impl Cacher {
         let Some(run) = &self.run else {
             return;
         };
-        let Some(Some((last_full_scan, scan_ms))) = run.saved_as else {
+        let SavedAs::Save(ScanTiming {
+            last_full_scan,
+            scan_ms,
+        }) = run.saved_as
+        else {
             return;
         };
         let now = cache::now();
@@ -371,7 +403,7 @@ impl Cacher {
         let worth = self
             .run
             .as_ref()
-            .is_some_and(|r| matches!(r.saved_as, Some(Some(_))));
+            .is_some_and(|r| matches!(r.saved_as, SavedAs::Save(_)));
         if !worth || self.writer.is_some() {
             return;
         }
@@ -405,13 +437,13 @@ impl Cacher {
 }
 
 impl Run {
-    fn new(kept: Option<(u64, u64)>, journal: Option<JournalPosition>) -> Run {
+    fn new(kept: Option<ScanTiming>, journal: Option<JournalPosition>) -> Run {
         Run {
             started: Instant::now(),
             started_secs: cache::now(),
             kept,
             journal,
-            saved_as: None,
+            saved_as: SavedAs::Pending,
         }
     }
 }

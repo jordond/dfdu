@@ -86,6 +86,8 @@ impl Tree {
         self.live
     }
 
+    /// Bytes in the name arena, freed names included, and how many of them are freed names:
+    /// `(stored, garbage)`.
     #[must_use]
     pub fn name_bytes(&self) -> (u64, u64) {
         (self.names.bytes(), self.names_garbage)

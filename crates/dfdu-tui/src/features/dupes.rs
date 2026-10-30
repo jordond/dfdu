@@ -173,15 +173,25 @@ fn found(app: &App) -> Option<&Found> {
     app.dupes.run.as_ref()?.result.get()
 }
 
-/// For the view's tab: `None` before a comparison was started, `Some(None)` while one runs,
-/// and then the number of groups. While the view is open only groups with two files left
-/// count; closed, the files are not looked up and every group found counts.
-pub fn groups(app: &App) -> Option<Option<usize>> {
+/// Where a comparison is, for the view's tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Groups {
+    Running,
+    /// It ended with this many groups.
+    Found(usize),
+}
+
+/// For the view's tab: `None` before a comparison was started. While the view is open only
+/// groups with two files left count; closed, the files are not looked up and every group found
+/// counts.
+pub fn groups(app: &App) -> Option<Groups> {
     let run = app.dupes.run.as_ref()?;
     let Some(f) = run.result.get() else {
-        return Some(None);
+        return Some(Groups::Running);
     };
-    Some(Some(app.dupes.live_groups.unwrap_or(f.groups.len())))
+    Some(Groups::Found(
+        app.dupes.live_groups.unwrap_or(f.groups.len()),
+    ))
 }
 
 /// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):

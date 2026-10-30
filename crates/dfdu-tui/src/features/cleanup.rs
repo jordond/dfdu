@@ -99,9 +99,16 @@ pub struct Info {
     pub native: Option<NativeView>,
     /// What native size commands reported, by rule name.
     pub native_sizes: Vec<(String, Result<u64, String>)>,
-    /// What the matches that can be ticked add up to, for the tab and the summary bar alike,
-    /// with the tree's version and number of matches it was counted at.
-    pub total: Option<((u64, usize), u64)>,
+    /// What the matches that can be ticked add up to, for the tab and the summary bar alike.
+    pub total: Option<Reclaim>,
+}
+
+/// What the matches that can be ticked add up to.
+#[derive(Clone, Copy, Debug)]
+pub struct Reclaim {
+    /// The tree's version and number of matches it was counted at ([`count_key`]).
+    pub at: (u64, usize),
+    pub size: u64,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
@@ -162,7 +169,7 @@ pub fn read(m: &Model, app: &App) -> Info {
             .map(|l| l.total.alloc)
             .sum();
         return Info {
-            total: Some((at, total)),
+            total: Some(Reclaim { at, size: total }),
             ..Info::default()
         };
     }
@@ -228,7 +235,10 @@ pub fn read(m: &Model, app: &App) -> Info {
         items,
         native,
         native_sizes,
-        total: Some((count_key(m), total)),
+        total: Some(Reclaim {
+            at: count_key(m),
+            size: total,
+        }),
     }
 }
 
@@ -236,8 +246,8 @@ pub fn read(m: &Model, app: &App) -> Info {
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
-    if let Some((at, total)) = app.extras.cleanup.total {
-        app.cleanup.reclaimable = Some(total);
+    if let Some(Reclaim { at, size }) = app.extras.cleanup.total {
+        app.cleanup.reclaimable = Some(size);
         app.cleanup.counted_at = Some(at);
     }
     let premark = std::mem::take(&mut app.cleanup.premark);
