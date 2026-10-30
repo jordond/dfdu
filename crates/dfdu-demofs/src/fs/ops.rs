@@ -4,16 +4,98 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::Path;
 use std::thread;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use fuser::{
-    BsdFileFlags, Errno, FileHandle, Filesystem, FopenFlags, Generation, INodeNo, LockOwner,
-    OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
+    BsdFileFlags, Errno, FileAttr, FileHandle, Filesystem, FopenFlags, Generation, INodeNo,
+    LockOwner, OpenFlags, RenameFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 
-use super::{BLOCK, DemoFs, FILES, TTL, attr, entry, errno, listing, made_by, node, stat};
-use crate::tree::Kind;
+use super::{BLOCK, DemoFs, FILES, TTL, attr, entry, errno, listing, node, stat};
+use crate::tree::{FsError, Kind, Tree};
+
+/// What a `setattr` request changes; `None` leaves that attribute as it is.
+#[derive(Clone, Copy, Default)]
+struct Changes {
+    mode: Option<u32>,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    size: Option<u64>,
+    mtime: Option<TimeOrNow>,
+}
+
+/// Applies `c` to node `n` at `now` (the size first, which may fail), and gives its attributes
+/// after.
+fn set_attr(t: &mut Tree, n: usize, c: Changes, now: i64) -> Result<FileAttr, FsError> {
+    if t.get(n).is_none() {
+        return Err(FsError::NoEnt);
+    }
+    if let Some(s) = c.size {
+        t.truncate(n, s, now)?;
+    }
+    let i = &mut t.nodes[n];
+    if let Some(m) = c.mode {
+        i.mode = m & 0o7777;
+    }
+    if let Some(u) = c.uid {
+        i.uid = u;
+    }
+    if let Some(g) = c.gid {
+        i.gid = g;
+    }
+    match c.mtime {
+        Some(TimeOrNow::SpecificTime(st)) => {
+            let secs = st.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            i.mtime = i64::try_from(secs).unwrap_or(0);
+        }
+        Some(TimeOrNow::Now) => i.mtime = now,
+        None => {}
+    }
+    attr(t, n)
+}
+
+/// Makes `name` in `parent`, of `kind`, permissions `mode` and the time `now`, owned by the
+/// user and group `by` (the request's).
+fn make(
+    t: &mut Tree,
+    parent: usize,
+    name: &[u8],
+    kind: Kind,
+    now: i64,
+    mode: u32,
+    by: (u32, u32),
+) -> Result<usize, FsError> {
+    let n = t.insert(parent, name, kind, now, mode)?;
+    (t.nodes[n].uid, t.nodes[n].gid) = by;
+    Ok(n)
+}
+
+/// The user and group a request is made by.
+fn owner(req: &Request) -> (u32, u32) {
+    (req.uid(), req.gid())
+}
+
+/// What symlink `n` points to.
+fn link_target(t: &Tree, n: usize) -> Result<&[u8], FsError> {
+    match t.get(n).map(|i| &i.kind) {
+        Some(Kind::Symlink(target)) => Ok(target),
+        Some(_) => Err(FsError::Inval),
+        None => Err(FsError::NoEnt),
+    }
+}
+
+/// How late directory `n` answers its opening (its fixture's `delay`), or its fault.
+fn open_delay(t: &Tree, n: usize) -> Result<Duration, FsError> {
+    let i = t.get(n).ok_or(FsError::NoEnt)?;
+    if !i.is_dir() {
+        return Err(FsError::NotDir);
+    }
+    if let Some(f) = i.fault {
+        return Err(f.into());
+    }
+    Ok(i.delay)
+}
 
 impl Filesystem for DemoFs {
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
@@ -51,44 +133,23 @@ impl Filesystem for DemoFs {
         reply: ReplyAttr,
     ) {
         let now = self.time();
-        let mut t = self.tree();
-        let n = node(ino);
-        if t.get(n).is_none() {
-            return reply.error(Errno::ENOENT);
-        }
-        if let Some(s) = size
-            && let Err(e) = t.truncate(n, s, now)
-        {
-            return reply.error(errno(e));
-        }
-        if let Some(m) = mode {
-            t.nodes[n].mode = m & 0o7777;
-        }
-        if let Some(u) = uid {
-            t.nodes[n].uid = u;
-        }
-        if let Some(g) = gid {
-            t.nodes[n].gid = g;
-        }
-        match mtime {
-            Some(TimeOrNow::SpecificTime(st)) => {
-                let secs = st.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                t.nodes[n].mtime = i64::try_from(secs).unwrap_or(0);
-            }
-            Some(TimeOrNow::Now) => t.nodes[n].mtime = now,
-            None => {}
-        }
-        match attr(&t, n) {
+        let changes = Changes {
+            mode,
+            uid,
+            gid,
+            size,
+            mtime,
+        };
+        match set_attr(&mut self.tree(), node(ino), changes, now) {
             Ok(a) => reply.attr(&TTL, &a),
             Err(e) => reply.error(errno(e)),
         }
     }
 
     fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
-        match self.tree().get(node(ino)).map(|i| &i.kind) {
-            Some(Kind::Symlink(target)) => reply.data(target),
-            Some(_) => reply.error(Errno::EINVAL),
-            None => reply.error(Errno::ENOENT),
+        match link_target(&self.tree(), node(ino)) {
+            Ok(target) => reply.data(target),
+            Err(e) => reply.error(errno(e)),
         }
     }
 
@@ -103,17 +164,17 @@ impl Filesystem for DemoFs {
     ) {
         let now = self.time();
         let mut t = self.tree();
-        match t.insert(
+        let (name, mode) = (name.as_bytes(), mode & !umask & 0o7777);
+        match make(
+            &mut t,
             node(parent),
-            name.as_bytes(),
+            name,
             Kind::dir(),
             now,
-            mode & !umask & 0o7777,
+            mode,
+            owner(req),
         ) {
-            Ok(n) => {
-                made_by(&mut t, n, req);
-                entry(&t, n, reply);
-            }
+            Ok(n) => entry(&t, n, reply),
             Err(e) => reply.error(errno(e)),
         }
     }
@@ -145,11 +206,16 @@ impl Filesystem for DemoFs {
         let now = self.time();
         let mut t = self.tree();
         let kind = Kind::Symlink(target.as_os_str().as_bytes().to_vec());
-        match t.insert(node(parent), link_name.as_bytes(), kind, now, 0o777) {
-            Ok(n) => {
-                made_by(&mut t, n, req);
-                entry(&t, n, reply);
-            }
+        match make(
+            &mut t,
+            node(parent),
+            link_name.as_bytes(),
+            kind,
+            now,
+            0o777,
+            owner(req),
+        ) {
+            Ok(n) => entry(&t, n, reply),
             Err(e) => reply.error(errno(e)),
         }
     }
@@ -262,18 +328,10 @@ impl Filesystem for DemoFs {
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        let t = self.tree();
-        let Some(i) = t.get(node(ino)) else {
-            return reply.error(Errno::ENOENT);
+        let delay = match open_delay(&self.tree(), node(ino)) {
+            Ok(d) => d,
+            Err(e) => return reply.error(errno(e)),
         };
-        if !i.is_dir() {
-            return reply.error(Errno::ENOTDIR);
-        }
-        if let Some(f) = i.fault {
-            return reply.error(errno(f.into()));
-        }
-        let delay = i.delay;
-        drop(t);
         if delay.is_zero() {
             return reply.opened(FileHandle(0), FopenFlags::empty());
         }
@@ -338,21 +396,16 @@ impl Filesystem for DemoFs {
     ) {
         let now = self.time();
         let mut t = self.tree();
-        let created = t
-            .insert(
-                node(parent),
-                name.as_bytes(),
-                Kind::stored(vec![]),
-                now,
-                mode & !umask & 0o7777,
-            )
-            .and_then(|n| {
-                made_by(&mut t, n, req);
-                attr(&t, n)
-            });
+        let (name, mode) = (name.as_bytes(), mode & !umask & 0o7777);
+        let kind = Kind::stored(vec![]);
+        let created =
+            make(&mut t, node(parent), name, kind, now, mode, owner(req)).and_then(|n| attr(&t, n));
         match created {
             Ok(a) => reply.created(&TTL, &a, Generation(0), FileHandle(0), FopenFlags::empty()),
             Err(e) => reply.error(errno(e)),
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use anyhow::Context as _;
 use fuser::{
     BackgroundSession, Config, Errno, FileAttr, FileType, Generation, INodeNo, MountOption,
-    ReplyEntry, Request, SessionACL,
+    ReplyEntry, SessionACL,
 };
 
 use crate::Error;
@@ -140,11 +140,6 @@ fn stat(t: &Tree, n: usize) -> Result<FileAttr, FsError> {
         return Err(f.into());
     }
     attr(t, n)
-}
-
-/// Gives node `n`, just made by `req`, to the user who made it.
-fn made_by(t: &mut Tree, n: usize, req: &Request) {
-    (t.nodes[n].uid, t.nodes[n].gid) = (req.uid(), req.gid());
 }
 
 fn entry(t: &Tree, n: usize, reply: ReplyEntry) {
