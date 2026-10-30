@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-export \- Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH SYNOPSIS
-\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-\-resume\-from\fR] [\fB\-\-remote\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu export\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-compress\fR] [\fB\-\-snapshot\fR] [\fB\-\-threads\fR] [\fB\-\-resume\-from\fR] [\fB\-\-remote\fR] [\fB\-\-remote\-agent\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 Scan a directory and write it in ncdu\*(Aqs JSON format
 .SH OPTIONS
@@ -25,7 +25,22 @@ Worker threads
 Start from this snapshot (`\-\-snapshot`) and rescan only the directories changed since it was taken, when the volume\*(Aqs change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot\*(Aqs
 .TP
 \fB\-\-remote\fR \fI<HOST>\fR
-Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)
+Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (\-\-remote\-agent)
+.TP
+\fB\-\-remote\-agent\fR \fI<HOW>\fR
+How to start the agent on HOST: auto (an installed dfdu that speaks this one\*(Aqs protocol, else one sent earlier, else send this version\*(Aqs, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto: The installed dfdu if it speaks this one\*(Aqs protocol, else one sent earlier, else send one (asking first)
+.IP \(bu 2
+installed: The dfdu installed on the host, as `ssh HOST dfdu agent`
+.IP \(bu 2
+upload: One sent earlier, else send one, without asking
+.RE
 .TP
 \fB\-x\fR, \fB\-\-one\-file\-system\fR
 Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
@@ -40,7 +55,7 @@ Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts)
 Windows, as administrator: read each NTFS volume\*(Aqs master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIPATH\fR] [default: .]
 

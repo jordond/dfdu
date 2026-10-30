@@ -57,7 +57,7 @@ dfdu                      # browse the current directory
 dfdu ~                    # browse a directory
 dfdu --disks              # pick a disk first
 dfdu --type video ~       # only video files
-dfdu --remote server /srv # another host over ssh (dfdu installed there)
+dfdu --remote server /srv # another host over ssh (sends dfdu there if needed)
 ```
 
 Keys follow ncdu. Press `?` in the app for the full list.

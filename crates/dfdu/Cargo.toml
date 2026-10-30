@@ -30,11 +30,24 @@ clap_mangen.workspace = true
 clap_complete.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ureq = { workspace = true, optional = true }
+lzma-rust2 = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+
+[features]
+default = ["agent-download"]
+# Downloads the release agent for `--remote` hosts of another platform. Without it, only this
+# build and `DFDU_AGENT_DIR` can be sent.
+agent-download = ["dep:ureq", "dep:lzma-rust2", "dep:tar"]
 
 [dev-dependencies]
 tempfile.workspace = true
 boon.workspace = true
 crossbeam-channel.workspace = true
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+tar.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["pty", "termios"] }

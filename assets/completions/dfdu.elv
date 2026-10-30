@@ -21,7 +21,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --resume-from 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done'
             cand -f 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
             cand --file 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
-            cand --remote 'Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history'
+            cand --remote 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history'
+            cand --remote-agent 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]'
             cand --type 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)'
             cand --theme 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown'
             cand --color 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set'
@@ -64,7 +65,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --top 'Entries to print per directory, largest first [default: 10; all for ndjson]'
             cand --threads 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many'
             cand --measure-workers 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does'
-            cand --remote 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history'
+            cand --remote 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent). Nothing is recorded in the history'
+            cand --remote-agent 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]'
             cand --type 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them'
             cand --stall-abandon 'Abandon directories stalled this many seconds'
             cand --stall-after 'Report a directory as stalled after one call on it took this many seconds (tests)'
@@ -82,8 +84,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --errors 'List every entry that could not be read, with the reason'
             cand --no-history 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)'
             cand --debug-stats 'Print pipeline counters and applier timing (lock hold and wait) after the scan'
-            cand -h 'Print help'
-            cand --help 'Print help'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
         }
         &'dfdu;disks'= {
             cand -h 'Print help'
@@ -163,7 +165,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --output 'Where to write (`-` for stdout)'
             cand --threads 'Worker threads'
             cand --resume-from 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot''s'
-            cand --remote 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)'
+            cand --remote 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent)'
+            cand --remote-agent 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]'
             cand --compress 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)'
             cand --snapshot 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)'
             cand -x 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
@@ -171,8 +174,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --cross-mounts 'Descend into other local filesystems (disks, tmpfs)'
             cand --network 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
             cand --mft 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
-            cand -h 'Print help'
-            cand --help 'Print help'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
         }
         &'dfdu;import'= {
             cand --depth 'Levels of directories to print below the root'
@@ -228,6 +231,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
         }
         &'dfdu;agent'= {
             cand --threads 'Worker threads'
+            cand --protocols 'Print the protocol versions this agent speaks (`MIN MAX`) and exit'
             cand -h 'Print help'
             cand --help 'Print help'
         }

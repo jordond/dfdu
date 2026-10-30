@@ -50,6 +50,12 @@ etcetera = "0.11.0"
 crc32c = "0.6.8"
 twox-hash = { version = "2.1.5", default-features = false, features = ["std", "xxhash3_128"] }
 sha2 = "0.11"
+# Not `rustls`, which bundles webpki-roots: certificates come from the platform verifier only.
+# `_ring` is how ureq spells "rustls with ring" without the bundled roots; it is not public API,
+# so check it still exists when upgrading ureq.
+ureq = { version = "3.5.0", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
+lzma-rust2 = { version = "0.24.0", default-features = false, features = ["std", "xz"] }
+tar = { version = "0.4.46", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 hex = "0.4.3"

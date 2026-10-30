@@ -104,11 +104,16 @@ struct Cli {
     /// only as dry runs.
     #[arg(long)]
     read_only: bool,
-    /// Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be
-    /// installed there) and classified with the rules of this host. The delete keys delete on
-    /// HOST, unless --read-only; nothing is recorded in the history.
+    /// Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST
+    /// has none, see --remote-agent) and classified with the rules of this host. The delete
+    /// keys delete on HOST, unless --read-only; nothing is recorded in the history.
     #[arg(long, value_name = "HOST", conflicts_with_all = ["disks", "import", "resume_from"])]
     remote: Option<String>,
+    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
+    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
+    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
+    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    remote_agent: Option<crate::remote::AgentMode>,
     /// Show only files of these types or extensions, comma-separated: `video,audio,.iso`
     /// (`t` in the browser changes it).
     #[arg(long = "type", value_name = "TYPES", value_parser = type_filter)]
@@ -201,6 +206,9 @@ enum Cmd {
         /// Worker threads.
         #[arg(long)]
         threads: Option<usize>,
+        /// Print the protocol versions this agent speaks (`MIN MAX`) and exit.
+        #[arg(long)]
+        protocols: bool,
     },
 }
 
@@ -398,7 +406,7 @@ fn main() -> ExitCode {
         Some(Cmd::Recover(args)) => recover::run(args),
         Some(Cmd::Cache(cmd)) => cache::run(&cmd),
         Some(Cmd::Man { dir }) => man(&dir),
-        Some(Cmd::Agent { threads }) => remote::agent(threads),
+        Some(Cmd::Agent { threads, protocols }) => remote::agent(threads, protocols),
         Some(Cmd::Completions { shell }) => {
             use clap::CommandFactory;
             clap_complete::generate(shell, &mut Cli::command(), "dfdu", &mut std::io::stdout());
@@ -412,6 +420,7 @@ fn main() -> ExitCode {
             scan::run(scan::ScanArgs {
                 path: cli.path.unwrap_or_else(|| PathBuf::from(".")),
                 remote: cli.remote,
+                remote_agent: cli.remote_agent,
                 mounts: cli.mounts,
                 rules: cli.rules,
                 types: cli.types,

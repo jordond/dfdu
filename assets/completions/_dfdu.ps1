@@ -24,7 +24,8 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done')
             [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
             [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
-            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history')
+            [CompletionResult]::new('--remote-agent', '--remote-agent', [CompletionResultType]::ParameterName, 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]')
             [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)')
             [CompletionResult]::new('--theme', '--theme', [CompletionResultType]::ParameterName, 'Colour theme: auto, dark, light, ansi (the terminal''s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown')
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set')
@@ -68,7 +69,8 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--top', '--top', [CompletionResultType]::ParameterName, 'Entries to print per directory, largest first [default: 10; all for ndjson]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many')
             [CompletionResult]::new('--measure-workers', '--measure-workers', [CompletionResultType]::ParameterName, 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does')
-            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent). Nothing is recorded in the history')
+            [CompletionResult]::new('--remote-agent', '--remote-agent', [CompletionResultType]::ParameterName, 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]')
             [CompletionResult]::new('--type', '--type', [CompletionResultType]::ParameterName, 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them')
             [CompletionResult]::new('--stall-abandon', '--stall-abandon', [CompletionResultType]::ParameterName, 'Abandon directories stalled this many seconds')
             [CompletionResult]::new('--stall-after', '--stall-after', [CompletionResultType]::ParameterName, 'Report a directory as stalled after one call on it took this many seconds (tests)')
@@ -86,8 +88,8 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--errors', '--errors', [CompletionResultType]::ParameterName, 'List every entry that could not be read, with the reason')
             [CompletionResult]::new('--no-history', '--no-history', [CompletionResultType]::ParameterName, 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)')
             [CompletionResult]::new('--debug-stats', '--debug-stats', [CompletionResultType]::ParameterName, 'Print pipeline counters and applier timing (lock hold and wait) after the scan')
-            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
-            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
         'dfdu;disks' {
@@ -174,7 +176,8 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Where to write (`-` for stdout)')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
             [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume''s change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot''s')
-            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)')
+            [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent)')
+            [CompletionResult]::new('--remote-agent', '--remote-agent', [CompletionResultType]::ParameterName, 'How to start the agent on HOST: auto (an installed dfdu that speaks this one''s protocol, else one sent earlier, else send this version''s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]')
             [CompletionResult]::new('--compress', '--compress', [CompletionResultType]::ParameterName, 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)')
             [CompletionResult]::new('--snapshot', '--snapshot', [CompletionResultType]::ParameterName, 'Write dfdu''s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)')
             [CompletionResult]::new('-x', '-x', [CompletionResultType]::ParameterName, 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)')
@@ -182,8 +185,8 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--cross-mounts', '--cross-mounts', [CompletionResultType]::ParameterName, 'Descend into other local filesystems (disks, tmpfs)')
             [CompletionResult]::new('--network', '--network', [CompletionResultType]::ParameterName, 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts')
             [CompletionResult]::new('--mft', '--mft', [CompletionResultType]::ParameterName, 'Windows, as administrator: read each NTFS volume''s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual')
-            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
-            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
         'dfdu;import' {
@@ -251,6 +254,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
         }
         'dfdu;agent' {
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads')
+            [CompletionResult]::new('--protocols', '--protocols', [CompletionResultType]::ParameterName, 'Print the protocol versions this agent speaks (`MIN MAX`) and exit')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break

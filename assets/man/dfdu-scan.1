@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-scan \- Scan a directory and print a summary
 .SH SYNOPSIS
-\fBdfdu scan\fR [\fB\-\-format\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-like\-du\fR] [\fB\-\-threads\fR] [\fB\-\-measure\-workers\fR] [\fB\-\-remote\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-type\fR] [\fB\-\-by\-type\fR] [\fB\-\-bytes\fR] [\fB\-\-errors\fR] [\fB\-\-no\-history\fR] [\fB\-\-stall\-abandon\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
+\fBdfdu scan\fR [\fB\-\-format\fR] [\fB\-\-depth\fR] [\fB\-\-top\fR] [\fB\-\-apparent\fR] [\fB\-\-like\-du\fR] [\fB\-\-threads\fR] [\fB\-\-measure\-workers\fR] [\fB\-\-remote\fR] [\fB\-\-remote\-agent\fR] [\fB\-x\fR|\fB\-\-one\-file\-system\fR] [\fB\-\-cross\-mounts\fR] [\fB\-\-network\fR] [\fB\-\-mft\fR] [\fB\-\-no\-rules\fR] [\fB\-\-type\fR] [\fB\-\-by\-type\fR] [\fB\-\-bytes\fR] [\fB\-\-errors\fR] [\fB\-\-no\-history\fR] [\fB\-\-stall\-abandon\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR] 
 .SH DESCRIPTION
 Scan a directory and print a summary
 .SH OPTIONS
@@ -45,7 +45,22 @@ Worker threads for the scanned filesystem. Mounts below it with their own limit 
 Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does
 .TP
 \fB\-\-remote\fR \fI<HOST>\fR
-Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history
+Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (\-\-remote\-agent). Nothing is recorded in the history
+.TP
+\fB\-\-remote\-agent\fR \fI<HOW>\fR
+How to start the agent on HOST: auto (an installed dfdu that speaks this one\*(Aqs protocol, else one sent earlier, else send this version\*(Aqs, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto: The installed dfdu if it speaks this one\*(Aqs protocol, else one sent earlier, else send one (asking first)
+.IP \(bu 2
+installed: The dfdu installed on the host, as `ssh HOST dfdu agent`
+.IP \(bu 2
+upload: One sent earlier, else send one, without asking
+.RE
 .TP
 \fB\-x\fR, \fB\-\-one\-file\-system\fR
 Stay on the filesystem of the scanned directory (the default; overrides \-\-cross\-mounts and \-\-network given before it)
@@ -81,7 +96,7 @@ Do not record the scan in the history (`dfdu diff`, `dfdu history`)
 Abandon directories stalled this many seconds
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIPATH\fR] [default: .]
 

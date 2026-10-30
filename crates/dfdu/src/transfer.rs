@@ -36,9 +36,15 @@ pub struct ExportArgs {
     /// PATH and the mount options are the snapshot's.
     #[arg(long, value_name = "SNAPSHOT", conflicts_with = "remote")]
     pub resume_from: Option<PathBuf>,
-    /// Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there).
+    /// Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none
+    /// (--remote-agent).
     #[arg(long, value_name = "HOST")]
     pub remote: Option<String>,
+    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
+    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
+    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
+    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    pub remote_agent: Option<crate::remote::AgentMode>,
     #[command(flatten)]
     pub mounts: MountArgs,
 }
@@ -160,7 +166,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     let opts = launch::headless(false);
     // A remote scan's root is the one the agent resolved on its host.
     let (engine, job, root) = if let Some(host) = &args.remote {
-        match remote::engine(host, opts, &path, None) {
+        match remote::engine(host, opts, &path, None, args.remote_agent) {
             Ok((e, _, root)) => (e, job, root),
             Err(code) => return code,
         }

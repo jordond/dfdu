@@ -39,6 +39,9 @@ pub use codec::{Dec, Enc};
 /// message's encoding takes a new number.
 pub const VERSION: u32 = 6;
 
+/// The oldest protocol version this build speaks: [`VERSION`], since it speaks only one.
+pub const MIN_VERSION: u32 = VERSION;
+
 /// The largest payload accepted.
 pub const MAX_FRAME: usize = 64 << 20;
 

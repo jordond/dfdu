@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_dfdu_global_optspecs
-    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= type= no-history no-cache theme= color= bars= no-mouse debug-stats h/help V/version
+    string join \n x/one-file-system cross-mounts network mft no-rules disks resume-from= f/file= read-only remote= remote-agent= type= no-history no-cache theme= color= bars= no-mouse debug-stats h/help V/version
 end
 
 function __fish_dfdu_needs_command
@@ -26,7 +26,10 @@ end
 
 complete -c dfdu -n "__fish_dfdu_needs_command" -l resume-from -d 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done' -r -F
 complete -c dfdu -n "__fish_dfdu_needs_command" -s f -l file -d 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only' -r -F
-complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on HOST, scanned there through `ssh HOST dfdu agent` (dfdu must be installed there) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history' -r
+complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history' -r
+complete -c dfdu -n "__fish_dfdu_needs_command" -l remote-agent -d 'How to start the agent on HOST: auto (an installed dfdu that speaks this one\'s protocol, else one sent earlier, else send this version\'s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]' -r -f -a "auto\t'The installed dfdu if it speaks this one\'s protocol, else one sent earlier, else send one (asking first)'
+installed\t'The dfdu installed on the host, as `ssh HOST dfdu agent`'
+upload\t'One sent earlier, else send one, without asking'"
 complete -c dfdu -n "__fish_dfdu_needs_command" -l type -d 'Show only files of these types or extensions, comma-separated: `video,audio,.iso` (`t` in the browser changes it)' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l theme -d 'Colour theme: auto, dark, light, ansi (the terminal\'s own 16 colours), mono, high-contrast, or NAME for the theme file NAME.toml in dfdu/themes in the configuration directory. auto asks the terminal for its background colour at start (up to 1 s if it does not answer) and picks dark or light, or ansi when the colour is unknown' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l color -d 'Colours: auto (from the terminal and NO_COLOR), never, 16, 256 or truecolor. A level given here is used even when NO_COLOR is set' -r
@@ -67,7 +70,10 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l depth -d 'Levels of d
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l top -d 'Entries to print per directory, largest first [default: 10; all for ndjson]' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l threads -d 'Worker threads for the scanned filesystem. Mounts below it with their own limit (spinning disks: 2, network: 4) add that many' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l measure-workers -d 'Threads measuring shared extents (btrfs, XFS; APFS clones of 1 MiB or more); 0 reports sizes as du does' -r
-complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l remote -d 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there). Nothing is classified or recorded in the history' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l remote -d 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent). Nothing is recorded in the history' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l remote-agent -d 'How to start the agent on HOST: auto (an installed dfdu that speaks this one\'s protocol, else one sent earlier, else send this version\'s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]' -r -f -a "auto\t'The installed dfdu if it speaks this one\'s protocol, else one sent earlier, else send one (asking first)'
+installed\t'The dfdu installed on the host, as `ssh HOST dfdu agent`'
+upload\t'One sent earlier, else send one, without asking'"
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l type -d 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l stall-abandon -d 'Abandon directories stalled this many seconds' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l stall-after -d 'Report a directory as stalled after one call on it took this many seconds (tests)' -r
@@ -85,7 +91,7 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l bytes -d 'Print only 
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l errors -d 'List every entry that could not be read, with the reason'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l no-history -d 'Do not record the scan in the history (`dfdu diff`, `dfdu history`)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -l debug-stats -d 'Print pipeline counters and applier timing (lock hold and wait) after the scan'
-complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand scan" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c dfdu -n "__fish_dfdu_using_subcommand disks" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand report" -l min-size -d 'Only matches at least this big (`100M`, `1.5GiB`, `500 KB`)' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand report" -l category -d 'Only these categories (comma separated): an id such as `dev.build`, or its first part (`dev`) for all of them' -r
@@ -146,14 +152,17 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand dupes" -s h -l help -d 'Print 
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s o -l output -d 'Where to write (`-` for stdout)' -r -F
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l threads -d 'Worker threads' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l resume-from -d 'Start from this snapshot (`--snapshot`) and rescan only the directories changed since it was taken, when the volume\'s change journal can tell (macOS, Windows, btrfs as root); otherwise everything. PATH and the mount options are the snapshot\'s' -r -F
-complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l remote -d 'Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there)' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l remote -d 'Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none (--remote-agent)' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l remote-agent -d 'How to start the agent on HOST: auto (an installed dfdu that speaks this one\'s protocol, else one sent earlier, else send this version\'s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]' -r -f -a "auto\t'The installed dfdu if it speaks this one\'s protocol, else one sent earlier, else send one (asking first)'
+installed\t'The dfdu installed on the host, as `ssh HOST dfdu agent`'
+upload\t'One sent earlier, else send one, without asking'"
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l compress -d 'Compress with zstd (ncdu reads it with `-f`; dfdu recognises it on import)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l snapshot -d 'Write dfdu\'s own snapshot format instead (lossless, checked, compressed; for `dfdu -f` and `--resume-from`, not for ncdu)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s x -l one-file-system -d 'Stay on the filesystem of the scanned directory (the default; overrides --cross-mounts and --network given before it)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l cross-mounts -d 'Descend into other local filesystems (disks, tmpfs)'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l network -d 'Descend into network filesystems (NFS, SMB, sshfs and other FUSE network mounts); with or without --cross-mounts'
 complete -c dfdu -n "__fish_dfdu_using_subcommand export" -l mft -d 'Windows, as administrator: read each NTFS volume\'s master file table instead of listing its directories, which is much faster on large volumes. Volumes whose table cannot be read are listed as usual'
-complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s h -l help -d 'Print help'
+complete -c dfdu -n "__fish_dfdu_using_subcommand export" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l depth -d 'Levels of directories to print below the root' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l top -d 'Entries to print per directory, largest first' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand import" -l type -d 'Count only files of these types or extensions, comma-separated: `video,audio,.iso`. Types: video, audio, image, document, archive, disk-image, code, executable, font, data, other. Folders show the size of the matching files inside them' -r
@@ -178,6 +187,7 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and __fish_seen_subcomm
 complete -c dfdu -n "__fish_dfdu_using_subcommand man" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand completions" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand agent" -l threads -d 'Worker threads' -r
+complete -c dfdu -n "__fish_dfdu_using_subcommand agent" -l protocols -d 'Print the protocol versions this agent speaks (`MIN MAX`) and exit'
 complete -c dfdu -n "__fish_dfdu_using_subcommand agent" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "scan" -d 'Scan a directory and print a summary'
 complete -c dfdu -n "__fish_dfdu_using_subcommand help; and not __fish_seen_subcommand_from scan disks report clean diff history dupes export import recover cache man completions agent help" -f -a "disks" -d 'List the mounted filesystems with their size and free space'

@@ -24,7 +24,7 @@ use parking_lot::Mutex;
 use dfdu_clean::{DeleterHandle, DeleterMsg, DeleterReq, STAGE_UNDO_WINDOW, spawn_deleter};
 use dfdu_rules::{Env, RuleSet, Source};
 
-use super::wire::{FromAgent, ToAgent, VERSION, WireClass, read_frame, write_frame};
+use super::wire::{FromAgent, MIN_VERSION, ToAgent, VERSION, WireClass, read_frame, write_frame};
 use crate::classifier::CheckReq;
 use crate::measure::{MeasureMsg, MeasureReq, spawn_measurers};
 use crate::nanos::nanos;
@@ -249,7 +249,7 @@ fn describe_host<W: Write>(out: &Out<W>, root: &[u8]) -> usize {
 /// first.
 fn greet<W: Write>(out: &Out<W>, input: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     out.send(&FromAgent::Hello {
-        min: VERSION,
+        min: MIN_VERSION,
         max: VERSION,
         tool: format!("dfdu {}", env!("CARGO_PKG_VERSION")),
     });
