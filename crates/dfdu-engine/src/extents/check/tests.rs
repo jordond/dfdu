@@ -1,6 +1,11 @@
 use super::*;
 use crate::extents::tests::{m, tree};
 
+/// The path of `ix` as the tree joins it (with `\\` on Windows).
+fn path(t: &Tree, ix: Ix) -> String {
+    String::from_utf8_lossy(&t.path(ix)).into_owned()
+}
+
 /// x and y share [0, 60), homed at a; returns the table, the tree, r and a.
 #[expect(
     clippy::many_single_char_names,
@@ -20,9 +25,13 @@ fn shared() -> (ExtentTable, Tree, Ix, Ix) {
 /// The view of an inode names where it is counted and the segments it references.
 #[test]
 fn an_inode_is_described_with_its_segments() {
-    let (e, t, ..) = shared();
+    let (e, t, _, a) = shared();
     let d = e.describe(&t, (1, 10));
-    assert!(d.starts_with("(1, 10) at /r/a/x excl 40"), "{d}");
+    let x = t.children(a).find(|&c| t.name(c) == b"x").unwrap();
+    assert!(
+        d.starts_with(&format!("(1, 10) at {} excl 40", path(&t, x))),
+        "{d}"
+    );
     assert!(d.contains("seg 0..60 refs [(1, 10), (1, 11)]"), "{d}");
     assert_eq!(e.describe(&t, (1, 99)), "(1, 99): not in the table");
 }
@@ -68,7 +77,7 @@ fn wrong_homes_and_home_bytes_are_found() {
     assert_eq!(
         e.check(&t),
         Err(Mismatch::Bytes {
-            path: "/r/a".into(),
+            path: path(&t, a),
             tree: 65,
             table: 60,
         })
@@ -89,13 +98,14 @@ fn wrong_homes_and_home_bytes_are_found() {
     else {
         panic!("{err}");
     };
-    assert_eq!((*start, *end, &home[..]), (0, 60, "/r"));
-    assert_eq!(lca.as_deref(), Some("/r/a"));
+    assert_eq!((*start, *end, home), (0, 60, &path(&t, r)));
+    assert_eq!(lca.as_deref(), Some(&*path(&t, a)));
+    let at = |name: &[u8]| path(&t, t.children(a).find(|&c| t.name(c) == name).unwrap());
     assert_eq!(
         refs,
         &[
-            "(1, 10) at /r/a/x visible true",
-            "(1, 11) at /r/a/y visible true"
+            format!("(1, 10) at {} visible true", at(b"x")),
+            format!("(1, 11) at {} visible true", at(b"y")),
         ]
     );
     assert!(

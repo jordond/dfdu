@@ -105,6 +105,7 @@ fn guarded_matches_carry_the_pools_answer() {
     assert!(check_pool_flags(&sim.model, &rules).is_ok());
     let sim = project(false);
     let err = check_pool_flags(&sim.model, &rules).unwrap_err();
+    let path = sim.model.tree.path(find(&sim, "p/node_modules"));
     assert!(err.ends_with(": not checked"), "{err}");
-    assert!(err.starts_with("/sim/p/node_modules"), "{err}");
+    assert!(err.starts_with(&*String::from_utf8_lossy(&path)), "{err}");
 }
