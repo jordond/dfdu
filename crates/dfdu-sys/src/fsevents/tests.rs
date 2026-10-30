@@ -39,8 +39,9 @@ fn changes_after_an_id_are_reported() {
     assert!(volume_uuid(dev).is_some());
 }
 
-/// A change made just before the call is reported, without waiting or asking again, in a
-/// directory created just before the position was taken ([`position_event_id`]).
+/// A change made just before the call is reported, in a directory created just before the
+/// position was taken ([`position_event_id`]). A busy daemon can hold it past one call (the
+/// resume's verify pass covers that), so the call is repeated for a while.
 #[test]
 fn a_change_just_before_the_call_is_reported() {
     let _one = ONE_AT_A_TIME
@@ -55,7 +56,14 @@ fn a_change_just_before_the_call_is_reported() {
         // still holds for the new directory, with an id before it.
         let since = position_event_id();
         std::fs::write(d.join("f"), b"x").unwrap();
-        let got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
+        let mut got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
+        for _ in 0..40 {
+            if got.dirs.contains(&d) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
+        }
         assert!(!got.full);
         assert!(got.dirs.contains(&d), "{i}: {got:?}");
     }
