@@ -1,7 +1,13 @@
 //! `dfdu clean`: deletes the rules' matches that `dfdu report` recommends (or, with `--all`,
-//! every match that passes the filters), after the same checks as the browser's deletes. It
-//! is a dry run unless `--yes` is given, and runs the owning tools' commands only with
-//! `--allow-commands`.
+//! every match that passes the filters). It is a dry run unless `--yes` is given, and runs the
+//! owning tools' commands only with `--allow-commands`.
+//!
+//! The deletes go to the engine as the browser's do, with the same checks when they run. What
+//! it picks is stricter than what the browser's cleanup view lets you tick, which holds back
+//! only protected matches and shows the rest of these as reason chips: it also skips matches git
+//! could not tell about, ones a running process uses, and ones whose git or process checks did not
+//! finish, besides those still being scanned, report-only ones, ones only their tool's command
+//! cleans (without `--allow-commands`) and, without `--all`, ones not recommended.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
