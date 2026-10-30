@@ -184,7 +184,9 @@ fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
 /// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS this waits for
 /// the `FSEvents` daemon to send out the events it holds (about 0.1 s, at most 2 s), so that
-/// every change after it is replayed.
+/// every change after it is replayed; `None` when the daemon takes longer, so that what is
+/// saved with it is scanned again in full rather than resumed from a position that may miss
+/// changes.
 #[must_use]
 pub fn journal_position(path: &Path) -> Option<JournalPosition> {
     // Read before the position, so that whatever changes after it has a ctime no older.
@@ -208,7 +210,7 @@ fn position(path: &Path) -> Option<([u8; 16], u64)> {
         let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
         // Not the bare current id: a change made soon after it to a directory the daemon still
         // holds an event for would carry an older id, and be lost to the resume.
-        Some((volume, dfdu_sys::fsevents::flushed_event_id(dev, FLUSH)))
+        Some((volume, dfdu_sys::fsevents::flushed_event_id(dev, FLUSH)?))
     }
     #[cfg(windows)]
     {

@@ -22,7 +22,7 @@ fn changes_after_an_id_are_reported() {
         std::fs::metadata(&root).unwrap().dev()
     };
     // The writes above went out with ids before this one, so `quiet` is not reported.
-    let since = flushed_event_id(dev, Duration::from_secs(5));
+    let since = flushed_event_id(dev, Duration::from_secs(5)).expect("flushed");
     std::fs::write(root.join("a/b/new"), b"hello").unwrap();
     std::fs::write(root.join("a/top"), b"hi").unwrap();
     let mut got = Changes::default();
@@ -57,7 +57,7 @@ fn a_change_just_before_the_call_is_reported() {
         std::fs::create_dir(&d).unwrap();
         // Not the bare current id: the write below could fold into the event the daemon
         // still holds for the new directory, with an id before it.
-        let since = flushed_event_id(dev, Duration::from_secs(5));
+        let since = flushed_event_id(dev, Duration::from_secs(5)).expect("flushed");
         std::fs::write(d.join("f"), b"x").unwrap();
         let got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
         assert!(!got.full);
@@ -121,7 +121,7 @@ fn changes_right_after_a_flushed_position_are_replayed() {
         std::fs::create_dir_all(d.join("a/b")).unwrap();
         std::fs::write(d.join("a/one"), b"x").unwrap();
         let t = Instant::now();
-        let since = flushed_event_id(dev, Duration::from_secs(2));
+        let since = flushed_event_id(dev, Duration::from_secs(2)).expect("flushed");
         longest = longest.max(t.elapsed());
         all += t.elapsed();
         std::fs::remove_file(d.join("a/one")).unwrap();

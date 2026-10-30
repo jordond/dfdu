@@ -293,16 +293,18 @@ fn changes(
 /// after [`current_event_id`] can carry an id before it and never be replayed (seen under
 /// load: a directory written to shortly before the position was taken). Waits, at most
 /// `timeout`, for a file written in a directory of its own to arrive live, as
-/// [`changes_since`] does; events come in order, so the held ones went out before it. Without
-/// such a directory on the volume, or on timeout, the id is taken as it stands.
+/// [`changes_since`] does; events come in order, so the held ones went out before it. `None`
+/// when that file did not arrive in time: no position is safe then. Without such a directory
+/// on the volume, the id as it stands.
 #[must_use]
-pub fn flushed_event_id(dev: u64, timeout: Duration) -> u64 {
-    if let Some(d) = sync_dir(dev) {
-        let deadline = Instant::now() + timeout;
-        let _ = replay(&d, current_event_id(), deadline, Some(&d), None);
-        let _ = std::fs::remove_dir_all(&d);
-    }
-    current_event_id()
+pub fn flushed_event_id(dev: u64, timeout: Duration) -> Option<u64> {
+    let Some(d) = sync_dir(dev) else {
+        return Some(current_event_id());
+    };
+    let deadline = Instant::now() + timeout;
+    let flushed = replay(&d, current_event_id(), deadline, Some(&d), None).is_ok_and(|c| !c.full);
+    let _ = std::fs::remove_dir_all(&d);
+    flushed.then(current_event_id)
 }
 
 /// How often a cancellable wait looks at its flag.
