@@ -1,9 +1,9 @@
 //! Where dfdu keeps its files: the configuration directory (rule files, themes), the state
 //! directory (deletion journals, staging, crash reports, scan history) and the cache directory
-//! (the scan cache). XDG directories on Linux and macOS, Known Folders on Windows (which has no
-//! state directory, so the data directory is used there); the cache is in the platform's own
-//! cache directory (`~/Library/Caches` on macOS). Every path is `None` without a home
-//! directory.
+//! (the scan cache, the downloaded agents). XDG directories on Linux and macOS, Known Folders on Windows (which has no
+//! state directory, so the data directory is used there); the caches (scans, and the agents
+//! downloaded for `--remote` hosts) are in the platform's own cache directory
+//! (`~/Library/Caches` on macOS). Every path is `None` without a home directory.
 
 use std::path::PathBuf;
 
@@ -58,6 +58,14 @@ pub fn cache_dir() -> Option<PathBuf> {
     Some(dirs.cache_dir().join("dfdu").join("scans"))
 }
 
+/// The release agents downloaded for `--remote` hosts: `dfdu/agents` in the platform cache
+/// directory.
+#[must_use]
+pub fn agent_cache_dir() -> Option<PathBuf> {
+    let dirs = etcetera::base_strategy::choose_native_strategy().ok()?;
+    Some(dirs.cache_dir().join("dfdu").join("agents"))
+}
+
 /// The deletion journals: `ops` in [`state_dir`].
 #[must_use]
 pub fn journal_dir() -> Option<PathBuf> {
@@ -96,5 +104,13 @@ mod tests {
         let Some(cache) = cache_dir() else { return };
         assert!(cache.ends_with("dfdu/scans"), "{}", cache.display());
         assert_ne!(Some(cache.as_path()), state_dir().as_deref());
+    }
+
+    #[test]
+    fn agents_are_cached_beside_the_scans() {
+        let Some(agents) = agent_cache_dir() else {
+            return;
+        };
+        assert!(agents.ends_with("dfdu/agents"), "{}", agents.display());
     }
 }

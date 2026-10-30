@@ -137,7 +137,7 @@ _dfdu() {
 
     case "${cmd}" in
         dfdu)
-            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --type --no-history --no-cache --theme --color --bars --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover cache man completions agent help"
+            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --remote-agent --type --no-history --no-cache --theme --color --bars --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover cache man completions agent help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -157,6 +157,10 @@ _dfdu() {
                     ;;
                 --remote)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --remote-agent)
+                    COMPREPLY=($(compgen -W "auto installed upload" -- "${cur}"))
                     return 0
                     ;;
                 --type)
@@ -183,7 +187,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__agent)
-            opts="-h --threads --help"
+            opts="-h --threads --protocols --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -437,7 +441,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__export)
-            opts="-o -x -h --output --compress --snapshot --threads --resume-from --remote --one-file-system --cross-mounts --network --mft --help"
+            opts="-o -x -h --output --compress --snapshot --threads --resume-from --remote --remote-agent --one-file-system --cross-mounts --network --mft --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -461,6 +465,10 @@ _dfdu() {
                     ;;
                 --remote)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --remote-agent)
+                    COMPREPLY=($(compgen -W "auto installed upload" -- "${cur}"))
                     return 0
                     ;;
                 *)
@@ -849,7 +857,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__scan)
-            opts="-x -h --format --depth --top --apparent --like-du --threads --measure-workers --remote --one-file-system --cross-mounts --network --mft --no-rules --type --by-type --bytes --errors --no-history --stall-abandon --stall-after --debug-stats --backend --help"
+            opts="-x -h --format --depth --top --apparent --like-du --threads --measure-workers --remote --remote-agent --one-file-system --cross-mounts --network --mft --no-rules --type --by-type --bytes --errors --no-history --stall-abandon --stall-after --debug-stats --backend --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -877,6 +885,10 @@ _dfdu() {
                     ;;
                 --remote)
                     COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --remote-agent)
+                    COMPREPLY=($(compgen -W "auto installed upload" -- "${cur}"))
                     return 0
                     ;;
                 --type)

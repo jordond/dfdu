@@ -240,7 +240,14 @@ fn lint() -> anyhow::Result<()> {
         ("machete", Box::new(machete)),
         ("deny", Box::new(|| deny(false))),
         ("zizmor", Box::new(zizmor)),
+        ("shellcheck", Box::new(shellcheck)),
     ])
+}
+
+/// The script `--remote` runs on hosts without dfdu.
+fn shellcheck() -> anyhow::Result<()> {
+    need("shellcheck")?;
+    run(Command::new("shellcheck").args(["--shell=sh", "crates/dfdu/src/remote/boot.sh"]))
 }
 
 fn deny(advisories: bool) -> anyhow::Result<()> {

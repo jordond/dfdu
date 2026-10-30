@@ -52,10 +52,15 @@ pub struct ScanArgs {
     /// sizes as du does.
     #[arg(long)]
     pub measure_workers: Option<usize>,
-    /// Scan PATH on this host, through `ssh HOST dfdu agent` (dfdu must be installed there).
-    /// Nothing is classified or recorded in the history.
+    /// Scan PATH on this host, through ssh; the dfdu agent is sent there if it has none
+    /// (--remote-agent). Nothing is recorded in the history.
     #[arg(long, value_name = "HOST")]
     pub remote: Option<String>,
+    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
+    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
+    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
+    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    pub remote_agent: Option<crate::remote::AgentMode>,
     #[command(flatten)]
     pub mounts: MountArgs,
     #[command(flatten)]
@@ -141,7 +146,7 @@ pub fn run(args: ScanArgs) -> ExitCode {
     // The agent scans with its own workers; the path is on its host, not this one.
     if let Some(host) = args.remote.as_deref() {
         let rules = args.rules.remote();
-        return match remote::engine(host, opts, &args.path, rules) {
+        return match remote::engine(host, opts, &args.path, rules, args.remote_agent) {
             Ok((e, class, root)) => {
                 let job = JobOptions {
                     class,
