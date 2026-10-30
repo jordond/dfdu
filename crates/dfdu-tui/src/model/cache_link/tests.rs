@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
-use std::sync::{Condvar, Mutex};
 
+use dfdu_engine::test_support::{Gate, wide_tree};
 use dfdu_scan::PortableBackend;
 use dfdu_store::cache::{Cache, Key};
 
@@ -95,33 +95,6 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     assert_eq!(app.status, None);
     drop(c);
     e.shutdown(Duration::from_millis(200));
-}
-
-/// A gate threads wait at until it is opened.
-struct Gate {
-    open: Mutex<bool>,
-    opened: Condvar,
-}
-
-impl Gate {
-    const fn new() -> Self {
-        Gate {
-            open: Mutex::new(false),
-            opened: Condvar::new(),
-        }
-    }
-
-    fn wait(&self) {
-        let mut open = self.open.lock().unwrap();
-        while !*open {
-            open = self.opened.wait(open).unwrap();
-        }
-    }
-
-    fn open(&self) {
-        *self.open.lock().unwrap() = true;
-        self.opened.notify_all();
-    }
 }
 
 /// Holds the change journal's answer in the test below until opened.
@@ -258,45 +231,11 @@ fn quick_or_read_only_scans_are_not_saved() {
 #[test]
 #[ignore = "a measurement, not a check"]
 fn measure_opening_a_million() {
-    use dfdu_tree::{Kind, Meta, Tree};
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
     let root = link.slot.key.root();
-    let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
-    let mut t = Tree::new();
-    let r = t.new_root(root.as_os_str().as_encoded_bytes(), &meta, true);
-    if let Some(d) = t.dir_mut(r) {
-        d.state = DirState::Complete;
-    }
-    let mut ino = 10;
-    for d in 0..10_000 {
-        ino += 1;
-        let dir = t.add_dir_flagged(
-            r,
-            format!("dir-{d:05}").as_bytes(),
-            &Meta { ino, ..meta },
-            0,
-        );
-        if let Some(x) = t.dir_mut(dir) {
-            x.state = DirState::Complete;
-        }
-        let own = t.own(dir);
-        t.propagate_add(r, &own);
-        for f in 0..100 {
-            ino += 1;
-            let m = Meta {
-                kind: Kind::File,
-                apparent: f * 1000,
-                alloc: 4096,
-                ino,
-                nlink: 1,
-                ..meta
-            };
-            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
-            let own = t.own(x);
-            t.propagate_add(dir, &own);
-        }
-    }
+    let meta = dfdu_tree::Meta::from_metadata(&fs::metadata(root).unwrap());
+    let t = wide_tree(root, &meta, 10_000, 100);
     let now = cache::now();
     let header = Header {
         tool_version: "test".into(),

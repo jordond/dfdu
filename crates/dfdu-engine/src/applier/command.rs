@@ -226,3 +226,6 @@ impl<B: Backend> Applier<B> {
         self.resume_refusal(m, cmd)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use dfdu_tree::{Kind, Meta, Tree};
+use dfdu_tree::Meta;
 
 use super::*;
 use crate::cache::now;
@@ -222,32 +222,9 @@ fn a_step_is_done_or_more() {
 #[ignore = "a measurement, not a check"]
 fn measure_a_million() {
     let (_tmp, _cache, slot) = setup();
-    let mut t = Tree::new();
     let root_path = slot.key.root();
     let meta = Meta::from_metadata(&fs::metadata(root_path).unwrap());
-    let r = t.new_root(root_path.as_os_str().as_encoded_bytes(), &meta, true);
-    let mut ino = 10u64;
-    for d in 0..10_000u64 {
-        ino += 1;
-        let dm = Meta { ino, ..meta };
-        let dir = t.add_dir_flagged(r, format!("dir-{d:05}").as_bytes(), &dm, 0);
-        let own = t.own(dir);
-        t.propagate_add(r, &own);
-        for f in 0..100u64 {
-            ino += 1;
-            let m = Meta {
-                kind: Kind::File,
-                apparent: f * 1000,
-                alloc: 4096,
-                ino,
-                nlink: 1,
-                ..meta
-            };
-            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
-            let own = t.own(x);
-            t.propagate_add(dir, &own);
-        }
-    }
+    let t = dfdu_engine::test_support::wide_tree(root_path, &meta, 10_000, 100);
     let lock = std::sync::RwLock::new(t);
     let mut holds = vec![];
     let t0 = Instant::now();

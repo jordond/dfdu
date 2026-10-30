@@ -1,12 +1,7 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use dfdu_scan::{JobOptions, Limits, PortableBackend, Shared};
 use dfdu_tree::{Kind, Meta};
 
 use super::*;
-use crate::applier::Command;
-use crate::applier::resume::tests::tree;
+use crate::applier::resume::tests::{resumed, tree};
 use crate::test_util::meta;
 
 /// Taking a directory over gives it to the resume's job, registers its hard links, and keeps
@@ -62,21 +57,7 @@ fn a_directory_taken_over_belongs_to_the_resume() {
 #[test]
 fn a_walk_waits_for_its_check_until_cancelled() {
     let (t, [r, ..]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
-    let mut m = Model::default();
-    let root = t.node_ref(r);
-    m.tree = t;
-    ap.apply_command(
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![PathBuf::from("a")]),
-            since: 0,
-            root: None,
-        },
-    );
+    let (mut ap, mut m) = resumed(t, r, &["a"], 0, None);
     let job = ap.jobs.keys().next().copied().unwrap();
     assert!(ap.resuming() && ap.resume_checks(job));
     assert!(!ap.resume_checks(job + 1));

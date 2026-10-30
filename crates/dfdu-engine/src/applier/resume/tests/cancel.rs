@@ -30,34 +30,16 @@ fn refused_as_unverified<B: Backend>(
 /// and deletes refuse what the resume did not refresh, which a rescan may list again.
 #[test]
 fn a_resume_walking_refuses_and_cancels_what_follows() {
-    use std::sync::Arc;
-
     use dfdu_clean::Mode;
-    use dfdu_scan::{Limits, PortableBackend, Shared};
-
-    use crate::applier::Applier;
 
     let (t, [r, a, _, c]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
-    let mut m = Model::default();
-    let (root, a, c) = (t.node_ref(r), t.node_ref(a), t.node_ref(c));
-    m.tree = t;
+    let (a, c) = (t.node_ref(a), t.node_ref(c));
+    let (mut ap, mut m) = resumed(t, r, &["a/b", "c"], 0, None);
+    ap.check(&m).unwrap();
     let command = |ap: &mut Applier<PortableBackend>, m: &mut Model, cmd| {
         ap.apply_command(m, cmd);
         ap.check(m).unwrap();
     };
-    command(
-        &mut ap,
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![PathBuf::from("a/b"), PathBuf::from("c")]),
-            since: 0,
-            root: None,
-        },
-    );
     assert!(ap.resuming());
     command(&mut ap, &mut m, Command::Rescan { node: c });
     command(
@@ -94,34 +76,17 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
 /// the check did not vouch for stays refused to deletes.
 #[test]
 fn a_resume_checking_refuses_and_cancels_what_follows() {
-    use std::sync::Arc;
-
     use dfdu_clean::Mode;
-    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
-
-    use crate::applier::Applier;
+    use dfdu_scan::ScanMsg;
 
     let (t, [r, a, _, c]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared.clone());
-    let mut m = Model::default();
-    let (root, a, c) = (t.node_ref(r), t.node_ref(a), t.node_ref(c));
-    m.tree = t;
-    ap.apply_command(
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![]),
-            since: 0,
-            root: None,
-        },
-    );
+    let (a, c) = (t.node_ref(a), t.node_ref(c));
+    let (mut ap, mut m) = resumed(t, r, &[], 0, None);
     while ap.has_work() {
         ap.work_step(&mut m);
     }
     // No worker runs here: the check's one batch waits.
-    assert_eq!(shared.outstanding(), (1, 0));
+    assert_eq!(ap.scan.outstanding(), (1, 0));
     assert!(ap.resuming() && m.status.settling && m.status.busy());
     ap.apply_command(&mut m, Command::Rescan { node: c });
     ap.apply_command(
@@ -169,29 +134,12 @@ fn a_resume_checking_refuses_and_cancels_what_follows() {
 /// from. Once the directory is rescanned, it is deleted from too.
 #[test]
 fn a_cancelled_rescan_of_a_resume_leaves_its_directory_refused() {
-    use std::sync::Arc;
-
-    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
-
-    use crate::applier::Applier;
+    use dfdu_scan::ScanMsg;
 
     let (t, [r, a, b, c]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
-    let mut m = Model::default();
     let (root, a, b, c) = (t.node_ref(r), t.node_ref(a), t.node_ref(b), t.node_ref(c));
     let stat = crate::applier::meta_of(&t, r);
-    m.tree = t;
-    ap.apply_command(
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![PathBuf::from("a")]),
-            since: 0,
-            root: Some(Box::new(stat)),
-        },
-    );
+    let (mut ap, mut m) = resumed(t, r, &["a"], 0, Some(stat));
     while ap.has_work() {
         ap.work_step(&mut m);
     }
