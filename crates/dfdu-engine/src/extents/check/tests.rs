@@ -2,6 +2,10 @@ use super::*;
 use crate::extents::tests::{m, tree};
 
 /// x and y share [0, 60), homed at a; returns the table, the tree, r and a.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn shared() -> (ExtentTable, Tree, Ix, Ix) {
     let (mut t, r, [x, y, _]) = tree();
     let mut e = ExtentTable::default();

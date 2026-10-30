@@ -63,7 +63,7 @@ fn a_request_is_answered_for_what_it_names() {
     );
 }
 
-/// /sim/{p/{package.json, node_modules/}, e/}: a match whose guard the pool checks, and one
+/// `/sim/{p/{package.json, node_modules/}, e/}`: a match whose guard the pool checks, and one
 /// decided by the listing alone.
 fn project(checks: bool) -> Sim {
     let mut b = SpecBuilder::new();

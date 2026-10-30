@@ -8,6 +8,10 @@ use crate::test_util::meta;
 /// A pass over a table whose homes are all visible moves nothing, and one over an empty table
 /// ends at once.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn a_pass_leaves_visible_homes_as_they_are() {
     let (mut t, r, [x, y, _]) = tree();
     let mut e = ExtentTable::default();

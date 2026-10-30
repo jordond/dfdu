@@ -18,6 +18,10 @@ fn dir(t: &mut Tree, parent: Ix, name: &str, ino: u64) -> Ix {
 /// `k` (`k`'s inode), `k2` (`kk`'s), `z` (an inode not kept) and `o` (`o`'s, outside `t`), and
 /// what the rescan keeps: `k`, `kk` and `o`. Returns the model, the kept, `t`, `k` and the
 /// placeholders.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn grafting() -> (Model, Kept, Ix, Ix, [NodeRef; 4]) {
     let mut m = Model::default();
     let tr = &mut m.tree;
@@ -46,6 +50,10 @@ fn grafting() -> (Model, Kept, Ix, Ix, [NodeRef; 4]) {
 /// outside the target). The graft puts the found ones in place; what moved or was not found
 /// is rescanned, the lost placeholders marked cancelled.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn kept_directories_take_the_place_of_their_placeholders() {
     let (mut m, mut kept, t, k, [pk, pk2, pz, po]) = grafting();
     assert!(

@@ -63,6 +63,10 @@ fn problems_past_the_limit_are_counted_not_kept() {
 }
 
 /// /r/{f, d/{g}}, as a scan leaves them; returns the tree and r, f, d.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn small() -> (Tree, [Ix; 3]) {
     use crate::test_util::meta;
     let mut t = Tree::new();
@@ -80,6 +84,10 @@ fn small() -> (Tree, [Ix; 3]) {
 /// What the tree refuses: a mount point, a protected node, one holding mounts (counted in the
 /// message), one inside a read-only snapshot, and a snapshot without root.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn the_tree_refuses_mounts_protected_nodes_and_snapshots() {
     use super::item::refusal;
     let (mut t, [r, f, d]) = small();

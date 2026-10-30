@@ -20,7 +20,7 @@ fn job_class() -> ClassOpts {
     }
 }
 
-/// /r/p/node_modules, with `package.json` beside it when `project`; returns the tree and r,
+/// `/r/p/node_modules`, with `package.json` beside it when `project`; returns the tree and r,
 /// p, `node_modules`.
 fn project(project: bool) -> (Tree, [Ix; 3]) {
     let mut t = Tree::new();
@@ -43,7 +43,7 @@ fn a_rescan_classifies_where_the_job_saw_the_directory() {
     assert_eq!(c.path, b"/home/u/r/p/node_modules");
     let rule = job.rules.index("node.node_modules").unwrap();
     assert!(c.chain.iter().any(|h| h.rule == rule), "{:?}", c.chain);
-    assert!(c.inside.is_empty());
+    assert!(c.inside.is_empty(), "{:?}", c.inside);
     assert_eq!(c.protection, State::Off);
     assert_eq!(rescan_class(&t, p, Some(r), &job).path, b"/home/u/r/p");
 
@@ -137,12 +137,12 @@ fn a_rescan_waits_for_its_parents_listing() {
     let a = r.m.tree.node_ref(r.at("a"));
     r.command(Command::Rescan { node: a });
     r.command(Command::Rescan { node: a });
-    assert!(rescans(&r).is_empty());
+    assert_eq!(rescans(&r), [], "waiting");
     assert_eq!(r.a.rescans_after_listing, [(a, false)], "waiting, once");
     r.apply(close(0, 1));
     r.a.retry_rescans_after_listing(&mut r.m);
     assert_eq!(rescans(&r), [a]);
-    assert!(r.a.rescans_after_listing.is_empty());
+    assert_eq!(r.a.rescans_after_listing, []);
 }
 
 /// A rescan replaces the running rescans below it, and is refused while one of it or above

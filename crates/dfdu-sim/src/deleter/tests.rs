@@ -66,7 +66,8 @@ fn deletes_pick_entries_the_spec_can_lose() {
         assert_eq!(ixs.len(), picked.len(), "none twice");
     }
     let empty = Tree::new();
-    assert!(pick_deletable(&empty, &sim.spec, &sim.shared, &mut sim.rng).is_empty());
+    let none = pick_deletable(&empty, &sim.spec, &sim.shared, &mut sim.rng);
+    assert!(none.is_empty(), "{none:?}");
 }
 
 /// The simulated deleter answers each item of the oldest plan, then its end, then nothing; a

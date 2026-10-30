@@ -66,6 +66,10 @@ fn keys(k: &Kept) -> Vec<(u64, u64)> {
 /// A change in `b` lists `r`, `a` and `b` again, keeping `c`: the rescan is of the root
 /// when it changed, of `b` alone when it did not.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn what_is_listed_again_keeps_the_rest() {
     let (t, [r, a, b, c]) = tree();
     let kept = kept_by_target(&t, r, &[r, b], &[r], &[]);
@@ -73,9 +77,9 @@ fn what_is_listed_again_keeps_the_rest() {
     let kept = kept_by_target(&t, r, &[a], &[a], &[]);
     assert_eq!(keys(&kept[0]), [t.dev_ino(b)]);
     let kept = kept_by_target(&t, r, &[b], &[b], &[]);
-    assert!(keys(&kept[0]).is_empty());
+    assert_eq!(keys(&kept[0]), []);
     // A mount is scanned in full.
-    assert!(keys(&kept_by_target(&t, r, &[a], &[a], &[a])[0]).is_empty());
+    assert_eq!(keys(&kept_by_target(&t, r, &[a], &[a], &[a])[0]), []);
 }
 
 /// A directory whose listing was not read to the end is listed again.
@@ -91,6 +95,10 @@ fn an_incomplete_directory_is_not_kept() {
 /// gone; a batch that could not be stat'ed to the end lists all of its directories and their
 /// parents. The rescans start once the last batch is answered.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn what_the_check_finds_is_listed_again() {
     use std::sync::Arc;
 

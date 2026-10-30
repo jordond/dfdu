@@ -30,6 +30,10 @@ fn what_is_checked_leaves_out_what_is_listed_or_scanned_anyway() {
 /// Only full batches go until the walk has reached everything; then the rest goes too,
 /// without what is gone since it was reached.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn batches_go_full_or_at_the_end() {
     let (mut t, [r, a, b, c]) = tree();
     let scan = Shared::new(PortableBackend::default(), Limits::default());
@@ -43,7 +47,7 @@ fn batches_go_full_or_at_the_end() {
     t.detach(c);
     v.send(&t, &scan, 1, true);
     assert!(v.waiting());
-    assert!(v.next.is_empty());
+    assert_eq!(v.next, []);
     assert_eq!(v.batches, [Some(vec![t.node_ref(a), t.node_ref(b)])]);
 
     // Nothing left to stat sends no batch.
