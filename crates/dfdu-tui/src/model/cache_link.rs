@@ -7,6 +7,7 @@
 //! before stays) and waits at most [`CANCEL_WAIT`] for it to stop.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread;
@@ -89,6 +90,8 @@ struct Run {
 struct Writer {
     thread: thread::JoinHandle<std::io::Result<Saved>>,
     cancel: Arc<AtomicBool>,
+    /// Disconnected once the thread is done: it holds the other end until then.
+    done: mpsc::Receiver<()>,
 }
 
 /// Loads the cached scan, scans when there is none, and saves complete scans, on threads the
@@ -294,9 +297,11 @@ impl Cacher {
         let read = engine.reader();
         let cancel = Arc::new(AtomicBool::new(false));
         let (slot, stop) = (link.slot.clone(), cancel.clone());
+        let (running, done) = mpsc::channel();
         let spawned = thread::Builder::new()
             .name("dfdu-cache".into())
             .spawn(move || {
+                let _running: mpsc::Sender<()> = running;
                 let saved = slot.save(&header, |f| read(&mut |m| f(&m.tree)), &stop)?;
                 if matches!(saved, Saved::Written { .. }) {
                     slot.sweep(now);
@@ -304,7 +309,11 @@ impl Cacher {
                 Ok(saved)
             });
         if let Ok(thread) = spawned {
-            self.writer = Some(Writer { thread, cancel });
+            self.writer = Some(Writer {
+                thread,
+                cancel,
+                done,
+            });
             self.saved = Some(version);
             self.changed = None;
         }
@@ -427,11 +436,7 @@ impl Drop for Cacher {
             return;
         };
         w.cancel.store(true, Relaxed);
-        let deadline = Instant::now() + CANCEL_WAIT;
-        while !w.thread.is_finished() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-        if w.thread.is_finished() {
+        if w.done.recv_timeout(CANCEL_WAIT) == Err(RecvTimeoutError::Disconnected) {
             let _ = w.thread.join();
         }
     }

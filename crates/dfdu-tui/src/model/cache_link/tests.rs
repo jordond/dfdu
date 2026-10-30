@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Condvar, Mutex};
 
 use dfdu_engine::EngineOptions;
 use dfdu_scan::PortableBackend;
@@ -109,8 +109,35 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     e.shutdown(Duration::from_millis(200));
 }
 
-/// Holds the change journal's answer in the test below until set.
-static ANSWER: AtomicBool = AtomicBool::new(false);
+/// A gate threads wait at until it is opened.
+struct Gate {
+    open: Mutex<bool>,
+    opened: Condvar,
+}
+
+impl Gate {
+    const fn new() -> Self {
+        Gate {
+            open: Mutex::new(false),
+            opened: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) {
+        let mut open = self.open.lock().unwrap();
+        while !*open {
+            open = self.opened.wait(open).unwrap();
+        }
+    }
+
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
+}
+
+/// Holds the change journal's answer in the test below until opened.
+static ANSWER: Gate = Gate::new();
 
 /// A rescan sent while the resume waits for the change journal is refused (no resume has
 /// taken the cached tree over yet), which leaves it not yet brought up to date: nothing is
@@ -143,9 +170,7 @@ fn nothing_is_saved_before_the_resume_ended() {
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
     c.changed_since = |_, _, _| {
-        while !ANSWER.load(Relaxed) {
-            thread::sleep(Duration::from_millis(1));
-        }
+        ANSWER.wait();
         Some(vec![PathBuf::new()])
     };
     c.poll(&mut app, &e);
@@ -177,7 +202,7 @@ fn nothing_is_saved_before_the_resume_ended() {
         "the cached tree, without the new file"
     );
 
-    ANSWER.store(true, Relaxed);
+    ANSWER.open();
     poll_until(&mut c, &mut app, &e, |c, _| {
         c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
     });
