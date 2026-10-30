@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, bail};
-use clap::Args;
+use clap::{Args, ValueEnum};
 
 use crate::cmd::{docker_run, need, run};
 
@@ -35,6 +35,29 @@ pub(crate) struct DemoArgs {
     /// The image to build the binaries in.
     #[arg(long, default_value = "rust:1.99")]
     build_image: String,
+    /// What to record each tape as; repeat for several (`--format gif --format mp4`). The tapes'
+    /// own `Output` lines name the GIF; other formats replace it.
+    #[arg(long = "format", value_enum, default_values_t = [Format::Gif])]
+    formats: Vec<Format>,
+}
+
+/// VHS's output formats. The videos are a fraction of the GIFs' size; dfdu.app plays them when
+/// they are in assets/demos and falls back to the GIF.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Format {
+    Gif,
+    Mp4,
+    Webm,
+}
+
+impl Format {
+    fn ext(self) -> &'static str {
+        match self {
+            Format::Gif => "gif",
+            Format::Mp4 => "mp4",
+            Format::Webm => "webm",
+        }
+    }
 }
 
 /// Names of the tapes in demo/tapes, sorted; `_`-prefixed ones are included by the others.
@@ -82,10 +105,14 @@ pub(crate) fn demo(a: &DemoArgs) -> anyhow::Result<()> {
     }
     run(Command::new("docker").args(["build", "-q", "-t", IMAGE, "demo"]))?;
     fs::create_dir_all(ASSETS)?;
+    let mut formats: Vec<&str> = a.formats.iter().map(|f| f.ext()).collect();
+    formats.sort_unstable();
+    formats.dedup();
+    let formats = formats.join(",");
     for t in &chosen {
-        record(t, &bins).with_context(|| format!("recording {t}"))?;
+        record(t, &bins, &formats).with_context(|| format!("recording {t}"))?;
     }
-    eprintln!("recorded {} into {ASSETS}/", chosen.join(", "));
+    eprintln!("recorded {} as {formats} into {ASSETS}/", chosen.join(", "));
     Ok(())
 }
 
@@ -100,8 +127,9 @@ fn build(image: &str) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(BUILT))
 }
 
-/// Records tape `name` in a new container and copies what it wrote to [`ASSETS`].
-fn record(name: &str, bins: &Path) -> anyhow::Result<()> {
+/// Records tape `name` in a new container as `formats` (extensions, comma-separated) and
+/// copies what it wrote to [`ASSETS`].
+fn record(name: &str, bins: &Path, formats: &str) -> anyhow::Result<()> {
     let container = format!("dfdu-demo-{name}");
     // A container left by an interrupted run.
     let _ = Command::new("docker")
@@ -114,6 +142,8 @@ fn record(name: &str, bins: &Path) -> anyhow::Result<()> {
         "devbox",
         "--name",
         &container,
+        "--env",
+        &format!("DEMO_FORMATS={formats}"),
         IMAGE,
         name,
     ]))?;

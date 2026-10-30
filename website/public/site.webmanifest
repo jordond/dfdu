@@ -1,0 +1,13 @@
+{
+  "name": "dfdu",
+  "short_name": "dfdu",
+  "description": "A disk usage browser for the terminal.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#1f232b",
+  "theme_color": "#1f232b",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

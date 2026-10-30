@@ -1,0 +1,196 @@
+---
+import Details from '../components/Details.astro'
+import { firstItem, TABS } from '../data/landing'
+import Base from '../layouts/Base.astro'
+import { BREW, DEFAULT_DESCRIPTION, REPO } from '../site'
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'dfdu',
+  description: DEFAULT_DESCRIPTION,
+  url: 'https://dfdu.app/',
+  applicationCategory: 'UtilitiesApplication',
+  operatingSystem: 'macOS, Linux, Windows',
+  license: 'https://opensource.org/licenses/MIT',
+  downloadUrl: `${REPO}/releases`,
+  installUrl: 'https://dfdu.app/docs/install/',
+  softwareHelp: 'https://dfdu.app/docs/',
+  sameAs: REPO,
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  author: { '@type': 'Person', name: 'Jordon de Hoog', url: 'https://github.com/jordond' },
+}
+
+// Lines, not a template literal: the logo has backticks and backslashes of its own.
+const LOGO = [
+  '     _   __      _',
+  '  __| | / _|  __| | _   _',
+  " / _` || |_  / _` || | | |",
+  '| (_| ||  _|| (_| || |_| |',
+  ' \\__,_||_|   \\__,_| \\__,_|',
+].join('\n')
+
+const first = TABS[0]!
+const firstRow = first.rows[firstItem(first)]!
+---
+
+<Base jsonLd={jsonLd}>
+  <noscript>
+    <style>
+      .tui { height: auto; overflow: visible; }
+      .main { flex-direction: column; }
+      .pane[hidden] { display: flex; }
+      .list { overflow: visible; }
+    </style>
+  </noscript>
+  <div class="tui" id="tui" tabindex="-1" data-tab={first.id}>
+    <header class="bar">
+      <nav class="tabs" aria-label="Views">
+        <span class="brand">dfdu</span>
+        {
+          TABS.map((t, i) => (
+            <>
+              <span class="sep" aria-hidden="true">│</span>
+              <button type="button" class="tab" data-tab-button={t.id} aria-controls={`pane-${t.id}`} aria-pressed={i === 0 ? 'true' : 'false'}>
+                {i + 1} {t.name}
+                {t.count && <span class="count"> {t.count}</span>}
+              </button>
+            </>
+          ))
+        }
+      </nav>
+      <div class="links">
+        <span class="t-ok only-wide">● ready</span>
+        <a href="/docs/">docs</a>
+        <a href={REPO}><span class="only-wide">github.com/jordond/dfdu</span><span class="only-narrow">GitHub</span> ↗</a>
+      </div>
+    </header>
+
+    <div class="bar meta">
+      <span>whole scan: <span class="v" id="scan-path">~/{first.id}</span></span>
+      <span class="only-wide">Rust · <span class="v">MIT</span> · macOS · Linux · Windows</span>
+    </div>
+
+    <div class="main">
+      {
+        TABS.map((t, ti) => (
+          <section
+            class="pane"
+            id={`pane-${t.id}`}
+            data-tab={t.id}
+            aria-label={t.name}
+            hidden={ti !== 0}
+            style={`--grid: ${t.grid}; --narrow-grid: ${t.narrowGrid}`}
+          >
+            <div class="band">
+              <span class="cell">{t.band}</span>
+              <span class="cell">{t.bandRight}</span>
+            </div>
+
+            {t.id === 'about' && (
+              <div class="hero">
+                <pre class="logo" aria-hidden="true">{LOGO}</pre>
+                <div class="pitch">
+                  <h1>A disk usage browser for the terminal.</h1>
+                  <p class="only-wide">
+                    Browse, sort and delete while the scan is still running, see what your space is made of (caches, build output,
+                    emulators, containers), and get a list of what is safe to remove.
+                  </p>
+                  <div class="actions">
+                    <button type="button" class="btn btn-line" data-copy={BREW}>
+                      <span class="t-dim">$&nbsp;</span>{BREW}
+                    </button>
+                    <a class="btn btn-fill" href="#install" data-tab-link="install">2 · all install options</a>
+                    <span class="copied" role="status" hidden>✓ copied</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div class="grid head" aria-hidden="true">
+              {t.head.map((h, hi) => (
+                <span class:list={['cell', { extra: hi > 0 }]} style={`text-align: ${h.align}`}>
+                  {h.t}
+                </span>
+              ))}
+            </div>
+
+            <div class="list" role="list">
+              {t.rows.map((r, ri) =>
+                r.kind === 'section' ? (
+                  <div class:list={['section', { first: r.first }]} role="listitem">
+                    <span class="cell">
+                      <span class="t-key b">▾ </span>
+                      <span class="name">{r.label}/</span>
+                      <span class="note t-dim"> {r.note}</span>
+                    </span>
+                    <span class="count">{r.count}</span>
+                  </div>
+                ) : (
+                  <div role="listitem">
+                    <button
+                      type="button"
+                      class="row grid"
+                      data-row={ri}
+                      aria-current={ri === firstItem(t) ? 'true' : 'false'}
+                      aria-controls="detail"
+                    >
+                      <span class="cell">
+                        <span class="tree">{r.tree}</span>
+                        <span class={`label t-${r.tone}`}>{r.label}</span>
+                      </span>
+                      {r.cells.map((c) => (
+                        <span class:list={['cell', 'extra', `t-${c.tone}`, { b: c.bold }]} style={`text-align: ${c.align}`}>
+                          {c.t}
+                        </span>
+                      ))}
+                    </button>
+                    <template id={`detail-${t.id}-${ri}`}>
+                      <Details detail={r.detail} />
+                    </template>
+                  </div>
+                ),
+              )}
+            </div>
+
+            <div class="summary">
+              <div>
+                <span class="b t-header">{t.sumTitle}</span>
+                <span class="t-dim"> · {t.sumNote}</span>
+              </div>
+              <p>{t.sum}</p>
+            </div>
+          </section>
+        ))
+      }
+
+      <aside class:list={['details', { 'has-gif': firstRow.kind === 'item' && !!firstRow.detail.gif }]} aria-label="Details">
+        <span class="details-label" aria-hidden="true">Details</span>
+        <div id="detail" class="details-body">
+          {firstRow.kind === 'item' && <Details detail={firstRow.detail} />}
+        </div>
+      </aside>
+    </div>
+
+    <footer class="foot">
+      <div class="foot-brew">
+        <button type="button" data-copy={BREW}>● {BREW}</button>
+        <span class="copied" role="status" hidden>&nbsp;✓</span>
+      </div>
+      <div class="only-narrow t-dim"><span class="t-key b">tap</span> a row for details</div>
+      <div class="hints only-wide">
+        <span><kbd>↑↓</kbd> move</span>
+        <span><kbd>1-4</kbd> views</span>
+        <span><kbd>c</kbd> copy command</span>
+        <span><kbd>g</kbd> GitHub</span>
+        <span><kbd>t</kbd> theme</span>
+        <span><kbd>p</kbd> pause</span>
+      </div>
+    </footer>
+  </div>
+</Base>
+
+<script>
+  import { start } from '../scripts/landing'
+  start()
+</script>

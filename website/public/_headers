@@ -1,0 +1,15 @@
+# 'unsafe-inline': the theme boot scripts and JSON-LD. 'wasm-unsafe-eval': Pagefind (docs search).
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Not immutable: re-recorded demos keep their names.
+/demos/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800

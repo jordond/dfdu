@@ -3,7 +3,7 @@ members = ["cargo:."]
 
 # Config for 'dist'
 [dist]
-cargo-dist-version = "0.32.0"
+cargo-dist-version = "0.33.1"
 ci = "github"
 installers = ["shell", "powershell", "homebrew"]
 tap = "jordond/homebrew-tap"

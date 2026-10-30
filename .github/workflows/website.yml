@@ -1,0 +1,149 @@
+name: website
+
+# Only `check` installs dependencies, and it has no secrets. The jobs holding CLOUDFLARE_API_TOKEN
+# deploy the built artifact with the Wrangler pinned below, so no dependency bump reaches the token.
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - website/**
+      - assets/demos/**
+      - assets/logo/**
+      - .github/workflows/website.yml
+      - .github/scripts/sticky-comment.sh
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # renovate: datasource=npm depName=bun
+  BUN_VERSION: "1.4.4"
+  # renovate: datasource=npm depName=wrangler
+  WRANGLER_VERSION: "4.156.0"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: website
+
+jobs:
+  check:
+    name: Check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Starlight's "last updated" reads each page's history.
+          fetch-depth: 0
+      - &node
+        name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.node-version
+      - &bun
+        name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Type-check
+        run: bun run check
+      - name: Build
+        env:
+          DFDU_SITE_ENV: ${{ github.event_name == 'pull_request' && 'preview' || '' }}
+        run: bun run build
+      - name: Upload the site
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: website/dist
+          retention-days: 3
+
+  deploy:
+    name: Deploy to dfdu.app
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://dfdu.app
+    concurrency:
+      group: website-deploy
+      cancel-in-progress: false
+    steps:
+      - &checkout-config
+        name: Check out the Wrangler and Node configs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            website/.node-version
+            website/wrangler.jsonc
+            .github/scripts
+          sparse-checkout-cone-mode: false
+      - &download
+        name: Download the site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site
+          path: website/dist
+      - *node
+      - *bun
+      - name: Deploy the site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          bun x "wrangler@$WRANGLER_VERSION" deploy
+
+  preview:
+    name: Preview
+    needs: check
+    # Secrets are not given to pull requests from forks.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - *checkout-config
+      - *download
+      - *node
+      - *bun
+      - name: Upload a preview version
+        id: upload
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          bun x "wrangler@$WRANGLER_VERSION" versions upload --preview-alias "pr-$PR" | tee "$RUNNER_TEMP/upload.log"
+          # Preview URLs are switched on by `wrangler deploy` (preview_urls in wrangler.jsonc),
+          # so there are none before the first deploy from main.
+          url=$(grep -o "https://pr-$PR-[^ ]*\.workers\.dev" "$RUNNER_TEMP/upload.log" | head -n 1 || true)
+          if [ -z "$url" ]; then
+            echo "::warning::No preview URL in wrangler's output; has dfdu-web been deployed from main yet?"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Comment the preview URL
+        if: steps.upload.outputs.url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.upload.outputs.url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '**Website preview:** %s\n\nBuilt from %s. Previews are noindex.\n' "$URL" "$SHA" > "$RUNNER_TEMP/comment.md"
+          ../.github/scripts/sticky-comment.sh website "$RUNNER_TEMP/comment.md"

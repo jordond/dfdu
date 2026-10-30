@@ -9,6 +9,7 @@ the same files, sizes and ages, and nothing of the machine it is made on.
 cargo xtask demo              # record every tape
 cargo xtask demo browse dupes # only these
 cargo xtask demo --list
+cargo xtask demo --format mp4 --format webm   # videos instead of GIFs (dfdu.app plays them)
 ```
 
 Needs Docker (privileged containers, for the FUSE mount). The binaries are built for Linux in
@@ -23,7 +24,8 @@ the `rust` image; `--bin-dir DIR` uses ones built already. Docker can be remote
   match are in [`crates/dfdu-demofs/README.md`](../crates/dfdu-demofs/README.md).
   `cargo run -p dfdu-demofs -- check FIXTURE` prints what one adds up to.
 - `tapes/NAME.tape`: one recording each. A tape writes `out/NAME.gif` (copied to
-  `assets/demos/`) and sources `tapes/_setup.tape` first. Comment lines set it up:
+  `assets/demos/`; with `--format`, `run.sh` records a copy of the tape that writes those
+  formats instead) and sources `tapes/_setup.tape` first. Comment lines set it up:
 
   | line | does |
   |---|---|

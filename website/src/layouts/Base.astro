@@ -1,0 +1,62 @@
+---
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/600.css'
+import '@fontsource/jetbrains-mono/700.css'
+import '../styles/landing.css'
+import { SEO } from 'astro-seo'
+import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, isPreview, SITE_NAME } from '../site'
+
+interface Props {
+  title?: string
+  description?: string
+  noindex?: boolean
+  jsonLd?: object
+}
+
+const { title = DEFAULT_TITLE, description = DEFAULT_DESCRIPTION, noindex = false, jsonLd } = Astro.props
+const site = Astro.site ?? new URL('https://dfdu.app')
+const hidden = noindex || isPreview()
+const canonical = new URL(Astro.url.pathname, site).href
+const ogImage = new URL('/og.png', site).href
+const ogImageAlt = 'The dfdu logo above the words "a disk usage browser for the terminal".'
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="theme-color" content="#1f232b" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <!-- Before first paint, so a saved or light theme never flashes dark. -->
+    <script is:inline>
+      try {
+        const t = localStorage.getItem('dfdu-theme')
+        document.documentElement.dataset.theme =
+          t === 'dark' || t === 'black' || t === 'light' ? t : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+      } catch {}
+    </script>
+    <SEO
+      title={title}
+      description={description}
+      canonical={canonical}
+      noindex={hidden}
+      nofollow={hidden}
+      openGraph={{
+        basic: { title, type: 'website', image: ogImage, url: canonical },
+        optional: { description, siteName: SITE_NAME, locale: 'en_US' },
+        image: { alt: ogImageAlt, width: 1200, height: 630, type: 'image/png' },
+      }}
+      twitter={{ card: 'summary_large_image', title, description, image: ogImage, imageAlt: ogImageAlt }}
+    />
+    {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

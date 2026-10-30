@@ -1,8 +1,8 @@
-# Built-in rules. The format is described in docs/rules.md.
+# Built-in rules. The format is described in https://dfdu.app/docs/rules/.
 #
 # `verified` lists the platforms where a rule's paths were checked on a real machine
-# (docs/rules.md); a path rule is enabled by default only there. Rules that match by name or
-# marker have no platform-specific paths and no `verified` list.
+# (https://dfdu.app/docs/rules/); a path rule is enabled by default only there. Rules that
+# match by name or marker have no platform-specific paths and no `verified` list.
 
 schema_version = 1
 

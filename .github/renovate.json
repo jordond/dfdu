@@ -56,8 +56,29 @@
       "matchPackageNames": ["libc", "rustix", "windows-sys", "fuser"]
     },
     {
+      "groupName": "website",
+      "matchFileNames": ["website/**", ".github/workflows/website.yml"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"]
+    },
+    {
+      "description": "@astrojs/check supports TypeScript 5 and 6 only",
+      "matchFileNames": ["website/**"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    },
+    {
       "groupName": "test tooling",
       "matchPackageNames": ["insta", "tempfile", "loom"]
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Versions pinned in website.yml next to a `# renovate:` comment (Bun, Wrangler)",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/website\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\w+: \"(?<currentValue>[^\"]+)\""
+      ]
     }
   ]
 }
