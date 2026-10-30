@@ -27,6 +27,8 @@ fn le_u64(b: &[u8], i: usize) -> u64 {
 /// reads the footer and checks it against what was read.
 struct FrameReader<R: Read> {
     r: R,
+    /// Where in the file the next frame starts.
+    at: u64,
     cur: Vec<u8>,
     pos: usize,
     frames: u64,
@@ -35,9 +37,18 @@ struct FrameReader<R: Read> {
     footer_entries: Option<u64>,
 }
 
+/// A damaged record: where it is in the file is not tracked.
 fn bad(msg: impl Into<String>) -> ImportError {
     ImportError::Format {
-        offset: 0,
+        offset: None,
+        msg: msg.into(),
+    }
+}
+
+/// Damage at byte `offset` of the file.
+fn bad_at(offset: u64, msg: impl Into<String>) -> ImportError {
+    ImportError::Format {
+        offset: Some(offset),
         msg: msg.into(),
     }
 }
@@ -47,6 +58,7 @@ impl<R: Read> FrameReader<R> {
         if self.footer_entries.is_some() {
             return Ok(false);
         }
+        let at = self.at;
         let mut h = [0u8; 12];
         self.r.read_exact(&mut h).map_err(truncated)?;
         let (zlen, rawlen, crc) = (
@@ -56,42 +68,46 @@ impl<R: Read> FrameReader<R> {
         );
         if zlen == 0 {
             if h != [0; 12] {
-                return Err(bad("a bad end marker"));
+                return Err(bad_at(at, "a bad end marker"));
             }
             let mut foot = [0u8; 24];
             self.r.read_exact(&mut foot).map_err(truncated)?;
             if crc32c::crc32c(&foot[..20]) != le_u32(&foot, 20) {
-                return Err(bad("the footer is damaged"));
+                return Err(bad_at(at + 12, "the footer is damaged"));
             }
             if le_u64(&foot, 8) != self.frames || le_u32(&foot, 16) != crc32c::crc32c(&self.crcs) {
-                return Err(bad("frames are missing or out of order"));
+                return Err(bad_at(at + 12, "frames are missing or out of order"));
             }
             let mut rest = [0u8; 1];
             if self.r.read(&mut rest)? != 0 {
-                return Err(bad("data after the footer"));
+                return Err(bad_at(at + 36, "data after the footer"));
             }
             self.footer_entries = Some(le_u64(&foot, 0));
             return Ok(false);
         }
         if zlen > FRAME_MAX || rawlen > FRAME_MAX || rawlen == 0 {
-            return Err(bad("a frame of impossible size"));
+            return Err(bad_at(at, "a frame of impossible size"));
         }
         let mut z = vec![0u8; zlen];
         self.r.read_exact(&mut z).map_err(truncated)?;
         if crc32c::crc32c(&z) != crc {
-            return Err(bad(format!("frame {} is damaged", self.frames)));
+            return Err(bad_at(at, format!("frame {} is damaged", self.frames)));
         }
         let mut d = ruzstd::decoding::StreamingDecoder::new(&z[..])
-            .map_err(|e| bad(format!("frame {}: {e}", self.frames)))?;
+            .map_err(|e| bad_at(at, format!("frame {}: {e}", self.frames)))?;
         self.cur.clear();
         (&mut d)
             .take(rawlen as u64 + 1)
             .read_to_end(&mut self.cur)
-            .map_err(|e| bad(format!("frame {}: {e}", self.frames)))?;
+            .map_err(|e| bad_at(at, format!("frame {}: {e}", self.frames)))?;
         if self.cur.len() != rawlen {
-            return Err(bad(format!("frame {} has the wrong length", self.frames)));
+            return Err(bad_at(
+                at,
+                format!("frame {} has the wrong length", self.frames),
+            ));
         }
         self.pos = 0;
+        self.at += 12 + zlen as u64;
         self.frames += 1;
         self.crcs.extend_from_slice(&crc.to_le_bytes());
         Ok(true)
@@ -113,7 +129,7 @@ impl<R: Read> Read for FrameReader<R> {
                 Ok(true) => {}
                 Ok(false) => return Ok(0),
                 Err(ImportError::Io(e)) => return Err(e),
-                Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+                Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e)),
             }
         }
         let n = out.len().min(self.cur.len() - self.pos);
@@ -123,16 +139,28 @@ impl<R: Read> Read for FrameReader<R> {
     }
 }
 
+/// An error from reading the records, with the frame reader's own [`ImportError`] taken back
+/// out of the `io::Error` it travelled in.
+fn frame_error(e: io::Error) -> ImportError {
+    match e.kind() {
+        io::ErrorKind::UnexpectedEof => bad("the records end early"),
+        io::ErrorKind::InvalidData => {
+            let text = e.to_string();
+            match e.into_inner().map(|b| b.downcast::<ImportError>()) {
+                Some(Ok(ie)) => *ie,
+                _ => bad(text),
+            }
+        }
+        _ => ImportError::Io(e),
+    }
+}
+
 struct Rec<R: BufRead>(R);
 
 impl<R: BufRead> Rec<R> {
     fn byte(&mut self) -> Result<u8, ImportError> {
         let mut b = [0u8; 1];
-        self.0.read_exact(&mut b).map_err(|e| match e.kind() {
-            io::ErrorKind::UnexpectedEof => bad("the records end early"),
-            io::ErrorKind::InvalidData => bad(e.to_string()),
-            _ => ImportError::Io(e),
-        })?;
+        self.0.read_exact(&mut b).map_err(frame_error)?;
         Ok(b[0])
     }
 
@@ -303,16 +331,18 @@ fn open_records<R: Read>(r: R) -> Result<(Records<R>, u32), ImportError> {
     let mut head = [0u8; 12];
     r.read_exact(&mut head).map_err(truncated)?;
     if &head[..8] != MAGIC {
-        return Err(bad("not a dfdu snapshot"));
+        return Err(bad_at(0, "not a dfdu snapshot"));
     }
     let version = le_u32(&head, 8);
     if !matches!(version, VERSION | VERSION_1 | VERSION_2 | VERSION_3) {
-        return Err(bad(format!(
-            "snapshot format {version}; this dfdu reads {VERSION}"
-        )));
+        return Err(bad_at(
+            8,
+            format!("snapshot format {version}; this dfdu reads {VERSION}"),
+        ));
     }
     let fr = FrameReader {
         r,
+        at: 12,
         cur: vec![],
         pos: 0,
         frames: 0,
@@ -328,7 +358,7 @@ fn check_end<R: Read>(
     entries: u64,
 ) -> Result<(), ImportError> {
     let mut rest = [0u8; 1];
-    let more = rec.0.read(&mut rest).map_err(|e| bad(e.to_string()))?;
+    let more = rec.0.read(&mut rest).map_err(frame_error)?;
     if more != 0 {
         return Err(bad("records after the root closed"));
     }

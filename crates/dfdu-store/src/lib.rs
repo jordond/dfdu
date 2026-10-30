@@ -14,10 +14,10 @@ use std::io;
 #[derive(Debug)]
 pub enum ImportError {
     Io(io::Error),
-    /// Not valid input: what was wrong and where, in bytes from the start (of the
+    /// Not valid input: what was wrong and, when known, where, in bytes from the start (of the
     /// decompressed stream).
     Format {
-        offset: u64,
+        offset: Option<u64>,
         msg: String,
     },
     /// Past one of the import's limits.
@@ -34,7 +34,11 @@ impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ImportError::Io(e) => write!(f, "{e}"),
-            ImportError::Format { offset, msg } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format {
+                offset: Some(offset),
+                msg,
+            } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format { offset: None, msg } => write!(f, "{msg}"),
             ImportError::Limit(msg) => write!(f, "over a limit: {msg}"),
         }
     }

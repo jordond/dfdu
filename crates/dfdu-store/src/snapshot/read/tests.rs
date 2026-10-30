@@ -31,6 +31,28 @@ fn damage_is_refused() {
     assert!(read(&more[..], &Limits::default()).is_err());
 }
 
+/// A damaged frame is reported once, at the byte its frame starts, not re-wrapped by the
+/// record reader.
+#[test]
+fn damage_names_its_frame_once() {
+    let (t, r) = sample();
+    let out = bytes(&t, r);
+    let mut bad = out.clone();
+    // The first frame's header is bytes 12..24; its compressed data follows.
+    bad[24] ^= 0x41;
+    let err = read(&bad[..], &Limits::default()).err().unwrap();
+    assert_eq!(err.to_string(), "at byte 12: frame 0 is damaged");
+    for i in 0..out.len() {
+        let mut bad = out.clone();
+        bad[i] ^= 0x41;
+        let text = read(&bad[..], &Limits::default())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(text.matches("at byte").count() <= 1, "flip at {i}: {text}");
+    }
+}
+
 /// Version 1 files (no journal position), version 2 files (no time) and version 3 files (no
 /// last full scan) still read, with the same tree.
 #[test]
