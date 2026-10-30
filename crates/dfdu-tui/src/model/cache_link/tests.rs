@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::Ordering::Relaxed;
 
 use dfdu_engine::EngineOptions;
 use dfdu_scan::PortableBackend;
@@ -104,6 +105,89 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     poll_until(&mut c, &mut app, &e, |_, app| app.cached.is_none());
     assert_eq!(items(&e), scanned);
     assert_eq!(app.status, None);
+    drop(c);
+    e.shutdown(Duration::from_millis(200));
+}
+
+/// Holds the change journal's answer in the test below until set.
+static ANSWER: AtomicBool = AtomicBool::new(false);
+
+/// A rescan sent while the resume waits for the change journal ends first, and leaves the
+/// cached tree not yet brought up to date: nothing is saved until the resume has ended too.
+#[test]
+fn nothing_is_saved_before_the_resume_ended() {
+    const AT: JournalPosition = JournalPosition {
+        volume: [1; 16],
+        event_id: 7,
+        time: 0,
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let link = link(tmp.path());
+    let e = engine();
+    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut c = cacher(&link);
+    c.position = |_| Some(AT);
+    poll_until(&mut c, &mut app, &e, |c, _| {
+        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+    });
+    let scanned = items(&e).unwrap();
+    drop(c);
+    e.shutdown(Duration::from_millis(200));
+    let before = fs::read(&link.slot.path).unwrap();
+    // Changed since, as the journal will say.
+    fs::write(link.path.join("new"), b"new").unwrap();
+
+    let e = engine();
+    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut c = cacher(&link);
+    c.position = |_| Some(AT);
+    c.changed_since = |_, _| {
+        while !ANSWER.load(Relaxed) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        Some(vec![PathBuf::new()])
+    };
+    c.poll(&mut app, &e);
+    poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
+    let sub = e.read(|m| {
+        let r = m.tree.roots().next()?;
+        let sub = m.tree.children(r).find(|&x| m.tree.name(x) == b"sub")?;
+        Some(m.tree.node_ref(sub))
+    });
+    e.send(Command::Rescan { node: sub.unwrap() });
+    let rescanned = |m: &Model| {
+        m.status
+            .jobs
+            .first()
+            .is_some_and(|j| j.phase == JobPhase::Done)
+            && !m.status.busy()
+    };
+    poll_until(&mut c, &mut app, &e, |_, _| e.read(rescanned));
+    for _ in 0..20 {
+        c.poll(&mut app, &e);
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_none()));
+    assert!(matches!(app.cached, Some(Cached::Refreshing { .. })));
+    assert_eq!(fs::read(&link.slot.path).unwrap(), before);
+    assert_eq!(
+        items(&e),
+        Some(scanned),
+        "the cached tree, without the new file"
+    );
+
+    ANSWER.store(true, Relaxed);
+    poll_until(&mut c, &mut app, &e, |c, _| {
+        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+    });
+    assert_eq!(app.cached, None);
+    assert_eq!(items(&e), Some(scanned + 1));
+    let hit = link.slot.load(cache::now()).unwrap().expect("saved");
+    assert_eq!(
+        hit.loaded.tree.total(hit.loaded.root).items,
+        scanned + 1,
+        "the tree saved is the resumed one"
+    );
     drop(c);
     e.shutdown(Duration::from_millis(200));
 }
