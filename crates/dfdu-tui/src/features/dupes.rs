@@ -21,6 +21,7 @@ use dfdu_engine::Model;
 use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::state::marks;
 
@@ -356,19 +357,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let page = app.list_height.max(1);
-    let d = &mut app.dupes;
-    if let Some(n) = crate::app::keys::half_page(k, page) {
-        d.cursor = d.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.dupes.cursor, last, page) {
+        app.dupes.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => d.cursor = d.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => d.cursor = (d.cursor + 1).min(last),
-        KeyCode::PageUp => d.cursor = d.cursor.saturating_sub(page),
-        KeyCode::PageDown => d.cursor = (d.cursor + page).min(last),
-        KeyCode::Home | KeyCode::Char('g') => d.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => d.cursor = last,
-        KeyCode::Char(' ') => {
+    let d = &mut app.dupes;
+    match action {
+        Action::ToggleMark => {
             let Some(f) = found(app) else {
                 return Some(Vec::new());
             };
@@ -391,7 +387,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 None => {}
             }
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(d.cursor) {
+        Action::Open | Action::Enter => match rows.get(d.cursor) {
             Some(&Row::Group(g)) => {
                 if !d.toggled.remove(&g) {
                     d.toggled.insert(g);
@@ -408,7 +404,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             let at = (0..=d.cursor.min(last))
                 .rev()
                 .find(|&i| matches!(rows.get(i), Some(Row::Group(_))));

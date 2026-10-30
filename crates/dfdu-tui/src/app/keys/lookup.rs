@@ -88,6 +88,25 @@ pub fn half_page(k: &KeyEvent, page: usize) -> Option<isize> {
     }
 }
 
+/// Where `a` moves a cursor at `cursor` in a list of rows up to `last` that shows `page` rows,
+/// as the list moves its own; `None` for an action that does not move it. The views with a
+/// cursor of their own move theirs by it.
+#[must_use]
+pub fn cursor_after(a: Action, cursor: usize, last: usize, page: usize) -> Option<usize> {
+    let half = (page / 2).max(1);
+    Some(match a {
+        Action::Up => cursor.saturating_sub(1),
+        Action::Down => (cursor + 1).min(last),
+        Action::PageUp => cursor.saturating_sub(page),
+        Action::PageDown => (cursor + page).min(last),
+        Action::HalfPageUp => cursor.saturating_sub(half),
+        Action::HalfPageDown => (cursor + half).min(last),
+        Action::First => 0,
+        Action::Last => last,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -226,5 +245,23 @@ mod tests {
         assert_eq!(half_page(&ctrl('u'), 20), Some(-10));
         assert_eq!(half_page(&ctrl('d'), 1), Some(1), "at least a row");
         assert_eq!(half_page(&press(c('d')), 20), None);
+    }
+
+    #[test]
+    fn cursors_move_within_the_rows() {
+        assert_eq!(cursor_after(Action::Up, 0, 9, 4), Some(0));
+        assert_eq!(cursor_after(Action::Down, 9, 9, 4), Some(9));
+        assert_eq!(cursor_after(Action::PageDown, 3, 9, 4), Some(7));
+        assert_eq!(cursor_after(Action::PageUp, 3, 9, 4), Some(0));
+        assert_eq!(cursor_after(Action::HalfPageDown, 3, 9, 4), Some(5));
+        assert_eq!(
+            cursor_after(Action::HalfPageUp, 3, 9, 1),
+            Some(2),
+            "at least a row"
+        );
+        assert_eq!(cursor_after(Action::First, 3, 9, 4), Some(0));
+        assert_eq!(cursor_after(Action::Last, 3, 9, 4), Some(9));
+        assert_eq!(cursor_after(Action::Down, 0, 0, 4), Some(0), "no rows");
+        assert_eq!(cursor_after(Action::ToggleMark, 3, 9, 4), None);
     }
 }

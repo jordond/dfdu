@@ -8,7 +8,7 @@ mod lookup;
 pub use act::run;
 #[cfg(test)]
 pub(crate) use lookup::parse;
-pub use lookup::{action_for, first_key, half_page, offered};
+pub use lookup::{action_for, cursor_after, first_key, half_page, offered};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {

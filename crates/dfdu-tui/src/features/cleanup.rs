@@ -18,8 +18,9 @@ use std::collections::HashSet;
 use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
 use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::KeyEvent;
 
+use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
@@ -359,6 +360,9 @@ fn markable(it: &Item) -> bool {
     it.class.safety < Safety::Protected
 }
 
+/// The rows the page keys move the view's cursor by.
+const PAGE: usize = 10;
+
 /// Keys the view takes before the action registry; `None` passes the key on.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     if app.cleanup.pane.is_some() {
@@ -368,19 +372,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     app.status = None;
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
-    let c = &mut app.cleanup;
-    if let Some(n) = crate::app::keys::half_page(k, 10) {
-        c.cursor = c.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.cleanup.cursor, last, PAGE) {
+        app.cleanup.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => c.cursor = c.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1).min(last),
-        KeyCode::PageUp => c.cursor = c.cursor.saturating_sub(10),
-        KeyCode::PageDown => c.cursor = (c.cursor + 10).min(last),
-        KeyCode::Home | KeyCode::Char('g') => c.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => c.cursor = last,
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(c.cursor) {
+    let c = &mut app.cleanup;
+    match action {
+        Action::Open | Action::Enter => match rows.get(c.cursor) {
             Some(&Row::Item(i)) => show_in_files(app, i),
             Some(&row) => {
                 let open = is_open(app, row);
@@ -388,7 +387,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             // The nearest open section or category at or above the cursor; none without rows.
             let at = (0..=c.cursor.min(last)).rev().find_map(|i| {
                 let row = *rows.get(i)?;
@@ -399,7 +398,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 app.cleanup.cursor = i;
             }
         }
-        KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
+        Action::ToggleMark => toggle(app, rows.get(app.cleanup.cursor).copied()),
         _ => return None,
     }
     Some(Vec::new())
