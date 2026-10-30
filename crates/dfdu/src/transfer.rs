@@ -169,8 +169,8 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     let opts = launch::headless(false);
     // A remote scan's root is the one the agent resolved on its host.
     let (engine, job, root) = if let Some(host) = &args.remote {
-        match remote::engine(host, opts, &path, None, args.remote_agent) {
-            Ok((e, _, root)) => (e, job, root),
+        match remote::engine(host, opts, job, &path, None, args.remote_agent) {
+            Ok(started) => started,
             Err(code) => return code,
         }
     } else {
