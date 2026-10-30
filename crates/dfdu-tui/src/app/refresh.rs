@@ -198,7 +198,7 @@ impl App {
         let tree = self.tree_shown().is_some();
         // Rows below the top are left out of a list until the read without them comes in.
         let visible = |i: usize, e: &EntryData| {
-            shown(hide, e) && (tree || e.parent == u32::MAX) && filter.matches(i, e)
+            shown(hide, e) && (tree || e.parent == u32::MAX) && filter.matches(i)
         };
         // Only the filter changed: its rows are picked from the kept exact sort of every entry
         // it can show, in the order an exact sort of only those gives.
@@ -255,8 +255,7 @@ impl App {
         self.rows.extend_from_slice(self.order.rows());
         if resorted && !dir_changed {
             let auto = mode == Reorder::Auto;
-            self.motion
-                .resorted(&old_rows, &self.rows, entries, auto, now);
+            self.motion.resorted(&old_rows, &self.rows, entries, auto);
         }
         self.new_count = self.order.new_entries().len();
         self.new_largest = self

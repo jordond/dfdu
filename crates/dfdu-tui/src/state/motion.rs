@@ -220,7 +220,6 @@ impl Motion {
         new_rows: &[usize],
         entries: &[EntryData],
         auto: bool,
-        _now: Instant,
     ) {
         if !self.on {
             return;
