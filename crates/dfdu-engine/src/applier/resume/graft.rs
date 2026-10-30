@@ -1,6 +1,6 @@
 //! Putting the loaded directories a resume's rescan kept in the place of their placeholders.
 
-use dfdu_rules::{RuleIx, Safety};
+use dfdu_rules::{Hit, RuleIx, Safety};
 use dfdu_scan::Backend;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, Tree};
@@ -14,28 +14,21 @@ fn verdict(c: &Class) -> (RuleIx, Safety, Option<u16>) {
     (c.rule, c.safety, c.degraded)
 }
 
-/// Whether the class `kx` was loaded with still holds where it is now in the visible tree, as
-/// far as its parent's listing decides: the listing gives a hit of its rule, with the same
-/// safety and degradation. A rule that looks inside `kx` is decided by its loaded entries,
-/// which the listing does not read, so a hit is all it can say; one whose sibling condition no
-/// longer holds (a marker file removed) gives none.
-fn class_holds(tree: &Tree, kx: Ix, class: &ClassOpts) -> bool {
-    let Some(c) = tree.class(kx) else {
-        return true;
-    };
-    crate::applier::rescan::rescan_class(tree, kx, None, class)
-        .chain
-        .iter()
-        .any(|h| (h.rule, h.safety, h.degraded) == verdict(&c))
+/// The hits its parent's listing gives directory `kx` where it is in `tree`, against `class`:
+/// with its own entries, which a kept directory's unchanged mtime vouches for, and the rules
+/// decided above it, what its class is decided from.
+fn hits(tree: &Tree, kx: Ix, class: &ClassOpts) -> Vec<Hit> {
+    crate::applier::rescan::rescan_class(tree, kx, None, class).chain
 }
 
 /// What [`Applier::graft_kept`] leaves to do once the rescan swapped in.
 pub(in crate::applier) struct Grafted {
     /// Rescanned as they are.
     again: Vec<NodeRef>,
-    /// Kept directories classified as loaded that the new listing did not classify: rescanned
-    /// unless their class still holds ([`class_holds`]).
-    check: Vec<NodeRef>,
+    /// Kept directories, with the hits their parent's listing gave them where they were
+    /// loaded: rescanned unless the new listing gives the same ones, since a rule that looks
+    /// inside is not decided by the listing, which cannot read them.
+    check: Vec<(NodeRef, Vec<Hit>)>,
 }
 
 impl Grafted {
@@ -47,25 +40,34 @@ impl Grafted {
         class: Option<&ClassOpts>,
     ) -> Vec<NodeRef> {
         let mut out = self.again;
-        out.extend(
-            self.check
-                .into_iter()
-                .filter(|&r| match (tree.resolve_visible(r), class) {
-                    (Some(kx), Some(c)) => !class_holds(tree, kx, c),
-                    _ => false,
-                }),
-        );
+        if let Some(c) = class {
+            out.extend(
+                self.check
+                    .into_iter()
+                    .filter(|(r, old)| {
+                        tree.resolve_visible(*r)
+                            .is_some_and(|kx| hits(tree, kx, c) != *old)
+                    })
+                    .map(|(r, _)| r),
+            );
+        }
         out
     }
 }
 
 impl<B: Backend> Applier<B> {
     /// Puts the loaded directories `kept` keeps in the place of their placeholders in the
-    /// shadow of the rescan of `target`, which swaps in next. What is rescanned once it has: a
-    /// placeholder whose loaded directory is gone, a kept directory found under another name
-    /// or parent, or that the new listing classifies otherwise, since its subtree was
-    /// classified where it was ([`Grafted`]).
-    pub(in crate::applier) fn graft_kept(m: &mut Model, kept: &Kept, target: Ix) -> Grafted {
+    /// shadow of the rescan of `target`, which swaps in next and classified against `class`.
+    /// What is rescanned once it has: a placeholder whose loaded directory is gone, a kept
+    /// directory found under another name or parent, or classified otherwise by the new
+    /// listing or by the rules above it, since its subtree was classified where it was
+    /// ([`Grafted`]).
+    pub(in crate::applier) fn graft_kept(
+        m: &mut Model,
+        kept: &Kept,
+        target: Ix,
+        class: Option<&ClassOpts>,
+    ) -> Grafted {
         let mut out = Grafted {
             again: Vec::new(),
             check: Vec::new(),
@@ -114,14 +116,14 @@ impl<B: Backend> Applier<B> {
                 || rule(px).is_some_and(|r| rule(kx) != Some(r))
                 || marks(px) != marks(kx)
                 || above(px) != above(kx);
-            // Not classified by the listing, but as loaded: the listing cannot decide a rule
-            // that looks inside, so whether it still holds is judged once it swapped in.
-            let unsure = !moved && rule(px).is_none() && rule(kx).is_some();
+            // Where it was loaded, before it moves.
+            let loaded = class.filter(|_| !moved).map(|c| hits(t, kx, c));
             m.tree.graft(px, kx);
+            let r = m.tree.node_ref(kx);
             if moved {
-                out.again.push(m.tree.node_ref(kx));
-            } else if unsure {
-                out.check.push(m.tree.node_ref(kx));
+                out.again.push(r);
+            } else if let Some(old) = loaded {
+                out.check.push((r, old));
             }
         }
         out

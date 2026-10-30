@@ -88,6 +88,9 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     let mut cancels = 0;
     while sim.report.cancels > cancels {
         cancels = sim.report.cancels;
+        // A rescan of the root replaced the loaded one.
+        let t = &sim.model.tree;
+        let node = t.roots().next().map_or(node, |r| t.node_ref(r));
         sim.command(Command::Resume {
             node,
             opts: opts.clone(),

@@ -252,7 +252,7 @@ impl<B: Backend> Applier<B> {
             let shadow = m.tree.resolve(root);
             match (cancelled, shadow, m.tree.resolve_visible(target)) {
                 (false, Some(s), Some(t)) => {
-                    let again = kept.map(|k| Self::graft_kept(m, &k, t));
+                    let again = kept.map(|k| Self::graft_kept(m, &k, t, class.as_ref()));
                     m.tree.replace(t, s);
                     // What the kept directories share may have been homed in what went.
                     if again.is_some() {
