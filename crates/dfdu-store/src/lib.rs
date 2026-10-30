@@ -166,8 +166,9 @@ pub fn write_atomic<T>(
 }
 
 /// [`write_atomic`] without the syncs, for a file whose loss costs nothing but time (the scan
-/// cache): a crash can leave the old file, the new one or none, never part of the new one
-/// under its name.
+/// cache). A process that dies leaves the old file or the new one; a system crash or power loss
+/// can also leave a new one cut short or empty under its name, which its reader must refuse
+/// (a snapshot's checksums do, and the scan cache then scans again).
 ///
 /// # Errors
 ///
