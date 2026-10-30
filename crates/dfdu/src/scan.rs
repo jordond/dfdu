@@ -296,7 +296,8 @@ fn scan_with<B: Backend>(
         }
     });
     if debug_stats {
-        for g in engine.scanner().gate_stats() {
+        let gates = engine.local_scanner().map(|s| s.gate_stats());
+        for g in gates.unwrap_or_default() {
             eprintln!(
                 "mount limit: mount {} (dev {}): {} at once, at most {} were; {} tasks waited, \
                  {} permits taken back from stuck calls",

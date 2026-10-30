@@ -216,8 +216,15 @@ impl<B: Backend> Engine<B> {
                 (None, true)
             }
         };
-        if let Some(r) = &remote {
-            model.tree.set_host(r.link.host);
+        let measure_min = remote
+            .as_ref()
+            .map_or(crate::applier::MEASURE_MIN, |r| r.measure_min);
+        let privileged = remote
+            .as_ref()
+            .map_or_else(dfdu_sys::is_privileged, |r| r.privileged);
+        let (link, reader) = remote.map(|r| (r.link, r.reader)).unzip();
+        if let Some(l) = &link {
+            model.tree.set_host(l.host);
         }
         let model = Arc::new(RwLock::new(model));
         *CRASH_MODEL.lock() = Some(Arc::downgrade(&model));
@@ -225,15 +232,6 @@ impl<B: Backend> Engine<B> {
         let (wake_tx, changes_rx) = bounded::<()>(1);
         let stop = Arc::new(AtomicBool::new(false));
 
-        let (link, reader, remote_min, privileged) = match remote {
-            Some(r) => (
-                Some(r.link),
-                Some(r.reader),
-                Some(r.measure_min),
-                r.privileged,
-            ),
-            None => (None, None, None, dfdu_sys::is_privileged()),
-        };
         let pool = link
             .is_none()
             .then(|| Pool::start(&shared, &inbox, opts.workers));
@@ -246,14 +244,13 @@ impl<B: Backend> Engine<B> {
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
         // A remote engine's measurements run on the agent, when it can measure; their answers
         // come in through the link.
-        let measurers = match (&link, remote_min) {
-            (Some(l), Some(min)) => (opts.measure_workers > 0 && min > 0)
+        let measurers = match &link {
+            Some(l) => (opts.measure_workers > 0 && measure_min > 0)
                 .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone())),
-            _ => {
+            None => {
                 (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, &meas_tx))
             }
         };
-        let measure_min = remote_min.unwrap_or(crate::applier::MEASURE_MIN);
         // Without measurers the sender is dropped (measurement is off on macOS and Windows).
         let meas_rx = or_never(meas_rx, measurers.is_some());
         let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
@@ -377,8 +374,10 @@ impl<B: Backend> Engine<B> {
         &self.changes_rx
     }
 
-    pub fn scanner(&self) -> &Shared<B> {
-        &self.shared
+    /// The local scan pool: `None` for an engine scanning through an agent, whose jobs run
+    /// there (the wire carries no focus, and the agent keeps its own counters).
+    pub fn local_scanner(&self) -> Option<&Shared<B>> {
+        self.link.is_none().then_some(&*self.shared)
     }
 
     /// The byte budget on scanner data in transit to the applier.
@@ -435,6 +434,8 @@ impl<B: Backend> Engine<B> {
         }
         self.send(Command::CancelAll);
         self.stop.store(true, SeqCst);
+        // Wakes the applier's `select!` to see `stop` without waiting out its timeout; not
+        // counted in `commands_sent`, as the applier may stop before applying it.
         let _ = self.cmd_tx.send(Command::CancelAll);
         if let Some(a) = self.applier.take() {
             let _ = a.join();

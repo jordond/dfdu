@@ -211,12 +211,12 @@ fn hung_network_mount_is_abandoned_and_the_rest_counted() {
 
     // The mount is limited to 4 parts at once and adds 4 workers; each stuck call may cost
     // one more thread, up to a cap.
-    let gates = engine.scanner().gate_stats();
+    let gates = engine.local_scanner().unwrap().gate_stats();
     assert_eq!(gates.len(), 1, "{gates:?}");
     let g = &gates[0];
     assert_eq!(g.limit, 4);
     assert!(g.revoked >= hung.len() as u64, "{g:?}");
-    let mount_workers = engine.scanner().mount_workers();
+    let mount_workers = engine.local_scanner().unwrap().mount_workers();
     assert_eq!(mount_workers, 4);
     let bound = pool + mount_workers + hung.len().min(pool.min(16) + 64);
     assert!(

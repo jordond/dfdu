@@ -1,5 +1,5 @@
 //! Shutdown waits for workers within its bound and leaves a worker stuck in a filesystem call
-//! behind.
+//! behind; an engine dropped without a shutdown stops its applier.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -100,4 +100,32 @@ fn shutdown_leaves_a_stuck_worker_within_its_bound() {
     );
     // The bound, plus the applier's stop and scheduling.
     assert!(took < wait + Duration::from_secs(1), "took {took:?}");
+}
+
+#[test]
+fn dropping_the_engine_stops_the_applier() {
+    let engine = Engine::start(
+        PortableBackend::default(),
+        EngineOptions {
+            workers: 1,
+            measure_workers: 0,
+            classifiers: 0,
+            ..Default::default()
+        },
+    );
+    // The applier holds the only sender of change notices.
+    let changes = engine.changes().clone();
+    drop(engine);
+    let t0 = Instant::now();
+    loop {
+        match changes.recv_timeout(Duration::from_secs(10)) {
+            Ok(()) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => panic!("the applier kept running"),
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "the applier kept running"
+        );
+    }
 }

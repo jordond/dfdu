@@ -262,8 +262,8 @@ impl Pacing {
         ) = (Some(now), cost, cost, mode);
         self.seen_version = Some(snap.version);
         if snap.focus != self.focus {
-            if let Some((job, dir)) = snap.focus {
-                engine.scanner().set_focus(job, dir);
+            if let (Some((job, dir)), Some(s)) = (snap.focus, engine.local_scanner()) {
+                s.set_focus(job, dir);
             }
             self.focus = snap.focus;
         }

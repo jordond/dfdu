@@ -50,8 +50,8 @@ impl Counters {
     pub fn of<B: Backend>(engine: &Engine<B>) -> Self {
         Counters {
             sent: engine.sent_messages(),
-            outstanding: engine.scanner().outstanding(),
-            queued: engine.scanner().queued(),
+            outstanding: engine.local_scanner().map(|s| s.outstanding()).unwrap_or_default(),
+            queued: engine.local_scanner().map(|s| s.queued()).unwrap_or_default(),
         }
     }
 }
