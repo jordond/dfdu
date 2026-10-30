@@ -29,6 +29,10 @@ fn refused_as_unverified<B: Backend>(
 /// walks starts none of its rescans, which leaves the tree as loaded: the scan is incomplete,
 /// and deletes refuse what the resume did not refresh, which a rescan may list again.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn a_resume_walking_refuses_and_cancels_what_follows() {
     use dfdu_clean::Mode;
 
@@ -75,6 +79,10 @@ fn a_resume_walking_refuses_and_cancels_what_follows() {
 /// wait, starting none of the rescans, and an answer that comes late changes nothing. What
 /// the check did not vouch for stays refused to deletes.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn a_resume_checking_refuses_and_cancels_what_follows() {
     use dfdu_clean::Mode;
     use dfdu_scan::ScanMsg;
@@ -133,6 +141,10 @@ fn a_resume_checking_refuses_and_cancels_what_follows() {
 /// what is below it and what holds it, while the rest of what the resume checked is deleted
 /// from. Once the directory is rescanned, it is deleted from too.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn a_cancelled_rescan_of_a_resume_leaves_its_directory_refused() {
     use dfdu_scan::ScanMsg;
 
