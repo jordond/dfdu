@@ -2,6 +2,7 @@
 
 mod applier_loop;
 mod journal;
+pub use journal::Query as JournalQuery;
 mod options;
 
 pub(crate) use options::default_measurers;

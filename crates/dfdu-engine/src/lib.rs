@@ -32,7 +32,9 @@ pub use classifier::{
 // Engine callers take these from here and use dfdu_clean only for what is not re-exported.
 pub use crash::{crash_state, default_crash_dir, panic_is_caught_by_engine, write_crash_report};
 pub use dfdu_clean::{DeleteResult, Mode, STAGE_UNDO_WINDOW, shown_argv};
-pub use dfdu_scan::journal::{JournalPosition, changed_since, journal_position};
+pub use dfdu_scan::journal::{
+    JournalPosition, changed_since, changed_since_cancellable, journal_position,
+};
 pub use extents::{Inode, Measurement};
 pub use listed::{Listed, listed};
 pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
@@ -42,5 +44,5 @@ pub use notes::{ErrorItem, ErrorList, errors, errors_below, problem, subvol_labe
 pub use recent::{Event, RECENT, Recent};
 pub use recommend::{Verdict, recommends, verdict};
 pub use remote::{Connected, DEAD, RemoteIo, RemoteRules, agent, wire};
-pub use runtime::{Engine, EngineOptions, WaitIdle, workers_for};
+pub use runtime::{Engine, EngineOptions, JournalQuery, WaitIdle, workers_for};
 pub use sizes::{SizeMode, human};

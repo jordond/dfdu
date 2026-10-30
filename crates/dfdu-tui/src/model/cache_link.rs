@@ -107,8 +107,9 @@ pub(crate) struct Cacher {
     min_scan_ms: u64,
     /// Where a directory's change journal stands ([`dfdu_engine::journal_position`]).
     position: fn(&Path) -> Option<JournalPosition>,
-    /// What changed below a directory since a position ([`dfdu_engine::changed_since`]).
-    changed_since: fn(&Path, JournalPosition) -> Option<Vec<PathBuf>>,
+    /// What changed below a directory since a position
+    /// ([`dfdu_engine::changed_since_cancellable`]).
+    changed_since: dfdu_engine::JournalQuery,
 }
 
 impl Cacher {
@@ -123,7 +124,7 @@ impl Cacher {
             changed: None,
             min_scan_ms: MIN_SCAN_MS,
             position: dfdu_engine::journal_position,
-            changed_since: dfdu_engine::changed_since,
+            changed_since: dfdu_engine::changed_since_cancellable,
         }
     }
 

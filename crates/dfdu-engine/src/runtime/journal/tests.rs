@@ -56,7 +56,7 @@ fn ask(query: Query) -> (Ask, Receiver<Command>) {
 /// resume stays counted.
 #[test]
 fn a_panicking_query_resumes_everything() {
-    let (a, rx) = ask(|_, _| panic!("injected journal panic"));
+    let (a, rx) = ask(|_, _, _| panic!("injected journal panic"));
     let sent = a.sent.clone();
     a.run();
     assert!(matches!(
@@ -70,14 +70,14 @@ fn a_panicking_query_resumes_everything() {
 /// is gone.
 #[test]
 fn a_cancelled_or_unsent_resume_is_uncounted() {
-    let (a, rx) = ask(|_, _| Some(vec![]));
+    let (a, rx) = ask(|_, _, _| Some(vec![]));
     let sent = a.sent.clone();
     a.cancel.store(true, SeqCst);
     a.run();
     assert!(rx.try_recv().is_err());
     assert_eq!(sent.load(SeqCst), 0);
 
-    let (a, rx) = ask(|_, _| Some(vec![]));
+    let (a, rx) = ask(|_, _, _| Some(vec![]));
     let sent = a.sent.clone();
     drop(rx);
     a.run();
@@ -95,7 +95,7 @@ fn idle_waits_for_a_late_journal_answer() {
     let root = dunce::canonicalize(tmp.path()).unwrap();
     std::fs::write(root.join("new"), b"data").unwrap();
     let e = engine();
-    e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _| {
+    e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _, _| {
         while !ANSWER.load(Relaxed) {
             thread::sleep(Duration::from_millis(1));
         }
@@ -119,7 +119,7 @@ fn shutdown_does_not_wait_for_the_journal() {
     let tmp = tempfile::tempdir().unwrap();
     let root = dunce::canonicalize(tmp.path()).unwrap();
     let e = engine();
-    e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _| {
+    e.resume_with(loaded(&root), Some(AT), JobOptions::default(), |_, _, _| {
         thread::sleep(Duration::from_secs(2));
         Some(vec![])
     });

@@ -141,7 +141,7 @@ fn nothing_is_saved_before_the_resume_ended() {
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
-    c.changed_since = |_, _| {
+    c.changed_since = |_, _, _| {
         while !ANSWER.load(Relaxed) {
             thread::sleep(Duration::from_millis(1));
         }

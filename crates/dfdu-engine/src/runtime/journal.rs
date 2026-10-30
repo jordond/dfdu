@@ -14,7 +14,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use dfdu_scan::journal::{JournalPosition, changed_since};
+use dfdu_scan::journal::{JournalPosition, changed_since_cancellable};
 use dfdu_scan::{Backend, JobOptions};
 use dfdu_tree::{NodeRef, Tree};
 
@@ -22,8 +22,8 @@ use super::Engine;
 use crate::applier::Command;
 
 /// What the change journal is asked: the directories changed below a root since a position,
-/// as [`changed_since`] answers.
-type Query = fn(&Path, JournalPosition) -> Option<Vec<PathBuf>>;
+/// as [`changed_since_cancellable`] answers, ending early (with `None`) once the flag is set.
+pub type Query = fn(&Path, JournalPosition, &AtomicBool) -> Option<Vec<PathBuf>>;
 
 /// How long dropping an engine waits for a journal query still running.
 const DROP_WAIT: Duration = Duration::from_millis(200);
@@ -57,7 +57,7 @@ impl<B: Backend> Engine<B> {
     /// returns once the tree is loaded; [`Engine::wait_idle`] waits for the resume as for any
     /// command sent.
     pub fn resume(&self, tree: Tree, journal: Option<JournalPosition>, opts: JobOptions) {
-        self.resume_with(tree, journal, opts, changed_since);
+        self.resume_with(tree, journal, opts, changed_since_cancellable);
     }
 
     /// [`Engine::resume`], with the change journal asked by `query` (a test's, to answer late
@@ -67,7 +67,7 @@ impl<B: Backend> Engine<B> {
         tree: Tree,
         journal: Option<JournalPosition>,
         opts: JobOptions,
-        query: fn(&Path, JournalPosition) -> Option<Vec<PathBuf>>,
+        query: Query,
     ) {
         let Some(root) = tree.roots().next() else {
             self.load(tree);
@@ -118,10 +118,10 @@ impl Ask {
     /// Asks the journal and sends the resume with its answer, unless cancelled by then.
     fn run(self) {
         // A query that panics cannot tell what changed: everything is rescanned.
-        let changed =
-            catch_unwind(AssertUnwindSafe(|| (self.query)(&self.path, self.at))).unwrap_or(None);
-        // The query itself runs to its end: a cancel parameter of `changed_since` would take
-        // `self.cancel` here, to end a long history replay early and remove its files.
+        let changed = catch_unwind(AssertUnwindSafe(|| {
+            (self.query)(&self.path, self.at, &self.cancel)
+        }))
+        .unwrap_or(None);
         if self.cancel.load(SeqCst) {
             self.sent.fetch_sub(1, SeqCst);
             return;
@@ -147,8 +147,8 @@ impl Asking {
         self.cancel.store(true, SeqCst);
     }
 
-    /// Cancels and waits until `deadline` for the thread to end; one still asking the journal
-    /// then is left behind, and sends nothing when it ends.
+    /// Cancels and waits until `deadline` for the thread to end; the query sees the cancel within
+    /// about 50 ms, and a thread still running then is left behind and sends nothing.
     pub(super) fn stop(&mut self, deadline: Instant) {
         self.cancel();
         let Some(t) = self.thread.take() else {
