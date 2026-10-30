@@ -211,3 +211,6 @@ impl Step {
         if done { Step::Done } else { Step::More }
     }
 }
+
+#[cfg(test)]
+mod tests;

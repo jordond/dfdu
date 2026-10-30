@@ -29,6 +29,15 @@ fn written<T>(r: std::io::Result<T>) -> Result<T, ExitCode> {
     written_to(&"writing the output", r)
 }
 
+/// Writes the output with `f` to stdout through a buffer and flushes it, ending as
+/// [`written`] says.
+fn print_out(
+    f: impl FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>,
+) -> Result<(), ExitCode> {
+    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+    written(f(&mut w).and_then(|()| std::io::Write::flush(&mut w)))
+}
+
 /// [`written`] for output to `what`.
 fn written_to<T>(what: &dyn std::fmt::Display, r: std::io::Result<T>) -> Result<T, ExitCode> {
     match r {
@@ -109,10 +118,13 @@ struct Cli {
     /// keys delete on HOST, unless --read-only; nothing is recorded in the history.
     #[arg(long, value_name = "HOST", conflicts_with_all = ["disks", "import", "resume_from"])]
     remote: Option<String>,
-    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
-    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
-    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
-    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    #[arg(
+        long,
+        value_name = "HOW",
+        value_enum,
+        requires = "remote",
+        help = crate::remote::AGENT_MODE_HELP
+    )]
     remote_agent: Option<crate::remote::AgentMode>,
     /// Show only files of these types or extensions, comma-separated: `video,audio,.iso`
     /// (`t` in the browser changes it).

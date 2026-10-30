@@ -40,10 +40,13 @@ pub struct ExportArgs {
     /// (--remote-agent).
     #[arg(long, value_name = "HOST")]
     pub remote: Option<String>,
-    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
-    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
-    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
-    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    #[arg(
+        long,
+        value_name = "HOW",
+        value_enum,
+        requires = "remote",
+        help = crate::remote::AGENT_MODE_HELP
+    )]
     pub remote_agent: Option<crate::remote::AgentMode>,
     #[command(flatten)]
     pub mounts: MountArgs,
