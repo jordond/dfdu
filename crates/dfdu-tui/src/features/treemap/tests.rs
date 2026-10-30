@@ -94,6 +94,29 @@ pub(crate) fn treemap_app(m: &Model, now: Instant) -> App {
     app
 }
 
+/// [`treemap_app`] one level deeper (`+`): every tile shows what is in it.
+pub(crate) fn nested_app(m: &Model, now: Instant) -> App {
+    let mut app = treemap_app(m, now);
+    app.key(press(KeyCode::Char('+')), now);
+    sync(&mut app, m, now);
+    app
+}
+
+/// The Map of a directory of `entries`, without totals.
+pub(crate) fn map_of(entries: Vec<EntryData>, now: Instant) -> App {
+    let mut app = App::new(Theme::no_color(), now);
+    app.key(press(KeyCode::Char('2')), now);
+    app.refresh(snap_without_totals(entries, 1), now);
+    app
+}
+
+/// The symbols of row `y` of `buf`, across its area.
+pub(crate) fn buffer_row(buf: &Buffer, y: u16) -> String {
+    (buf.area.left()..buf.area.right())
+        .map(|x| buf[(x, y)].symbol())
+        .collect()
+}
+
 fn selected(app: &App) -> String {
     app.selected_entry()
         .map(|e| String::from_utf8_lossy(&e.name).into_owned())
@@ -457,12 +480,10 @@ fn click_selects_a_tile_and_a_second_click_zooms_in() {
 #[test]
 fn tiles_hold_still_until_the_next_sort() {
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    app.key(press(KeyCode::Char('2')), t0);
     let mut es: Vec<EntryData> = (0..6)
         .map(|i| test_entry(i, &format!("e{i}"), 6000 - u64::from(i) * 900))
         .collect();
-    app.refresh(snap_without_totals(es.clone(), 1), t0);
+    let mut app = map_of(es.clone(), t0);
     render(&mut app, t0, 100, 30);
     let before: Vec<Rect> = layout_rects(&app);
     // e5 grows past everything, inside the idle window: no re-sort, no new layout.
@@ -510,8 +531,6 @@ fn the_selected_tile_has_a_heavy_frame() {
 #[test]
 fn ten_thousand_rows_lay_out_quickly() {
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    app.key(press(KeyCode::Char('2')), t0);
     let es: Vec<EntryData> = (0..10_000u32)
         .map(|i| {
             test_entry(
@@ -521,7 +540,7 @@ fn ten_thousand_rows_lay_out_quickly() {
             )
         })
         .collect();
-    app.refresh(snap_without_totals(es, 1), t0);
+    let app = map_of(es, t0);
     let area = Rect::new(0, 3, 200, 54);
     let mut best = Duration::MAX;
     for _ in 0..5 {
@@ -728,9 +747,7 @@ fn narrow_tiles_show_short_labels_or_none() {
         }
     }
     let t0 = Instant::now();
-    let mut app = treemap_app(&fx.m, t0);
-    app.key(press(KeyCode::Char('+')), t0);
-    sync(&mut app, &fx.m, t0);
+    let mut app = nested_app(&fx.m, t0);
     for (w, h) in [(80, 24), (100, 30)] {
         let buf = render_buffer(&mut app, t0, w, h);
         let frame = render(&mut app, t0, w, h);

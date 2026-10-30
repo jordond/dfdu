@@ -3,7 +3,7 @@
 //! those of the rules ([`dfdu_rules::Glob`]): `*` and `?`, no `[...]`, and case ignored on macOS
 //! and Windows, where file names usually ignore it.
 
-use dfdu_rules::{Glob, Platform};
+use dfdu_rules::{Glob, GlobError, Platform};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -22,13 +22,13 @@ pub struct Prompt {
     input: LineInput,
     /// How many names the glob typed matches, or what is wrong with it; counted as it is typed,
     /// not with every frame.
-    matches: Option<Result<usize, String>>,
+    matches: Option<Result<usize, GlobError>>,
 }
 
 /// The glob of `pattern`, compared as file names are on this platform.
-fn glob(pattern: &str) -> Result<Glob, String> {
+fn glob(pattern: &str) -> Result<Glob, GlobError> {
     let fold = matches!(Platform::current(), Platform::MacOs | Platform::Windows);
-    Glob::new(pattern.trim(), fold).map_err(|e| e.to_string())
+    Glob::new(pattern.trim(), fold)
 }
 
 /// The entries the list shows that `g` matches, by index into the snapshot's entries. The

@@ -72,6 +72,10 @@ fn a_bad_or_empty_glob_marks_nothing() {
     let (mut app, t0) = app();
     open_from_palette(&mut app, t0);
     typed(&mut app, "[ab]*", t0);
+    let Overlay::MarkPattern(p) = &app.overlay else {
+        panic!("the prompt is open");
+    };
+    assert_eq!(p.matches, Some(Err(GlobError::Brackets)));
     let frame = render(&mut app, t0, 80, 12);
     assert!(frame.contains("`[...]` is not supported"), "{frame}");
     app.key(press(KeyCode::Enter), t0);

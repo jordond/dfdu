@@ -53,6 +53,17 @@ pub(crate) fn sample() -> Vec<EntryData> {
     es
 }
 
+/// [`sample`] with its leaves files: only `a`, `y`, `b` and `only` are directories.
+pub(crate) fn sample_with_files() -> Vec<EntryData> {
+    let mut es = sample();
+    for e in &mut es {
+        e.is_dir = ["a", "y", "b", "only"]
+            .iter()
+            .any(|d| e.name[..] == *d.as_bytes());
+    }
+    es
+}
+
 fn guides(es: &[EntryData]) -> Vec<String> {
     let rows = tree_order(es, SortSpec::default());
     assert_eq!(rows, (0..es.len()).collect::<Vec<_>>(), "preorder by size");

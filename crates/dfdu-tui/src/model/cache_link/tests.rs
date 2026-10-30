@@ -62,6 +62,13 @@ fn ages_are_short() {
     assert_eq!(ago(200, 100), "0 s", "a time ahead of the clock");
 }
 
+#[test]
+fn a_load_error_says_what_failed() {
+    let limit = LoadError::Read(dfdu_store::ImportError::Limit("too many entries".into()));
+    assert_eq!(limit.to_string(), "over a limit: too many entries");
+    assert_eq!(LoadError::Panicked.to_string(), "the loader panicked");
+}
+
 /// The first run scans and saves the complete scan; the next opens it at once, says it is
 /// cached while it is brought up to date, and then shows the scan as any other.
 #[test]
