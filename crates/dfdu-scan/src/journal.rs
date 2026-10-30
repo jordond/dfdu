@@ -114,7 +114,10 @@ fn changed(root: &Path, at: JournalPosition, cancel: Option<&AtomicBool>) -> Opt
         }
         // Events name what is in the Data volume by its firmlinked paths (`/Users/me`), the
         // stream watching either form: both sides are compared in the Data volume's form,
-        // which is where a tree of `/` has them.
+        // which is where a tree of `/` has them. A root named in that form
+        // (`/System/Volumes/Data/Users/me`) can get a change made within a second or so before
+        // the call only on a later call: the sync file, written through the firmlink, does not
+        // vouch for a stream watching that form.
         let links = std::fs::read_to_string("/usr/share/firmlinks")
             .map(|t| firmlinks(&t))
             .unwrap_or_default();
@@ -285,8 +288,8 @@ mod tests {
     use super::*;
 
     /// Directories changed after the position come back relative to the root, also those
-    /// written to just before it was taken, and at once; a position in another volume's journal
-    /// tells nothing.
+    /// written to just before it was taken, and from the first answer; a position in another
+    /// volume's journal tells nothing.
     #[test]
     fn changes_come_back_relative_to_the_root() {
         let tmp = tempfile::tempdir().unwrap();
@@ -298,15 +301,32 @@ mod tests {
             return;
         };
         std::fs::write(root.join("a/b/new"), b"x").unwrap();
-        let got = changed_since(&root, since).expect("the journal can tell");
+        // A loaded machine can keep the daemon past the replay's wait, and the journal then
+        // cannot tell (a full rescan): asked again. An answer that leaves the change out is
+        // not.
+        let answer = |root: &Path| {
+            (0..5)
+                .find_map(|_| changed_since(root, since))
+                .expect("the journal can tell")
+        };
+        let got = answer(&root);
         assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
         assert!(!got.iter().any(|d| d.starts_with("quiet")), "{got:?}");
         // The same directory named in the Data volume, where events name it through the
-        // `/private` firmlink.
+        // `/private` firmlink. The sync file is written through the firmlink, so it does not
+        // vouch for a stream watching the Data volume's form: a change made just before shows
+        // up there up to a second or two late.
         let real = dunce::canonicalize(&root).unwrap();
         let data = Path::new(DATA_VOLUME).join(real.strip_prefix("/").unwrap());
         if data.exists() {
-            let got = changed_since(&data, since).expect("the journal can tell");
+            let mut got = answer(&data);
+            for _ in 0..20 {
+                if got.contains(&PathBuf::from("a/b")) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                got = answer(&data);
+            }
             assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
         }
         let mut other = since;
