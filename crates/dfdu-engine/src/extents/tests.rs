@@ -145,3 +145,53 @@ fn compressed_extents_match_by_start() {
     e.check(&t).unwrap();
     t.check(&[]).unwrap();
 }
+
+/// Subtrees moved whole into a rescan that replaces their common ancestor keep their
+/// references: what they share stays homed in the tree that went until a pass over the table,
+/// a step at a time, homes it in the one that came.
+#[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
+fn a_pass_homes_again_what_lost_its_home_to_a_graft() {
+    let (mut t, r, [x, y, z]) = tree();
+    let mut e = ExtentTable::default();
+    let shared = |ranges: &[(u64, u64)], points: &[(u64, u64)]| Measurement {
+        ranges: ranges.to_vec(),
+        points: points.to_vec(),
+        ..Default::default()
+    };
+    for (ix, ino, mm) in [
+        (x, 10, shared(&[(0, 100)], &[])),
+        (y, 11, shared(&[], &[(9000, 100)])),
+        (z, 12, shared(&[(0, 100)], &[(9000, 100)])),
+    ] {
+        let n = t.node_ref(ix);
+        e.measure(&mut t, (1, ino), n, mm);
+    }
+    assert_eq!(t.shared_here(r), 200);
+    let before = alloc(&t, r);
+    let (a, b) = (t.parent(x).unwrap(), t.parent(z).unwrap());
+    let s = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), false);
+    let mut pairs = Vec::new();
+    for (k, name, ino) in [(a, b"a", 2), (b, b"b", 3)] {
+        let p = t.add_dir(s, name, &meta(Kind::Dir, 0, ino));
+        let own = t.own(p);
+        t.propagate_add(s, &own);
+        pairs.push((p, k));
+    }
+    t.graft(&pairs);
+    t.replace(r, s);
+    assert_eq!(t.shared_here(s), 0, "its home went with the root replaced");
+    let mut pass = Rehome::default();
+    let mut steps = 1;
+    while !e.rehome_step(&mut t, &mut pass, 1) {
+        steps += 1;
+    }
+    assert!(steps >= 2, "{steps} steps");
+    assert_eq!(t.shared_here(s), 200);
+    assert_eq!(alloc(&t, s), before);
+    e.check(&t).unwrap();
+    t.check(&[]).unwrap();
+}

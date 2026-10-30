@@ -245,6 +245,92 @@ fn a_resume_checking_refuses_and_cancels_what_follows() {
     ap.check(&m).unwrap();
 }
 
+/// A resume's rescan cancelled once the rescans started leaves what it was to list again as
+/// loaded: the scan is incomplete, and deletes and native commands refuse that directory,
+/// what is below it and what holds it, while the rest of what the resume checked is deleted
+/// from. Once the directory is rescanned, it is deleted from too.
+#[test]
+fn a_cancelled_rescan_of_a_resume_leaves_its_directory_refused() {
+    use std::sync::Arc;
+
+    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
+
+    use crate::applier::Applier;
+
+    let (t, [r, a, b, c]) = tree();
+    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let mut ap = Applier::new(shared);
+    let mut m = Model::default();
+    let (root, a, b, c) = (t.node_ref(r), t.node_ref(a), t.node_ref(b), t.node_ref(c));
+    let stat = crate::applier::meta_of(&t, r);
+    m.tree = t;
+    ap.apply_command(
+        &mut m,
+        Command::Resume {
+            node: root,
+            opts: JobOptions::default(),
+            changed: Some(vec![PathBuf::from("a")]),
+            since: 0,
+            root: Some(stat),
+        },
+    );
+    while ap.has_work() {
+        ap.work_step(&mut m);
+    }
+    let job = ap.jobs.keys().next().copied().unwrap();
+    ap.apply(
+        &mut m,
+        ScanMsg::Verified {
+            job: JobId(job),
+            batch: 0,
+            changed: vec![],
+            gone: vec![],
+            complete: true,
+        },
+        1,
+    );
+    while ap.has_work() {
+        ap.work_step(&mut m);
+    }
+    assert!(!ap.resuming() && !m.status.incomplete);
+    let rescans: Vec<u32> = ap
+        .jobs
+        .iter()
+        .filter(|(_, j)| j.kind == JobKind::Rescan)
+        .map(|(&id, _)| id)
+        .collect();
+    assert_eq!(rescans.len(), 1, "of `a`, the root being as loaded");
+    ap.apply_command(
+        &mut m,
+        Command::Cancel {
+            job: JobId(rescans[0]),
+        },
+    );
+    while ap.has_work() {
+        ap.work_step(&mut m);
+        ap.check(&m).unwrap();
+    }
+    assert!(m.status.incomplete);
+    assert_eq!(refused_as_unverified(&mut ap, &mut m, vec![a, b, root]), 3);
+    assert_eq!(refused_as_unverified(&mut ap, &mut m, vec![c]), 0);
+    ap.apply_command(
+        &mut m,
+        Command::RunNative {
+            id: 1,
+            node: b,
+            variant: None,
+            dry_run: false,
+        },
+    );
+    assert_eq!(
+        m.status.notices.last().map(String::as_str),
+        Some(UNVERIFIED_NATIVE)
+    );
+    // A rescan of it is taken, which lists it again.
+    ap.apply_command(&mut m, Command::Rescan { node: a });
+    assert_eq!(ap.jobs.values().filter(|j| j.swap_pending()).count(), 1);
+}
+
 /// What the check finds is listed again: a directory whose mtime moved, and the parent of one
 /// gone; a batch that could not be stat'ed to the end lists all of its directories and their
 /// parents. The rescans start once the last batch is answered.
@@ -334,6 +420,103 @@ fn what_the_check_finds_is_listed_again() {
         ap.work_step(&mut m);
     }
     assert!(!ap.resuming());
+}
+
+/// The root is judged on the stat the resume is sent, as the directories it keeps are on
+/// theirs: listed again when its mtime moved, is not older than the journal position, or is
+/// not known, and scanned again in full when it is another directory.
+#[test]
+fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
+    use std::sync::Arc;
+
+    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
+
+    use crate::applier::Applier;
+
+    let loaded = Meta {
+        mtime: 5,
+        ..meta(Kind::Dir, 0, 1)
+    };
+    let cases = [
+        (0, Some(5), false),
+        (6, Some(5), false),
+        (5, Some(5), true),
+        (4, Some(5), true),
+        (0, Some(6), true),
+        (0, None, true),
+    ];
+    for (since, now, listed) in cases {
+        let mut t = Tree::new();
+        let r = t.new_root(b"/r", &loaded, true);
+        let a = t.add_dir(r, b"a", &meta(Kind::Dir, 0, 2));
+        let own = t.own(a);
+        t.propagate_add(r, &own);
+        for d in [r, a] {
+            let rec = t.dir_mut(d).unwrap();
+            rec.state = DirState::Complete;
+            rec.outcome = rec.state;
+            rec.listing_closed = true;
+            rec.reported = true;
+        }
+        let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+        let mut ap = Applier::new(shared);
+        let mut m = Model::default();
+        let root = t.node_ref(r);
+        m.tree = t;
+        ap.apply_command(
+            &mut m,
+            Command::Resume {
+                node: root,
+                opts: JobOptions::default(),
+                changed: Some(vec![]),
+                since,
+                root: now.map(|mtime| Meta { mtime, ..loaded }),
+            },
+        );
+        while ap.has_work() {
+            ap.work_step(&mut m);
+        }
+        let job = ap.jobs.keys().next().copied().unwrap();
+        ap.apply(
+            &mut m,
+            ScanMsg::Verified {
+                job: JobId(job),
+                batch: 0,
+                changed: vec![],
+                gone: vec![],
+                complete: true,
+            },
+            1,
+        );
+        while ap.has_work() {
+            ap.work_step(&mut m);
+        }
+        let rescans = ap
+            .jobs
+            .values()
+            .filter(|j| j.kind == JobKind::Rescan && j.target == root)
+            .count();
+        assert_eq!(rescans, usize::from(listed), "{since} {now:?}");
+    }
+    // Another directory where the root was is scanned again in full, without a resume.
+    let (t, [r, ..]) = tree();
+    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let mut ap = Applier::new(shared);
+    let mut m = Model::default();
+    let root = t.node_ref(r);
+    m.tree = t;
+    ap.apply_command(
+        &mut m,
+        Command::Resume {
+            node: root,
+            opts: JobOptions::default(),
+            changed: Some(vec![]),
+            since: 0,
+            root: Some(meta(Kind::Dir, 0, 77)),
+        },
+    );
+    assert!(!ap.resuming());
+    assert_eq!(ap.jobs.values().filter(|j| j.target == root).count(), 1);
 }
 
 /// A kept directory goes to its scanner with the mtime it was loaded with.

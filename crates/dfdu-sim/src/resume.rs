@@ -32,7 +32,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     // Directories last changed over a few seconds, around when the journal position is read.
     for n in &mut spec.nodes {
         if n.meta.kind == Kind::Dir {
-            n.meta.mtime = 1 + i64::from(rng.below(3) == 0) + i64::from(rng.below(3) == 0);
+            n.meta.mtime = 1 + i64::try_from(rng.below(8).saturating_sub(5)).unwrap_or(0);
         }
     }
     let spec = Arc::new(spec);
@@ -58,7 +58,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
     };
     let mut rng = first.rng;
     // When the journal position was read, before the scan; 0 when not known.
-    let since = if rng.chance(250) { 0 } else { 1 + rng.below(3) };
+    let since = if rng.chance(250) { 0 } else { 2 + rng.below(3) };
 
     // The changes since: each marks its directory's mtime, unless made within the second the
     // position was read, in a directory whose mtime is that second or later.
