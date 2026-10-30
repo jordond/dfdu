@@ -228,3 +228,6 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
     }
     Ok((tracked, in_use))
 }
+
+#[cfg(test)]
+mod tests;

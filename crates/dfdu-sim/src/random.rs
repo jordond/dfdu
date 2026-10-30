@@ -6,7 +6,7 @@ use dfdu_scan::Clock;
 
 use crate::check::random_dir;
 use crate::deleter::{deleter_step, pick_deletable};
-use crate::{Sim, sim_check};
+use crate::{Sim, SimError, sim_check};
 
 impl Sim {
     /// One step chosen at random: a worker step, answers to the applier's requests, applied
@@ -15,7 +15,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn random_step(&mut self) -> Result<(), String> {
+    pub fn random_step(&mut self) -> Result<(), SimError> {
         self.report.ticks += 1;
         self.check_q.extend(self.applier.take_check_requests());
         self.queue_measurements()?;
@@ -109,7 +109,7 @@ impl Sim {
     }
 
     /// Time passes, and maybe a cancel, a delete or a rescan is issued.
-    fn random_command(&mut self) -> Result<(), String> {
+    fn random_command(&mut self) -> Result<(), SimError> {
         self.clock.advance(self.rng.below(3) * 1_000_000);
         if self.cancels_left > 0 && self.rng.chance(8) {
             let running: Vec<_> = self
@@ -170,3 +170,6 @@ impl Sim {
 fn trace() -> Option<String> {
     std::env::var("DFDU_SIM_TRACE").ok()
 }
+
+#[cfg(test)]
+mod tests;
