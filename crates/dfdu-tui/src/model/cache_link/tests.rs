@@ -81,7 +81,10 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     assert!(c.poll(&mut app, &e), "the scan is sent at once");
     assert_eq!(app.cached, None, "nothing was cached");
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert!(link.slot.path.exists());
     assert_eq!(app.status, None);
@@ -124,7 +127,10 @@ fn nothing_is_saved_before_the_resume_ended() {
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     let scanned = items(&e).unwrap();
     drop(c);
@@ -161,7 +167,12 @@ fn nothing_is_saved_before_the_resume_ended() {
         c.poll(&mut app, &e);
         thread::sleep(Duration::from_millis(2));
     }
-    assert!(c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_none()));
+    assert!(
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as == SavedAs::Pending)
+    );
     assert!(matches!(app.cached, Some(Cached::Refreshing { .. })));
     assert_eq!(fs::read(&link.slot.path).unwrap(), before);
     assert_eq!(
@@ -172,7 +183,10 @@ fn nothing_is_saved_before_the_resume_ended() {
 
     ANSWER.open();
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert_eq!(app.cached, None);
     assert_eq!(items(&e), Some(scanned + 1));
@@ -222,7 +236,9 @@ fn quick_or_read_only_scans_are_not_saved() {
         let mut c = cacher(&link);
         c.min_scan_ms = min;
         poll_until(&mut c, &mut app, &e, |c, _| {
-            c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+            c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
         });
         assert!(c.writer.is_none());
         assert!(!c.busy());

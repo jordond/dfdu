@@ -58,7 +58,7 @@ const NOISE_LINES: usize = 64;
 /// Bytes they may print.
 const NOISE_BYTES: u64 = 16 << 10;
 /// The longest line the script prints after the marker.
-const LINE: u64 = 4096;
+const MAX_LINE_BYTES: u64 = 4096;
 const MARKER: &[u8] = b"DFDU-BOOT 1 ";
 
 /// Runs the bootstrap on the script's stdout `r` and stdin `w`: on success the agent is
@@ -136,7 +136,9 @@ fn marker(r: &mut impl BufRead) -> io::Result<(String, String)> {
 /// The script's next status line.
 fn line(r: &mut impl BufRead) -> io::Result<String> {
     let mut buf = Vec::new();
-    r.by_ref().take(LINE).read_until(b'\n', &mut buf)?;
+    r.by_ref()
+        .take(MAX_LINE_BYTES)
+        .read_until(b'\n', &mut buf)?;
     if buf.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,

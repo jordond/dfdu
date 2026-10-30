@@ -21,6 +21,7 @@ use dfdu_engine::Model;
 use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::state::marks;
 
@@ -173,15 +174,25 @@ fn found(app: &App) -> Option<&Found> {
     app.dupes.run.as_ref()?.result.get()
 }
 
-/// For the view's tab: `None` before a comparison was started, `Some(None)` while one runs,
-/// and then the number of groups. While the view is open only groups with two files left
-/// count; closed, the files are not looked up and every group found counts.
-pub fn groups(app: &App) -> Option<Option<usize>> {
+/// Where a comparison is, for the view's tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Groups {
+    Running,
+    /// It ended with this many groups.
+    Found(usize),
+}
+
+/// For the view's tab: `None` before a comparison was started. While the view is open only
+/// groups with two files left count; closed, the files are not looked up and every group found
+/// counts.
+pub fn groups(app: &App) -> Option<Groups> {
     let run = app.dupes.run.as_ref()?;
     let Some(f) = run.result.get() else {
-        return Some(None);
+        return Some(Groups::Running);
     };
-    Some(Some(app.dupes.live_groups.unwrap_or(f.groups.len())))
+    Some(Groups::Found(
+        app.dupes.live_groups.unwrap_or(f.groups.len()),
+    ))
 }
 
 /// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):
@@ -346,19 +357,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let page = app.list_height.max(1);
-    let d = &mut app.dupes;
-    if let Some(n) = crate::app::keys::half_page(k, page) {
-        d.cursor = d.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.dupes.cursor, last, page) {
+        app.dupes.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => d.cursor = d.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => d.cursor = (d.cursor + 1).min(last),
-        KeyCode::PageUp => d.cursor = d.cursor.saturating_sub(page),
-        KeyCode::PageDown => d.cursor = (d.cursor + page).min(last),
-        KeyCode::Home | KeyCode::Char('g') => d.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => d.cursor = last,
-        KeyCode::Char(' ') => {
+    let d = &mut app.dupes;
+    match action {
+        Action::ToggleMark => {
             let Some(f) = found(app) else {
                 return Some(Vec::new());
             };
@@ -381,7 +387,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 None => {}
             }
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(d.cursor) {
+        Action::Open | Action::Enter => match rows.get(d.cursor) {
             Some(&Row::Group(g)) => {
                 if !d.toggled.remove(&g) {
                     d.toggled.insert(g);
@@ -398,7 +404,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             let at = (0..=d.cursor.min(last))
                 .rev()
                 .find(|&i| matches!(rows.get(i), Some(Row::Group(_))));

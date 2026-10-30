@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-rules"
-description = "Categories and cleanup rules: the rule schema, loader, built-in pack, protected paths and matcher"
+description = "Categories and cleanup rules: the rule schema, loader, built-in pack, protected paths and matcher, and where dfdu keeps its files (dirs)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

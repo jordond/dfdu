@@ -1,9 +1,20 @@
-//! Where dfdu keeps its files: the configuration directory (rule files, themes), the state
-//! directory (deletion journals, staging, crash reports, scan history) and the cache directory
-//! (the scan cache, the downloaded agents). XDG directories on Linux and macOS, Known Folders on Windows (which has no
-//! state directory, so the data directory is used there); the caches (scans, and the agents
-//! downloaded for `--remote` hosts) are in the platform's own cache directory
-//! (`~/Library/Caches` on macOS). Every path is `None` without a home directory.
+//! Where dfdu keeps its files. This module is the one owner of that layout:
+//!
+//! - [`config_dir`]: the configuration directory, holding [`rules_dir`] (rule files) and
+//!   [`theme_dir`] (themes).
+//! - [`state_dir`]: the state directory, holding [`journal_dir`] (`ops`, the deletion journals
+//!   and staging), [`crash_dir`] (`crash`, crash reports) and [`history_path`]
+//!   (`history.sqlite3`, the scan history).
+//! - [`cache_dir`] (`scans`, the scan cache) and [`agent_cache_dir`] (`agents`, the agents
+//!   downloaded for `--remote` hosts), in the platform's own cache directory.
+//!
+//! The layout lives here because dfdu-rules is the lowest crate that every user of these
+//! paths (dfdu-store, dfdu-clean, dfdu-engine, dfdu-tui, dfdu) already depends on, and the rule
+//! directory is its own concern.
+//!
+//! XDG directories on Linux and macOS, Known Folders on Windows (which has no state directory,
+//! so the data directory is used there); the caches are in `~/Library/Caches` on macOS. Every
+//! path is `None` without a home directory.
 
 use std::path::PathBuf;
 

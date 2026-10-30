@@ -75,6 +75,13 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     assert!(frame.contains("▸ [ ] Safe to delete"), "{frame}");
     assert!(!frame.contains("OS and user caches"), "{frame}");
     app.key(press(KeyCode::Right), t0);
+    // Backspace closes it too, as in the list, and leaves the list behind where it was.
+    let dir = app.snap.dir_path.clone();
+    app.key(press(KeyCode::Backspace), t0);
+    let frame = render(&mut app, t0, 100, 24);
+    assert!(frame.contains("▸ [ ] Safe to delete"), "{frame}");
+    assert_eq!(app.snap.dir_path, dir);
+    app.key(press(KeyCode::Right), t0);
     // `f` shows safe items only: the regenerable group goes.
     app.key(press(KeyCode::Char('f')), t0);
     let frame = render(&mut app, t0, 100, 24);

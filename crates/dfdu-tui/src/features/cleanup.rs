@@ -18,8 +18,9 @@ use std::collections::HashSet;
 use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
 use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::KeyEvent;
 
+use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
@@ -99,9 +100,16 @@ pub struct Info {
     pub native: Option<NativeView>,
     /// What native size commands reported, by rule name.
     pub native_sizes: Vec<(String, Result<u64, String>)>,
-    /// What the matches that can be ticked add up to, for the tab and the summary bar alike,
-    /// with the tree's version and number of matches it was counted at.
-    pub total: Option<((u64, usize), u64)>,
+    /// What the matches that can be ticked add up to, for the tab and the summary bar alike.
+    pub total: Option<Reclaim>,
+}
+
+/// What the matches that can be ticked add up to.
+#[derive(Clone, Copy, Debug)]
+pub struct Reclaim {
+    /// The tree's version and number of matches it was counted at ([`count_key`]).
+    pub at: (u64, usize),
+    pub size: u64,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
@@ -162,7 +170,7 @@ pub fn read(m: &Model, app: &App) -> Info {
             .map(|l| l.total.alloc)
             .sum();
         return Info {
-            total: Some((at, total)),
+            total: Some(Reclaim { at, size: total }),
             ..Info::default()
         };
     }
@@ -228,7 +236,10 @@ pub fn read(m: &Model, app: &App) -> Info {
         items,
         native,
         native_sizes,
-        total: Some((count_key(m), total)),
+        total: Some(Reclaim {
+            at: count_key(m),
+            size: total,
+        }),
     }
 }
 
@@ -236,8 +247,8 @@ pub fn read(m: &Model, app: &App) -> Info {
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
-    if let Some((at, total)) = app.extras.cleanup.total {
-        app.cleanup.reclaimable = Some(total);
+    if let Some(Reclaim { at, size }) = app.extras.cleanup.total {
+        app.cleanup.reclaimable = Some(size);
         app.cleanup.counted_at = Some(at);
     }
     let premark = std::mem::take(&mut app.cleanup.premark);
@@ -349,6 +360,9 @@ fn markable(it: &Item) -> bool {
     it.class.safety < Safety::Protected
 }
 
+/// The rows the page keys move the view's cursor by.
+const PAGE: usize = 10;
+
 /// Keys the view takes before the action registry; `None` passes the key on.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     if app.cleanup.pane.is_some() {
@@ -358,19 +372,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     app.status = None;
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
-    let c = &mut app.cleanup;
-    if let Some(n) = crate::app::keys::half_page(k, 10) {
-        c.cursor = c.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.cleanup.cursor, last, PAGE) {
+        app.cleanup.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => c.cursor = c.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1).min(last),
-        KeyCode::PageUp => c.cursor = c.cursor.saturating_sub(10),
-        KeyCode::PageDown => c.cursor = (c.cursor + 10).min(last),
-        KeyCode::Home | KeyCode::Char('g') => c.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => c.cursor = last,
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(c.cursor) {
+    let c = &mut app.cleanup;
+    match action {
+        Action::Open | Action::Enter => match rows.get(c.cursor) {
             Some(&Row::Item(i)) => show_in_files(app, i),
             Some(&row) => {
                 let open = is_open(app, row);
@@ -378,7 +387,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             // The nearest open section or category at or above the cursor; none without rows.
             let at = (0..=c.cursor.min(last)).rev().find_map(|i| {
                 let row = *rows.get(i)?;
@@ -389,7 +398,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 app.cleanup.cursor = i;
             }
         }
-        KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
+        Action::ToggleMark => toggle(app, rows.get(app.cleanup.cursor).copied()),
         _ => return None,
     }
     Some(Vec::new())

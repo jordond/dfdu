@@ -9,8 +9,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use dfdu_engine::{Engine, EngineOptions};
-use dfdu_scan::classify::ClassOpts;
-use dfdu_scan::{NativeBackend, native_backend};
+use dfdu_scan::{JobOptions, NativeBackend, native_backend};
 use dfdu_tree::HostPath;
 
 /// Which agent `--remote` starts on the host.
@@ -234,16 +233,18 @@ fn megabytes(n: u64) -> String {
     format!("{mb:.1} MB")
 }
 
-/// An engine scanning on `host` through its agent, classifying with `rules`, what the scan
-/// root classifies against, and the root to scan: `root` as typed, resolved by the agent on its
-/// host. `mode` is `--remote-agent`. Reports a failure to start.
+/// An engine scanning on `host` through its agent, classifying with `rules`, the options of
+/// the scan (`job` with what the scan root classifies against), and the root to scan: `root` as
+/// typed, resolved by the agent on its host. `mode` is `--remote-agent`. Reports a failure to
+/// start.
 pub fn engine(
     host: &str,
     opts: EngineOptions,
+    job: JobOptions,
     root: &Path,
     rules: Option<dfdu_engine::RemoteRules>,
     mode: Option<AgentMode>,
-) -> Result<(Engine<NativeBackend>, Option<ClassOpts>, HostPath), ExitCode> {
+) -> Result<(Engine<NativeBackend>, JobOptions, HostPath), ExitCode> {
     let mode = AgentMode::resolve(mode)?;
     let started = agent_io(host, mode).and_then(|io| {
         Engine::start_remote(
@@ -259,7 +260,11 @@ pub fn engine(
             for msg in c.errors {
                 eprintln!("dfdu: {host}: {msg}");
             }
-            Ok((e, c.class, c.root))
+            let job = JobOptions {
+                class: c.class,
+                ..job
+            };
+            Ok((e, job, c.root))
         }
         Err(e) => {
             eprintln!("dfdu: {host}: {e}");

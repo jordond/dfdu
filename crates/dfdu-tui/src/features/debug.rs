@@ -50,8 +50,14 @@ impl Counters {
     pub fn of<B: Backend>(engine: &Engine<B>) -> Self {
         Counters {
             sent: engine.sent_messages(),
-            outstanding: engine.scanner().outstanding(),
-            queued: engine.scanner().queued(),
+            outstanding: engine
+                .local_scanner()
+                .map(|s| s.outstanding())
+                .unwrap_or_default(),
+            queued: engine
+                .local_scanner()
+                .map(|s| s.queued())
+                .unwrap_or_default(),
         }
     }
 }
@@ -62,12 +68,31 @@ pub struct Info {
     pub stats: Stats,
     pub timing: Timing,
     pub counters: Counters,
-    /// Bytes in transit, the most at once so far, and the budget's capacity.
-    pub budget: (usize, usize, usize),
+    pub budget: BudgetUse,
     pub running: usize,
     pub stalled: usize,
     /// The first [`STALLED_SHOWN`] stalled directories.
     pub stalled_paths: Vec<HostPath>,
+}
+
+/// The byte budget on scanner data in transit, in bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BudgetUse {
+    /// In transit now.
+    pub used: usize,
+    /// The most in transit at once so far.
+    pub peak: usize,
+    pub capacity: usize,
+}
+
+impl BudgetUse {
+    fn of(budget: &Budget) -> Self {
+        BudgetUse {
+            used: budget.used(),
+            peak: budget.peak(),
+            capacity: budget.capacity(),
+        }
+    }
 }
 
 /// Opens or closes the panel.
@@ -116,7 +141,7 @@ pub fn read(m: &Model, budget: &Budget, counters: Counters) -> Info {
         stats: s.stats.clone(),
         timing: s.timing.clone(),
         counters,
-        budget: (budget.used(), budget.peak(), budget.capacity()),
+        budget: BudgetUse::of(budget),
         running: s.running(),
         stalled: s.stalled.len(),
         stalled_paths: s
@@ -192,7 +217,11 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
     };
     let locked = Duration::from_nanos(tm.locked_ns);
     let rate = per_second(s.entries, locked);
-    let (used, peak, capacity) = info.budget;
+    let BudgetUse {
+        used,
+        peak,
+        capacity,
+    } = info.budget;
     let mut lines = vec![
         plain(format!(
             "sent {}  received {}  pending {}",
@@ -321,7 +350,7 @@ mod tests {
                 outstanding: (12, 1),
                 queued: (3, 40),
             },
-            budget: (budget.used(), budget.peak(), budget.capacity()),
+            budget: BudgetUse::of(&budget),
             running: 1,
             stalled: 1,
             stalled_paths: vec![HostPath::from("/home/jo/nfs")],

@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::keys;
+use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
@@ -230,20 +230,14 @@ pub(crate) fn selected(app: &App) -> Option<(HostPath, &File)> {
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let last = app.largest.files.len().saturating_sub(1);
     let page = app.list_height.max(1);
-    let l = &mut app.largest;
-    if let Some(d) = keys::half_page(k, page) {
-        l.cursor = l.cursor.saturating_add_signed(d).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.largest.cursor, last, page) {
+        app.largest.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => l.cursor = l.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => l.cursor = (l.cursor + 1).min(last),
-        KeyCode::PageUp => l.cursor = l.cursor.saturating_sub(page),
-        KeyCode::PageDown => l.cursor = (l.cursor + page).min(last),
-        KeyCode::Home | KeyCode::Char('g') => l.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => l.cursor = last,
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => go(app),
-        KeyCode::Char(' ') => toggle(app),
+    match action {
+        Action::Open | Action::Enter => go(app),
+        Action::ToggleMark => toggle(app),
         _ => return None,
     }
     Some(Vec::new())

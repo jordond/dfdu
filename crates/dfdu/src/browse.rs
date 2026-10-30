@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dfdu_engine::EngineOptions;
-use dfdu_scan::JobOptions;
 use dfdu_tui::{Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
 
 use crate::launch::Local;
@@ -36,14 +35,12 @@ pub fn run(cli: Cli) -> ExitCode {
         // Connected before the browser takes the terminal, so ssh can ask for a password.
         // Deletion runs on the agent, journalled on its host.
         let rules = cli.rules.remote();
-        match remote::engine(host, engine.clone(), &path, rules, cli.remote_agent) {
-            Ok((engine, class, root)) => Source::Remote {
+        let job = cli.mounts.job();
+        match remote::engine(host, engine.clone(), job, &path, rules, cli.remote_agent) {
+            Ok((engine, job, root)) => Source::Remote {
                 engine,
                 path: root,
-                job: JobOptions {
-                    class,
-                    ..cli.mounts.job()
-                },
+                job,
             },
             Err(code) => return code,
         }

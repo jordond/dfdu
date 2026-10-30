@@ -68,12 +68,6 @@ pub fn theme_dir() -> Option<PathBuf> {
     dfdu_rules::dirs::theme_dir()
 }
 
-/// The user's home directory with symbolic links resolved, as the scan's paths are.
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    let home = etcetera::home_dir().ok()?;
-    Some(dunce::canonicalize(&home).unwrap_or(home))
-}
-
 /// The theme `settings` ask for and the terminal it was resolved for.
 #[derive(Debug)]
 pub(crate) struct Colors {

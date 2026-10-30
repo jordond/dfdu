@@ -64,9 +64,14 @@ impl Unfinished {
     }
 }
 
-/// An item's record, its state so far (`None` once nothing is left to do) and its staging
-/// path.
-type OpenItem = (ItemRec, Option<Pending>, Option<PathBuf>);
+/// An item a journal started on and has not finished.
+struct OpenItem {
+    item: ItemRec,
+    /// Its state so far: `None` once nothing is left to do.
+    state: Option<Pending>,
+    /// Its staging path.
+    stage: Option<PathBuf>,
+}
 
 struct Session {
     journal: Journal,
@@ -153,16 +158,20 @@ impl Recovery {
                     let at_original = path_of_hex(&item.path_hex)
                         .is_some_and(|p| fs::symlink_metadata(p).is_ok());
                     let pending = Pending::Interrupted { mode, at_original };
-                    open.insert(key(&item), (item, Some(pending), stage));
+                    let state = Some(pending);
+                    open.insert(key(&item), OpenItem { item, state, stage });
                 }
                 Record::Done { item } => {
                     if let Some(e) = open.get_mut(&key(&item)) {
-                        e.1 = e.2.clone().map(|stage| Pending::Staged { stage });
+                        e.state = e.stage.clone().map(|stage| Pending::Staged { stage });
                     }
                 }
                 Record::CommitIntent { item } => {
                     if let Some(e) = open.get_mut(&key(&item)) {
-                        e.1 = e.2.clone().map(|stage| Pending::PartlyDeleted { stage });
+                        e.state = e
+                            .stage
+                            .clone()
+                            .map(|stage| Pending::PartlyDeleted { stage });
                     }
                 }
                 Record::Failed { item, .. }
@@ -188,35 +197,41 @@ impl Recovery {
             .unwrap_or(0);
         let mut items: Vec<Unfinished> = open
             .into_values()
-            .filter_map(|(rec, state, stage)| {
-                let mut state = state?;
-                // Interrupted while staging: the rename either happened or it did not.
-                if let (Pending::Interrupted { mode, .. }, Some(s)) = (&state, &stage)
-                    && *mode == Mode::Stage
-                    && fs::symlink_metadata(s).is_ok()
-                {
-                    state = Pending::Staged { stage: s.clone() };
-                }
-                // Interrupted on its way to the trash: it may be there.
-                if let Pending::Interrupted {
-                    mode,
-                    at_original: false,
-                } = &state
-                    && *mode == Mode::Trash
-                    && let Some(path) = path_of_hex(&rec.path_hex)
-                    && crate::stage::in_trash(&path, &identity(&rec), started).is_ok_and(|t| t)
-                {
-                    state = Pending::Trashed;
-                }
-                Some(Unfinished {
-                    journal: path.clone(),
-                    path: path_of_hex(&rec.path_hex)?,
-                    kind: rec.kind,
-                    state,
-                    session,
-                    rec,
-                })
-            })
+            .filter_map(
+                |OpenItem {
+                     item: rec,
+                     state,
+                     stage,
+                 }| {
+                    let mut state = state?;
+                    // Interrupted while staging: the rename either happened or it did not.
+                    if let (Pending::Interrupted { mode, .. }, Some(s)) = (&state, &stage)
+                        && *mode == Mode::Stage
+                        && fs::symlink_metadata(s).is_ok()
+                    {
+                        state = Pending::Staged { stage: s.clone() };
+                    }
+                    // Interrupted on its way to the trash: it may be there.
+                    if let Pending::Interrupted {
+                        mode,
+                        at_original: false,
+                    } = &state
+                        && *mode == Mode::Trash
+                        && let Some(path) = path_of_hex(&rec.path_hex)
+                        && crate::stage::in_trash(&path, &identity(&rec), started).is_ok_and(|t| t)
+                    {
+                        state = Pending::Trashed;
+                    }
+                    Some(Unfinished {
+                        journal: path.clone(),
+                        path: path_of_hex(&rec.path_hex)?,
+                        kind: rec.kind,
+                        state,
+                        session,
+                        rec,
+                    })
+                },
+            )
             .collect();
         items.sort_by(|a, b| a.path.cmp(&b.path));
         self.items.extend(items);

@@ -183,7 +183,11 @@ pub(super) fn applier_loop<B: Backend>(
             && chks.is_empty()
         {
             select! {
-                recv(cmd_rx) -> c => if let Ok(c) = c { cmds.push_back(c) },
+                // Every sender is gone with the engine, dropped without a shutdown.
+                recv(cmd_rx) -> c => match c {
+                    Ok(c) => cmds.push_back(c),
+                    Err(_) => break,
+                },
                 recv(del_rx) -> d => if let Ok(d) = d { dels.push_back(d) },
                 recv(meas_rx) -> r => if let Ok(r) = r { meas.extend(r) },
                 recv(chk_rx) -> r => if let Ok(r) = r { chks.extend(r) },

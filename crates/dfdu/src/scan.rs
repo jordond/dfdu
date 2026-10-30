@@ -145,18 +145,13 @@ pub fn run(args: ScanArgs) -> ExitCode {
     if let Some(n) = args.measure_workers {
         opts.measure_workers = n;
     }
-    let key = dfdu_store::history::options_key(&args.mounts.job(), opts.measure_workers > 0);
+    let base = args.mounts.job();
+    let key = dfdu_store::history::options_key(&base, opts.measure_workers > 0);
     // The agent scans with its own workers; the path is on its host, not this one.
     if let Some(host) = args.remote.as_deref() {
         let rules = args.rules.remote();
-        return match remote::engine(host, opts, &args.path, rules, args.remote_agent) {
-            Ok((e, class, root)) => {
-                let job = JobOptions {
-                    class,
-                    ..args.mounts.job()
-                };
-                scan_with(e, job, root, &key, args)
-            }
+        return match remote::engine(host, opts, base, &args.path, rules, args.remote_agent) {
+            Ok((e, job, root)) => scan_with(e, job, root, &key, args),
             Err(code) => code,
         };
     }
@@ -296,7 +291,8 @@ fn scan_with<B: Backend>(
         }
     });
     if debug_stats {
-        for g in engine.scanner().gate_stats() {
+        let gates = engine.local_scanner().map(|s| s.gate_stats());
+        for g in gates.unwrap_or_default() {
             eprintln!(
                 "mount limit: mount {} (dev {}): {} at once, at most {} were; {} tasks waited, \
                  {} permits taken back from stuck calls",

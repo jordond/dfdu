@@ -141,8 +141,8 @@ pub fn badge(app: &App, view: View) -> Option<String> {
     match view {
         View::Cleanup => cleanup::reclaimable(app).filter(|&b| b > 0).map(short_size),
         View::Duplicates => dupes::groups(app).map(|n| match n {
-            Some(n) => crate::theme::count(n as u64),
-            None => "…".into(),
+            dupes::Groups::Found(n) => crate::theme::count(n as u64),
+            dupes::Groups::Running => "…".into(),
         }),
         View::Files | View::Map | View::Largest => None,
     }

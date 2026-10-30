@@ -1,6 +1,7 @@
 //! The engine: the applier thread that is the single writer of the tree, and the API the TUI
 //! and the headless commands use, with what both show of the model alike: sizes, problems,
-//! subvolume labels, the matches of the rules listed and which are recommended for deletion.
+//! subvolume labels, the matches of the rules listed and which are recommended for deletion,
+//! the mounts the scan did not enter and the rule locations behind links out of it.
 
 mod applier;
 mod classifier;
@@ -11,6 +12,7 @@ mod listed;
 mod measure;
 mod nanos;
 mod notes;
+mod outside;
 mod recent;
 mod reclassify;
 mod recommend;
@@ -44,6 +46,10 @@ pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 #[cfg(target_os = "linux")]
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
 pub use notes::{ErrorItem, ErrorList, errors, errors_below, problem, subvol_label};
+pub use outside::{
+    LIST_MAX, NotEntered, describe, home_dir, linked_note, more_links, not_entered,
+    not_entered_lines, rel_text, tilde,
+};
 pub use recent::{Event, RECENT, Recent};
 pub use recommend::{Verdict, recommends, verdict};
 pub use remote::{Connected, DEAD, RemoteIo, RemoteRules, agent, wire};

@@ -1,15 +1,14 @@
 //! What `scan` and `report` add about what the scan did not enter: mounts it listed but stayed
-//! out of, with their type and used space ([`dfdu_tui::not_entered`]), and rule locations behind
-//! a link that leads out of the scan ([`dfdu_rules::linked_outside`]). Printed as footer lines,
+//! out of, with their type and used space ([`dfdu_engine::not_entered`]), and rule locations
+//! behind a link that leads out of the scan ([`dfdu_rules::linked_outside`]). Printed as footer lines,
 //! and as the optional `not_entered` and `links_outside` fields of the JSON documents.
 
 use std::io::{self, Write};
 
-use dfdu_engine::Model;
+use dfdu_engine::{LIST_MAX, Model, NotEntered};
 use dfdu_rules::{Linked, RuleSet};
 use dfdu_sys::MountInfo;
 use dfdu_tree::Ix;
-use dfdu_tui::NotEntered;
 use serde_json::{Map, Value};
 
 use crate::json::{put_host_path, put_path};
@@ -26,7 +25,7 @@ pub struct Outside {
 /// (a scan on another host) nothing is looked up on this machine: the mounts are listed by
 /// path alone and links are not looked for.
 pub fn gather(m: &Model, root: Ix, local: bool) -> Outside {
-    let list = dfdu_tui::not_entered(&m.tree, root);
+    let list = dfdu_engine::not_entered(&m.tree, root);
     let infos = if local && !list.is_empty() {
         let paths: Vec<_> = list.iter().map(|n| n.path.to_local()).collect();
         dfdu_sys::mounts_at(&paths, dfdu_sys::DISK_TIMEOUT)
@@ -44,26 +43,18 @@ pub fn gather(m: &Model, root: Ix, local: bool) -> Outside {
     }
 }
 
-/// The footer lines: the mounts not entered, then the links, at most
-/// [`dfdu_tui::not_entered_lines`]'s count of each named. The link notes suggest `command`
-/// (`dfdu report`) on where they lead.
+/// The footer lines: the mounts not entered, then the links, at most [`LIST_MAX`] of each
+/// named. The link notes suggest `command` (`dfdu report`) on where they lead.
 pub fn lines(o: &Outside, rules: Option<&RuleSet>, command: &str) -> Vec<String> {
-    const MAX: usize = 5;
-    let home = dfdu_tui::home_dir().filter(|_| o.local);
-    let mut out = dfdu_tui::not_entered_lines(&o.mounts, home.as_deref());
+    let home = dfdu_engine::home_dir().filter(|_| o.local);
+    let mut out = dfdu_engine::not_entered_lines(&o.mounts, home.as_deref());
     let Some(rules) = rules else {
         return out;
     };
-    for l in o.linked.iter().take(MAX) {
-        out.push(dfdu_tui::linked_note(rules, l, home.as_deref(), command));
+    for l in o.linked.iter().take(LIST_MAX) {
+        out.push(dfdu_engine::linked_note(rules, l, home.as_deref(), command));
     }
-    if o.linked.len() > MAX {
-        let n = o.linked.len() - MAX;
-        out.push(format!(
-            "and {n} more link{} out of the scan",
-            if n == 1 { "" } else { "s" }
-        ));
-    }
+    out.extend(dfdu_engine::more_links(o.linked.len(), LIST_MAX));
     out
 }
 
