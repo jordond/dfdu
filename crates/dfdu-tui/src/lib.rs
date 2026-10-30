@@ -47,9 +47,6 @@ pub use features::debug::summary as debug_summary;
 pub use features::picker::{Picked, Picker};
 pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
-pub use model::outside::{
-    NotEntered, home_dir, linked_note, not_entered, not_entered_lines, tilde,
-};
 pub use model::snapshot::{Snapshot, Target};
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings, theme_dir};
@@ -202,7 +199,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         mouse,
         debug: ui.debug_stats,
         // Another host's paths are not below this one's home directory.
-        home: setup::home_dir().filter(|_| local),
+        home: dfdu_engine::home_dir().filter(|_| local),
         history,
         cache: None,
         types: ui.types.clone(),
@@ -222,7 +219,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             // by their host.
             let ui = UiOptions {
                 read_only: true,
-                home: setup::home_dir(),
+                home: dfdu_engine::home_dir(),
                 ..ui_opts(theme, None, false)
             };
             return browse(&mut terminal, engine, ui);

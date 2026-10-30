@@ -24,7 +24,6 @@ unicode-width.workspace = true
 tachyonfx.workspace = true
 nucleo-matcher.workspace = true
 terminal-colorsaurus.workspace = true
-etcetera.workspace = true
 toml.workspace = true
 dunce.workspace = true
 
