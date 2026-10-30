@@ -165,5 +165,8 @@ fn the_detail_pane_says_which_copy_is_kept_and_which_go() {
     // On a group's row, its copies only.
     let group = detail_lines(&app, f, Some(&Row::Group(1)), Path::new("/r"));
     assert_eq!(group.len(), 2);
-    assert_eq!(detail_lines(&app, f, None, Path::new("/r")), Vec::<Line>::new());
+    assert_eq!(
+        detail_lines(&app, f, None, Path::new("/r")),
+        Vec::<Line>::new()
+    );
 }
