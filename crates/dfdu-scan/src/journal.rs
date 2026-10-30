@@ -62,7 +62,9 @@ pub struct JournalPosition {
 /// The directories at or below `root` that changed after the journal position `at`, relative
 /// to `root` (the root itself is the empty path). `None` when the journal cannot tell: `root`
 /// is on another volume, the history was lost or coalesced, or the system keeps no journal;
-/// everything must then be scanned again.
+/// everything must then be scanned again. On macOS a change made in the seconds before the call
+/// on a loaded machine can be missing, `FSEvents` holding it longer than the call waits; a
+/// position taken before the call ([`journal_position`]) has it.
 #[must_use]
 pub fn changed_since(root: &Path, at: JournalPosition) -> Option<Vec<PathBuf>> {
     changed(root, at, None)
@@ -179,8 +181,8 @@ fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
 
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
 /// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS the position is
-/// a few seconds back ([`dfdu_sys::fsevents::position_event_id`]), so that a change folded
-/// into an event the `FSEvents` daemon still held is replayed.
+/// well back ([`dfdu_sys::fsevents::position_event_id`]), so that a change folded into an event
+/// the `FSEvents` daemon still held is replayed.
 #[must_use]
 pub fn journal_position(path: &Path) -> Option<JournalPosition> {
     // Read before the position, so that whatever changes after it has a ctime no older.
@@ -204,7 +206,7 @@ fn position(path: &Path) -> Option<([u8; 16], u64)> {
         let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
         // Not the bare current id: a change made soon after it to a directory the daemon still
         // holds an event for would carry an older id, and be lost to the resume.
-        Some((volume, dfdu_sys::fsevents::position_event_id(dev)))
+        Some((volume, dfdu_sys::fsevents::position_event_id()))
     }
     #[cfg(windows)]
     {

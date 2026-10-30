@@ -21,7 +21,7 @@ fn changes_after_an_id_are_reported() {
         use std::os::unix::fs::MetadataExt;
         std::fs::metadata(&root).unwrap().dev()
     };
-    let since = position_event_id(dev);
+    let since = position_event_id();
     std::fs::write(root.join("a/b/new"), b"hello").unwrap();
     std::fs::write(root.join("a/top"), b"hi").unwrap();
     let mut got = Changes::default();
@@ -43,19 +43,17 @@ fn changes_after_an_id_are_reported() {
 /// directory created just before the position was taken ([`position_event_id`]).
 #[test]
 fn a_change_just_before_the_call_is_reported() {
-    use std::os::unix::fs::MetadataExt;
     let _one = ONE_AT_A_TIME
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
-    let dev = std::fs::metadata(&root).unwrap().dev();
     for i in 0..5 {
         let d = root.join(format!("d{i}"));
         std::fs::create_dir(&d).unwrap();
         // Not the bare current id: the write below could fold into the event the daemon
         // still holds for the new directory, with an id before it.
-        let since = position_event_id(dev);
+        let since = position_event_id();
         std::fs::write(d.join("f"), b"x").unwrap();
         let got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
         assert!(!got.full);
@@ -102,13 +100,11 @@ fn a_cancelled_call_cleans_up() {
 #[test]
 #[ignore = "a stress run, meant for a loaded machine"]
 fn changes_right_after_a_position_are_replayed() {
-    use std::os::unix::fs::MetadataExt;
     let _one = ONE_AT_A_TIME
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
-    let dev = std::fs::metadata(&root).unwrap().dev();
     let rounds = std::env::var("DFDU_ROUNDS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -119,7 +115,7 @@ fn changes_right_after_a_position_are_replayed() {
         std::fs::create_dir_all(d.join("a/b")).unwrap();
         std::fs::write(d.join("a/one"), b"x").unwrap();
         let t = Instant::now();
-        let since = position_event_id(dev);
+        let since = position_event_id();
         longest = longest.max(t.elapsed());
         all += t.elapsed();
         std::fs::remove_file(d.join("a/one")).unwrap();

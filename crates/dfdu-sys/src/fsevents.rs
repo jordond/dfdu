@@ -13,10 +13,13 @@
 //! The daemon holds the newest events for up to a second or so before they reach the history
 //! or a stream, so a replay alone can miss what changed just before it. After `HistoryDone`,
 //! [`changes_since`] therefore creates a file in a directory of its own on the same volume and
-//! waits for that change to arrive live: events come in the order they happened, so every
-//! change before it has arrived too. The daemon also folds a change into an event it still
-//! holds for the same directory, keeping that event's id: a position is therefore taken a few
-//! seconds back ([`position_event_id`]).
+//! waits for that change to arrive live: the replay is past the history then, and what the
+//! daemon held for a while has mostly arrived. Not all of it: the daemon sends the first change
+//! in a quiet directory at once and holds those in busy ones, and on a loaded machine it can
+//! hold a change for seconds, which this call then misses (seen: a cargo build running) and the
+//! next call from a position taken before it reports. The daemon also folds a change into an
+//! event it still holds for the same directory, keeping that event's id: a position is
+//! therefore taken well back ([`position_event_id`]).
 
 #![allow(unsafe_code)]
 
@@ -73,8 +76,6 @@ unsafe extern "C" {
     fn CFRelease(cf: *const c_void);
     fn CFUUIDGetUUIDBytes(uuid: CFUUIDRef) -> CFUUIDBytes;
     fn FSEventsGetCurrentEventId() -> u64;
-    fn FSEventsGetLastEventIdForDeviceBeforeTime(dev: i32, time: f64) -> u64;
-    fn CFAbsoluteTimeGetCurrent() -> f64;
     fn FSEventsCopyUUIDForDevice(dev: i32) -> CFUUIDRef;
     fn FSEventStreamCreate(
         alloc: CFAllocatorRef,
@@ -291,36 +292,21 @@ fn changes(
     result
 }
 
-/// How long the daemon may hold an event before it goes out, with a wide margin: about a
-/// second on a quiet machine.
-const HELD: f64 = 10.0;
+/// How far back a position reaches, in event ids: ids are one counter for the whole system,
+/// so this is seconds on a busy one, hours on a quiet one. Replaying them costs the daemon a
+/// read of that much history, a fraction of a second.
+const BACK: u64 = 1 << 20;
 
-/// A position on device `dev` for a later [`changes_since`]: the id of the last event older
-/// than [`HELD`] seconds, or [`current_event_id`] if that is older. While it holds an event
-/// for a directory the daemon folds later changes there into it, keeping its id, so a change
-/// made just after [`current_event_id`] in a directory changed just before can carry an id
-/// before it and never be replayed (seen under load). Every event held now is younger than
-/// [`HELD`], so its id comes after this one; what changed in those seconds is replayed too,
-/// which costs a few directories listed again.
+/// A position for a later [`changes_since`]: [`BACK`] ids before [`current_event_id`]. While
+/// it holds an event for a directory the daemon folds later changes there into it, keeping
+/// its id, so a change made just after [`current_event_id`] in a directory changed just
+/// before can carry an id before it and never be replayed (seen under load, and with
+/// `FSEventsGetLastEventIdForDeviceBeforeTime`, which gives an id a few hundred back whatever
+/// the time asked). An event the daemon holds now is younger than the last [`BACK`] ids; what
+/// changed since is replayed too, which costs some directories listed again.
 #[must_use]
-pub fn position_event_id(dev: u64) -> u64 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "macOS `st_dev` is an i32 that `MetadataExt::dev` widened to u64; this undoes it"
-    )]
-    let dev = dev as i32;
-    // SAFETY: plain values in and out.
-    let (now, before) = unsafe {
-        let now = FSEventsGetCurrentEventId();
-        let t = CFAbsoluteTimeGetCurrent() - HELD;
-        (now, FSEventsGetLastEventIdForDeviceBeforeTime(dev, t))
-    };
-    // 0 when the device's history does not reach back that far, or it has none.
-    if before == 0 || before == SINCE_NOW {
-        now
-    } else {
-        before.min(now)
-    }
+pub fn position_event_id() -> u64 {
+    current_event_id().saturating_sub(BACK).max(1)
 }
 
 /// How often a cancellable wait looks at its flag.
