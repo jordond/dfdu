@@ -1,6 +1,4 @@
-// Renders public/og.png (1200x630, the social card) from the dark logo in ../assets/logo. Run
-// after changing the logo or the tagline: `cargo xtask website og`. The text is set in the
-// system's monospace font, which sharp finds through fontconfig.
+// Renders public/og.png, the social card. The text uses a system monospace font (fontconfig).
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'

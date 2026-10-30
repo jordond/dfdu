@@ -1,7 +1,4 @@
-// What /llms.txt says about dfdu (https://llmstxt.org): the summary, then how to install and run
-// it and where each guide is, so an assistant asked to "install dfdu" or "clean up my disk with
-// dfdu" has the commands without reading the whole site. starlight-llms-txt adds the links to
-// /llms-full.txt (every docs page) and /llms-small.txt (the same, trimmed).
+// The text of /llms.txt (https://llmstxt.org).
 
 const site = 'https://dfdu.app'
 const repo = 'https://github.com/jordond/dfdu'

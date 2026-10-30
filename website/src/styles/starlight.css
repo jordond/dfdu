@@ -1,4 +1,4 @@
-/* Starlight in dfdu's palette (the TUI's dark and light themes, as on the landing page). */
+/* Starlight in the TUI's dark and light palettes. */
 
 :root {
   --sl-font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -33,7 +33,6 @@
   --sl-color-black: #ffffff;
 }
 
-/* Headings in the TUI's typeface; body text stays in the system sans for long reading. */
 .sl-markdown-content :is(h1, h2, h3, h4),
 h1#_top {
   font-family: var(--sl-font-mono);

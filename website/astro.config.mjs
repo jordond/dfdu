@@ -3,8 +3,7 @@ import { defineConfig } from 'astro/config'
 import starlightLlmsTxt from 'starlight-llms-txt'
 import { llms } from './llms.mjs'
 
-// `DFDU_SITE_ENV=preview` builds the pull request previews: same pages, but robots.txt disallows
-// everything and every page is noindex (src/site.ts).
+// Pull request previews are built with DFDU_SITE_ENV=preview and kept out of search indexes.
 const preview = process.env.DFDU_SITE_ENV === 'preview'
 
 const repo = 'https://github.com/jordond/dfdu'
@@ -27,7 +26,6 @@ export default defineConfig({
       editLink: { baseUrl: `${repo}/edit/main/website/` },
       lastUpdated: true,
       plugins: [starlightLlmsTxt(llms)],
-      // The site's own 404 (src/pages/404.astro) is a dfdu screen, like the landing page.
       disable404Route: true,
       customCss: ['@fontsource/jetbrains-mono/400.css', '@fontsource/jetbrains-mono/700.css', './src/styles/starlight.css'],
       head: [

@@ -1,7 +1,4 @@
-# Cloudflare Workers Static Assets honours this file; a static build has no server to set headers.
-# 'unsafe-inline' scripts cover the theme boot in the landing layout, Starlight's theme and
-# JSON-LD; 'wasm-unsafe-eval' lets the docs search (Pagefind) compile its WebAssembly. Nothing
-# on the site loads from another origin.
+# 'unsafe-inline': the theme boot scripts and JSON-LD. 'wasm-unsafe-eval': Pagefind (docs search).
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -13,7 +10,6 @@
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
 
-# The recordings keep their names when re-recorded, so not immutable: a day fresh, then served
-# from cache for up to a week while the browser checks for a new one.
+# Not immutable: re-recorded demos keep their names.
 /demos/*
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800

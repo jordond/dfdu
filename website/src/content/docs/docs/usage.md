@@ -46,7 +46,3 @@ A cache is used for 14 days and the cache keeps at most 1 GiB, readable only by 
 ## Deleting
 
 Deletes go to the Trash. Permanent deletes (`D`) ask you to type `delete`. `--read-only` removes the delete keys.
-
-## Themes
-
-dfdu ships with five themes and reads your own from TOML; see [Themes](/docs/themes/).

@@ -1,5 +1,4 @@
-//! `cargo xtask website`: the dfdu.app site in website/ (Astro and Starlight, built with Bun and
-//! deployed to Cloudflare with Wrangler). The same commands as `.github/workflows/website.yml`.
+//! `cargo xtask website`: the same commands as `.github/workflows/website.yml`.
 
 use std::process::Command;
 
@@ -81,8 +80,8 @@ pub(crate) fn website(w: Website) -> anyhow::Result<()> {
     }
 }
 
-/// Cloudflare's rule for preview aliases: a DNS label of lowercase letters, digits and dashes
-/// that starts with a letter (and fits in 63 characters with the Worker's name).
+/// Cloudflare's rule: lowercase letters, digits and dashes, starting with a letter, and a DNS
+/// label with the Worker's name.
 fn preview_alias_ok(alias: &str) -> bool {
     alias.starts_with(|c: char| c.is_ascii_lowercase())
         && alias.len() + "-dfdu-web".len() <= 63
@@ -102,8 +101,6 @@ fn check() -> anyhow::Result<()> {
 fn build(preview: bool) -> anyhow::Result<()> {
     let mut c = Command::new("bun");
     c.current_dir(DIR).args(["run", "build"]);
-    // Removed otherwise, so a DFDU_SITE_ENV=preview left in the shell cannot ship a noindex
-    // production site.
     if preview {
         c.env("DFDU_SITE_ENV", "preview");
     } else {

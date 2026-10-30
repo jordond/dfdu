@@ -23,16 +23,14 @@ dfdu -f home.snap                           # browse a saved scan or an ncdu exp
 
 ![dfdu scan printing a summary](/demos/scan-cli.gif)
 
-`dfdu scan` prints a summary without opening the browser, `--by-type` groups it by file type. `dfdu disks` lists disks and their free space. `dfdu dupes` finds duplicate files above a size.
-
 ## Clean
 
 ![dfdu report listing what the cleanup rules found](/demos/report.gif)
 
-`dfdu report` lists what the [cleanup rules](/docs/rules/) found. With `--format json` and `--fail-above`, it exits with 4 when the recommended deletes add up to more than the limit, which makes it a CI check. `dfdu clean` shows the deletes it would make; `--yes` moves them to the Trash.
+`dfdu report` lists what the [cleanup rules](/docs/rules/) found. With `--fail-above`, it exits with 4 when the recommended deletes add up to more than the limit, which makes it a CI check.
 
 ## Over time
 
 ![dfdu diff showing what grew](/demos/diff.gif)
 
-Every scan is recorded. `dfdu diff ~ --since 7d` shows what grew in the last week. `dfdu export --snapshot` saves a scan to a file, and `dfdu -f` browses a saved scan or an ncdu export.
+Every scan is recorded, which is what `dfdu diff` compares against.

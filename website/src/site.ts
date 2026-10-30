@@ -1,13 +1,8 @@
-/** Site-wide constants for the pages outside Starlight. */
-
 export const SITE_NAME = 'dfdu'
 export const REPO = 'https://github.com/jordond/dfdu'
 export const BREW = 'brew install jordond/tap/dfdu'
 
-/**
- * Pull request previews (`DFDU_SITE_ENV=preview`) are kept out of search indexes. A function so
- * that the client script can import this module: it is only called at build time.
- */
+/** A function, not a constant, so the client script can import this module. */
 export const isPreview = () => process.env.DFDU_SITE_ENV === 'preview'
 
 export const DEFAULT_TITLE = 'dfdu: a disk usage browser for the terminal'

@@ -1,5 +1,4 @@
-/* The landing page and the 404 as dfdu screens: the TUI's palettes as variables, one per theme
-   (data-theme on <html>), JetBrains Mono at 14px on 20px lines. */
+/* The TUI's palettes, one per data-theme on <html>. */
 
 :root,
 :root[data-theme='dark'] {

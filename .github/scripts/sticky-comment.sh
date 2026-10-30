@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Usage: sticky-comment.sh KEY BODY_FILE
-# Posts BODY_FILE on pull request $PR, or replaces the bot comment an earlier run posted with the
-# same KEY. Each workflow uses its own KEY, so their comments never overwrite each other (gh's
-# --edit-last would edit whichever bot comment came last). Needs GH_TOKEN, GITHUB_REPOSITORY and PR.
+# Posts BODY_FILE on pull request $PR, or replaces the comment posted earlier with the same KEY.
+# Needs GH_TOKEN, GITHUB_REPOSITORY and PR.
 set -euo pipefail
 
 key=${1:?usage: sticky-comment.sh KEY BODY_FILE}

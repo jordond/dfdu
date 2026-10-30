@@ -1,7 +1,4 @@
-// Copies the demo recordings (GIFs, and videos when `cargo xtask demo --format` made them) and
-// the icons from the repository's assets/ into public/, so the site serves the same files the
-// README shows without a second copy in git (the copies are ignored). Runs before dev, check and
-// build.
+// Copies the demo recordings and icons from ../assets into public/, so git holds one copy.
 
 import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'

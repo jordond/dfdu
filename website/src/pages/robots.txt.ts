@@ -1,8 +1,7 @@
 import type { APIRoute } from 'astro'
 import { isPreview } from '../site'
 
-// Generated, not shipped from public/: pull request previews (DFDU_SITE_ENV=preview) serve the
-// same pages on another host and must stay out of search indexes.
+// Generated so pull request previews can disallow everything.
 const PRODUCTION = `User-agent: *
 Allow: /
 

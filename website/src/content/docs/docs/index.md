@@ -32,9 +32,3 @@ dfdu is a disk usage browser for the terminal. Browse, sort and delete while the
 | Reads ncdu exports      | ✓    | ✓    | ✓    |      |      |
 
 Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](/docs/benchmarks/) have the full numbers.
-
-## Next
-
-- [Install dfdu](/docs/install/)
-- [Browse a directory](/docs/usage/)
-- [Use it from scripts and CI](/docs/cli/)

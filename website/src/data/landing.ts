@@ -1,9 +1,4 @@
-/**
- * What the landing page shows: four tabs laid out like the TUI's cleanup view, each a list of
- * rows grouped under directory-like sections, and a Details pane for the selected row. Every
- * row's details are worked out here, so the page renders the first one and the client script
- * only swaps in the others (src/scripts/landing.ts).
- */
+/** The landing page's tabs, rows and details. */
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -52,7 +47,6 @@ export interface Tab {
   /** Shown after the active tab's name, as the TUI shows a count. */
   count?: string
   grid: string
-  /** The grid on a phone. */
   narrowGrid: string
   head: { t: string; align: Cell['align'] }[]
   sumTitle: string
@@ -63,7 +57,6 @@ export interface Tab {
 
 const gif = (name: string) => `/demos/${name}.gif`
 
-/** The build runs in website/; the recordings are in the repository's assets/demos. */
 const DEMOS = join(process.cwd(), '..', 'assets', 'demos')
 const VIDEO_TYPES = [
   ['webm', 'video/webm'],
@@ -239,5 +232,4 @@ const SPECS: TabSpec[] = [
 
 export const TABS: Tab[] = SPECS.map(build)
 
-/** The index of a tab's first selectable row. */
 export const firstItem = (tab: Tab) => tab.rows.findIndex((r) => r.kind === 'item')

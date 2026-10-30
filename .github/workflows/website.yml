@@ -1,13 +1,7 @@
 name: website
 
-# dfdu.app (website/): checked and built on every change to it, deployed to Cloudflare from main,
-# and uploaded as a preview version for pull requests from this repository. `cargo xtask website`
-# runs the same steps locally.
-#
-# Only the `check` job installs the site's dependencies, and it has no secrets. The jobs that hold
-# CLOUDFLARE_API_TOKEN take the built site as an artifact and run Wrangler at the version pinned
-# below, never code from the pull request's lockfile (a dependency bump, Renovate's included,
-# cannot reach the token).
+# Only `check` installs dependencies, and it has no secrets. The jobs holding CLOUDFLARE_API_TOKEN
+# deploy the built artifact with the Wrangler pinned below, so no dependency bump reaches the token.
 
 on:
   push:
@@ -66,7 +60,6 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Type-check
         run: bun run check
-      # Pull requests get the preview build: noindex everywhere, robots.txt disallows all.
       - name: Build
         env:
           DFDU_SITE_ENV: ${{ github.event_name == 'pull_request' && 'preview' || '' }}

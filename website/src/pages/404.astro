@@ -1,6 +1,4 @@
 ---
-// Served by Cloudflare for every unknown path (wrangler.jsonc: not_found_handling = 404-page),
-// as dfdu shows an unreadable entry: marked ! with the reason.
 import Base from '../layouts/Base.astro'
 import { REPO } from '../site'
 
@@ -38,7 +36,7 @@ const path = Astro.url.pathname
           <div class="pitch">
             <p class="t-err b">error 404</p>
             <h1 id="title">Nothing here.</h1>
-            <p>This page was moved, deleted, or never existed. It is not in the Trash either.</p>
+            <p>This page was moved, deleted, or never existed.</p>
             <div class="actions">
               <a class="btn btn-fill" href="/">← back to dfdu.app</a>
               <a class="btn btn-line" href="/docs/">read the docs</a>
@@ -67,13 +65,11 @@ const path = Astro.url.pathname
 </Base>
 
 <script>
-  // The page is built once as /404.html, so the path it was served for is only known here.
+  // One /404.html serves every missing path, so only the browser knows which.
   let path = location.pathname
   try {
     path = decodeURI(path)
-  } catch {
-    // A malformed %-escape: show the path as it came.
-  }
+  } catch {}
   document.getElementById('missing-path')!.textContent = `dfdu.app${path}`
   document.getElementById('missing-name')!.textContent = path
   addEventListener('keydown', (e) => {

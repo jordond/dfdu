@@ -1,6 +1,4 @@
-// The landing page's behaviour, on the server-rendered screen in src/pages/index.astro: tabs
-// (deep-linked as #install and so on), row selection, the Details pane (cloned from each row's
-// <template>), copying commands, pausing the recordings, and the TUI's keys on the focused screen.
+// Tabs, selection, copying, pausing and keys for the server-rendered landing page.
 
 import { BREW, REPO } from '../site'
 
@@ -42,10 +40,8 @@ export function start() {
   const rows = (id: string) => [...pane(id).querySelectorAll<HTMLButtonElement>('button.row')]
   const selected = (id: string) => rows(id).find((r) => r.getAttribute('aria-current') === 'true') ?? rows(id)[0]!
 
-  // Recordings start paused for people who ask for reduced motion; `p` or the button toggles.
   let paused = matchMedia('(prefers-reduced-motion: reduce)').matches
 
-  /** Plays or stops the recording in the Details pane to match `paused`. */
   function applyMotion() {
     const media = detail!.querySelector<HTMLElement>('[data-media]')
     const button = detail!.querySelector<HTMLButtonElement>('[data-pause]')
@@ -58,8 +54,7 @@ export function start() {
       else media.play().catch(() => {})
       return
     }
-    // A <picture>: the GIF, or its still frame while paused. The reduced-motion <source> only
-    // matters before this script runs.
+    // The reduced-motion <source> only matters before this script runs.
     media.querySelector('source')?.remove()
     media.querySelector('img')!.src = paused ? media.dataset.still! : media.dataset.gif!
   }

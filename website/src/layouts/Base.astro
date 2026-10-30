@@ -4,13 +4,12 @@ import '@fontsource/jetbrains-mono/600.css'
 import '@fontsource/jetbrains-mono/700.css'
 import '../styles/landing.css'
 import { SEO } from 'astro-seo'
-import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, isPreview, REPO, SITE_NAME } from '../site'
+import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, isPreview, SITE_NAME } from '../site'
 
 interface Props {
   title?: string
   description?: string
   noindex?: boolean
-  /** JSON-LD for the page, written as given. */
   jsonLd?: object
 }
 
@@ -34,8 +33,7 @@ const ogImageAlt = 'The dfdu logo above the words "a disk usage browser for the 
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="sitemap" href="/sitemap-index.xml" />
-    <!-- Before first paint, so a saved or light theme never flashes dark (src/scripts/landing.ts
-         cycles it with t). -->
+    <!-- Before first paint, so a saved or light theme never flashes dark. -->
     <script is:inline>
       try {
         const t = localStorage.getItem('dfdu-theme')
@@ -55,7 +53,6 @@ const ogImageAlt = 'The dfdu logo above the words "a disk usage browser for the 
         image: { alt: ogImageAlt, width: 1200, height: 630, type: 'image/png' },
       }}
       twitter={{ card: 'summary_large_image', title, description, image: ogImage, imageAlt: ogImageAlt }}
-      extend={{ link: [{ rel: 'me', href: REPO }] }}
     />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
   </head>
