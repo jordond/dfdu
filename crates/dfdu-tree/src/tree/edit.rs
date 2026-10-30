@@ -332,7 +332,6 @@ impl Tree {
         self.free_work.push(FreeWork::Node(old.0));
     }
 
-    // resume-graft
     /// Moves the subtree at `kept` into the place of the directory `placeholder`, under the
     /// placeholder's name, and detaches the placeholder: a resume keeps a loaded directory
     /// where its rescan found it again. The ancestors on both sides keep their totals.

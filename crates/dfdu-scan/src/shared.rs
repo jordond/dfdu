@@ -101,7 +101,6 @@ pub struct JobOptions {
     pub scope: Option<PathBuf>,
     /// Classify entries against these rules while scanning (`crate::classify`).
     pub class: Option<ClassOpts>,
-    // resume-keep
     /// Directories not read but reported as [`SkipReason::Kept`](crate::SkipReason::Kept): a
     /// resume's, which keeps them from the tree it loaded.
     pub keep: Option<Arc<crate::journal::Keep>>,

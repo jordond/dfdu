@@ -206,6 +206,12 @@ pub enum ToAgent {
     },
     /// Scan `root` (a path on the agent's host) as job `job`, classifying against `class`
     /// with the rules of [`ToAgent::Rules`]; `enter` as [`dfdu_scan::JobOptions::enter`].
+    ///
+    /// [`dfdu_scan::JobOptions::keep`] (the directories a resume keeps as loaded) is not
+    /// sent: the agent reads every directory, so a resume's rescan through it lists its
+    /// subtree in full, slower but to the same tree, and the agent never reports
+    /// [`SkipReason::Kept`](dfdu_scan::SkipReason::Kept). Resumes are meant for local scans
+    /// anyway: the change journal they ask is this host's.
     StartJob {
         job: JobId,
         root: Vec<u8>,

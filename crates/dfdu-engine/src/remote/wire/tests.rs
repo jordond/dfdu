@@ -77,12 +77,25 @@ fn sample() -> Vec<FromAgent> {
             },
         ],
         first_subdir: DirId(40),
-        subdirs: vec![SubdirRec {
+        // One of each skip reason.
+        subdirs: [
+            None,
+            Some(SkipReason::DuplicateMount),
+            Some(SkipReason::OtherFilesystem),
+            Some(SkipReason::Network),
+            Some(SkipReason::Kernel),
+            Some(SkipReason::Excluded),
+            Some(SkipReason::Kept),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, skip)| SubdirRec {
             name: NameSpan { off: 7, len: 3 },
-            meta: meta(Kind::Dir, 2),
-            mount_root: true,
-            skip: Some(SkipReason::DuplicateMount),
-        }],
+            meta: meta(Kind::Dir, 2 + i as u64),
+            mount_root: skip.is_some(),
+            skip,
+        })
+        .collect(),
         errors: vec![EntryError {
             name: NameSpan { off: 0, len: 0 },
             err: ErrKind::Os(-22),

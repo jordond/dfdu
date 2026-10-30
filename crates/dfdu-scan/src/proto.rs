@@ -57,7 +57,6 @@ pub enum SkipReason {
     /// mount, a second mount of a subvolume, or a mount loop).
     DuplicateMount,
     Excluded,
-    // resume-keep
     /// A directory a resume keeps from the tree it loaded (`JobOptions::keep`).
     Kept,
 }

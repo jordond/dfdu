@@ -86,7 +86,6 @@ fn replace_swaps_totals() {
     t.check(&[]).unwrap();
 }
 
-// resume-graft
 #[test]
 fn a_graft_moves_the_kept_subtree_into_the_placeholder() {
     let mut t = Tree::new();
