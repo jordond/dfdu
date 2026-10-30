@@ -2,21 +2,10 @@
 //! the help overlay and the command palette all read [`ACTIONS`], so a binding shown anywhere is
 //! the binding that works.
 
-use std::time::Instant;
-
-use dfdu_engine::{Command, Mode, SizeMode};
-
-use super::views::{self, View};
-use super::{App, Effect, Overlay};
-use crate::features::{cleanup, debug, details, dupes, review, selected_path, treemap};
-use crate::overlay::{help, mark_pattern, palette, type_filter};
-use crate::state::order::SortKey;
-use crate::state::{filter, marks, tree};
-
 mod act;
 mod lookup;
 
-use act::{enter_mount, only_in, sort_by, toggle_size};
+pub use act::run;
 #[cfg(test)]
 pub(crate) use lookup::parse;
 pub use lookup::{action_for, first_key, half_page, offered};
@@ -438,135 +427,6 @@ pub const ACTIONS: &[ActionInfo] = &[
     ),
     row(Action::Quit, "q Ctrl-C", "quit", Group::Global),
 ];
-
-/// Carries out `a` on the list (no overlay open) and returns the effects for the run loop. In a
-/// read-only browser an action that deletes only says so.
-pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
-    let mut fx = Vec::new();
-    if app.read_only && a.deletes() {
-        app.status = Some(READ_ONLY.into());
-        return fx;
-    }
-    let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
-    let before = app.selected_index();
-    match a {
-        Action::Quit => app.quit = true,
-        Action::Up => app.move_by(-1),
-        Action::Down => app.move_by(1),
-        Action::PageUp => app.move_by(-page),
-        Action::PageDown => app.move_by(page),
-        Action::HalfPageUp => app.move_by(-(page / 2).max(1)),
-        Action::HalfPageDown => app.move_by((page / 2).max(1)),
-        Action::First => app.move_to(0),
-        Action::Last => app.move_to(app.rows.len().saturating_sub(1)),
-        Action::Open if tree::act::right(app) => {}
-        Action::Open | Action::Enter => {
-            let dir = app.selected_index().map(|row| app.rows[row]);
-            if let Some(i) = dir.filter(|&i| app.snap.entries[i].is_dir) {
-                app.enter(i);
-            }
-        }
-        Action::Parent if tree::act::left(app) => {}
-        Action::Parent => app.up(),
-        Action::SortSize => sort_by(app, SortKey::Size),
-        Action::SortName => sort_by(app, SortKey::Name),
-        Action::SortItems => sort_by(app, SortKey::Items),
-        Action::SortMtime => sort_by(app, SortKey::Mtime),
-        Action::Resort => app.request_sort(),
-        Action::ToggleApparent => toggle_size(app, SizeMode::Apparent),
-        Action::ToggleReferenced => toggle_size(app, SizeMode::Referenced),
-        Action::ToggleHidden => {
-            app.hide_hidden = !app.hide_hidden;
-            app.request_sort();
-        }
-        Action::Columns => {
-            app.columns = app.columns.next();
-            app.status = Some(app.columns.describe().into());
-        }
-        Action::ToggleTree => tree::act::toggle(app),
-        Action::ExpandChain => tree::act::chain(app),
-        Action::CycleFold => tree::act::cycle_fold(app),
-        Action::Rescan => {
-            let node = match app.selected_entry() {
-                Some(e) if e.is_dir => Some(e.node),
-                _ => app.snap.dir_node,
-            };
-            if let Some(node) = node {
-                fx.push(Effect::Send(Command::Rescan { node }));
-                app.status = Some("rescan requested".into());
-            }
-        }
-        Action::EnterMount => fx.extend(enter_mount(app)),
-        Action::SkipStalled => {
-            if app.snap.stalled > 0 {
-                fx.push(Effect::Send(Command::AbandonAllStalled));
-                app.status = Some("skipping directories that are not responding".into());
-            }
-        }
-        Action::Trash => fx.extend(review::delete(app, Mode::Trash)),
-        Action::DeletePermanent => fx.extend(review::delete(app, Mode::Permanent)),
-        Action::Undo => match &app.snap.undo {
-            Some(u) if !app.snap.undoing => {
-                fx.push(Effect::Send(Command::Undo { plan: u.plan }));
-                app.status = Some(format!(
-                    "putting back {} item{} ({})…",
-                    u.items,
-                    if u.items == 1 { "" } else { "s" },
-                    crate::theme::human(u.bytes)
-                ));
-            }
-            _ => app.status = Some("nothing to undo".into()),
-        },
-        Action::Help => help::open(app),
-        Action::Errors => fx.push(Effect::ShowErrors),
-        Action::Close => {
-            if !marks::range::end(app) && !filter::clear(app) && !type_filter::clear(app) {
-                app.overlay = Overlay::None;
-                if views::current(app) != View::Files {
-                    fx.extend(views::switch(app, View::Files));
-                }
-            }
-        }
-        Action::ToggleMark => marks::toggle(app),
-        Action::ClearMarks => marks::clear(app),
-        Action::RangeMark => marks::range::toggle(app),
-        Action::MarkPattern => mark_pattern::open(app),
-        Action::InvertMarks => marks::invert(app),
-        Action::CopyPath => fx.extend(selected_path::copy(app)),
-        Action::OpenPath => fx.extend(selected_path::open(app)),
-        Action::Filter => filter::open(app),
-        Action::Types => type_filter::open(app),
-        Action::Details => details::toggle(app),
-        Action::FocusDetails => fx.extend(details::focus(app)),
-        Action::Palette => palette::open(app),
-        Action::Debug => debug::toggle(app),
-        Action::ViewFiles => fx.extend(views::switch(app, View::Files)),
-        Action::ViewMap => fx.extend(views::switch(app, View::Map)),
-        Action::ViewCleanup => fx.extend(views::switch(app, View::Cleanup)),
-        Action::ViewDupes => fx.extend(views::switch(app, View::Duplicates)),
-        Action::ViewLargest => fx.extend(views::switch(app, View::Largest)),
-        Action::PrevView => fx.extend(views::step(app, -1)),
-        Action::NextView => fx.extend(views::step(app, 1)),
-        Action::DupesKeep => crate::features::dupes::cycle_keep(app),
-        Action::TickSuggested => match views::current(app) {
-            View::Cleanup => cleanup::tick_suggested(app),
-            View::Duplicates => dupes::tick_suggested(app),
-            _ => only_in(app, a, &[View::Cleanup, View::Duplicates]),
-        },
-        Action::CompareAgain if dupes::active(app) => fx.extend(dupes::compare_again(app)),
-        Action::CleanupFilter if cleanup::active(app) => cleanup::cycle_filter(app),
-        Action::CleanupCommand if cleanup::active(app) => fx.extend(cleanup::command(app)),
-        Action::CompareAgain => only_in(app, a, &[View::Duplicates]),
-        Action::CleanupFilter | Action::CleanupCommand => only_in(app, a, &[View::Cleanup]),
-        Action::TreemapDeeper => treemap::deeper(app, 1),
-        Action::TreemapShallower => treemap::deeper(app, -1),
-        Action::TreemapColor => treemap::cycle_color(app),
-    }
-    if a.moves() {
-        marks::range::follow(app, before);
-    }
-    fx
-}
 
 #[cfg(test)]
 mod tests;

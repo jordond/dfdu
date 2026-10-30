@@ -6,9 +6,42 @@ use std::time::Instant;
 
 use dfdu_tree::NodeRef;
 
-use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, delete_summary, shown};
+use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, shown};
 use crate::model::snapshot::{EntryData, Snapshot};
 use crate::state::order::{Order, Siblings};
+
+/// One line describing a finished delete plan. On btrfs the freed space shows up in the free
+/// space only after the transaction commits, and for snapshots after the cleaner ran.
+fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
+    let done = match d.mode {
+        Some(dfdu_engine::Mode::Trash) => "moved to the Trash",
+        Some(dfdu_engine::Mode::Stage) => "staged",
+        _ => "deleted",
+    };
+    let mut parts = vec![format!(
+        "{done} {} ({})",
+        d.deleted,
+        crate::theme::human(d.bytes)
+    )];
+    for (n, what) in [
+        (d.stale, "changed since the scan"),
+        (d.refused, "refused"),
+        (d.failed, "failed"),
+        (d.aborted, "stopped"),
+    ] {
+        if n > 0 {
+            parts.push(format!("{n} {what}"));
+        }
+    }
+    let mut s = parts.join(", ");
+    if d.deleted > 0 && d.mode.is_some_and(dfdu_engine::Mode::undoable) {
+        s.push_str("; U puts it back");
+    }
+    if d.btrfs {
+        s.push_str("; btrfs frees the space when it commits (snapshots: in the background)");
+    }
+    s
+}
 
 #[cfg(test)]
 mod tests;
