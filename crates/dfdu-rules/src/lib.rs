@@ -315,6 +315,7 @@ impl Rule {
 
 /// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
 /// the deletion-time protection check both read paths through this.
+#[must_use]
 pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
     rule_path_on(&dfdu_tree::HostPath::local(path))
 }

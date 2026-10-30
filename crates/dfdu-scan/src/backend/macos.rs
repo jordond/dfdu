@@ -43,9 +43,9 @@ use std::sync::Arc;
 use dfdu_sys::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG};
 use dfdu_tree::{ErrKind, Kind, Meta};
 use parking_lot::Mutex;
-use rustix::fs::{AtFlags, CWD, FileType, OFlags};
+use rustix::fs::{AtFlags, FileType, OFlags};
 
-use super::unix::{name_at, push_name};
+use super::unix::{UnixStat, name_at, push_name, unix_path_queries};
 use super::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock, portable_queries};
 
 /// `getattrlistbulk` buffer; Apple suggests 64-128 KiB.
@@ -262,19 +262,17 @@ fn meta_of(st: &rustix::fs::Stat) -> Meta {
     }
 }
 
-/// Opens a directory by path without following a symlink in its last component, in pieces
-/// when the path is longer than the kernel accepts.
-fn open_dir(path: &Path) -> io::Result<OwnedFd> {
-    super::unix::open_dir(path, OFlags::NOFOLLOW)
-}
+impl UnixStat for MacBackend {
+    /// A symlink as the last component of a directory's path is not followed.
+    const OPEN_LAST: OFlags = OFlags::NOFOLLOW;
 
-/// `path`'s metadata, by path, or once it is open when the path is too long for one call.
-fn stat_path(path: &Path, flags: AtFlags) -> io::Result<Meta> {
-    super::unix::stat_path(
-        path,
-        |name| stat_at(CWD, name, flags),
-        |path| Ok(meta_of(&rustix::fs::fstat(open_dir(path)?)?)),
-    )
+    fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta> {
+        stat_at(dir, name, flags)
+    }
+
+    fn stat_fd(fd: BorrowedFd<'_>) -> io::Result<Meta> {
+        Ok(meta_of(&rustix::fs::fstat(fd)?))
+    }
 }
 
 impl MacStream {
@@ -380,14 +378,6 @@ impl Backend for MacBackend {
 
     /// A root given as a symlink is resolved here, since directories are opened without
     /// following one.
-    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
-        super::read_prefix_at(dir, name, len)
-    }
-
-    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
-        super::link_target_missing_at(dir, name)
-    }
-
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         match std::fs::symlink_metadata(path) {
             Ok(m) if m.file_type().is_symlink() => {
@@ -397,17 +387,9 @@ impl Backend for MacBackend {
         }
     }
 
-    fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        stat_path(loc, AtFlags::empty())
-    }
-
-    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
-        stat_path(path, AtFlags::SYMLINK_NOFOLLOW)
-    }
-
     fn open(&self, loc: &PathBuf, _storage: dfdu_sys::Storage) -> io::Result<MacStream> {
         Ok(MacStream {
-            fd: Arc::new(open_dir(loc)?),
+            fd: Arc::new(super::unix::open_dir(loc, Self::OPEN_LAST)?),
             path: Arc::new(loc.clone()),
             common: self.common.clone(),
             filled: VecDeque::new(),
@@ -419,6 +401,7 @@ impl Backend for MacBackend {
     }
 
     portable_queries!(loc => loc);
+    unix_path_queries!();
 }
 
 #[cfg(test)]
