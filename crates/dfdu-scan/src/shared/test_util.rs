@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 
 use dfdu_sys::{FsClass, Storage};
@@ -12,7 +13,7 @@ use dfdu_tree::{DirId, Meta};
 use super::{Clock, Shared, Sink, StepResult, Task, Worker};
 use crate::backend::{Backend, PortableBackend};
 use crate::proto::{Batch, ScanMsg};
-use crate::sync::{AtomicU64, Mutex};
+use crate::sync::{AtomicU64, Injector, Mutex, Steal};
 
 /// The portable backend, with mount classes from `classes` (by mount id) instead of the
 /// system's mount table.
@@ -123,4 +124,26 @@ pub(crate) fn task<L>(dir: DirId, loc: L, dev: u64, mount: u64) -> Task<L> {
         storage: Storage::Unknown,
         class: None,
     }
+}
+
+/// What `q` holds, taken out in order.
+pub(crate) fn queued<T>(q: &Injector<T>) -> Vec<T> {
+    let mut out = Vec::new();
+    loop {
+        match q.steal() {
+            Steal::Success(t) => out.push(t),
+            Steal::Empty => return out,
+            Steal::Retry => {}
+        }
+    }
+}
+
+/// Counts the times `sh` wakes its workers from now on.
+pub(crate) fn wakes<B: Backend>(sh: &Shared<B>) -> Arc<std::sync::atomic::AtomicUsize> {
+    let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = n.clone();
+    sh.set_waker(Box::new(move || {
+        counted.fetch_add(1, SeqCst);
+    }));
+    n
 }

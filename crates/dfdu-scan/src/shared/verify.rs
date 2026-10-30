@@ -73,3 +73,6 @@ impl<B: Backend> Shared<B> {
         self.wake();
     }
 }
+
+#[cfg(test)]
+mod tests;

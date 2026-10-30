@@ -407,15 +407,12 @@ fn replay(
         let started = FSEventStreamStart(stream) != 0;
         let mut finished = started && wait(&rx, deadline, cancel);
         if finished {
-            match sync {
-                Some(d) => {
-                    finished = std::fs::write(d.join("sync"), b"").is_ok()
-                        && wait(&synced_rx, deadline, cancel);
-                }
-                None => {
-                    let (_never, rx) = mpsc::channel();
-                    wait(&rx, Instant::now() + SETTLE.min(left()), cancel);
-                }
+            if let Some(d) = sync {
+                finished = std::fs::write(d.join("sync"), b"").is_ok()
+                    && wait(&synced_rx, deadline, cancel);
+            } else {
+                let (_never, rx) = mpsc::channel();
+                wait(&rx, Instant::now() + SETTLE.min(left()), cancel);
             }
         }
         if started {

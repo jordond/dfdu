@@ -8,7 +8,7 @@
 //! The calls that happen once per directory at most (mount table, subvolume and extent probes)
 //! are the portable backend's.
 
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, OsStr};
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -152,6 +152,15 @@ fn open_dir(path: &Path) -> io::Result<OwnedFd> {
     super::unix::open_dir(path, OFlags::empty())
 }
 
+/// `path`'s metadata, by path, or once it is open when the path is too long for one call.
+fn stat_path(path: &Path, flags: AtFlags) -> io::Result<Meta> {
+    super::unix::stat_path(
+        path,
+        |name| stat_at(CWD, name, flags),
+        |path| stat_at(open_dir(path)?.as_fd(), c"", AtFlags::EMPTY_PATH),
+    )
+}
+
 /// `getdents64` buffer per open directory.
 const GETDENTS_BUF: usize = 32 * 1024;
 
@@ -237,24 +246,11 @@ impl Backend for LinuxBackend {
     }
 
     fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        let name = CString::new(loc.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::empty()) {
-            // Too long for one call: stat the directory once it is open.
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                stat_at(open_dir(loc)?.as_fd(), c"", AtFlags::EMPTY_PATH)
-            }
-            r => r,
-        }
+        stat_path(loc, AtFlags::empty())
     }
 
     fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
-        let name = CString::new(path.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::SYMLINK_NOFOLLOW) {
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                stat_at(open_dir(path)?.as_fd(), c"", AtFlags::EMPTY_PATH)
-            }
-            r => r,
-        }
+        stat_path(path, AtFlags::SYMLINK_NOFOLLOW)
     }
 
     fn open(&self, loc: &PathBuf, storage: dfdu_sys::Storage) -> io::Result<LinuxStream> {

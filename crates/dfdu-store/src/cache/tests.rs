@@ -1,14 +1,12 @@
-use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use dfdu_tree::{Ix, Kind, Meta, Tree};
 
 use super::*;
-use crate::ncdu::tests::dump;
 
 /// A tree of the directory `root` with `files` files in it.
-fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
+pub(super) fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
     let mut t = Tree::new();
     let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
     let r = t.new_root(root.as_os_str().as_encoded_bytes(), &meta, true);
@@ -31,7 +29,7 @@ fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
     (t, r)
 }
 
-fn header(written: u64, last_full_scan: u64) -> Header {
+pub(super) fn header(written: u64, last_full_scan: u64) -> Header {
     Header {
         tool_version: "test".into(),
         written,
@@ -44,7 +42,7 @@ fn header(written: u64, last_full_scan: u64) -> Header {
 }
 
 /// A cache in a temporary directory, a directory to scan, and its slot.
-fn setup() -> (tempfile::TempDir, Cache, Slot) {
+pub(super) fn setup() -> (tempfile::TempDir, Cache, Slot) {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("scanned")).unwrap();
     let cache = Cache::at(tmp.path().join("cache/scans")).unwrap();
@@ -53,11 +51,11 @@ fn setup() -> (tempfile::TempDir, Cache, Slot) {
     (tmp, cache, slot)
 }
 
-fn save(slot: &Slot, t: &Tree, h: &Header) -> Saved {
+pub(super) fn save(slot: &Slot, t: &Tree, h: &Header) -> Saved {
     slot.save(h, |f| f(t), &AtomicBool::new(false)).unwrap()
 }
 
-fn set_mtime(path: &Path, secs: u64) {
+pub(super) fn set_mtime(path: &Path, secs: u64) {
     let f = fs::File::options().write(true).open(path).unwrap();
     f.set_modified(UNIX_EPOCH + Duration::from_secs(secs))
         .unwrap();
@@ -74,7 +72,7 @@ fn keys_follow_the_directory_and_the_options() {
     assert_eq!(k.root(), dunce::canonicalize(&dir).unwrap());
     let name = k.file_name();
     assert_eq!(name.len(), 16 + ".snap".len(), "{name}");
-    assert!(name.ends_with(".snap"));
+    assert_eq!(Path::new(&name).extension(), Some("snap".as_ref()));
     let names: std::collections::HashSet<String> = [
         (false, false, false),
         (true, false, false),
@@ -95,59 +93,6 @@ fn keys_follow_the_directory_and_the_options() {
     fs::write(tmp.path().join("f"), b"").unwrap();
     assert!(Key::new(&tmp.path().join("f"), false, false, false).is_err());
     assert!(Key::new(&tmp.path().join("missing"), false, false, false).is_err());
-}
-
-/// What is saved loads back as it was: the tree, and the header.
-#[test]
-fn a_saved_scan_loads_back() {
-    let (_tmp, _cache, slot) = setup();
-    let now = now();
-    assert!(!slot.cached(now));
-    assert!(slot.load(now).unwrap().is_none());
-    let (t, r) = tree_of(slot.key.root(), 50);
-    let h = header(now, now - 60);
-    let Saved::Written { entries, bytes, .. } = save(&slot, &t, &h) else {
-        panic!("not written")
-    };
-    assert_eq!(entries, 51);
-    assert_eq!(bytes, fs::metadata(&slot.path).unwrap().len());
-    assert!(slot.cached(now));
-    let hit = slot.load(now).unwrap().expect("a hit");
-    assert!(!hit.full_rescan);
-    assert_eq!(hit.loaded.header, h);
-    assert_eq!(dump(&t, r), dump(&hit.loaded.tree, hit.loaded.root));
-}
-
-/// A file written more than the maximum age ago is not loaded and is removed; a tree whose
-/// last full scan is older than a week is loaded to be rescanned whole.
-#[test]
-fn old_scans_expire() {
-    let (_tmp, _cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), 3);
-    save(
-        &slot,
-        &t,
-        &header(now - FULL_RESCAN_AFTER - 10, now - FULL_RESCAN_AFTER - 10),
-    );
-    let hit = slot.load(now).unwrap().expect("a hit");
-    assert!(hit.full_rescan);
-    // Brought up to date from the journal since: still the old full scan.
-    save(&slot, &t, &header(now, now - FULL_RESCAN_AFTER - 10));
-    assert!(slot.load(now).unwrap().expect("a hit").full_rescan);
-    save(&slot, &t, &header(now, now - FULL_RESCAN_AFTER + 10));
-    assert!(!slot.load(now).unwrap().expect("a hit").full_rescan);
-    // Formats before 4 do not say; when it was written stands in.
-    save(&slot, &t, &header(now - 60, 0));
-    assert!(!slot.load(now).unwrap().expect("a hit").full_rescan);
-
-    save(&slot, &t, &header(now - MAX_AGE - 10, now - MAX_AGE - 10));
-    assert!(slot.cached(now), "the file itself is new");
-    assert!(slot.load(now).unwrap().is_none());
-    assert!(!slot.path.exists(), "an expired scan is removed");
-    save(&slot, &t, &header(now, now));
-    set_mtime(&slot.path, now - MAX_AGE - 10);
-    assert!(!slot.cached(now));
 }
 
 /// The sweep removes expired files, then the least recently written ones over the cap, but
@@ -219,58 +164,6 @@ fn only_the_caches_own_names_are_its_files() {
     }
 }
 
-/// A damaged or cut-short file is an error and is removed; one of another directory is not
-/// used, nor is a symbolic link.
-#[test]
-fn bad_files_are_not_loaded() {
-    let (tmp, _cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), 20);
-    save(&slot, &t, &header(now, now));
-    let good = fs::read(&slot.path).unwrap();
-    fs::write(&slot.path, &good[..good.len() / 2]).unwrap();
-    assert!(slot.load(now).is_err());
-    assert!(!slot.path.exists());
-    fs::write(&slot.path, b"not a snapshot").unwrap();
-    assert!(slot.load(now).is_err());
-    assert!(!slot.path.exists());
-
-    // Another directory's scan under this name.
-    fs::create_dir(tmp.path().join("elsewhere")).unwrap();
-    let (other, _) = tree_of(
-        &dunce::canonicalize(tmp.path().join("elsewhere")).unwrap(),
-        2,
-    );
-    let mut bytes = vec![];
-    snapshot::write(
-        &other,
-        other.roots().next().unwrap(),
-        &mut bytes,
-        &header(now, now),
-    )
-    .unwrap();
-    fs::write(&slot.path, &bytes).unwrap();
-    assert!(slot.load(now).unwrap().is_none());
-    // Other options.
-    let mut cross = header(now, now);
-    cross.cross_mounts = true;
-    let mut bytes = vec![];
-    snapshot::write(&t, t.roots().next().unwrap(), &mut bytes, &cross).unwrap();
-    fs::write(&slot.path, &bytes).unwrap();
-    assert!(slot.load(now).unwrap().is_none());
-
-    #[cfg(unix)]
-    {
-        let real = tmp.path().join("real.snap");
-        fs::write(&real, &good).unwrap();
-        fs::remove_file(&slot.path).unwrap();
-        std::os::unix::fs::symlink(&real, &slot.path).unwrap();
-        assert!(!slot.cached(now));
-        assert!(slot.load(now).unwrap().is_none());
-        assert!(real.exists());
-    }
-}
-
 /// The directory created is the user's alone and the files are readable by the user only. A
 /// directory that exists is used as it is, unless other users can write to it.
 #[cfg(unix)]
@@ -320,44 +213,6 @@ fn another_users_directory_is_not_used() {
     assert!(Cache::at(tmp.path().join("a/b")).is_ok());
 }
 
-/// A tree that changes between the parts of a save is not written, nor is anything once
-/// cancelled; the file cached before stays, and no temporary file is left.
-#[test]
-fn a_changing_tree_or_a_cancel_writes_nothing() {
-    let (_tmp, cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), STEP_ENTRIES + 10);
-    let h = header(now, now);
-    assert!(matches!(save(&slot, &t, &h), Saved::Written { .. }));
-    let before = fs::read(&slot.path).unwrap();
-    let tree = Mutex::new(t);
-    let mut calls = 0;
-    let changed = slot
-        .save(
-            &header(now + 1, now + 1),
-            |f| {
-                let mut t = tree.lock().unwrap();
-                if calls == 1 {
-                    t.bump_version();
-                }
-                calls += 1;
-                f(&t);
-            },
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-    assert_eq!(changed, Saved::Changed);
-    assert_eq!(calls, 2);
-    let t = tree.into_inner().unwrap();
-    let cancelled = slot.save(&h, |f| f(&t), &AtomicBool::new(true)).unwrap();
-    assert_eq!(cancelled, Saved::Cancelled);
-    // A tree of another directory.
-    let (other, _) = tree_of(cache.dir(), 1);
-    assert_eq!(save(&slot, &other, &h), Saved::Changed);
-    assert_eq!(fs::read(&slot.path).unwrap(), before);
-    assert_eq!(fs::read_dir(cache.dir()).unwrap().count(), 1);
-}
-
 /// The listing reads each file's root, header and entries.
 #[test]
 fn the_list_says_what_each_file_holds() {
@@ -384,68 +239,4 @@ fn the_cache_turns_off_by_environment() {
     for v in ["1", "", "yes", "on"] {
         assert!(!is_off(std::ffi::OsStr::new(v)), "{v}");
     }
-}
-
-/// Measures a save and a load of about a million entries: how long the tree is held still at
-/// once, and how long each takes. `cargo test --release -p dfdu-store -- --ignored --nocapture
-/// measure_a_million`.
-#[test]
-#[ignore = "a measurement, not a check"]
-fn measure_a_million() {
-    let (_tmp, _cache, slot) = setup();
-    let mut t = Tree::new();
-    let root_path = slot.key.root();
-    let meta = Meta::from_metadata(&fs::metadata(root_path).unwrap());
-    let r = t.new_root(root_path.as_os_str().as_encoded_bytes(), &meta, true);
-    let mut ino = 10u64;
-    for d in 0..10_000u64 {
-        ino += 1;
-        let dm = Meta { ino, ..meta };
-        let dir = t.add_dir_flagged(r, format!("dir-{d:05}").as_bytes(), &dm, 0);
-        let own = t.own(dir);
-        t.propagate_add(r, &own);
-        for f in 0..100u64 {
-            ino += 1;
-            let m = Meta {
-                kind: Kind::File,
-                apparent: f * 1000,
-                alloc: 4096,
-                ino,
-                nlink: 1,
-                ..meta
-            };
-            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
-            let own = t.own(x);
-            t.propagate_add(dir, &own);
-        }
-    }
-    let lock = std::sync::RwLock::new(t);
-    let mut holds = vec![];
-    let t0 = Instant::now();
-    let saved = slot
-        .save(
-            &header(now(), now()),
-            |f| {
-                let g = lock.read().unwrap();
-                let h = Instant::now();
-                f(&g);
-                holds.push(h.elapsed());
-            },
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-    let save = t0.elapsed();
-    holds.sort();
-    let p = |q: usize| holds[(holds.len() - 1) * q / 100];
-    let t0 = Instant::now();
-    let hit = slot.load(now()).unwrap().unwrap();
-    let load = t0.elapsed();
-    eprintln!(
-        "{saved:?}\nsave {save:?} in {} steps: hold p50 {:?} p99 {:?} max {:?}\nload {load:?}, {} entries",
-        holds.len(),
-        p(50),
-        p(99),
-        p(100),
-        hit.loaded.entries
-    );
 }

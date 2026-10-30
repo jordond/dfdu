@@ -1,6 +1,7 @@
 //! Scan history in the CLI: `dfdu scan` records each scan, `dfdu history` lists them and
 //! `dfdu diff` prints what grew.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -11,7 +12,7 @@ use dfdu_tree::{HostPath, Ix, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::report::{ReportFormat, age_arg, size_arg};
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.
 pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
@@ -45,7 +46,6 @@ pub struct HistoryArgs {
 
 /// `dfdu history`: the recorded scans, newest first.
 pub fn list(args: HistoryArgs) -> ExitCode {
-    use std::io::Write;
     let h = match open() {
         Ok(h) => h,
         Err(c) => return c,
@@ -64,8 +64,7 @@ pub fn list(args: HistoryArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
-    let r = (|| {
+    let r = print_out(|w| {
         if scans.is_empty() {
             writeln!(w, "no scans recorded")?;
         }
@@ -80,9 +79,9 @@ pub fn list(args: HistoryArgs) -> ExitCode {
                 s.root.display()
             )?;
         }
-        w.flush()
-    })();
-    match written(r) {
+        Ok(())
+    });
+    match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(code) => code,
     }
@@ -176,11 +175,11 @@ pub fn diff(args: &DiffArgs) -> ExitCode {
         .take(args.top)
         .collect();
     let r = if args.format == ReportFormat::Json {
-        print_json(&old, &new, &root, total.as_ref(), &shown)
+        written(print_json(&old, &new, &root, total.as_ref(), &shown))
     } else {
-        print_table(&old, &new, &root, total.as_ref(), &shown)
+        print_out(|w| print_table(w, &old, &new, &root, total.as_ref(), &shown))
     };
-    if let Err(code) = written(r) {
+    if let Err(code) = r {
         return code;
     }
     if partial {
@@ -285,14 +284,13 @@ fn label(s: &Side) -> String {
 }
 
 fn print_table(
+    w: &mut dyn Write,
     old: &Side,
     new: &Side,
     root: &Path,
     total: Option<&Change>,
     shown: &[&Change],
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
     let size = |s: &Side| s.sizes.get(&b""[..]).map_or(0, |s| s.disk);
     writeln!(
         w,
@@ -320,7 +318,7 @@ fn print_table(
             shown_path(root, &c.path)
         )?;
     }
-    w.flush()
+    Ok(())
 }
 
 fn sizes_json(s: Option<Sizes>) -> Value {

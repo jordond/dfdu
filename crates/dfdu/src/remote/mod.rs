@@ -25,6 +25,11 @@ pub enum AgentMode {
     Upload,
 }
 
+/// `--remote-agent`'s help, the same for every command that has it.
+pub const AGENT_MODE_HELP: &str = "How to start the agent on HOST: auto (an installed dfdu that \
+    speaks this one's protocol, else one sent earlier, else send this version's, asking first), \
+    installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]";
+
 /// The environment variable for `--remote-agent`'s default.
 const AGENT_MODE_VAR: &str = "DFDU_REMOTE_AGENT";
 
