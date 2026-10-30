@@ -1,25 +1,32 @@
 //! Putting the loaded directories a resume's rescan kept in the place of their placeholders.
 
+use dfdu_rules::{RuleIx, Safety};
 use dfdu_scan::Backend;
 use dfdu_scan::classify::ClassOpts;
-use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
+use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, Tree};
 
 use super::Kept;
 use crate::applier::{Applier, Model};
 
+/// What decides whether two classes are the same match: the rule, and the safety and
+/// degradation its sibling conditions gave it (not the flags the classifier pool adds later).
+fn verdict(c: &Class) -> (RuleIx, Safety, Option<u16>) {
+    (c.rule, c.safety, c.degraded)
+}
+
 /// Whether the class `kx` was loaded with still holds where it is now in the visible tree, as
-/// far as its parent's listing decides: its rule is among the hits the listing gives it. A
-/// rule that looks inside `kx` is decided by its loaded entries, which the listing does not
-/// read, so a hit is all it can say; one whose sibling condition no longer holds (a marker
-/// file removed) gives none.
+/// far as its parent's listing decides: the listing gives a hit of its rule, with the same
+/// safety and degradation. A rule that looks inside `kx` is decided by its loaded entries,
+/// which the listing does not read, so a hit is all it can say; one whose sibling condition no
+/// longer holds (a marker file removed) gives none.
 fn class_holds(tree: &Tree, kx: Ix, class: &ClassOpts) -> bool {
-    let Some(rule) = tree.class(kx).map(|c| c.rule) else {
+    let Some(c) = tree.class(kx) else {
         return true;
     };
     crate::applier::rescan::rescan_class(tree, kx, None, class)
         .chain
         .iter()
-        .any(|h| h.rule == rule)
+        .any(|h| (h.rule, h.safety, h.degraded) == verdict(&c))
 }
 
 /// What [`Applier::graft_kept`] leaves to do once the rescan swapped in.
@@ -82,15 +89,31 @@ impl<B: Backend> Applier<B> {
             };
             let t = &m.tree;
             let parent = |ix: Ix| t.parent(ix).map(|q| t.dev_ino(q));
-            let rule = |ix: Ix| t.class(ix).map(|c| c.rule);
+            let rule = |ix: Ix| t.class(ix).map(|c| verdict(&c));
             let marks = |ix: Ix| {
                 let f = t.flags(ix);
                 (f.has(NodeFlags::PROTECTED), f.has(NodeFlags::EXCEPTED))
             };
+            // The rules decided above it, which its subtree was classified with: above the
+            // placeholder, those in the shadow and then those above `target`, which the shadow
+            // replaces.
+            let above = |ix: Ix| {
+                let mut v = Vec::new();
+                let mut cur = t.parent(ix);
+                while let Some(q) = cur {
+                    v.extend(t.class(q).map(|c| c.rule));
+                    cur = match t.parent(q) {
+                        None if !t.is_visible(q) => t.parent(target),
+                        up => up,
+                    };
+                }
+                v
+            };
             let moved = t.name(px) != t.name(kx)
                 || parent(px) != parent(kx)
                 || rule(px).is_some_and(|r| rule(kx) != Some(r))
-                || marks(px) != marks(kx);
+                || marks(px) != marks(kx)
+                || above(px) != above(kx);
             // Not classified by the listing, but as loaded: the listing cannot decide a rule
             // that looks inside, so whether it still holds is judged once it swapped in.
             let unsure = !moved && rule(px).is_none() && rule(kx).is_some();

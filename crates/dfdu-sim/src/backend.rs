@@ -152,7 +152,7 @@ impl RawBlock<u32> for SimRaw {
             let meta = if cn.vanished {
                 Err(ErrKind::NotFound)
             } else {
-                Ok(cn.meta)
+                Ok(self.spec.meta(c))
             };
             let child = (cn.meta.kind == Kind::Dir).then_some(c);
             out.push(&cn.name, meta, child);
@@ -191,7 +191,7 @@ impl Backend for SimBackend {
     }
 
     fn stat_root(&self, loc: &u32) -> io::Result<Meta> {
-        Ok(self.spec.nodes[*loc as usize].meta)
+        Ok(self.spec.meta(*loc))
     }
 
     fn read_prefix(&self, dir: &u32, name: &[u8], len: usize) -> Option<Vec<u8>> {

@@ -304,6 +304,23 @@ impl ExtentTable {
         }
     }
 
+    // resume-rehome
+    /// Re-homes every shared extent whose home is no longer visible. A subtree moved whole
+    /// (a resume's kept directory, grafted into its rescan) keeps its references, so no freed
+    /// reference tells that their home went with the tree the rescan replaced.
+    pub fn rehome_detached(&mut self, tree: &mut Tree) {
+        for (&(_, s), seg) in &mut self.segs {
+            if seg.home.is_some_and(|h| tree.resolve_visible(h).is_none()) {
+                rehome_seg(tree, &self.inodes, s, seg, None);
+            }
+        }
+        for pt in self.points.values_mut() {
+            if pt.home.is_some_and(|h| tree.resolve_visible(h).is_none()) {
+                rehome_point(tree, &self.inodes, pt, None);
+            }
+        }
+    }
+
     /// The table's view of one inode, for debugging.
     pub fn describe(&self, tree: &Tree, inode: Inode) -> String {
         let Some(rec) = self.inodes.get(&inode) else {

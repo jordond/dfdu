@@ -138,12 +138,29 @@ pub struct Spec {
     pub parent: Vec<u32>,
     /// Set when the simulated deleter removes the entry.
     pub deleted: Vec<AtomicBool>,
+    /// Set when a directory's entries changed since it was generated: its mtime is a second
+    /// later ([`Spec::meta`]).
+    pub touched: Vec<AtomicBool>,
 }
 
 impl Spec {
     #[must_use]
     pub fn is_deleted(&self, i: u32) -> bool {
         self.deleted[i as usize].load(SeqCst)
+    }
+
+    /// What stat'ing entry `i` gives: its metadata, a second later for a directory
+    /// [`Spec::touch`] changed.
+    #[must_use]
+    pub fn meta(&self, i: u32) -> Meta {
+        let mut m = self.nodes[i as usize].meta;
+        m.mtime += i64::from(self.touched[i as usize].load(SeqCst));
+        m
+    }
+
+    /// Records that the entries of directory `i` changed, as its mtime would.
+    pub fn touch(&self, i: u32) {
+        self.touched[i as usize].store(true, SeqCst);
     }
 
     /// Makes a removed entry exist again (a scenario replacing a file by another of the same
@@ -288,11 +305,15 @@ impl SpecBuilder {
         let deleted = (0..self.nodes.len())
             .map(|i| AtomicBool::new(self.absent.contains(&id32(i))))
             .collect();
+        let touched = (0..self.nodes.len())
+            .map(|_| AtomicBool::new(false))
+            .collect();
         Spec {
             nodes: self.nodes,
             dev_fs: HashMap::from([(1, (0, false))]),
             parent,
             deleted,
+            touched,
         }
     }
 }

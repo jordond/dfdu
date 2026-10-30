@@ -331,11 +331,13 @@ impl Spec {
             mark_shared(rng, &mut nodes);
         }
         let deleted = (0..nodes.len()).map(|_| AtomicBool::new(false)).collect();
+        let touched = (0..nodes.len()).map(|_| AtomicBool::new(false)).collect();
         Spec {
             nodes,
             dev_fs,
             parent,
             deleted,
+            touched,
         }
     }
 }

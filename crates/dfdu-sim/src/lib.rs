@@ -25,6 +25,7 @@ mod check;
 mod config;
 mod deleter;
 mod random;
+mod resume;
 mod spec;
 
 use backend::mount_key;
@@ -32,6 +33,7 @@ pub use backend::{SimBackend, SimClock, SimSink, SimStream};
 pub use check::sim_check;
 use check::{check_classes, check_pool_flags, compare, topmost_incomplete};
 pub use config::{SimConfig, SimReport, sim_rules};
+pub use resume::run_resumed;
 pub use spec::{
     CACHEDIR_TAG, Fault, ROOT, ROOT_NAME, Rng, SimPiece, Spec, SpecBuilder, SpecConfig, SpecNode,
 };
@@ -98,17 +100,30 @@ impl Sim {
     pub fn new(seed: u64, cfg: &SimConfig) -> Sim {
         let mut rng = Rng::new(seed);
         let spec = Spec::generate(&mut rng, &cfg.spec, cfg.limits.block_entries);
-        Sim::start(seed, rng, cfg, spec)
+        Sim::start(seed, rng, cfg, Arc::new(spec))
     }
 
     /// A simulation of a spec built by the caller, with the initial scan issued.
     #[must_use]
     pub fn with_spec(seed: u64, cfg: &SimConfig, spec: Spec) -> Sim {
-        Sim::start(seed, Rng::new(seed), cfg, spec)
+        Sim::start(seed, Rng::new(seed), cfg, Arc::new(spec))
     }
 
-    fn start(seed: u64, mut rng: Rng, cfg: &SimConfig, spec: Spec) -> Sim {
-        let spec = Arc::new(spec);
+    fn start(seed: u64, rng: Rng, cfg: &SimConfig, spec: Arc<Spec>) -> Sim {
+        let mut sim = Sim::build(seed, rng, cfg, spec);
+        let opts = sim.scan_opts();
+        sim.applier.apply_command(
+            &mut sim.model,
+            Command::Scan {
+                path: PathBuf::from(ROOT_NAME).into(),
+                opts,
+            },
+        );
+        sim
+    }
+
+    /// A simulation of `spec` with nothing issued yet.
+    fn build(seed: u64, mut rng: Rng, cfg: &SimConfig, spec: Arc<Spec>) -> Sim {
         let cross_mounts = cfg.cross_mounts.unwrap_or_else(|| rng.chance(400));
         let network = cfg.network.unwrap_or_else(|| rng.chance(300));
         let (rotational, net) = cfg
@@ -137,7 +152,7 @@ impl Sim {
             .collect();
         let mut applier = Applier::new(shared.clone());
         applier.checks = cfg.checks;
-        let mut sim = Sim {
+        Sim {
             seed,
             rng,
             cfg: cfg.clone(),
@@ -163,26 +178,23 @@ impl Sim {
             revoked: HashSet::new(),
             log: Vec::new(),
             record: false,
-        };
-        sim.applier.apply_command(
-            &mut sim.model,
-            Command::Scan {
-                path: PathBuf::from(ROOT_NAME).into(),
-                opts: JobOptions {
-                    cross_mounts,
-                    network,
-                    class: cfg.rules.clone().map(|rules| ClassOpts {
-                        rules,
-                        path: ROOT_NAME.as_bytes().to_vec(),
-                        inside: vec![],
-                        protection: dfdu_rules::protected::State::default(),
-                        chain: vec![],
-                    }),
-                    ..JobOptions::default()
-                },
-            },
-        );
-        sim
+        }
+    }
+
+    /// The options the root is scanned with.
+    fn scan_opts(&self) -> JobOptions {
+        JobOptions {
+            cross_mounts: self.cross_mounts,
+            network: self.network,
+            class: self.cfg.rules.clone().map(|rules| ClassOpts {
+                rules,
+                path: ROOT_NAME.as_bytes().to_vec(),
+                inside: vec![],
+                protection: dfdu_rules::protected::State::default(),
+                chain: vec![],
+            }),
+            ..JobOptions::default()
+        }
     }
 
     fn fail(&self, what: impl std::fmt::Display) -> String {
@@ -506,6 +518,13 @@ impl Sim {
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
     pub fn run_to_end(mut self) -> Result<SimReport, String> {
+        self.settle()?;
+        self.finish()
+    }
+
+    /// Steps in random order until everything has settled and no directory is left
+    /// incomplete.
+    fn settle(&mut self) -> Result<(), String> {
         loop {
             if self.report.ticks >= self.cfg.max_ticks {
                 let (out, ab) = self.shared.outstanding();
@@ -532,11 +551,10 @@ impl Sim {
                     Some(_) => {
                         return Err(self.fail("incomplete directories remain after 100 rescans"));
                     }
-                    None => break,
+                    None => return Ok(()),
                 }
             }
         }
-        self.finish()
     }
 
     fn finish(mut self) -> Result<SimReport, String> {

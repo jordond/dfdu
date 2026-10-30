@@ -254,6 +254,10 @@ impl<B: Backend> Applier<B> {
                 (false, Some(s), Some(t)) => {
                     let again = kept.map(|k| Self::graft_kept(m, &k, t));
                     m.tree.replace(t, s);
+                    // What the kept directories share may have been homed in what went.
+                    if again.is_some() {
+                        self.extents.rehome_detached(&mut m.tree);
+                    }
                     self.start_measure(m, root);
                     let keys = self.links.keys_in(scope);
                     self.work.push_back(Work::Free);

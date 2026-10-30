@@ -142,4 +142,10 @@ pub struct SimReport {
     pub deferred: u64,
     pub revoked: u64,
     pub at_limit: u64,
+    /// Resumed runs ([`run_resumed`](crate::run_resumed)): directories still the loaded nodes
+    /// at the end, changed directories the journal left out, and runs whose journal could not
+    /// tell (everything rescanned).
+    pub kept: u64,
+    pub lost_events: u64,
+    pub full_resumes: u64,
 }
