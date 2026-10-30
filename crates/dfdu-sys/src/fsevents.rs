@@ -14,7 +14,9 @@
 //! or a stream, so a replay alone can miss what changed just before it. After `HistoryDone`,
 //! [`changes_since`] therefore creates a file in a directory of its own on the same volume and
 //! waits for that change to arrive live: events come in the order they happened, so every
-//! change before it has arrived too.
+//! change before it has arrived too. The daemon also folds a change into an event it still
+//! holds for the same directory, keeping that event's id: a position is therefore taken a few
+//! seconds back ([`position_event_id`]).
 
 #![allow(unsafe_code)]
 
@@ -71,6 +73,8 @@ unsafe extern "C" {
     fn CFRelease(cf: *const c_void);
     fn CFUUIDGetUUIDBytes(uuid: CFUUIDRef) -> CFUUIDBytes;
     fn FSEventsGetCurrentEventId() -> u64;
+    fn FSEventsGetLastEventIdForDeviceBeforeTime(dev: i32, time: f64) -> u64;
+    fn CFAbsoluteTimeGetCurrent() -> f64;
     fn FSEventsCopyUUIDForDevice(dev: i32) -> CFUUIDRef;
     fn FSEventStreamCreate(
         alloc: CFAllocatorRef,
@@ -287,24 +291,36 @@ fn changes(
     result
 }
 
-/// The id of the newest event once the daemon has sent out every event of device `dev` it
-/// held: a position for a later [`changes_since`]. The daemon folds a change into an event
-/// it still holds for the same directory, which keeps its earlier id, so a change made just
-/// after [`current_event_id`] can carry an id before it and never be replayed (seen under
-/// load: a directory written to shortly before the position was taken). Waits, at most
-/// `timeout`, for a file written in a directory of its own to arrive live, as
-/// [`changes_since`] does; events come in order, so the held ones went out before it. `None`
-/// when that file did not arrive in time: no position is safe then. Without such a directory
-/// on the volume, the id as it stands.
+/// How long the daemon may hold an event before it goes out, with a wide margin: about a
+/// second on a quiet machine.
+const HELD: f64 = 10.0;
+
+/// A position on device `dev` for a later [`changes_since`]: the id of the last event older
+/// than [`HELD`] seconds, or [`current_event_id`] if that is older. While it holds an event
+/// for a directory the daemon folds later changes there into it, keeping its id, so a change
+/// made just after [`current_event_id`] in a directory changed just before can carry an id
+/// before it and never be replayed (seen under load). Every event held now is younger than
+/// [`HELD`], so its id comes after this one; what changed in those seconds is replayed too,
+/// which costs a few directories listed again.
 #[must_use]
-pub fn flushed_event_id(dev: u64, timeout: Duration) -> Option<u64> {
-    let Some(d) = sync_dir(dev) else {
-        return Some(current_event_id());
+pub fn position_event_id(dev: u64) -> u64 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "macOS `st_dev` is an i32 that `MetadataExt::dev` widened to u64; this undoes it"
+    )]
+    let dev = dev as i32;
+    // SAFETY: plain values in and out.
+    let (now, before) = unsafe {
+        let now = FSEventsGetCurrentEventId();
+        let t = CFAbsoluteTimeGetCurrent() - HELD;
+        (now, FSEventsGetLastEventIdForDeviceBeforeTime(dev, t))
     };
-    let deadline = Instant::now() + timeout;
-    let flushed = replay(&d, current_event_id(), deadline, Some(&d), None).is_ok_and(|c| !c.full);
-    let _ = std::fs::remove_dir_all(&d);
-    flushed.then(current_event_id)
+    // 0 when the device's history does not reach back that far, or it has none.
+    if before == 0 || before == SINCE_NOW {
+        now
+    } else {
+        before.min(now)
+    }
 }
 
 /// How often a cancellable wait looks at its flag.

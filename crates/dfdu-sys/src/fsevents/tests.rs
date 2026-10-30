@@ -5,8 +5,8 @@ use std::sync::Mutex;
 /// which another test's call in flight would break.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
-/// Writes below a directory after an event id show up as changes of the directories they
-/// were made in; nothing before the id does.
+/// Writes below a directory after a position show up as changes of the directories they were
+/// made in.
 #[test]
 fn changes_after_an_id_are_reported() {
     let _one = ONE_AT_A_TIME
@@ -21,8 +21,7 @@ fn changes_after_an_id_are_reported() {
         use std::os::unix::fs::MetadataExt;
         std::fs::metadata(&root).unwrap().dev()
     };
-    // The writes above went out with ids before this one, so `quiet` is not reported.
-    let since = flushed_event_id(dev, Duration::from_secs(5)).expect("flushed");
+    let since = position_event_id(dev);
     std::fs::write(root.join("a/b/new"), b"hello").unwrap();
     std::fs::write(root.join("a/top"), b"hi").unwrap();
     let mut got = Changes::default();
@@ -36,13 +35,12 @@ fn changes_after_an_id_are_reported() {
     }
     assert!(got.dirs.contains(&root.join("a/b")), "{got:?}");
     assert!(got.dirs.contains(&root.join("a")), "{got:?}");
-    assert!(!got.dirs.contains(&root.join("quiet")), "{got:?}");
     assert!(got.last_id > since);
     assert!(volume_uuid(dev).is_some());
 }
 
 /// A change made just before the call is reported, without waiting or asking again, in a
-/// directory created just before the position was taken.
+/// directory created just before the position was taken ([`position_event_id`]).
 #[test]
 fn a_change_just_before_the_call_is_reported() {
     use std::os::unix::fs::MetadataExt;
@@ -57,7 +55,7 @@ fn a_change_just_before_the_call_is_reported() {
         std::fs::create_dir(&d).unwrap();
         // Not the bare current id: the write below could fold into the event the daemon
         // still holds for the new directory, with an id before it.
-        let since = flushed_event_id(dev, Duration::from_secs(5)).expect("flushed");
+        let since = position_event_id(dev);
         std::fs::write(d.join("f"), b"x").unwrap();
         let got = changes_since(&root, since, Duration::from_secs(10)).unwrap();
         assert!(!got.full);
@@ -103,7 +101,7 @@ fn a_cancelled_call_cleans_up() {
 /// into the event it still held, with its older id.
 #[test]
 #[ignore = "a stress run, meant for a loaded machine"]
-fn changes_right_after_a_flushed_position_are_replayed() {
+fn changes_right_after_a_position_are_replayed() {
     use std::os::unix::fs::MetadataExt;
     let _one = ONE_AT_A_TIME
         .lock()
@@ -121,7 +119,7 @@ fn changes_right_after_a_flushed_position_are_replayed() {
         std::fs::create_dir_all(d.join("a/b")).unwrap();
         std::fs::write(d.join("a/one"), b"x").unwrap();
         let t = Instant::now();
-        let since = flushed_event_id(dev, Duration::from_secs(2)).expect("flushed");
+        let since = position_event_id(dev);
         longest = longest.max(t.elapsed());
         all += t.elapsed();
         std::fs::remove_file(d.join("a/one")).unwrap();
@@ -132,7 +130,7 @@ fn changes_right_after_a_flushed_position_are_replayed() {
             lost.push((i, got));
         }
     }
-    eprintln!("flush: longest {longest:?}, mean {:?}", all / rounds);
+    eprintln!("position: longest {longest:?}, mean {:?}", all / rounds);
     assert!(
         lost.is_empty(),
         "{} of {rounds} lost a change: {lost:?}",

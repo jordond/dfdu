@@ -12,10 +12,6 @@ use crate::sync::Mutex;
 #[cfg(target_os = "macos")]
 const REPLAY: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long taking a position waits for the `FSEvents` daemon to send out the events it holds.
-#[cfg(target_os = "macos")]
-const FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
-
 /// Where macOS mounts the Data volume, which the firmlinks of the system volume join.
 #[cfg(any(target_os = "macos", test))]
 const DATA_VOLUME: &str = "/System/Volumes/Data";
@@ -182,11 +178,9 @@ fn through_firmlinks(path: &Path, links: &[(PathBuf, PathBuf)]) -> PathBuf {
 }
 
 /// Where the change journal of `path`'s volume stands, for [`changed_since`]; `None` where
-/// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS this waits for
-/// the `FSEvents` daemon to send out the events it holds (about 0.1 s, at most 2 s), so that
-/// every change after it is replayed; `None` when the daemon takes longer, so that what is
-/// saved with it is scanned again in full rather than resumed from a position that may miss
-/// changes.
+/// there is none (on Linux: off btrfs, or without `CAP_SYS_ADMIN`). On macOS the position is
+/// a few seconds back ([`dfdu_sys::fsevents::position_event_id`]), so that a change folded
+/// into an event the `FSEvents` daemon still held is replayed.
 #[must_use]
 pub fn journal_position(path: &Path) -> Option<JournalPosition> {
     // Read before the position, so that whatever changes after it has a ctime no older.
@@ -210,7 +204,7 @@ fn position(path: &Path) -> Option<([u8; 16], u64)> {
         let volume = dfdu_sys::fsevents::volume_uuid(dev)?;
         // Not the bare current id: a change made soon after it to a directory the daemon still
         // holds an event for would carry an older id, and be lost to the resume.
-        Some((volume, dfdu_sys::fsevents::flushed_event_id(dev, FLUSH)?))
+        Some((volume, dfdu_sys::fsevents::position_event_id(dev)))
     }
     #[cfg(windows)]
     {
@@ -288,9 +282,10 @@ mod firmlink_tests {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
 
     /// Directories changed after the position come back relative to the root, also those
-    /// written to just before it was taken, and from the first answer; a position in another
+    /// written to just before it was taken, from the first answer; a position in another
     /// volume's journal tells nothing.
     #[test]
     fn changes_come_back_relative_to_the_root() {
@@ -299,9 +294,11 @@ mod tests {
         let root = tmp.path().join("r");
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::create_dir_all(root.join("quiet")).unwrap();
-        let Some(since) = journal_position(&root) else {
+        let dev = std::fs::metadata(&root).unwrap().dev() as u64;
+        if dfdu_sys::fsevents::volume_uuid(dev).is_none() {
             return;
-        };
+        }
+        let since = journal_position(&root).expect("a position");
         std::fs::write(root.join("a/b/new"), b"x").unwrap();
         // A loaded machine can keep the daemon past the replay's wait, and the journal then
         // cannot tell (a full rescan): asked again. An answer that leaves the change out is
@@ -311,9 +308,10 @@ mod tests {
                 .find_map(|_| changed_since(root, since))
                 .expect("the journal can tell")
         };
+        // `quiet` changed just before the position, which reaches a few seconds back: it may
+        // be named too.
         let got = answer(&root);
         assert!(got.contains(&PathBuf::from("a/b")), "{got:?}");
-        assert!(!got.iter().any(|d| d.starts_with("quiet")), "{got:?}");
         // The same directory named in the Data volume, where events name it through the
         // `/private` firmlink. The sync file is written through the firmlink, so it does not
         // vouch for a stream watching the Data volume's form: a change made just before shows
