@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_tree::{DirState, Ix, Meta, Totals, Tree};
 
 pub fn engine() -> Engine<PortableBackend> {
@@ -35,7 +35,7 @@ pub fn loaded(root: &Path) -> Tree {
         for e in entries {
             let file_name = e.file_name();
             let name = dfdu_tree::name_bytes(&file_name);
-            let meta = Meta::from_metadata(&fs::symlink_metadata(e.path()).unwrap());
+            let meta = PortableBackend::default().stat_dir(&e.path()).unwrap();
             if e.file_type().unwrap().is_dir() {
                 let d = t.add_dir(dir, &name, &meta);
                 let own = t.own(d);
@@ -61,7 +61,7 @@ pub fn loaded(root: &Path) -> Tree {
         r.reported = true;
     }
     let mut t = Tree::default();
-    let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
+    let meta = PortableBackend::default().stat_dir(root).unwrap();
     let r = t.new_root(&dfdu_tree::name_bytes(root.as_os_str()), &meta, true);
     add(&mut t, r, root, &mut Vec::new());
     close(&mut t, r);
@@ -70,9 +70,10 @@ pub fn loaded(root: &Path) -> Tree {
 
 /// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
 pub fn stat(root: &Path) -> Option<Box<Meta>> {
-    fs::metadata(root)
+    PortableBackend::default()
+        .stat_root(&root.to_path_buf())
         .ok()
-        .map(|m| Box::new(Meta::from_metadata(&m)))
+        .map(Box::new)
 }
 
 /// The node at `rel` below the root, if there is one.

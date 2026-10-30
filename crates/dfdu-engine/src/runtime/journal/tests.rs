@@ -68,7 +68,7 @@ fn the_root_is_stat_ed_after_the_journal_answered() {
     let Ok(Command::Resume { root: Some(m), .. }) = rx.try_recv() else {
         panic!("a resume with the root's stat");
     };
-    let now = Meta::from_metadata(&std::fs::metadata(&root).unwrap());
+    let now = PortableBackend::default().stat_root(&root).unwrap();
     assert_eq!((m.dev, m.ino, m.mtime), (now.dev, now.ino, now.mtime));
 
     let (mut a, rx) = ask(|_, _, _| Some(vec![]));

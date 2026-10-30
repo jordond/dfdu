@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_scan::{Backend, JobOptions, PortableBackend};
 use dfdu_store::ncdu::Limits;
 use dfdu_store::snapshot::{self, Header};
 use dfdu_tree::Totals;
@@ -27,9 +27,10 @@ fn engine() -> Engine<PortableBackend> {
 
 /// What stat'ing `root` gives, as a resume is sent it after the journal was asked.
 fn stat(root: &Path) -> Option<Box<dfdu_tree::Meta>> {
-    fs::metadata(root)
+    PortableBackend::default()
+        .stat_root(&root.to_path_buf())
         .ok()
-        .map(|m| Box::new(dfdu_tree::Meta::from_metadata(&m)))
+        .map(Box::new)
 }
 
 fn root_total(e: &Engine<PortableBackend>) -> Totals {

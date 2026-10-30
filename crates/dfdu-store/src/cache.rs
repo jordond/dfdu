@@ -21,6 +21,8 @@ use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use dfdu_scan::Backend;
+
 use crate::ncdu::Limits;
 use crate::snapshot::{self, Header};
 
@@ -180,7 +182,10 @@ impl Key {
                 "not a directory",
             ));
         }
-        let meta = dfdu_tree::Meta::from_metadata(&m);
+        // As the scanners stat it: on Windows std has no volume serial or file id, and the
+        // creation time standing in for them is carried over to a directory made again under
+        // the same name.
+        let meta = dfdu_scan::PortableBackend::default().stat_dir(&root)?;
         Ok(Key {
             root,
             cross_mounts,
