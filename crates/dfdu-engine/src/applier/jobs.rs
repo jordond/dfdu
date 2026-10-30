@@ -147,6 +147,29 @@ impl<B: Backend> Applier<B> {
         self.scanner_abandon(job, dir);
     }
 
+    /// Cancels job `job`, or every job, and a resume's walk with it.
+    pub(super) fn cancel_jobs(&mut self, job: Option<u32>) {
+        self.cancel_resume(job);
+        let ids: Vec<u32> = match job {
+            Some(id) => vec![id],
+            None => self.jobs.keys().copied().collect(),
+        };
+        for id in ids {
+            self.cancel(id);
+        }
+    }
+
+    /// Whether `b` is below `a`.
+    pub(super) fn is_ancestor(tree: &Tree, a: Ix, mut b: Ix) -> bool {
+        while let Some(p) = tree.parent(b) {
+            if p == a {
+                return true;
+            }
+            b = p;
+        }
+        false
+    }
+
     pub(super) fn under_cut(tree: &Tree, ix: Ix) -> bool {
         let mut cur = Some(ix);
         while let Some(c) = cur {

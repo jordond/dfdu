@@ -409,17 +409,8 @@ impl<B: Backend> Applier<B> {
                 opts,
                 changed: Some(dirs),
             } => self.resume_changed(m, node, opts, &dirs),
-            Command::Cancel { job } => {
-                self.cancel_resume(Some(job.0));
-                self.cancel(job.0);
-            }
-            Command::CancelAll => {
-                self.cancel_resume(None);
-                let ids: Vec<u32> = self.jobs.keys().copied().collect();
-                for id in ids {
-                    self.cancel(id);
-                }
-            }
+            Command::Cancel { job } => self.cancel_jobs(Some(job.0)),
+            Command::CancelAll => self.cancel_jobs(None),
             Command::Abandon { node } => self.abandon(m, node),
             Command::AbandonAllStalled => {
                 for s in m.status.stalled.clone() {
@@ -494,15 +485,5 @@ impl<B: Backend> Applier<B> {
             return Some("the link to the agent is gone: nothing more is scanned");
         }
         self.resume_refusal(m, cmd)
-    }
-
-    fn is_ancestor(tree: &Tree, a: Ix, mut b: Ix) -> bool {
-        while let Some(p) = tree.parent(b) {
-            if p == a {
-                return true;
-            }
-            b = p;
-        }
-        false
     }
 }
