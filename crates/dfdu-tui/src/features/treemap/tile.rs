@@ -218,6 +218,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::features::treemap::tests::buffer_row;
     use crate::theme::Theme;
 
     const DAY: i64 = 86_400;
@@ -281,9 +282,7 @@ mod tests {
         let r = Rect::new(0, 0, 6, 3);
         let mut buf = Buffer::empty(r);
         hatch(&mut buf, r, 1, Style::new(), Bars::Ascii, 2);
-        let rows: Vec<String> = (0..3)
-            .map(|y| (0..6).map(|x| buf[(x, y)].symbol()).collect())
-            .collect();
+        let rows: Vec<String> = (0..3).map(|y| buffer_row(&buf, y)).collect();
         assert_eq!(rows, ["      ", " / / /", "/ / / "]);
         put(&mut buf, r, 0, "name", Style::new());
         assert_eq!(buf[(1, 0)].symbol(), "n", "a cell in");

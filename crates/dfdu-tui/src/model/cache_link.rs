@@ -6,6 +6,7 @@
 //! Nothing is saved on the way out: quitting cancels a save still running (the file cached
 //! before stays) and waits at most [`CANCEL_WAIT`] for it to stop.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model, WaitIdle};
 use dfdu_scan::JobOptions;
+use dfdu_store::ImportError;
 use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
 use dfdu_store::snapshot::Header;
 use dfdu_tree::DirState;
@@ -71,7 +73,24 @@ struct Prepared {
 
 /// What the loader thread ends with: the scan, `None` when there is none to use, or why it
 /// could not be read.
-type Loaded = Result<Option<Prepared>, String>;
+type Loaded = Result<Option<Prepared>, LoadError>;
+
+/// Why the cached scan could not be read.
+#[derive(Debug)]
+enum LoadError {
+    Read(ImportError),
+    /// The loader thread panicked.
+    Panicked,
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadError::Read(e) => e.fmt(f),
+            LoadError::Panicked => f.write_str("the loader panicked"),
+        }
+    }
+}
 
 /// The scan or resume whose result is saved.
 struct Run {
@@ -154,9 +173,7 @@ impl Cacher {
             .is_some_and(thread::JoinHandle::is_finished)
             && let Some(l) = self.loader.take()
         {
-            let loaded = l
-                .join()
-                .unwrap_or_else(|_| Err("the loader panicked".into()));
+            let loaded = l.join().unwrap_or(Err(LoadError::Panicked));
             self.loaded(&link, loaded, app, engine);
             changed = true;
         }
@@ -181,7 +198,7 @@ impl Cacher {
             let spawned = thread::Builder::new()
                 .name("dfdu-cache".into())
                 .spawn(move || {
-                    let hit = slot.load(now).map_err(|e| e.to_string())?;
+                    let hit = slot.load(now).map_err(LoadError::Read)?;
                     slot.sweep(now);
                     // Before the resume asks the journal what changed: what changes from here
                     // on is asked about again next time.

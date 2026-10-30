@@ -254,3 +254,6 @@ fn largest<const MAX: usize>(tree: &Tree, ix: Ix, mode: SizeMode) -> Largest {
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod tests;

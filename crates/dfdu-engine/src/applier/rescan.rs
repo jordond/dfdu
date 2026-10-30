@@ -1,5 +1,6 @@
 //! Rescans of visible directories.
 
+use std::fmt;
 use std::sync::Arc;
 
 use dfdu_scan::classify::ClassOpts;
@@ -100,30 +101,53 @@ fn left_out(tree: &Tree, ix: Ix) -> bool {
         && !f.has(NodeFlags::KERNEL)
 }
 
+/// Why a directory is not rescanned ([`rescan_owner`]); said in a notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotRescanned {
+    /// An enter of what is not a mount the scan left out.
+    NotLeftOut,
+    NotADirectory,
+    /// Counted at another mount of it.
+    CountedElsewhere,
+    Kernel,
+    Network,
+    /// On a filesystem the scan did not enter.
+    OtherFilesystem,
+}
+
+impl fmt::Display for NotRescanned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            NotRescanned::NotLeftOut => "enter: that is not a mount the scan left out",
+            NotRescanned::NotADirectory => "rescan: not a directory",
+            NotRescanned::CountedElsewhere => {
+                "rescan: that directory is counted at another mount of it"
+            }
+            NotRescanned::Kernel => "rescan: that is a kernel filesystem, which is never scanned",
+            NotRescanned::Network => {
+                "rescan: that is a network filesystem; start dfdu with --network to scan it"
+            }
+            NotRescanned::OtherFilesystem => "rescan: that directory is on another filesystem",
+        })
+    }
+}
+
 /// The job that scanned directory `ix`, whose options its rescan takes, or why it is not
 /// rescanned: with `enter`, unless it is a mount the scan left out ([`left_out`]); otherwise
 /// when it is not a directory, is counted at another mount of it, or is on a filesystem the
 /// scan does not enter (a kernel or network one, or another filesystem).
-fn rescan_owner(tree: &Tree, ix: Ix, enter: bool) -> Result<u32, &'static str> {
+fn rescan_owner(tree: &Tree, ix: Ix, enter: bool) -> Result<u32, NotRescanned> {
     if enter && !left_out(tree, ix) {
-        return Err("enter: that is not a mount the scan left out");
+        return Err(NotRescanned::NotLeftOut);
     }
     let f = tree.flags(ix);
     match tree.dir(ix) {
         Some(d) if enter => Ok(d.job.0),
-        None => Err("rescan: not a directory"),
-        Some(_) if f.has(NodeFlags::DUP_MOUNT) => {
-            Err("rescan: that directory is counted at another mount of it")
-        }
-        Some(_) if f.has(NodeFlags::KERNEL) => {
-            Err("rescan: that is a kernel filesystem, which is never scanned")
-        }
-        Some(_) if f.has(NodeFlags::NETWORK) => {
-            Err("rescan: that is a network filesystem; start dfdu with --network to scan it")
-        }
-        Some(d) if d.state == DirState::Skipped => {
-            Err("rescan: that directory is on another filesystem")
-        }
+        None => Err(NotRescanned::NotADirectory),
+        Some(_) if f.has(NodeFlags::DUP_MOUNT) => Err(NotRescanned::CountedElsewhere),
+        Some(_) if f.has(NodeFlags::KERNEL) => Err(NotRescanned::Kernel),
+        Some(_) if f.has(NodeFlags::NETWORK) => Err(NotRescanned::Network),
+        Some(d) if d.state == DirState::Skipped => Err(NotRescanned::OtherFilesystem),
         Some(d) => Ok(d.job.0),
     }
 }
@@ -173,7 +197,7 @@ impl<B: Backend> Applier<B> {
         let owner_id = match rescan_owner(&m.tree, ix, enter) {
             Ok(id) => id,
             Err(why) => {
-                m.status.notice(why.into());
+                m.status.notice(why.to_string());
                 return;
             }
         };

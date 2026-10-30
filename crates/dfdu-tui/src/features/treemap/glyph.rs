@@ -153,6 +153,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::features::treemap::tests::buffer_row as row;
     use crate::model::snapshot::test_entry;
     use crate::theme::Theme;
 
@@ -164,12 +165,6 @@ mod tests {
         let mut buf = Buffer::empty(AREA);
         glyph_tile(&mut buf, &app, tiles, 0, selected.then_some(0), 0);
         buf
-    }
-
-    fn row(buf: &Buffer, y: u16) -> String {
-        (AREA.left()..AREA.right())
-            .map(|x| buf[(x, y)].symbol())
-            .collect()
     }
 
     #[test]

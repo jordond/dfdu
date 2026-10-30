@@ -32,6 +32,8 @@ rustix.workspace = true
 [features]
 # Test-only hooks (Command::InjectPanic).
 fault-injection = []
+# Helpers for the tests of the crates above (`test_support`).
+test-support = []
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 dfdu-hangfs.workspace = true

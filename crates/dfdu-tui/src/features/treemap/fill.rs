@@ -175,6 +175,7 @@ mod tests {
     use ratatui::style::Color;
 
     use super::*;
+    use crate::features::treemap::tests::buffer_row as row;
     use crate::model::snapshot::test_entry;
     use crate::theme::{ColorLevel, Theme};
 
@@ -192,12 +193,6 @@ mod tests {
         let sel = selected.then_some(0);
         fill_tile(&mut buf, app, tiles, 0, sel, &mut colors, 0);
         buf
-    }
-
-    fn row(buf: &Buffer, y: u16) -> String {
-        (AREA.left()..AREA.right())
-            .map(|x| buf[(x, y)].symbol())
-            .collect()
     }
 
     #[test]

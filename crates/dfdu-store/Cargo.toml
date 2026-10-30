@@ -24,4 +24,4 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-dfdu-engine.workspace = true
+dfdu-engine = { workspace = true, features = ["test-support"] }

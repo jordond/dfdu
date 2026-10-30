@@ -122,3 +122,6 @@ fn notice_unfinished(status: &mut Status, items: &[String], notes: Vec<String>) 
         status.notice(format!("deletion journal: {n}"));
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -71,29 +71,24 @@ fn what_is_not_rescanned_says_why() {
     let (mut t, [r, p, _]) = project(true);
     let f = t.children(p).find(|&c| t.dir(c).is_none()).unwrap();
     assert_eq!(rescan_owner(&t, r, false), Ok(0));
-    assert_eq!(rescan_owner(&t, f, false), Err("rescan: not a directory"));
+    assert_eq!(rescan_owner(&t, f, false), Err(NotRescanned::NotADirectory));
     let cases = [
-        (NodeFlags::DUP_MOUNT, "counted at another mount"),
-        (NodeFlags::KERNEL, "kernel filesystem"),
-        (NodeFlags::NETWORK, "--network"),
+        (NodeFlags::DUP_MOUNT, NotRescanned::CountedElsewhere),
+        (NodeFlags::KERNEL, NotRescanned::Kernel),
+        (NodeFlags::NETWORK, NotRescanned::Network),
     ];
     for (flag, why) in cases {
         t.set_flag(p, flag, true);
-        assert!(
-            rescan_owner(&t, p, false).is_err_and(|w| w.contains(why)),
-            "{why}"
-        );
+        assert_eq!(rescan_owner(&t, p, false), Err(why));
         t.set_flag(p, flag, false);
     }
-    assert_eq!(
-        rescan_owner(&t, p, true),
-        Err("enter: that is not a mount the scan left out")
-    );
+    assert_eq!(rescan_owner(&t, p, true), Err(NotRescanned::NotLeftOut));
     t.dir_mut(p).unwrap().state = DirState::Skipped;
     assert_eq!(
         rescan_owner(&t, p, false),
-        Err("rescan: that directory is on another filesystem")
+        Err(NotRescanned::OtherFilesystem)
     );
+    assert!(NotRescanned::Network.to_string().contains("--network"));
     assert!(!left_out(&t, p), "not a mount root");
     t.set_flag(p, NodeFlags::MOUNT_ROOT, true);
     assert!(left_out(&t, p));

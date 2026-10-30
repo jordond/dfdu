@@ -17,6 +17,9 @@ mod recommend;
 mod remote;
 mod runtime;
 mod sizes;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;
 #[cfg(test)]
 mod test_util;
 mod threads;

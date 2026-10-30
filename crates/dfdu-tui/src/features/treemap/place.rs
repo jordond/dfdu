@@ -323,13 +323,9 @@ impl Tile {
 mod tests {
     use std::time::Instant;
 
-    use ratatui::crossterm::event::KeyCode;
-
     use super::*;
-    use crate::features::treemap::tests::{sync, tree, treemap_app};
+    use crate::features::treemap::tests::{map_of, nested_app, tree, treemap_app};
     use crate::model::snapshot::test_entry;
-    use crate::tests::{press, snap_without_totals};
-    use crate::theme::Theme;
 
     const AREA: Rect = Rect::new(0, 2, 80, 20);
 
@@ -357,11 +353,9 @@ mod tests {
     #[test]
     fn tiny_rows_merge_into_one_tile_and_the_largest_keeps_its_own() {
         let t0 = Instant::now();
-        let mut app = App::new(Theme::no_color(), t0);
-        app.key(press(KeyCode::Char('2')), t0);
         let mut entries = vec![test_entry(0, "huge", 1_000_000)];
         entries.extend((1..200).map(|i| test_entry(i, &format!("t{i}"), 100)));
-        app.refresh(snap_without_totals(entries, 1), t0);
+        let app = map_of(entries, t0);
         let l = build(&app, AREA, false);
         let merged: Vec<&Tile> = l.tiles.iter().filter(|t| t.small > 0).collect();
         assert_eq!(merged.len(), 1);
@@ -374,9 +368,7 @@ mod tests {
     fn deeper_levels_nest_inside_their_tile() {
         let fx = tree();
         let t0 = Instant::now();
-        let mut app = treemap_app(&fx.m, t0);
-        app.key(press(KeyCode::Char('+')), t0);
-        sync(&mut app, &fx.m, t0);
+        let app = nested_app(&fx.m, t0);
         let l = build(&app, AREA, true);
         let big = l.tops[0];
         assert!(l.tiles[big].nested, "big shows what is in it");

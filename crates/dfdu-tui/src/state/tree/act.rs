@@ -163,7 +163,7 @@ mod tests {
 
     use dfdu_tree::HostPath;
 
-    use super::super::tests::sample;
+    use super::super::tests::sample_with_files;
     use super::*;
     use crate::tests::{row_names, select, snap_with_totals};
     use crate::theme::Theme;
@@ -174,13 +174,7 @@ mod tests {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
         app.tree = Some(TreeState::default());
-        let mut entries = sample();
-        for e in &mut entries {
-            e.is_dir = ["a", "y", "b", "only"]
-                .iter()
-                .any(|d| e.name[..] == *d.as_bytes());
-        }
-        let mut snap = snap_with_totals(entries, 1);
+        let mut snap = snap_with_totals(sample_with_files(), 1);
         snap.root_path = HostPath::from("/r");
         app.refresh(snap, t0);
         app.reorder(t0);

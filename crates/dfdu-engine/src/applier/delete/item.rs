@@ -131,3 +131,6 @@ pub(super) fn listings(tree: &Tree, item: Ix) -> Listings {
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

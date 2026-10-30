@@ -117,7 +117,7 @@ mod tests {
 
     use super::*;
     use crate::state::tree::TreeState;
-    use crate::state::tree::tests::sample;
+    use crate::state::tree::tests::sample_with_files;
     use crate::tests::snap_with_totals;
     use crate::theme::Theme;
 
@@ -125,12 +125,7 @@ mod tests {
     fn browser() -> App {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        let mut entries = sample();
-        for e in &mut entries {
-            e.is_dir = ["a", "y", "b", "only"]
-                .iter()
-                .any(|d| e.name[..] == *d.as_bytes());
-        }
+        let entries = sample_with_files();
         let mut tree = TreeState::default();
         tree.expand(crate::model::snapshot::Target {
             node: Some(entries[2].node),

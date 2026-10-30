@@ -1,45 +1,16 @@
-use std::sync::{Condvar, Mutex};
-
 use crossbeam_channel::unbounded;
 use dfdu_scan::{Limits, PortableBackend, Shared};
 use dfdu_tree::{DirState, Meta};
 
 use super::*;
 use crate::WaitIdle;
+use crate::test_support::Gate;
 
 const AT: JournalPosition = JournalPosition {
     volume: [1; 16],
     event_id: 7,
     time: 0,
 };
-
-/// Holds a query's answer until opened: a journal that answers late. A [`Query`] is a plain
-/// function, so each test's is a static.
-struct Gate {
-    open: Mutex<bool>,
-    opened: Condvar,
-}
-
-impl Gate {
-    const fn new() -> Gate {
-        Gate {
-            open: Mutex::new(false),
-            opened: Condvar::new(),
-        }
-    }
-
-    fn wait(&self) {
-        let mut open = self.open.lock().unwrap();
-        while !*open {
-            open = self.opened.wait(open).unwrap();
-        }
-    }
-
-    fn open(&self) {
-        *self.open.lock().unwrap() = true;
-        self.opened.notify_all();
-    }
-}
 
 /// The tree of the directory `root` as loaded from a file that saw nothing in it: the root,
 /// complete.
