@@ -87,13 +87,15 @@ impl Pool {
                     let allowed = sh.allowed_extra_workers(st.target, &rep);
                     st.allowed_extra.store(allowed, SeqCst);
                     // Workers for limited mounts are added at once; replacements for stuck
-                    // workers one per round.
+                    // workers one per round. Not once stopping: each new worker would leave at
+                    // once, and be replaced, without end.
+                    let stopping = || st.stop.load(SeqCst);
                     let mut want = st.target + sh.mount_workers();
-                    while st.active.load(SeqCst) < want {
+                    while !stopping() && st.active.load(SeqCst) < want {
                         spawn_worker(&st, &sh, &sk, &ck);
                     }
                     want += allowed;
-                    if st.active.load(SeqCst) < want {
+                    if !stopping() && st.active.load(SeqCst) < want {
                         spawn_worker(&st, &sh, &sk, &ck);
                     }
                     thread::sleep(Duration::from_millis(10));
