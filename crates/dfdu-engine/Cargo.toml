@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-engine"
-description = "The applier (single writer of the tree), jobs, hard links, classifier and measurer pools, change journals, crash reports, the remote agent and wire protocol, and the model queries the TUI and CLI share (sizes, problems, recommendations, not-entered mounts, link notes)"
+description = "The applier (single writer of the tree), jobs, hard links, classifier and measurer pools, the resume of a loaded tree from what the change journal says changed, crash reports, the remote agent and wire protocol, and the model queries the TUI and CLI share (sizes, problems, recommendations, not-entered mounts, link notes)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
