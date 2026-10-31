@@ -417,7 +417,7 @@ fn run_item(
             None,
         );
     }
-    let result = execute(
+    let result = remove_path(
         &item.path.to_local(),
         &item.identity,
         plan.mode,
@@ -435,7 +435,9 @@ fn journal_note(j: &Journal, e: &std::io::Error) -> String {
     )
 }
 
-fn execute(path: &Path, id: &Identity, mode: Mode, stage: Option<&Path>) -> DeleteResult {
+/// Trashes `path`, stages it (renames it to `stage`) or deletes it, per `mode`, once the item
+/// was verified. A permanent delete checks again, on the item as opened, that it is still `id`.
+fn remove_path(path: &Path, id: &Identity, mode: Mode, stage: Option<&Path>) -> DeleteResult {
     let kind = id.kind;
     let r = match (mode, stage) {
         (Mode::Trash, _) => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
