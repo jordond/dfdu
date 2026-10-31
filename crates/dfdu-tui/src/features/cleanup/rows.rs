@@ -1,6 +1,7 @@
 //! The view's rows: a section per safety level, the categories in it and their items, and
 //! which sections and categories are open.
 
+use dfdu_rules::CategoryIx;
 use dfdu_tree::Safety;
 
 use super::Item;
@@ -12,7 +13,7 @@ pub(super) enum Row {
     Section(Safety),
     /// One category at one level.
     Group {
-        cat: u16,
+        cat: CategoryIx,
         safety: Safety,
     },
     Item(usize),
@@ -25,7 +26,7 @@ pub(super) fn rows(app: &App) -> Vec<Row> {
         return vec![];
     };
     let items = &app.extras.cleanup.items;
-    let mut groups: Vec<((u16, Safety), u64)> = vec![];
+    let mut groups: Vec<((CategoryIx, Safety), u64)> = vec![];
     for it in items {
         if app.cleanup.filter.is_some_and(|f| it.class.safety > f) {
             continue;
@@ -71,7 +72,7 @@ pub(super) fn section_items(app: &App, safety: Safety) -> Vec<usize> {
         .collect()
 }
 
-pub(super) fn group_items(app: &App, cat: u16, safety: Safety) -> Vec<usize> {
+pub(super) fn group_items(app: &App, cat: CategoryIx, safety: Safety) -> Vec<usize> {
     let Some(rules) = &app.snap.rules else {
         return vec![];
     };

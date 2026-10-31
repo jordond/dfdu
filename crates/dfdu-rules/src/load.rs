@@ -10,8 +10,8 @@ use dfdu_tree::Safety;
 use crate::schema::{DegradeWhen, File, MatchDef, NativeDef, PerOs, RuleDef};
 use crate::vars::Env;
 use crate::{
-    Action, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet, Source,
-    category_index, glob, parse_size,
+    Action, CategoryIx, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet,
+    Source, glob, parse_size,
 };
 
 /// The built-in pack.
@@ -244,7 +244,7 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
     let need = |v: Option<String>, field: &str| v.ok_or_else(|| format!("`{field}` is missing"));
     let category_id = need(def.category, "category")?;
     let category =
-        category_index(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
+        CategoryIx::of(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
     let name = need(def.name, "name")?;
     let safety = safety(&need(def.safety, "safety")?)?;
     let action = action(def.action, def.native)?;

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 use dfdu_engine::{Engine, Model};
-use dfdu_rules::RuleSet;
+use dfdu_rules::{CategoryIx, RuleSet};
 use dfdu_scan::{Backend, NativeBackend};
 use dfdu_tree::{Class, HostPath, Kind, NodeRef, Safety, now_secs};
 use serde_json::json;
@@ -33,7 +33,7 @@ pub struct Filter {
     /// Only these categories (comma separated): an id such as `dev.build`, or its first part
     /// (`dev`) for all of them.
     #[arg(long, value_name = "CATEGORY", value_delimiter = ',', value_parser = category_arg)]
-    pub category: Vec<String>,
+    pub category: Vec<Categories>,
     /// Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days).
     #[arg(long, value_name = "AGE", value_parser = age_arg)]
     pub older_than: Option<u64>,
@@ -102,16 +102,17 @@ pub fn safety_arg(s: &str) -> Result<Safety, String> {
     })
 }
 
-fn category_arg(s: &str) -> Result<String, String> {
-    let known = dfdu_rules::CATEGORIES.iter().skip(1);
-    if known
-        .clone()
-        .any(|c| c.id == s || c.id.split('.').next() == Some(s))
-    {
-        Ok(s.to_owned())
-    } else {
-        let ids: Vec<&str> = known.map(|c| c.id).collect();
+/// The categories one `--category` value names: an id, or every id of a family.
+#[derive(Clone, Debug)]
+pub struct Categories(Vec<CategoryIx>);
+
+fn category_arg(s: &str) -> Result<Categories, String> {
+    let named = CategoryIx::named(s);
+    if named.is_empty() {
+        let ids: Vec<&str> = CategoryIx::all().map(|c| c.get().id).collect();
         Err(format!("`{s}` is not a category ({})", ids.join(", ")))
+    } else {
+        Ok(Categories(named))
     }
 }
 
@@ -191,15 +192,12 @@ fn item(m: &Model, rules: &RuleSet, l: dfdu_engine::Listed, now: i64) -> Item {
 }
 
 fn keep(rules: &RuleSet, f: &Filter, it: &Item, now: i64) -> bool {
-    let cat = rules.rule(it.class.rule).category().id;
+    let cat = rules.rule(it.class.rule).category;
     f.min_size.is_none_or(|min| it.disk >= min)
         && f.older_than.is_none_or(|age| {
             now.saturating_sub(it.mtime) >= i64::try_from(age).unwrap_or(i64::MAX)
         })
-        && (f.category.is_empty()
-            || f.category
-                .iter()
-                .any(|c| cat == c || cat.split('.').next() == Some(c.as_str())))
+        && (f.category.is_empty() || f.category.iter().any(|c| c.0.contains(&cat)))
 }
 
 /// Starts an engine that scans `path` with the rules, and waits for the scan and the guard

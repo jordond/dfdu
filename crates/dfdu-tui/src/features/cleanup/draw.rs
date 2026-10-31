@@ -4,6 +4,7 @@
 //! them.
 
 use dfdu_engine::Verdict;
+use dfdu_rules::CategoryIx;
 use dfdu_tree::{Class, Safety, now_secs};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -223,10 +224,10 @@ fn section_line(app: &App, safety: Safety, width: usize) -> Line<'static> {
 }
 
 /// A category's row in its section, in the category's colour.
-fn group_line(app: &App, cat: u16, safety: Safety, width: usize) -> Line<'static> {
+fn group_line(app: &App, cat: CategoryIx, safety: Safety, width: usize) -> Line<'static> {
     let t = &app.theme;
     let ix = group_items(app, cat, safety);
-    let category = &dfdu_rules::CATEGORIES[cat as usize];
+    let category = cat.get();
     let arrow = if is_open(app, Row::Group { cat, safety }) {
         "   ▾ "
     } else {

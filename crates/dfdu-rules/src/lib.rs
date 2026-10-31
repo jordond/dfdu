@@ -132,10 +132,8 @@ const fn cat(id: &'static str, name: &'static str, color: CategoryColor) -> Cate
     Category { id, name, color }
 }
 
-/// Every category. A rule's `category` must be one of these ids. The index is the category's
-/// number ([`category_index`]); 0 is never used, so a node can store 0 for "none".
+/// Every category, in the taxonomy's order. A rule's `category` must be one of these ids.
 pub const CATEGORIES: &[Category] = &[
-    cat("", "", CategoryColor::Other),
     cat("dev.build", "Project build output", CategoryColor::Build),
     cat("dev.deps", "Project dependencies", CategoryColor::Build),
     cat(
@@ -214,14 +212,38 @@ pub const CATEGORIES: &[Category] = &[
     ),
 ];
 
-/// The number of category `id`, `None` for an id outside the taxonomy.
-#[must_use]
-pub fn category_index(id: &str) -> Option<u16> {
-    CATEGORIES
-        .iter()
-        .skip(1)
-        .position(|c| c.id == id)
-        .and_then(|i| u16::try_from(i + 1).ok())
+/// A category, as its place in [`CATEGORIES`]: ordered as the taxonomy is.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct CategoryIx(u16);
+
+impl CategoryIx {
+    /// The category with id `id`, `None` for an id outside the taxonomy.
+    #[must_use]
+    pub fn of(id: &str) -> Option<CategoryIx> {
+        Self::all().find(|c| c.get().id == id)
+    }
+
+    /// The categories `name` stands for: the one with that id, or every one of a family
+    /// (`dev` for `dev.build`, `dev.deps` and the rest). Empty when it names none.
+    #[must_use]
+    pub fn named(name: &str) -> Vec<CategoryIx> {
+        Self::all()
+            .filter(|c| {
+                let id = c.get().id;
+                id == name || id.split('.').next() == Some(name)
+            })
+            .collect()
+    }
+
+    /// Every category, in the taxonomy's order.
+    pub fn all() -> impl Iterator<Item = CategoryIx> {
+        (0..CATEGORIES.len()).filter_map(|i| u16::try_from(i).ok().map(CategoryIx))
+    }
+
+    #[must_use]
+    pub fn get(self) -> &'static Category {
+        &CATEGORIES[usize::from(self.0)]
+    }
 }
 
 /// A file inside a candidate whose presence (and first bytes) a rule checks.
@@ -263,8 +285,7 @@ pub enum Source {
 )]
 pub struct Rule {
     pub id: String,
-    /// Index into [`CATEGORIES`].
-    pub category: u16,
+    pub category: CategoryIx,
     pub name: String,
     pub safety: Safety,
     pub action: Action,
@@ -303,7 +324,7 @@ pub struct Rule {
 impl Rule {
     #[must_use]
     pub fn category(&self) -> &'static Category {
-        &CATEGORIES[self.category as usize]
+        self.category.get()
     }
 
     /// Whether some condition can only be checked once the candidate's own listing is known.
@@ -380,13 +401,22 @@ mod tests {
 
     #[test]
     fn categories() {
-        assert_eq!(category_index("dev.build"), Some(1));
-        assert_eq!(category_index(""), None);
-        assert_eq!(category_index("dev.nope"), None);
         assert_eq!(
-            CATEGORIES[category_index("sys.trash").unwrap() as usize].name,
-            "Trash"
+            CategoryIx::of("dev.build").map(|c| c.get().id),
+            Some("dev.build")
         );
+        assert_eq!(CategoryIx::of(""), None);
+        assert_eq!(CategoryIx::of("dev.nope"), None);
+        assert_eq!(CategoryIx::of("sys.trash").unwrap().get().name, "Trash");
+        assert_eq!(CategoryIx::all().count(), CATEGORIES.len());
+        assert!(CategoryIx::of("dev.build") < CategoryIx::of("sys.trash"));
+        let dev = CategoryIx::named("dev");
+        assert!(dev.len() > 1 && dev.iter().all(|c| c.get().id.starts_with("dev.")));
+        assert_eq!(
+            CategoryIx::named("sys.logs"),
+            CategoryIx::of("sys.logs").into_iter().collect::<Vec<_>>()
+        );
+        assert!(CategoryIx::named("de").is_empty() && CategoryIx::named("").is_empty());
         assert!(Safety::Safe < Safety::Review && Safety::Review < Safety::Protected);
     }
 }
