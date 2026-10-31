@@ -3,11 +3,11 @@
 //! mounted at several places (btrfs subvolumes, bind mounts) is listed once. Each system's
 //! listing is in a module of its own: `linux`, `macos` and, from `sysinfo`, `other`.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 mod linux;
 #[cfg(any(target_os = "macos", test))]
 mod macos;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
 mod other;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
