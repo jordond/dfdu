@@ -282,12 +282,7 @@ impl Recovery {
             }
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(io::Error::new(
-                    e.kind(),
-                    format!("{}: {e}", stage.display()),
-                ));
-            }
+            Err(e) => return Err(at(stage, &e)),
         }
         let j = &mut self.sessions[u.session].journal;
         if matches!(u.state, Pending::Staged { .. }) {
@@ -302,12 +297,7 @@ impl Recovery {
         match crate::remove_verified(stage, id.kind, id.dev, id.ino) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(io::Error::new(
-                    e.kind(),
-                    format!("{}: {e}", stage.display()),
-                ));
-            }
+            Err(e) => return Err(at(stage, &e)),
         }
         record(
             j,
@@ -400,6 +390,11 @@ fn identity(rec: &ItemRec) -> crate::Identity {
         apparent: rec.size,
         mtime: rec.mtime,
     }
+}
+
+/// `e`, naming the path it happened at.
+fn at(path: &Path, e: &io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("{}: {e}", path.display()))
 }
 
 /// An action the item's state does not allow.
