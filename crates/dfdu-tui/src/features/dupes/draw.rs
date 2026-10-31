@@ -20,7 +20,7 @@ use super::{Keep, Row, kept, live, min_size, open, rows};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, Tally, Tick};
-use crate::format::{count, human, truncate_middle};
+use crate::format::{count, human, plural, truncate_middle};
 use crate::model::outside::tilde;
 use crate::theme::Theme;
 use crate::view::columns::cursor;
@@ -225,11 +225,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let (sum, groups) = tally(app, found);
-    let mut extra = format!(
-        " · {} group{}",
-        count(groups as u64),
-        if groups == 1 { "" } else { "s" },
-    );
+    let mut extra = format!(" · {} group{}", count(groups as u64), plural(groups as u64),);
     if found.skipped > 0 {
         extra.push_str(&format!(" · {} skipped", count(found.skipped)));
     }
@@ -381,7 +377,7 @@ fn frees(c: &Candidate) -> String {
         format!(
             "has {} other name{} (hard links): deleting this one frees nothing",
             c.links,
-            if c.links == 1 { "" } else { "s" }
+            plural(u64::from(c.links))
         )
     } else {
         match c.private {

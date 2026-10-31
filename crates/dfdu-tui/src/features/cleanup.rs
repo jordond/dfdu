@@ -24,7 +24,7 @@ use ratatui::crossterm::event::KeyEvent;
 use crate::app::keys::{self, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::format::human;
+use crate::format::{human, plural};
 use crate::state::marks;
 
 mod draw;
@@ -248,15 +248,11 @@ pub fn apply(app: &mut App) {
     }
 }
 
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
-
 /// The status line after `n` suggested items of `size` in all were ticked.
 fn marked_status(n: usize, size: u64) -> String {
     format!(
         "Ticked {n} suggested item{} ({}) · {} untick all",
-        plural(n),
+        plural(n as u64),
         human(size),
         crate::app::keys::first_key(crate::app::keys::Action::ClearMarks)
     )

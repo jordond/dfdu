@@ -84,7 +84,7 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
                 app.status = Some(format!(
                     "putting back {} item{} ({})…",
                     u.items,
-                    if u.items == 1 { "" } else { "s" },
+                    crate::format::plural(u.items as u64),
                     crate::format::human(u.bytes)
                 ));
             }

@@ -16,7 +16,7 @@ use ratatui::widgets::Paragraph;
 use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::app::views::{self, View};
-use crate::format::{count, human, spinner, truncate_middle};
+use crate::format::{count, human, plural, spinner, truncate_middle};
 use crate::input::mouse::{Crumb, Tab};
 use crate::model::cache_link::{Cached, ago};
 use crate::model::outside::tilde;
@@ -118,10 +118,7 @@ fn totals(app: &App) -> Vec<Span<'static>> {
     if root.errors > 0 {
         info.push(Span::styled(" · ", t.fg_dim));
         info.push(Span::styled(
-            match root.errors {
-                1 => "1 error".to_string(),
-                n => format!("{} errors", count(n)),
-            },
+            format!("{} error{}", count(root.errors), plural(root.errors)),
             t.status_error,
         ));
     }
