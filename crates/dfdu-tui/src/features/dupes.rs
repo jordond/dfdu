@@ -121,15 +121,14 @@ pub fn cycle_keep(app: &mut App) {
 }
 
 /// The nodes of the files the view lists (still in the tree), for `d` to act on its ticks
-/// only; `None` before a comparison finished.
-pub fn listed(app: &App) -> Option<HashSet<NodeRef>> {
-    let f = found(app)?;
-    Some(
+/// only; none before a comparison finished.
+pub fn listed(app: &App) -> HashSet<NodeRef> {
+    found(app).map_or_else(HashSet::new, |f| {
         (f.groups.iter())
             .flat_map(|g| &g.files)
             .filter_map(|c| live(app, c))
-            .collect(),
-    )
+            .collect()
+    })
 }
 
 /// A group whose every copy still in the tree is ticked, by its file's name: deleting what is

@@ -1,7 +1,7 @@
 use super::super::test_util::{Listing, Rig, chunk, close};
 use super::super::{JobKind, JobPhase};
 use super::*;
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 #[test]
 fn a_plan_can_be_undone_until_its_last_item_is_gone() {

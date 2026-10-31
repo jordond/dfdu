@@ -391,7 +391,7 @@ fn rows_say_why_and_the_rule_is_explained_below() {
 /// marks that rest, not the folder whole.
 #[test]
 fn marking_a_container_marks_its_rest() {
-    let fx = crate::tests::caches::caches();
+    let fx = dfdu_engine::test_support::caches();
     let cache = fx.find("Caches");
     let m = Model {
         tree: fx.tree,

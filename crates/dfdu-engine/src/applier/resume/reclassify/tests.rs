@@ -3,7 +3,7 @@ use dfdu_tree::{ErrKind, Kind};
 
 use super::*;
 use crate::applier::test_util::{job_class, project};
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// Classifies the whole tree from its root, `units` entries a step; returns the directories
 /// in the order they were reached, and the number of steps.

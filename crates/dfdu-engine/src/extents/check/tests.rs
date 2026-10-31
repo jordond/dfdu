@@ -39,7 +39,7 @@ fn an_inode_is_described_with_its_segments() {
 /// A measured inode counted in a rescan's shadow, or at a node detached, is not settled.
 #[test]
 fn an_inode_counted_out_of_sight_is_not_settled() {
-    use crate::test_util::meta;
+    use crate::test_support::meta;
     use dfdu_tree::Kind;
     let (mut e, mut t, _, a) = shared();
     assert_eq!(e.check_settled(&t), Ok(()));

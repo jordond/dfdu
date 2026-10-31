@@ -1,7 +1,7 @@
 use dfdu_tree::{Kind, Meta, NodeFlags};
 
 use super::*;
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// The inode every link of these tests is a link of.
 const KEY: (u64, u64) = (1, 50);

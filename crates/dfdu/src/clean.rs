@@ -296,7 +296,7 @@ fn execute<B: Backend>(
             items: deletes.iter().flat_map(|&i| items[i].targets()).collect(),
             mode,
         });
-        let summary = launch::poll(engine, None, |m| {
+        let summary = launch::wait_for(engine, None, |m| {
             (m.status.last_delete.as_ref())
                 .filter(|d| Some(d.plan) != before)
                 .cloned()
@@ -318,7 +318,7 @@ fn execute<B: Backend>(
         });
         if mode == Mode::Stage {
             engine.send(Command::CommitStaged);
-            launch::poll(engine, None, |m| (m.status.staged.items == 0).then_some(()));
+            launch::wait_for(engine, None, |m| (m.status.staged.items == 0).then_some(()));
         }
     }
     for (n, &i) in commands.iter().enumerate() {
@@ -329,7 +329,7 @@ fn execute<B: Backend>(
             variant: None,
             dry_run: false,
         });
-        let done = launch::poll(engine, Some(NATIVE_WAIT), |m| {
+        let done = launch::wait_for(engine, Some(NATIVE_WAIT), |m| {
             (m.status.native.as_ref())
                 .filter(|r| r.id == id)
                 .and_then(|r| r.done.clone())

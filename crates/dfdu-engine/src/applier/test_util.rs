@@ -13,7 +13,7 @@ use dfdu_scan::{
 use dfdu_tree::{DirState, Ix, Kind, Meta, Tree};
 
 use super::{Applier, ApplierSettings, Command, JobPhase, Model};
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// The `submitted_seq` the scanner gave job 1.
 pub(super) const SEQ: u64 = 1;
