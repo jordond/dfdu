@@ -151,7 +151,7 @@ pub(super) struct Subject {
 /// The cleanup view's selected item while that view is shown, else the list's selected entry.
 pub(super) fn subject(app: &App) -> Option<Subject> {
     if crate::features::cleanup::active(app) {
-        let it = crate::features::cleanup::selected_item(app)?;
+        let it = crate::features::cleanup::selected(app)?;
         return Some(Subject {
             node: it.node,
             pseudo: false,

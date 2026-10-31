@@ -32,7 +32,7 @@ mod pane;
 mod rows;
 
 pub use rows::enter_does;
-pub(crate) use rows::selected_item;
+pub(crate) use rows::selected;
 use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;

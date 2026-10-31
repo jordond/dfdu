@@ -26,10 +26,10 @@ fn selected(app: &App) -> Option<(HostPath, bool)> {
     match views::current(app) {
         View::Largest => return largest::selected(app).map(|(path, _)| (path, false)),
         View::Duplicates => {
-            return dupes::selected_path(app).map(|p| (HostPath::local(&p), false));
+            return dupes::selected(app).map(|p| (HostPath::local(&p), false));
         }
         View::Cleanup => {
-            let it = cleanup::selected_item(app)?;
+            let it = cleanup::selected(app)?;
             return Some((it.path.clone(), it.kind == dfdu_tree::Kind::Dir));
         }
         View::Files | View::Map => {}

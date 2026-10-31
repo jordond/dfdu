@@ -90,7 +90,7 @@ pub fn enter_does(app: &App) -> &'static str {
     }
 }
 
-pub(crate) fn selected_item(app: &App) -> Option<&Item> {
+pub(crate) fn selected(app: &App) -> Option<&Item> {
     match rows(app).get(app.cleanup.cursor)? {
         Row::Item(i) => app.extras.cleanup.items.get(*i),
         Row::Section(_) | Row::Group { .. } => None,
@@ -170,14 +170,14 @@ mod tests {
         );
         app.cleanup.cursor = 4;
         assert_eq!(enter_does(&app), "show in Files");
-        let item = selected_item(&app).expect("the item selected");
+        let item = selected(&app).expect("the item selected");
         assert!(item.path.to_local().ends_with("big"));
         // A closed section hides its categories.
         set_open(&mut app, Row::Section(Safety::Safe), false);
         assert_eq!(shown(&app)[..2], ["Safe", "Regenerable"]);
         app.cleanup.cursor = 0;
         assert_eq!(enter_does(&app), "open");
-        assert!(selected_item(&app).is_none());
+        assert!(selected(&app).is_none());
     }
 
     #[test]

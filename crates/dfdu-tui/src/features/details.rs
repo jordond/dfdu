@@ -135,7 +135,7 @@ pub fn scroll(app: &mut App, delta: i32) -> bool {
 /// size and, for a directory, its items.
 fn summary(app: &App) -> Option<String> {
     let (name, is_dir, size, items) = if crate::features::cleanup::active(app) {
-        let it = crate::features::cleanup::selected_item(app)?;
+        let it = crate::features::cleanup::selected(app)?;
         let name = it.path.file_name().unwrap_or(it.path.as_bytes());
         let is_dir = it.kind == Kind::Dir;
         (
