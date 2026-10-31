@@ -2,7 +2,10 @@
 
 #![allow(dead_code, reason = "each test crate uses only some of the helpers")]
 
+pub mod files;
+pub mod journal;
 pub mod loaded;
+pub mod portable;
 pub mod remote;
 
 use std::time::{Duration, Instant};

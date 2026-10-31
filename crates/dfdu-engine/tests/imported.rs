@@ -101,7 +101,7 @@ fn imported_trees_cannot_delete() {
         let (tree, f) = loaded_tree(root, "f.bin");
         let e = Engine::start(dfdu_scan::PortableBackend::default(), opts());
         let opts = dfdu_scan::JobOptions::default();
-        common::loaded::resume_changed(&e, tree, opts, vec![], 0);
+        common::journal::resume_changed(&e, tree, opts, vec![], 0);
         assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
         e.send(Command::Delete {
             items: vec![f],
