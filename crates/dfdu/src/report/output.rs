@@ -6,6 +6,7 @@ use dfdu_tree::{Class, Safety};
 use serde_json::{Map, Value, json};
 
 use crate::matches::{Item, age_days, reclaimable};
+use crate::output::plural;
 
 /// How a match is cleaned up, in words for the table.
 fn how(rules: &RuleSet, it: &Item) -> String {
@@ -77,10 +78,9 @@ pub(super) fn table(
             flags.push(r.degrade[d as usize].reason.clone());
         }
         if it.matches_inside > 0 {
-            let n = it.matches_inside;
             flags.push(format!(
-                "without the {n} match{} inside",
-                if n == 1 { "" } else { "es" }
+                "without the {} inside",
+                plural(it.matches_inside, "match", "matches")
             ));
         }
         flags.push(how(rules, it));
@@ -101,22 +101,20 @@ pub(super) fn table(
         if !of.is_empty() {
             writeln!(
                 w,
-                "{:<12} {:>10}  {} item{}",
+                "{:<12} {:>10}  {}",
                 s.as_str(),
                 dfdu_engine::human(of.iter().map(|i| i.disk).sum()),
-                of.len(),
-                if of.len() == 1 { "" } else { "s" }
+                plural(of.len(), "item", "items")
             )?;
         }
     }
     let rec: Vec<&Item> = list.iter().filter(|i| i.recommended).collect();
     writeln!(
         w,
-        "{:<12} {:>10}  {} item{} (dfdu clean deletes these)",
+        "{:<12} {:>10}  {} (dfdu clean deletes these)",
         "recommended",
         dfdu_engine::human(rec.iter().map(|i| i.disk).sum()),
-        rec.len(),
-        if rec.len() == 1 { "" } else { "s" }
+        plural(rec.len(), "item", "items")
     )?;
     if let Some(t) = fail_above {
         writeln!(

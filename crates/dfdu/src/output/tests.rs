@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn counts_take_the_word_for_that_many() {
+    assert_eq!(plural(1usize, "item", "items"), "1 item");
+    assert_eq!(plural(0usize, "item", "items"), "0 items");
+    assert_eq!(plural(3u64, "match", "matches"), "3 matches");
+}
+
+#[test]
 fn base64_matches_rfc4648() {
     for (raw, enc) in [
         ("", ""),

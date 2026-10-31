@@ -26,6 +26,7 @@ use dfdu_tree::{Class, NodeRef, Safety};
 
 use crate::args::{ReportFormat, safety_arg};
 use crate::matches::{self, Filter, Item};
+use crate::output::plural;
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
 use output::{Results, print_json, print_table};
 
@@ -213,9 +214,8 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     }
     if !r.items.is_empty() {
         eprintln!(
-            "dfdu: {} item{} earlier sessions left unfinished (dfdu recover lists them{})",
-            r.items.len(),
-            if r.items.len() == 1 { "" } else { "s" },
+            "dfdu: {} earlier sessions left unfinished (dfdu recover lists them{})",
+            plural(r.items.len(), "item", "items"),
             if act {
                 ""
             } else {

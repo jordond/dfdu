@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{CleanArgs, ModeArg, Outcome};
 use crate::matches::{Item, item_json};
-use crate::output::json as js;
+use crate::output::{json as js, plural};
 
 fn verb(mode: ModeArg) -> &'static str {
     match mode {
@@ -68,7 +68,6 @@ fn summary(yes: bool, mode: ModeArg, rows: &[(u64, &Outcome)]) -> String {
             .filter(|(_, o)| f(o))
             .fold((0usize, 0u64), |(n, b), (disk, _)| (n + 1, b + disk))
     };
-    let plural = |n| if n == 1 { "" } else { "s" };
     if yes {
         let (n, b) = sum(&|o| *o == Outcome::Deleted);
         let (f, _) = sum(&|o| matches!(o, Outcome::Failed(_)));
@@ -78,16 +77,16 @@ fn summary(yes: bool, mode: ModeArg, rows: &[(u64, &Outcome)]) -> String {
             String::new()
         };
         format!(
-            "{n} item{} ({}) {}{failed}",
-            plural(n),
+            "{} ({}) {}{failed}",
+            plural(n, "item", "items"),
             dfdu_engine::human(b),
             verb(mode)
         )
     } else {
         let (n, b) = sum(&|o| *o == Outcome::Planned);
         format!(
-            "dry run: {n} item{} ({}) would be {}; nothing was changed (--yes does it)",
-            plural(n),
+            "dry run: {} ({}) would be {}; nothing was changed (--yes does it)",
+            plural(n, "item", "items"),
             dfdu_engine::human(b),
             verb(mode)
         )

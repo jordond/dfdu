@@ -6,6 +6,7 @@ use clap::Subcommand;
 use dfdu_store::cache::{Cache, Listed};
 use dfdu_tree::date_time;
 
+use crate::output::plural;
 use crate::print_out;
 
 #[derive(Subcommand)]
@@ -50,9 +51,8 @@ pub fn run(cmd: &CacheCmd) -> Result<ExitCode, ExitCode> {
                 print_out(|w| {
                     writeln!(
                         w,
-                        "removed {} cached scan{} ({})",
-                        r.files,
-                        if r.files == 1 { "" } else { "s" },
+                        "removed {} ({})",
+                        plural(r.files, "cached scan", "cached scans"),
                         dfdu_engine::human(r.bytes)
                     )
                 })?;

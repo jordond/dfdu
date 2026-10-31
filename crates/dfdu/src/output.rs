@@ -51,5 +51,14 @@ pub fn put_host_path(o: &mut Map<String, Value>, key: &str, path: &HostPath) {
     put_bytes(o, key, path.as_bytes());
 }
 
+/// `n` and the word for that many: `1 item`, `3 items`, `0 matches`.
+pub fn plural<N: Copy + PartialEq + From<u8> + std::fmt::Display>(
+    n: N,
+    one: &str,
+    many: &str,
+) -> String {
+    format!("{n} {}", if n == N::from(1) { one } else { many })
+}
+
 #[cfg(test)]
 mod tests;
