@@ -1,10 +1,11 @@
 //! Helpers for the tests of this crate and of the crates above it (the `test-support` feature):
-//! a gate that holds threads until it is opened, and a wide tree of about a million entries for
-//! the measurements of saving and opening scans.
+//! a gate that holds threads until it is opened, a local mount as the mount table describes it,
+//! and a wide tree of about a million entries for the measurements of saving and opening scans.
 
 use std::path::Path;
 use std::sync::{Condvar, Mutex, PoisonError};
 
+use dfdu_sys::{FsClass, MountInfo};
 use dfdu_tree::{DirState, Kind, Meta, NodeFlags, Tree};
 
 /// A gate threads wait at until it is opened: a change journal or a filesystem call that
@@ -41,6 +42,17 @@ impl Gate {
 impl Default for Gate {
     fn default() -> Gate {
         Gate::new()
+    }
+}
+
+/// A local filesystem of type `fstype` with `used` bytes in use, a third of its size.
+#[must_use]
+pub fn local_mount(fstype: &str, used: Option<u64>) -> MountInfo {
+    MountInfo {
+        fstype: fstype.into(),
+        class: FsClass::Local,
+        used,
+        total: used.map(|u| u * 3),
     }
 }
 

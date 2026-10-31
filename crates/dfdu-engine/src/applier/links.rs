@@ -316,3 +316,6 @@ impl LinkTable {
         (true, n)
     }
 }
+
+#[cfg(test)]
+mod tests;

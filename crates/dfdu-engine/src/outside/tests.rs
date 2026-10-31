@@ -1,13 +1,5 @@
 use super::*;
-
-fn info(fstype: &str, used: Option<u64>) -> MountInfo {
-    MountInfo {
-        fstype: fstype.into(),
-        class: dfdu_sys::FsClass::Local,
-        used,
-        total: used.map(|u| u * 3),
-    }
-}
+use crate::test_support::local_mount;
 
 fn at(p: &str, network: bool) -> NotEntered {
     NotEntered {
@@ -19,9 +11,15 @@ fn at(p: &str, network: bool) -> NotEntered {
 #[test]
 fn footer_lines_name_the_largest_and_count_the_rest() {
     let mut list = vec![
-        (at("/mnt/data", false), Some(info("zfs", Some(3 << 40)))),
-        (at("/nas", true), Some(info("nfs4", None))),
-        (at("/boot", false), Some(info("ext4", Some(300 << 20)))),
+        (
+            at("/mnt/data", false),
+            Some(local_mount("zfs", Some(3 << 40))),
+        ),
+        (at("/nas", true), Some(local_mount("nfs4", None))),
+        (
+            at("/boot", false),
+            Some(local_mount("ext4", Some(300 << 20))),
+        ),
     ];
     assert_eq!(
         not_entered_lines(&list, None),
@@ -34,7 +32,7 @@ fn footer_lines_name_the_largest_and_count_the_rest() {
     for i in 0..6 {
         list.push((
             at(&format!("/snap/x/{i}"), false),
-            Some(info("squashfs", Some(i))),
+            Some(local_mount("squashfs", Some(i))),
         ));
     }
     let lines = not_entered_lines(&list, None);
