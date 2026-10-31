@@ -15,6 +15,15 @@ fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
     }
 }
 
+/// The path of `rel` (`/`-separated) below `/r`, joined as the tree joins it on this system.
+fn at(rel: &str) -> String {
+    let mut p = HostPath::from("/r");
+    for c in rel.split('/') {
+        p.push(c.as_bytes());
+    }
+    String::from_utf8(p.as_bytes().to_vec()).unwrap()
+}
+
 /// `/r` with the directory `big` (a 300-byte file `f` in it), the files `mid` (100 bytes) and
 /// `small` (50 bytes) and the directory `other`, on another filesystem and not entered.
 fn tree() -> (Model, Ix) {
@@ -107,7 +116,7 @@ fn a_scan_document_lists_the_largest_children_and_sums_the_rest() {
     assert_eq!(doc["errors"], json!([]));
     assert_eq!(
         doc["skipped"],
-        json!([{ "path": "/r/other", "reason": "other-filesystem" }])
+        json!([{ "path": at("other"), "reason": "other-filesystem" }])
     );
     assert!(doc.get("not_entered").is_none());
 }
@@ -124,7 +133,7 @@ fn unreadable_entries_are_listed_as_errors() {
     assert_eq!(doc["complete"], false);
     let errors = doc["errors"].as_array().unwrap();
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0]["path"], "/r/bad");
+    assert_eq!(errors[0]["path"], at("bad"));
     assert_eq!(errors[0]["dir"], false);
     assert!(doc["tree"].get("children").is_none(), "depth 0");
 }
@@ -156,16 +165,19 @@ fn ndjson_is_one_record_per_line_ending_with_the_summary() {
         .iter()
         .map(|r| (r["path"].as_str().unwrap(), r["depth"].as_u64().unwrap()))
         .collect();
+    let want = [
+        ("/r".to_string(), 0),
+        (at("big"), 1),
+        (at("big/f"), 2),
+        (at("mid"), 1),
+        (at("small"), 1),
+        (at("other"), 1),
+    ];
     assert_eq!(
         paths,
-        [
-            ("/r", 0),
-            ("/r/big", 1),
-            ("/r/big/f", 2),
-            ("/r/mid", 1),
-            ("/r/small", 1),
-            ("/r/other", 1)
-        ]
+        want.iter()
+            .map(|(p, d)| (p.as_str(), *d))
+            .collect::<Vec<_>>()
     );
     assert!(records[1].get("name").is_none());
     assert_eq!(records[7]["reason"], "other-filesystem");
