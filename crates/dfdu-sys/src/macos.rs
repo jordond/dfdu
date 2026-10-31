@@ -1,5 +1,7 @@
 //! macOS calls without a safe binding: `getattrlistbulk(2)`, and `fgetattrlist(2)` for APFS
-//! clone information.
+//! clone information. The FSEvents history is in [`fsevents`].
+
+pub mod fsevents;
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -304,11 +306,12 @@ pub(crate) fn mounted() -> io::Result<Vec<(std::path::PathBuf, String)>> {
 /// group the system started from.
 const MNT_EXT_ROOT_DATA_VOL: u32 = 0x1;
 
-/// The mounted volumes with their devices and roles ([`fsstat`]): the read-only root is the
-/// system volume, and the kernel marks its data volume.
+/// The mounted volumes with their devices, types and roles, in mount order ([`fsstat`]): the
+/// read-only root is the system volume, and the kernel marks its data volume.
 pub(crate) fn volumes() -> io::Result<Vec<crate::disks::Volume>> {
     use std::os::unix::ffi::OsStrExt;
     let system = (libc::MNT_ROOTFS | libc::MNT_RDONLY).cast_unsigned();
+    let flag = |s: &libc::statfs, f: libc::c_int| s.f_flags & f.cast_unsigned() != 0;
     Ok(fsstat()?
         .iter()
         .map(|s| crate::disks::Volume {
@@ -316,6 +319,7 @@ pub(crate) fn volumes() -> io::Result<Vec<crate::disks::Volume>> {
                 .to_owned()
                 .into(),
             from: String::from_utf8_lossy(&field(&s.f_mntfromname)).into_owned(),
+            fstype: String::from_utf8_lossy(&field(&s.f_fstypename)).into_owned(),
             role: if s.f_flags & system == system {
                 Some(crate::Role::System)
             } else if s.f_flags_ext & MNT_EXT_ROOT_DATA_VOL != 0 {
@@ -323,6 +327,8 @@ pub(crate) fn volumes() -> io::Result<Vec<crate::disks::Volume>> {
             } else {
                 None
             },
+            browsable: !flag(s, libc::MNT_DONTBROWSE),
+            local: flag(s, libc::MNT_LOCAL),
         })
         .collect())
 }

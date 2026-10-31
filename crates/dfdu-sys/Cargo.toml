@@ -20,7 +20,9 @@ undocumented_unsafe_blocks = "deny"
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+# The disk list where no mount table is read directly: Linux reads `/proc/self/mountinfo` and
+# macOS `getfsstat`, each mount sized on its own thread.
+[target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
 sysinfo = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
