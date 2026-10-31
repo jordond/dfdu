@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::keys::{self, ACTIONS, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect, Overlay};
-use crate::features::treemap::tests::{Fixture, sync};
+use crate::tests::{Fixture, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 
@@ -108,7 +108,7 @@ fn the_palettes_delete_needs_ticks_in_a_review_view() {
     views::switch(&mut app, View::Largest);
     sync(&mut app, &fx.m, t0);
     for mode in [Action::Trash, Action::DeletePermanent] {
-        assert!(keys::run(&mut app, mode, t0).is_empty());
+        assert!(keys::run(&mut app, mode).is_empty());
         assert!(matches!(app.overlay, Overlay::None));
         let status = app.status.clone().unwrap_or_default();
         assert!(status.contains("tick items with Space first"), "{status}");
@@ -130,7 +130,7 @@ fn delete_in_a_review_view_takes_only_its_ticks() {
     app.key(press(KeyCode::Home), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks.items().len(), 2);
-    let fx_out = keys::run(&mut app, Action::Trash, t0);
+    let fx_out = keys::run(&mut app, Action::Trash);
     assert_eq!(asked(&fx_out), 2, "both are listed in Largest");
     app.overlay = Overlay::None;
     // A mark outside what the view lists stays out of its delete.

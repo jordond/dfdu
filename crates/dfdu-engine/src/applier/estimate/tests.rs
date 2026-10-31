@@ -2,7 +2,7 @@ use dfdu_tree::{Kind, NodeRef};
 
 use super::super::Estimate;
 use super::super::test_util::{Listing, Rig, chunk, chunk_of, close};
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// The estimate, numbered 7, of deleting the nodes at `paths`.
 fn estimate(r: &Rig, paths: &[&str]) -> Estimate {

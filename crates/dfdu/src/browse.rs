@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dfdu_engine::EngineOptions;
-use dfdu_scan::JobOptions;
 use dfdu_tui::{Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
 
 use crate::launch::Local;
@@ -14,12 +13,12 @@ use crate::{Cli, remote};
 
 /// `dfdu [PATH]` on a terminal: the browser, on PATH, a disk from the picker, a scan read from a
 /// file, or a directory on another host.
-pub fn run(cli: Cli) -> ExitCode {
-    let theme = match theme_choice(&cli.theme, dfdu_tui::theme_dir().as_deref()) {
+pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
+    let theme = match theme_choice(&cli.theme, dfdu_sys::dirs::theme_dir().as_deref()) {
         Ok(theme) => theme,
         Err(e) => {
             eprintln!("dfdu: theme {}: {e}", cli.theme);
-            return ExitCode::from(2);
+            return Err(ExitCode::from(2));
         }
     };
     let engine = EngineOptions {
@@ -28,42 +27,33 @@ pub fn run(cli: Cli) -> ExitCode {
     };
     let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
     let source = if let Some(f) = &cli.import {
-        match read_export(f) {
-            Ok(im) => Source::Imported(im.tree),
-            Err(code) => return code,
-        }
+        Source::Imported(read_export(f)?.tree)
     } else if let Some(host) = &cli.remote {
         // Connected before the browser takes the terminal, so ssh can ask for a password.
         // Deletion runs on the agent, journalled on its host.
         let rules = cli.rules.remote();
-        match remote::engine(host, engine.clone(), &path, rules, cli.remote_agent) {
-            Ok((engine, class, root)) => Source::Remote {
-                engine,
-                path: root,
-                job: JobOptions {
-                    class,
-                    ..cli.mounts.job()
-                },
-            },
-            Err(code) => return code,
+        let job = cli.mounts.job();
+        let (engine, job, root) =
+            remote::engine(host, engine.clone(), job, &path, rules, cli.remote_agent)?;
+        Source::Remote {
+            engine,
+            path: root,
+            job,
         }
     } else {
-        let resumed = match &cli.resume_from {
-            Some(f) => match read_export(f) {
-                Ok(im) => Some((im.tree, im.journal)),
-                Err(code) => return code,
-            },
-            None => None,
-        };
+        let resumed = (cli.resume_from.as_deref().map(read_export))
+            .transpose()?
+            .map(|im| (im.tree, im.header));
         let root = resumed
             .as_ref()
             .and_then(|(t, _)| t.roots().next().map(|r| t.path_buf(r)));
+        let header = resumed.as_ref().and_then(|(_, h)| h.as_ref());
         // Checked before the browser takes the terminal. With --disks the directory is not
         // known yet, and --mft is not used.
         let local = Local {
             mft: !cli.disks && cli.mounts.use_mft(root.as_deref().unwrap_or(&path)),
             threads: None,
-            job: cli.mounts.job(),
+            job: cli.mounts.job_resuming(header),
             rules: cli.rules.load(),
         };
         // The cache is for a directory named on the command line, not one read from a file or
@@ -73,9 +63,9 @@ pub fn run(cli: Cli) -> ExitCode {
             .flatten();
         let start: StartLocal = Box::new(move |path, opts| local.start(path, opts));
         match (resumed, slot) {
-            (Some((tree, journal)), _) => Source::Resumed {
+            (Some((tree, header)), _) => Source::Resumed {
                 tree,
-                journal,
+                journal: header.and_then(|h| h.journal),
                 start,
             },
             (None, Some(slot)) => Source::Cached { path, slot, start },
@@ -99,10 +89,10 @@ pub fn run(cli: Cli) -> ExitCode {
         },
     };
     match dfdu_tui::run(opts) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => Ok(ExitCode::SUCCESS),
         Err(e) => {
             eprintln!("dfdu: {e}");
-            ExitCode::from(1)
+            Err(ExitCode::from(1))
         }
     }
 }
@@ -119,9 +109,7 @@ fn cache_slot(path: &Path, local: &Local) -> Option<dfdu_store::cache::Slot> {
             return None;
         }
     };
-    let key =
-        dfdu_store::cache::Key::new(path, local.job.cross_mounts, local.job.network, local.mft)
-            .ok()?;
+    let key = dfdu_store::cache::Key::new(path, &local.job, local.mft).ok()?;
     Some(cache.slot(key))
 }
 

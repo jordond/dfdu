@@ -10,12 +10,14 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, NativeBackend};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 
 use crate::app::{App, Effect, Overlay};
-use crate::model::snapshot::{self, Target};
-use crate::tests::{press, render};
-use crate::theme::{Theme, human};
+use crate::format::human;
+use crate::model::snapshot;
+use crate::tests::{press, render, select};
+use crate::theme::Theme;
 
 /// Tests run one at a time: one adds and removes a directory in the shared fixture.
 fn fixture() -> Option<(PathBuf, MutexGuard<'static, ()>)> {
@@ -45,7 +47,7 @@ fn scan(root: &Path, journal: &Path) -> Engine<NativeBackend> {
 /// The browser showing `dir`, drawn 160 columns wide.
 fn show(e: &Engine<NativeBackend>, app: &mut App, dir: &Path, t: Instant) -> String {
     let mut target = e.read(|m| {
-        let ix = snapshot::find_path(&m.tree, &dir.into()).expect("directory in the tree");
+        let ix = dfdu_tree::find_path(&m.tree, &dir.into()).expect("directory in the tree");
         Target::of(&m.tree, ix)
     });
     let snap = e.read(|m| snapshot::build(m, &mut target, app.size_mode));
@@ -58,20 +60,6 @@ fn line_with<'a>(out: &'a str, name: &str) -> &'a str {
     out.lines()
         .find(|l| l.contains(name))
         .unwrap_or_else(|| panic!("{name} missing:\n{out}"))
-}
-
-/// Moves the cursor to the entry `name`.
-fn select(app: &mut App, name: &str, t: Instant) {
-    for _ in 0..app.rows.len() {
-        if app
-            .selected_entry()
-            .is_some_and(|e| e.name[..] == *name.as_bytes())
-        {
-            return;
-        }
-        app.key(press(KeyCode::Down), t);
-    }
-    panic!("{name} not in the list");
 }
 
 /// Unprivileged: compressed files are labelled as upper bounds and the header says
@@ -90,7 +78,7 @@ fn compressed_labels_and_quota_groups() {
     let random = line_with(&plain, "random.bin");
     assert!(!random.contains("compressed"), "{plain}");
     let quota = e.read(|m| {
-        let ix = snapshot::find_path(&m.tree, &f.join("sub").into()).unwrap();
+        let ix = dfdu_tree::find_path(&m.tree, &f.join("sub").into()).unwrap();
         m.subvols[&m.tree.node_ref(ix)].qgroup
     });
     if dfdu_sys::is_privileged() {
@@ -138,7 +126,7 @@ fn data_used_outside_the_scan_may_free_less() {
     assert!(!line_with(&out, "only-here.bin").contains('↔'), "{out}");
     let shared = format!("↔ {} also used outside the scan", human(8 << 20));
     assert!(line_with(&out, "▸ a.bin").contains(&shared), "{out}");
-    select(&mut app, "a.bin", t);
+    select(&mut app, "a.bin");
     app.key(press(KeyCode::Char('D')), t);
     assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
     let dialog = render(&mut app, t, 160, 24);
@@ -149,7 +137,7 @@ fn data_used_outside_the_scan_may_free_less() {
     assert!(dialog.contains(&want), "{dialog}");
     // A file that only this snapshot has frees all of it.
     app.key(press(KeyCode::Esc), t);
-    select(&mut app, "only-here.bin", t);
+    select(&mut app, "only-here.bin");
     app.key(press(KeyCode::Char('D')), t);
     let dialog = render(&mut app, t, 160, 24);
     assert!(!dialog.contains("May free less"), "{dialog}");
@@ -169,7 +157,7 @@ fn delete_on_btrfs_notes_when_space_is_freed() {
     let t = Instant::now();
     let mut app = App::new(Theme::no_color(), t);
     show(&e, &mut app, &w, t);
-    select(&mut app, "junk", t);
+    select(&mut app, "junk");
     app.key(press(KeyCode::Char('D')), t);
     for c in "delete".chars() {
         app.key(press(KeyCode::Char(c)), t);

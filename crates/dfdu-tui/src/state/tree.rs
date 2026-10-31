@@ -8,9 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use dfdu_tree::{HostPath, NodeRef};
+use dfdu_tree::{HostPath, Ident, NodeRef, Target};
 
-use crate::model::snapshot::{EntryData, Ident, Snapshot, Target};
+use crate::model::snapshot::{EntryData, Snapshot};
 
 /// The most rows a read adds below the top level. A directory with more children than fit
 /// shows the largest ones, and the rest in its fold row.
@@ -178,22 +178,6 @@ pub fn parent(entries: &[EntryData], i: usize) -> Option<usize> {
     (p != u32::MAX).then_some(p as usize)
 }
 
-/// Whether entry `i` is inside entry `ancestor` (below it in the tree, not equal to it).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the keys and the drawing need only the parent")
-)]
-pub fn inside(entries: &[EntryData], i: usize, ancestor: usize) -> bool {
-    let mut cur = i;
-    while let Some(p) = parent(entries, cur) {
-        if p == ancestor {
-            return true;
-        }
-        cur = p;
-    }
-    false
-}
-
 /// The path of entry `i` of a tree snapshot: the directory's path and the names down to it.
 pub fn path_of(snap: &Snapshot, i: usize) -> HostPath {
     let mut names = vec![i];
@@ -254,7 +238,7 @@ pub fn guide(entries: &[EntryData], last: &[bool], i: usize) -> String {
     parts.iter().rev().copied().collect()
 }
 
-pub mod act;
+pub(crate) mod act;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

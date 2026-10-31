@@ -43,7 +43,8 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-fn meta(path: &Path) -> io::Result<Meta> {
+/// The metadata of `path` itself, not of what a link at it points to.
+pub(crate) fn meta(path: &Path) -> io::Result<Meta> {
     #[cfg(not(windows))]
     return fs::symlink_metadata(path).map(|m| Meta::from_metadata(&m));
     #[cfg(windows)]

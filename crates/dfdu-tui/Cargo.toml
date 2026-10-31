@@ -24,11 +24,11 @@ unicode-width.workspace = true
 tachyonfx.workspace = true
 nucleo-matcher.workspace = true
 terminal-colorsaurus.workspace = true
-etcetera.workspace = true
 toml.workspace = true
 dunce.workspace = true
 
 [dev-dependencies]
+dfdu-engine = { workspace = true, features = ["test-support"] }
 insta.workspace = true
 proptest.workspace = true
 tempfile.workspace = true

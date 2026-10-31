@@ -18,11 +18,26 @@ fn app(read_only: bool) -> (App, Instant) {
     (app, t0)
 }
 
+/// A browser with the first row marked before it turned read-only, as nothing marks in one.
+fn marked_read_only() -> (App, Instant) {
+    let (mut app, t0) = app(false);
+    app.key(press(KeyCode::Char(' ')), t0);
+    assert!(!app.marks.is_empty());
+    app.read_only = true;
+    (app, t0)
+}
+
 #[test]
-fn delete_keys_open_no_dialog() {
+fn space_marks_nothing() {
     let (mut ro, t0) = app(true);
     ro.key(press(KeyCode::Char(' ')), t0);
-    assert!(!ro.marks.is_empty());
+    assert!(ro.marks.is_empty());
+    assert_eq!(ro.status.as_deref(), Some(READ_ONLY));
+}
+
+#[test]
+fn delete_keys_open_no_dialog() {
+    let (mut ro, t0) = marked_read_only();
     for c in ['d', 'D', 'U'] {
         ro.status = None;
         let fx = ro.key(press(KeyCode::Char(c)), t0);
@@ -38,8 +53,7 @@ fn delete_keys_open_no_dialog() {
 
 #[test]
 fn header_and_footer_show_it() {
-    let (mut ro, t0) = app(true);
-    ro.key(press(KeyCode::Char(' ')), t0);
+    let (mut ro, t0) = marked_read_only();
     let frame = render(&mut ro, t0, 120, 8);
     let header = frame.lines().next().unwrap_or_default();
     assert!(header.contains("read-only"), "{frame}");

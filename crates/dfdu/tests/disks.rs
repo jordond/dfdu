@@ -10,7 +10,10 @@ use common::{dfdu, ok};
 fn lists_the_filesystems_under_a_header() {
     let out = ok(dfdu(&["disks"]));
     let mut lines = out.lines();
-    let header: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+    // PURGEABLE shows only where some disk reports purgeable space (macOS).
+    let header: Vec<&str> = (lines.next().unwrap().split_whitespace())
+        .filter(|&h| h != "PURGEABLE")
+        .collect();
     assert_eq!(
         header,
         ["MOUNTED", "ON", "TYPE", "SIZE", "USED", "FREE", "USE%"]

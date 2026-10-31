@@ -6,8 +6,8 @@ use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use dfdu_clean::inside::{Listing, Listings};
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal};
 use dfdu_rules::protected::State;
-use dfdu_rules::{Hit, Inside, RuleIx, RuleSet, Safety};
-use dfdu_tree::{Class, ErrKind, Kind, Meta, NodeRef, Subvol};
+use dfdu_rules::{Hit, Inside, RuleSet};
+use dfdu_tree::{Class, ClassFlags, ErrKind, Kind, Meta, NodeRef, RuleIx, Safety, Subvol};
 
 use dfdu_scan::{
     Chunk, ChunkStatus, DirId, Entry, EntryError, FileRec, JobId, ListingStatus, Mark, NameSpan,
@@ -107,7 +107,7 @@ fn sample() -> Vec<FromAgent> {
                     rule,
                     safety: Safety::Review,
                     degraded: Some(0),
-                    flags: 0,
+                    flags: dfdu_tree::ClassFlags::NONE,
                 }),
             ),
             (Entry::File(1), Mark::Excepted),
@@ -137,7 +137,7 @@ fn sample() -> Vec<FromAgent> {
                         rule: RuleIx(0),
                         safety: Safety::Regenerable,
                         degraded: None,
-                        flags: 0,
+                        flags: dfdu_tree::ClassFlags::NONE,
                     },
                 )],
             },
@@ -456,7 +456,7 @@ fn class_layout() {
         rule: RuleIx(300),
         safety: Safety::Review,
         degraded: Some(1),
-        flags: Class::CHECKED,
+        flags: ClassFlags::CHECKED,
     };
     let mut e = Enc::default();
     enc_class(&mut e, c);
@@ -494,6 +494,46 @@ fn kind_layout() {
     assert!(matches!(
         Dec::new(&[4]).kind(),
         Err(WireError::Malformed("kind"))
+    ));
+}
+
+/// Options go as a 0 or 1 tag before the value and lists as their length before the items;
+/// any other tag is the option's own error, and a count larger than the payload an error.
+#[test]
+fn option_and_list_layout() {
+    let mut e = Enc::default();
+    e.opt(None::<u8>, Enc::u8);
+    e.opt(Some(7), Enc::u8);
+    e.list(&[1, 2], |e, &x| e.u8(x));
+    assert_eq!(e.0, [0, 1, 7, 2, 1, 2]);
+    let mut d = Dec::new(&e.0);
+    assert_eq!(d.opt("x", Dec::u8).unwrap(), None);
+    assert_eq!(d.opt("x", Dec::u8).unwrap(), Some(7));
+    assert_eq!(d.list(1, Dec::u8).unwrap(), [1, 2]);
+    assert!(d.end().is_ok());
+    assert!(matches!(
+        Dec::new(&[2, 0]).opt("x", Dec::u8),
+        Err(WireError::Malformed("x"))
+    ));
+    assert!(Dec::new(&[3, 0, 0]).list(1, Dec::u8).is_err());
+}
+
+/// Protection states go as one byte each; an unknown byte is an error.
+#[test]
+fn protection_layout() {
+    let states = [State::Off, State::On, State::Sticky];
+    let mut e = Enc::default();
+    for s in states {
+        e.protection(s);
+    }
+    assert_eq!(e.0, [0, 1, 2]);
+    let mut d = Dec::new(&e.0);
+    for s in states {
+        assert_eq!(d.protection().unwrap(), s);
+    }
+    assert!(matches!(
+        Dec::new(&[3]).protection(),
+        Err(WireError::Malformed("protection"))
     ));
 }
 

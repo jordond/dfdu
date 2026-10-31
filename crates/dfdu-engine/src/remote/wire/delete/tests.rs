@@ -1,5 +1,4 @@
-use dfdu_rules::RuleIx;
-use dfdu_tree::{ErrKind, Kind};
+use dfdu_tree::{ErrKind, Kind, RuleIx};
 
 use super::super::ToAgent;
 use super::super::tests::plan;

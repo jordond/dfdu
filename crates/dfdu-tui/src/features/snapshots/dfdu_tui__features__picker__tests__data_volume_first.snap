@@ -4,7 +4,7 @@ expression: out
 ---
  dfdu  choose a disk to scan
  mounted on               type           size       used       free
- /System/Volumes/Data     apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  Data  shares space with /
- /                        apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  System (read-only)  shares space with /System/Volumes/Data
+ /System/Volumes/Data     apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  (+30.0 GiB purgeable)  Data  shares space with /
+ /                        apfs      926.0 GiB  822.0 GiB  104.0 GiB  █████████████████▊     89%  (+30.0 GiB purgeable)  System (read-only)  shares space with /S
 
  ↑↓ move  Enter scan  q quit

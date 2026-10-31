@@ -21,7 +21,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
 
     $completions = @(switch ($command) {
         'dfdu' {
-            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done')
+            [CompletionResult]::new('--resume-from', '--resume-from', [CompletionResultType]::ParameterName, 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done. A snapshot is rescanned with the mount options it was taken with')
             [CompletionResult]::new('-f', '-f', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
             [CompletionResult]::new('--file', '--file', [CompletionResultType]::ParameterName, 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only')
             [CompletionResult]::new('--remote', '--remote', [CompletionResultType]::ParameterName, 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history')
@@ -205,6 +205,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--restore', '--restore', [CompletionResultType]::ParameterName, 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it')
             [CompletionResult]::new('--dismiss', '--dismiss', [CompletionResultType]::ParameterName, 'Close these interrupted items: nothing is done on disk')
             [CompletionResult]::new('--journals', '--journals', [CompletionResultType]::ParameterName, 'The journal directory (the default is dfdu''s state directory)')
+            [CompletionResult]::new('--yes', '--yes', [CompletionResultType]::ParameterName, 'Finish and restore. Without it nothing is changed: what would be done is printed')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break

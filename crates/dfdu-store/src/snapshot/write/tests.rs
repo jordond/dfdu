@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use super::super::tests::{header, sample};
-use super::super::{VERSION_2, VERSION_3};
 use super::*;
 
 fn u(v: u64) -> Vec<u8> {
@@ -93,26 +92,29 @@ fn a_snapshot_written_in_steps_is_the_same() {
     assert!(early.finish(&mut vec![]).is_err());
 }
 
-/// Format 2 leaves out the journal position's time, format 3 the last full scan; without a
-/// position formats 2 and 3 have nothing more.
+/// The journal position, with its time, comes only with the option that says so; the last full
+/// scan ends the header either way.
 #[test]
-fn the_header_drops_newer_fields_in_older_formats() {
+fn the_header_holds_the_journal_position_only_when_there_is_one() {
     let h = header();
-    let (mut v4, mut v3, mut v2) = (vec![], vec![], vec![]);
-    put_header(&mut v4, Path::new("/r"), &h, VERSION);
-    put_header(&mut v3, Path::new("/r"), &h, VERSION_3);
-    put_header(&mut v2, Path::new("/r"), &h, VERSION_2);
-    let time = u(h.journal.unwrap().time);
-    assert_eq!(v3, [&v2[..], &time[..]].concat());
-    let full = [u(h.last_full_scan), u(h.scan_ms)].concat();
-    assert_eq!(v4, [&v3[..], &full[..]].concat());
+    let j = h.journal.unwrap();
     let none = Header {
         journal: None,
         ..header()
     };
-    let (mut a, mut b) = (vec![], vec![]);
-    put_header(&mut a, Path::new("/r"), &none, VERSION_3);
-    put_header(&mut b, Path::new("/r"), &none, VERSION_2);
-    assert_eq!(a, b);
-    assert!(a.len() < v2.len());
+    let (mut with, mut without) = (vec![], vec![]);
+    put_header(&mut with, Path::new("/r"), &h);
+    put_header(&mut without, Path::new("/r"), &none);
+    let full = [u(h.last_full_scan), u(h.scan_ms)].concat();
+    assert!(without.ends_with(&full));
+    let mut position = vec![];
+    put_bytes(&mut position, &j.volume);
+    position.extend([u(j.event_id), u(j.time)].concat());
+    let cut = without.len() - full.len();
+    assert_eq!(
+        with[cut..],
+        [&position[..], &full[..]].concat()[..],
+        "the position follows the options"
+    );
+    assert_eq!(with[..cut - 1], without[..cut - 1], "up to the options");
 }

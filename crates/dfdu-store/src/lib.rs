@@ -1,9 +1,8 @@
-//! Persistence: ncdu JSON import and export, native
-//! snapshots, scan history, zstd streams and atomic file writes.
+//! Persistence: ncdu JSON import and export, native snapshots, the scan cache, scan history,
+//! zstd streams and atomic file writes.
 
 pub mod cache;
 pub mod history;
-mod json;
 pub mod ncdu;
 pub mod snapshot;
 
@@ -14,10 +13,10 @@ use std::io;
 #[derive(Debug)]
 pub enum ImportError {
     Io(io::Error),
-    /// Not valid input: what was wrong and where, in bytes from the start (of the
+    /// Not valid input: what was wrong and, when known, where, in bytes from the start (of the
     /// decompressed stream).
     Format {
-        offset: u64,
+        offset: Option<u64>,
         msg: String,
     },
     /// Past one of the import's limits.
@@ -34,13 +33,38 @@ impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ImportError::Io(e) => write!(f, "{e}"),
-            ImportError::Format { offset, msg } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format {
+                offset: Some(offset),
+                msg,
+            } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format { offset: None, msg } => write!(f, "{msg}"),
             ImportError::Limit(msg) => write!(f, "over a limit: {msg}"),
         }
     }
 }
 
 impl std::error::Error for ImportError {}
+
+/// Limits on what an import accepts, so a hostile or broken file cannot use unbounded memory
+/// or stack.
+#[derive(Clone, Debug)]
+pub struct Limits {
+    /// Directory nesting below the root.
+    pub max_depth: usize,
+    /// Bytes in a name (the default is ncdu's own limit).
+    pub max_name: usize,
+    pub max_entries: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_depth: 4096,
+            max_name: 32_768,
+            max_entries: 200_000_000,
+        }
+    }
+}
 
 /// Compresses what is written to it with zstd, as a series of frames of at most [`ZSTD_FRAME`]
 /// bytes each (zstd readers read concatenated frames as one stream). Encoding into memory frame
@@ -190,13 +214,8 @@ fn replace_file<T>(
         _ => std::path::Path::new("."),
     };
     let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut prefix = std::ffi::OsString::from(".");
-    prefix.push(name);
-    prefix.push(".");
-    remove_stale_temps(dir, prefix.as_encoded_bytes());
-    let mut tmp_name = prefix;
-    tmp_name.push(format!("{}.tmp", std::process::id()));
-    let tmp = dir.join(tmp_name);
+    remove_stale_temps(dir, |t| temp_target(t) == Some(name.as_encoded_bytes()));
+    let tmp = dir.join(temp_name(name, std::process::id()));
     let mut file = std::fs::File::create(&tmp)?;
     // Held until the file is closed, by this process or by its death.
     let _ = file.try_lock();
@@ -226,19 +245,31 @@ fn replace_file<T>(
     Ok(v)
 }
 
-/// Removes the temporary files `<prefix><pid>.tmp` in `dir` that no writer holds locked: those
-/// of writers killed before they renamed them.
-fn remove_stale_temps(dir: &std::path::Path, prefix: &[u8]) {
+/// The name of the temporary file process `pid` writes `name` into: `.<name>.<pid>.tmp`.
+fn temp_name(name: &std::ffi::OsStr, pid: u32) -> std::ffi::OsString {
+    let mut t = std::ffi::OsString::from(".");
+    t.push(name);
+    t.push(format!(".{pid}.tmp"));
+    t
+}
+
+/// The name of the file that `name` is the temporary file of ([`temp_name`]), when it is one.
+pub(crate) fn temp_target(name: &[u8]) -> Option<&[u8]> {
+    let rest = name.strip_prefix(b".")?.strip_suffix(b".tmp")?;
+    let dot = rest.iter().rposition(|&b| b == b'.')?;
+    let (target, pid) = (&rest[..dot], &rest[dot + 1..]);
+    let is_pid = !pid.is_empty() && pid.iter().all(u8::is_ascii_digit);
+    (is_pid && !target.is_empty()).then_some(target)
+}
+
+/// Removes the temporary files in `dir` that `is_temp` accepts by name ([`temp_target`]) and
+/// that no writer holds locked: those of writers killed before they renamed them.
+pub(crate) fn remove_stale_temps(dir: &std::path::Path, is_temp: impl Fn(&[u8]) -> bool) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
     for e in rd.flatten() {
-        let n = e.file_name();
-        let b = n.as_encoded_bytes();
-        let Some(pid) = b.strip_prefix(prefix).and_then(|r| r.strip_suffix(b".tmp")) else {
-            continue;
-        };
-        if pid.is_empty() || !pid.iter().all(u8::is_ascii_digit) {
+        if !is_temp(e.file_name().as_encoded_bytes()) {
             continue;
         }
         let Ok(f) = std::fs::OpenOptions::new().write(true).open(e.path()) else {
@@ -258,8 +289,9 @@ pub struct Opened {
     pub entries: u64,
     /// The program that wrote it and its version, when the file says.
     pub written_by: Option<String>,
-    /// Where the change journal stood when the scan started (snapshots only).
-    pub journal: Option<dfdu_scan::journal::JournalPosition>,
+    /// What the scan was (snapshots only): its mount options, and where the change journal
+    /// stood when it started.
+    pub header: Option<snapshot::Header>,
 }
 
 /// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by
@@ -269,7 +301,7 @@ pub struct Opened {
 /// # Errors
 ///
 /// When `r` fails, the data is in neither format or malformed, or it exceeds `limits`.
-pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open(r: impl io::Read, limits: &Limits) -> Result<Opened, ImportError> {
     let mut r = io::BufReader::with_capacity(1 << 16, r);
     let head = io::BufRead::fill_buf(&mut r)?;
     if ncdu::binary::is_binary(head) {
@@ -287,7 +319,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
             root: l.root,
             entries: l.entries,
             written_by: Some(format!("dfdu {}", l.header.tool_version)),
-            journal: l.header.journal,
+            header: Some(l.header),
         });
     }
     let im = ncdu::import(r, limits)?;
@@ -300,7 +332,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
         root: im.root,
         entries: im.entries,
         written_by,
-        journal: None,
+        header: None,
     })
 }
 
@@ -309,7 +341,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
 /// # Errors
 ///
 /// As [`open`], and when the file cannot be read or rewound.
-pub fn open_file(mut f: std::fs::File, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open_file(mut f: std::fs::File, limits: &Limits) -> Result<Opened, ImportError> {
     let mut head = [0u8; 8];
     let n = io::Read::read(&mut f, &mut head)?;
     io::Seek::rewind(&mut f)?;
@@ -328,7 +360,7 @@ fn binary_opened(im: ncdu::Imported) -> Opened {
         root: im.root,
         entries: im.entries,
         written_by: Some("ncdu (binary export)".into()),
-        journal: None,
+        header: None,
     }
 }
 

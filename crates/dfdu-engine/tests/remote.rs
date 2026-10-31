@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use dfdu_engine::wire::{self, FromAgent};
 use dfdu_engine::{Command, Engine, RemoteIo, RemoteRules};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{JobOptions, PortableBackend};
@@ -141,6 +142,59 @@ fn a_closed_link_is_reported() {
     e.shutdown(Duration::from_secs(1));
 }
 
+/// Why an agent that sends `frames` and then hangs up is refused at the greeting.
+fn rejected(frames: &[FromAgent]) -> String {
+    let mut buf = Vec::new();
+    for f in frames {
+        wire::write_frame(&mut buf, &f.encode()).unwrap();
+    }
+    let started = Engine::start_remote(
+        PortableBackend::default(),
+        opts(),
+        RemoteIo {
+            reader: Box::new(std::io::Cursor::new(buf)),
+            writer: Box::new(std::io::sink()),
+            child: None,
+        },
+        Path::new("/"),
+        None,
+    );
+    match started {
+        Ok(_) => panic!("{frames:?} was accepted"),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// An agent is refused when it does not say hello first, speaks no version this one does, or
+/// does not describe its host next, and its own fatal error is passed on.
+#[test]
+fn handshake_rejections() {
+    let hello = |v: u32| FromAgent::Hello {
+        min: v,
+        max: v,
+        tool: "fake".into(),
+    };
+    let cases = [
+        (vec![], "before saying hello"),
+        (vec![hello(wire::VERSION + 1)], "speaks protocol versions"),
+        (vec![FromAgent::Fatal("boom".into())], "boom"),
+        (vec![FromAgent::Heartbeat], "did not say hello"),
+        (
+            vec![hello(wire::VERSION), FromAgent::Batch(vec![])],
+            "did not describe its host",
+        ),
+        (
+            vec![hello(wire::VERSION), FromAgent::Fatal("boom".into())],
+            "boom",
+        ),
+        (vec![hello(wire::VERSION)], "closed the link"),
+    ];
+    for (frames, want) in cases {
+        let why = rejected(&frames);
+        assert!(why.contains(want), "{frames:?}: {why}");
+    }
+}
+
 /// An agent that says nothing for longer than `DEAD` is taken for gone: its process is
 /// killed and the scan ends with an error.
 #[cfg(unix)]
@@ -197,7 +251,7 @@ fn a_silent_agent_is_given_up() {
 type ClassRow = (
     std::path::PathBuf,
     String,
-    Option<dfdu_rules::Safety>,
+    Option<dfdu_tree::Safety>,
     u8,
     u8,
 );
@@ -208,7 +262,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<ClassRow> {
     while e.read(|m| {
         m.tree
             .classes()
-            .any(|(_, c)| c.has(dfdu_tree::Class::QUEUED))
+            .any(|(_, c)| c.has(dfdu_tree::ClassFlags::QUEUED))
     }) {
         assert!(
             t.elapsed() < Duration::from_secs(20),
@@ -227,7 +281,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<ClassRow> {
                     rules.rule(c.rule).id.clone(),
                     Some(c.safety),
                     c.degraded.map_or(0, |d| u8::try_from(d).unwrap() + 1),
-                    c.flags,
+                    c.flags.bits(),
                 )
             })
             .collect();
@@ -303,7 +357,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
     assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let want = classes(&local);
     assert!(want.len() >= 5, "{want:?}");
-    let tracked = dfdu_tree::Class::CHECKED | dfdu_tree::Class::VCS_TRACKED;
+    let tracked = (dfdu_tree::ClassFlags::CHECKED | dfdu_tree::ClassFlags::VCS_TRACKED).bits();
     assert!(
         want.iter()
             .any(|c| c.0.ends_with("git/node_modules") && c.4 == tracked),

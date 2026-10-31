@@ -213,7 +213,7 @@ impl Backend for PortableBackend {
 
     fn duplicate_mounts(&self, scope: &Path) -> Option<HashSet<u64>> {
         let table = dfdu_sys::mount_table().ok()?;
-        Some(crate::mounts::duplicate_mounts(&table, scope))
+        Some(crate::overlap::duplicate_mounts(&table, scope))
     }
 
     fn mount_class(&self, mount: u64, dev: u64) -> Option<FsClass> {

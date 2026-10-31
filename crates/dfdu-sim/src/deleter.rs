@@ -9,7 +9,7 @@ use dfdu_engine::DeleteResult;
 use dfdu_scan::{Backend, Shared};
 use dfdu_tree::{ErrKind, Kind, NodeFlags, Tree};
 
-use crate::{Rng, Sim, SimBackend, SimReport, Spec};
+use crate::{Rng, Sim, SimBackend, SimError, SimReport, Spec};
 
 impl Sim {
     /// Paths of the items of the delete plan the deleter is running, if any.
@@ -27,7 +27,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn delete_next(&mut self, result: DeleteResult) -> Result<bool, String> {
+    pub fn delete_next(&mut self, result: DeleteResult) -> Result<bool, SimError> {
         let Some((plan, i)) = self.plans.front_mut() else {
             return Ok(false);
         };
@@ -158,3 +158,6 @@ pub(crate) fn deleter_step(
         result,
     })
 }
+
+#[cfg(test)]
+mod tests;

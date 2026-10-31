@@ -74,33 +74,14 @@ where
     B: dfdu_scan::Backend,
 {
     let inject_panic = std::env::var_os("DFDU_TEST_UI_PANIC").is_some();
-    let UiOptions {
-        theme,
-        color_level,
-        background,
-        mouse: mouse_on,
-        debug: debug_on,
-        home,
-        history,
-        cache,
-        types,
-        local,
-        read_only,
-    } = ui;
-    let start = Instant::now();
-    let mut app = App::new(theme, start);
-    app.color_level = color_level;
-    app.background = background;
-    app.home = home;
-    app.types = types;
-    app.outside.local = local;
-    app.read_only = read_only;
+    let mut app = App::with_options(&ui, Instant::now());
+    let mouse_on = ui.mouse;
     motion::start(&mut app);
-    if debug_on {
+    if ui.debug {
         debug::toggle(&mut app);
     }
-    let mut recorder = Recorder::new(history);
-    let mut cacher = Cacher::new(cache);
+    let mut recorder = Recorder::new(ui.history);
+    let mut cacher = Cacher::new(ui.cache);
     let mut pacing = Pacing::new(app.size_mode);
     loop {
         let history_changed = recorder.poll(&mut app, engine);
@@ -262,8 +243,8 @@ impl Pacing {
         ) = (Some(now), cost, cost, mode);
         self.seen_version = Some(snap.version);
         if snap.focus != self.focus {
-            if let Some((job, dir)) = snap.focus {
-                engine.scanner().set_focus(job, dir);
+            if let (Some((job, dir)), Some(s)) = (snap.focus, engine.local_scanner()) {
+                s.set_focus(job, dir);
             }
             self.focus = snap.focus;
         }

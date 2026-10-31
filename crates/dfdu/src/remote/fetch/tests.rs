@@ -125,88 +125,28 @@ fn store_leaves_nothing_behind_on_failure() {
     assert_eq!(left, ["dfdu"]);
 }
 
-#[cfg(feature = "agent-download")]
-fn tar_xz(files: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut tar = tar::Builder::new(Vec::new());
-    for (name, data) in files {
-        let mut h = tar::Header::new_gnu();
-        h.set_size(data.len() as u64);
-        h.set_mode(0o755);
-        h.set_cksum();
-        tar.append_data(&mut h, name, *data).unwrap();
-    }
-    let tar = tar.into_inner().unwrap();
-    let mut xz =
-        lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::with_preset(1)).unwrap();
-    io::Write::write_all(&mut xz, &tar).unwrap();
-    xz.finish().unwrap()
+#[test]
+fn store_sweeps_the_temp_of_a_writer_that_died() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("d/dfdu");
+    std::fs::create_dir_all(tmp.path().join("d")).unwrap();
+    std::fs::write(tmp.path().join("d/.dfdu.4294967295.tmp"), b"cut sh").unwrap();
+    store(&path, b"bin").unwrap();
+    let left: Vec<_> = std::fs::read_dir(tmp.path().join("d"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["dfdu"]);
+    assert_eq!(std::fs::read(&path).unwrap(), b"bin");
 }
 
 #[cfg(feature = "agent-download")]
 #[test]
-fn extracts_dfdu_from_its_top_directory() {
-    let archive = tar_xz(&[
-        ("dfdu-x86_64-unknown-linux-musl/README.md", b"read me"),
-        ("dfdu-x86_64-unknown-linux-musl/dfdu", b"\x7fELF agent"),
-    ]);
-    assert_eq!(extract(&archive, MUSL).unwrap(), b"\x7fELF agent");
-    let without = tar_xz(&[("dfdu-x86_64-unknown-linux-musl/other", b"x")]);
-    assert!(
-        extract(&without, MUSL)
-            .unwrap_err()
-            .to_string()
-            .contains("has no")
-    );
-    assert!(extract(b"not xz", MUSL).is_err());
-}
-
-/// Serves `files` (path, body) over HTTP, one request per connection; the base URL.
-#[cfg(feature = "agent-download")]
-fn serve(files: Vec<(String, Vec<u8>)>) -> String {
-    use std::io::{BufRead, BufReader, Write};
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = l.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for s in l.incoming() {
-            let Ok(mut s) = s else { break };
-            let mut r = BufReader::new(s.try_clone().unwrap());
-            let mut first = String::new();
-            r.read_line(&mut first).unwrap();
-            loop {
-                let mut h = String::new();
-                if r.read_line(&mut h).unwrap() == 0 || h == "\r\n" {
-                    break;
-                }
-            }
-            let path = first.split(' ').nth(1).unwrap_or_default();
-            let (status, body) = match files.iter().find(|(p, _)| p == path) {
-                Some((_, body)) => ("200 OK", body.as_slice()),
-                None => ("404 Not Found", &[][..]),
-            };
-            write!(
-                s,
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            )
-            .unwrap();
-            s.write_all(body).unwrap();
-        }
-    });
-    format!("http://{addr}")
-}
-
-#[cfg(feature = "agent-download")]
-#[test]
-fn downloads_checks_and_caches_the_release() {
-    let archive = tar_xz(&[(&format!("dfdu-{ARM}/dfdu"), b"agent bytes")]);
-    let sum = format!("{}  dfdu-{ARM}.tar.xz\n", sha256_hex(&archive));
-    let path = format!("/v{VERSION}/dfdu-{ARM}.tar.xz");
+fn a_downloaded_release_is_kept_and_a_bad_one_is_not() {
+    use super::release::tests::{published, serve};
     let tmp = tempfile::tempdir().unwrap();
     let mut a = agents(tmp.path(), MUSL, None);
-    a.release_url = serve(vec![
-        (path.clone(), archive.clone()),
-        (format!("{path}.sha256"), sum.into_bytes()),
-    ]);
+    a.release_url = serve(published(ARM, b"agent bytes", None));
     let plan = a.plan(ARM).unwrap();
     assert_eq!(a.load(ARM, &plan[0]).unwrap().1, b"agent bytes");
     // Kept: the next run sends it without downloading.
@@ -217,25 +157,11 @@ fn downloads_checks_and_caches_the_release() {
 
     let other = tempfile::tempdir().unwrap();
     let mut a = agents(other.path(), MUSL, None);
-    a.release_url = serve(vec![
-        (path.clone(), archive),
-        (
-            format!("{path}.sha256"),
-            format!("{}\n", "0".repeat(64)).into_bytes(),
-        ),
-    ]);
+    a.release_url = serve(published(ARM, b"agent bytes", Some(&"0".repeat(64))));
     let plan = a.plan(ARM).unwrap();
-    let err = a.load(ARM, &plan[0]).unwrap_err().to_string();
-    assert!(err.contains("does not match its published sha256"), "{err}");
+    assert!(a.load(ARM, &plan[0]).is_err());
     assert!(
         !other.path().join("cache").exists(),
         "a bad download is not kept"
-    );
-
-    a.release_url = serve(Vec::new());
-    let err = a.load(ARM, &plan[0]).unwrap_err().to_string();
-    assert!(
-        err.contains(&format!("no dfdu {VERSION} release for {ARM}")),
-        "{err}"
     );
 }

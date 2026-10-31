@@ -13,12 +13,6 @@ use serde_json::value::RawValue;
 
 use crate::{DeleteResult, Mode, PlanItem};
 
-/// Where deletion journals are kept: `ops` in the state directory ([`dfdu_rules::dirs`]).
-#[must_use]
-pub fn default_journal_dir() -> Option<PathBuf> {
-    dfdu_rules::dirs::journal_dir()
-}
-
 pub struct Journal {
     file: File,
     path: PathBuf,
@@ -383,7 +377,7 @@ impl Journal {
 }
 
 /// Parses a journal line and checks its CRC. Returns the record type, or `None` for a damaged
-/// or torn line.
+/// or torn line or a record type this version does not know.
 #[must_use]
 pub fn check_line(line: &str) -> Option<&'static str> {
     parse_line(line).map(|r| r.kind())

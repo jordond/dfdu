@@ -5,18 +5,21 @@
 //! mode, where both show at once, a directory and something inside it are never both marked:
 //! marking one unmarks the other ([`exclusive`]), as marking a container in the cleanup view
 //! marks only its rest.
+//!
+//! A read-only browser marks nothing, as nothing marked could be deleted: every way of marking
+//! says so on the status line instead.
 
 use std::collections::{HashMap, HashSet};
 
 use dfdu_engine::{JobKind, JobPhase, Model};
-use dfdu_tree::{DirState, HostPath, Ix, NodeRef};
+use dfdu_tree::{DirState, HostPath, Ident, Ix, NodeRef, Target, find_path};
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::model::snapshot::{EntryData, Ident, Mark, Target, find_path};
-use crate::theme::human;
+use crate::format::human;
+use crate::model::snapshot::{EntryData, Mark};
 
-pub mod range;
+pub(crate) mod range;
 
 /// One marked entry: how to find it again, and its sizes as the last read found them.
 #[derive(Clone, Debug)]
@@ -76,7 +79,7 @@ impl Marks {
     }
 
     /// Records a change by the user: the sizes need a read.
-    fn changed(&mut self) {
+    fn record_change(&mut self) {
         self.version += 1;
         self.index();
     }
@@ -129,7 +132,11 @@ struct Found {
 /// Marks or unmarks the selected entry and moves the cursor down a row. The "shared between
 /// entries" row, fold rows and deleted rows are not entries and cannot be marked.
 pub fn toggle(app: &mut App) {
-    let Some(index) = app.selected_index().map(|row| app.rows[row]) else {
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
+    let Some(index) = app.selected_index().map(|row| app.list.rows[row]) else {
         return;
     };
     let e = &app.snap.entries[index];
@@ -164,7 +171,7 @@ pub fn toggle(app: &mut App) {
             marks.items.push(item);
         }
     }
-    marks.changed();
+    marks.record_change();
     app.move_by(1);
 }
 
@@ -199,8 +206,7 @@ pub(crate) fn item_of(app: &App, index: usize) -> Item {
 }
 
 /// Marks `item` or unmarks it (found by its node or path), as the cleanup view does for whole
-/// groups. A read-only browser marks nothing this way, as nothing marked could be deleted: the
-/// status line says so instead.
+/// groups. A read-only browser marks nothing this way.
 pub fn set(app: &mut App, item: Item, on: bool) {
     if on && app.read_only {
         app.status = Some(crate::app::keys::READ_ONLY.into());
@@ -218,7 +224,7 @@ pub fn set(app: &mut App, item: Item, on: bool) {
         }
         _ => return,
     }
-    marks.changed();
+    marks.record_change();
 }
 
 /// Marks every one of `items` not marked yet, with one look-up each, and returns how many it
@@ -260,7 +266,7 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
         marks.items.retain(|_| keep.next().unwrap_or(true));
     }
     if added > 0 || dropped > 0 {
-        marks.changed();
+        marks.record_change();
     }
     added
 }
@@ -268,7 +274,7 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
 pub fn clear(app: &mut App) {
     if !app.marks.is_empty() {
         app.marks.items.clear();
-        app.marks.changed();
+        app.marks.record_change();
     }
 }
 
@@ -410,18 +416,17 @@ pub fn apply(app: &mut App) {
 /// shows only some of their files. A read-only browser changes nothing, as [`add`] does, and
 /// the other views leave the list's rows alone, as the range mark does.
 pub fn invert(app: &mut App) {
-    use crate::features::{cleanup, dupes, largest, treemap};
     if app.read_only {
         app.status = Some(crate::app::keys::READ_ONLY.into());
         return;
     }
-    if treemap::active(app) || cleanup::active(app) || dupes::active(app) || largest::active(app) {
+    if !crate::app::views::list_shown(app) {
         let list = crate::app::keys::first_key(crate::app::keys::Action::ViewFiles);
         app.status = Some(format!("marks are inverted in Files ({list})"));
         return;
     }
     let folders = !crate::overlay::type_filter::active(app);
-    let rows: Vec<Item> = (app.rows.iter())
+    let rows: Vec<Item> = (app.list.rows.iter())
         .filter(|&&i| {
             let e = &app.snap.entries[i];
             !e.pseudo && e.depth == 0 && (folders || !e.is_dir)
@@ -444,7 +449,7 @@ pub fn invert(app: &mut App) {
     });
     let (marked, unmarked) = (on.len(), off.len());
     marks.items.extend(on);
-    marks.changed();
+    marks.record_change();
     app.status = Some(format!(
         "marks inverted: {marked} marked, {unmarked} unmarked"
     ));

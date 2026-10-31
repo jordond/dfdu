@@ -2,7 +2,6 @@
 //! rows whose size changed noticeably, and a line in the details pane.
 
 use dfdu_engine::SizeMode;
-use dfdu_store::history;
 use dfdu_tree::HostPath;
 
 use crate::app::App;
@@ -34,14 +33,14 @@ pub fn since(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<(i128,
 
 /// "+12.4 GiB since 2026-10-18".
 pub fn describe(delta: i128, at: i64) -> String {
-    format!("{} since {}", short(delta), history::day(at))
+    format!("{} since {}", short(delta), dfdu_tree::day(at))
 }
 
 /// "+12.4 GiB".
 fn short(delta: i128) -> String {
     let sign = if delta < 0 { "-" } else { "+" };
     let abs = u64::try_from(delta.unsigned_abs()).unwrap_or(u64::MAX);
-    format!("{sign}{}", crate::theme::human(abs))
+    format!("{sign}{}", crate::format::human(abs))
 }
 
 /// A noticeable change of a list row's size since the last recorded scan.
@@ -80,7 +79,7 @@ pub fn row_note(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<Row
 
 /// The header of the column of changes, with the day of the last recorded scan: "Δ 10-18".
 pub fn column_title(app: &App) -> String {
-    match app.growth.as_ref().map(|g| history::day(g.at)) {
+    match app.growth.as_ref().map(|g| dfdu_tree::day(g.at)) {
         Some(day) => format!("Δ {}", day.get(5..).unwrap_or(&day)),
         None => "Δ".into(),
     }

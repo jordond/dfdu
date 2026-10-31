@@ -1,6 +1,7 @@
 //! Scan history in the CLI: `dfdu scan` records each scan, `dfdu history` lists them and
 //! `dfdu diff` prints what grew.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -10,12 +11,13 @@ use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
 use dfdu_tree::{HostPath, Ix, now_secs};
 use serde_json::{Map, Value, json};
 
-use crate::report::{ReportFormat, age_arg, size_arg};
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
+use crate::args::{ReportFormat, age_arg, size_arg};
+use crate::output::{json as js, put_path};
+use crate::{EXIT_PARTIAL, MountArgs, launch, print_out, written};
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.
 pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
-    let Some(path) = history::default_path() else {
+    let Some(path) = dfdu_sys::dirs::history_path() else {
         return;
     };
     let scan = Scanned::read(&m.tree, root, m.complete(root));
@@ -27,7 +29,7 @@ pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
 }
 
 fn open() -> Result<History, ExitCode> {
-    let Some(path) = history::default_path() else {
+    let Some(path) = dfdu_sys::dirs::history_path() else {
         eprintln!("dfdu: no state directory for the history");
         return Err(ExitCode::from(1));
     };
@@ -44,28 +46,23 @@ pub struct HistoryArgs {
 }
 
 /// `dfdu history`: the recorded scans, newest first.
-pub fn list(args: HistoryArgs) -> ExitCode {
-    use std::io::Write;
-    let h = match open() {
-        Ok(h) => h,
-        Err(c) => return c,
-    };
+pub fn list(args: HistoryArgs) -> Result<ExitCode, ExitCode> {
+    let h = open()?;
     let root = match args.path.as_deref().map(dunce::canonicalize).transpose() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("dfdu: {}: {e}", args.path.unwrap_or_default().display());
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     let scans = match h.scans(root.as_deref()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("dfdu: history: {e}");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
-    let r = (|| {
+    print_out(|w| {
         if scans.is_empty() {
             writeln!(w, "no scans recorded")?;
         }
@@ -73,19 +70,16 @@ pub fn list(args: HistoryArgs) -> ExitCode {
             writeln!(
                 w,
                 "{}  {:>10}  {:>9} entries{}  {}",
-                history::date_time(s.finished_at),
+                dfdu_tree::date_time(s.finished_at),
                 dfdu_engine::human(s.total.disk),
                 s.total.entries,
                 if s.complete { "" } else { " (partial)" },
                 s.root.display()
             )?;
         }
-        w.flush()
-    })();
-    match written(r) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(code) => code,
-    }
+        Ok(())
+    })?;
+    Ok(ExitCode::SUCCESS)
 }
 
 #[derive(Args)]
@@ -148,22 +142,13 @@ fn file_side(path: &Path, depth: usize) -> Result<(Side, PathBuf), ExitCode> {
     ))
 }
 
-pub fn diff(args: &DiffArgs) -> ExitCode {
+pub fn diff(args: &DiffArgs) -> Result<ExitCode, ExitCode> {
     let (old, new, root, complete, partial) = if args.paths.len() == 2 {
-        let (old, root) = match file_side(&args.paths[0], args.depth) {
-            Ok(s) => s,
-            Err(c) => return c,
-        };
-        let (new, _) = match file_side(&args.paths[1], args.depth) {
-            Ok(s) => s,
-            Err(c) => return c,
-        };
+        let (old, root) = file_side(&args.paths[0], args.depth)?;
+        let (new, _) = file_side(&args.paths[1], args.depth)?;
         (old, new, root, usize::MAX, false)
     } else {
-        match scan_and_base(args) {
-            Ok(v) => v,
-            Err(c) => return c,
-        }
+        scan_and_base(args)?
     };
     let changes: Vec<Change> = history::diff(&old.sizes, &new.sizes, complete)
         .into_iter()
@@ -175,19 +160,16 @@ pub fn diff(args: &DiffArgs) -> ExitCode {
         .filter(|c| !c.path.is_empty() && c.delta().unsigned_abs() >= u128::from(args.min_change))
         .take(args.top)
         .collect();
-    let r = if args.format == ReportFormat::Json {
-        print_json(&old, &new, &root, total.as_ref(), &shown)
+    if args.format == ReportFormat::Json {
+        written(print_json(&old, &new, &root, total.as_ref(), &shown))?;
     } else {
-        print_table(&old, &new, &root, total.as_ref(), &shown)
-    };
-    if let Err(code) = written(r) {
-        return code;
+        print_out(|w| print_table(w, &old, &new, &root, total.as_ref(), &shown))?;
     }
-    if partial {
+    Ok(if partial {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// Scans the directory now, finds the recorded scan to compare with, then records the new
@@ -279,20 +261,19 @@ fn shown_path(root: &Path, rel: &[u8]) -> String {
 
 fn label(s: &Side) -> String {
     match s.at {
-        Some(at) => format!("{} of {}", s.source, history::date_time(at)),
+        Some(at) => format!("{} of {}", s.source, dfdu_tree::date_time(at)),
         None => s.source.clone(),
     }
 }
 
 fn print_table(
+    w: &mut dyn Write,
     old: &Side,
     new: &Side,
     root: &Path,
     total: Option<&Change>,
     shown: &[&Change],
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
     let size = |s: &Side| s.sizes.get(&b""[..]).map_or(0, |s| s.disk);
     writeln!(
         w,
@@ -320,7 +301,7 @@ fn print_table(
             shown_path(root, &c.path)
         )?;
     }
-    w.flush()
+    Ok(())
 }
 
 fn sizes_json(s: Option<Sizes>) -> Value {
@@ -337,7 +318,7 @@ fn saturated(d: i128) -> i64 {
 
 fn change_json(root: &Path, c: &Change) -> Value {
     let mut o = Map::new();
-    js::put_path(&mut o, "path", Path::new(&shown_path(root, &c.path)));
+    put_path(&mut o, "path", Path::new(&shown_path(root, &c.path)));
     o.insert(
         "status".into(),
         match (c.old, c.new) {

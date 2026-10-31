@@ -2,24 +2,15 @@
 
 use std::time::Instant;
 
-use dfdu_tree::HostPath;
 use ratatui::crossterm::event::KeyCode;
 
-use super::keys::{key, select, selected, small, tree_app};
+use super::keys::{key, selected, small, tree_app};
 use super::sync;
 use crate::app::App;
 use crate::model::snapshot::Snapshot;
 use crate::state::motion;
-use crate::tests::{below, render, row_names, typed};
+use crate::tests::{below, marked_paths as marked, render, row_names, select, typed};
 use crate::theme::Theme;
-
-fn marked(app: &App) -> Vec<HostPath> {
-    app.marks
-        .items()
-        .iter()
-        .map(|it| it.target.path.clone())
-        .collect()
-}
 
 #[test]
 fn a_directory_and_what_is_inside_it_are_never_both_marked() {

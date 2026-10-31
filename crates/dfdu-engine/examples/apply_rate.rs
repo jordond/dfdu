@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dfdu_bench::synth::{self, SynthBackend};
-use dfdu_engine::{Applier, Command, Engine, EngineOptions, Model, Timing};
+use dfdu_engine::{Applier, ApplierSettings, Command, Engine, EngineOptions, Model, Timing};
 use dfdu_scan::runtime::RealClock;
 use dfdu_scan::{
     Backend, Batch, Clock, JobOptions, Limits, NativeBackend, ScanMsg, Shared, Sink, StepResult,
@@ -51,7 +51,7 @@ impl Sink for Collect {
 
 fn start<B: Backend>(backend: B, root: &Path) -> (Arc<Shared<B>>, Applier<B>, Model) {
     let shared = Arc::new(Shared::new(backend, Limits::default()));
-    let mut applier = Applier::new(shared.clone());
+    let mut applier = Applier::new(shared.clone(), ApplierSettings::default());
     let mut model = Model::default();
     applier.apply_command(
         &mut model,
@@ -84,7 +84,7 @@ fn record<B: Backend>(backend: B, root: &Path) -> Vec<ScanMsg> {
             applier.work_step(&mut model);
         }
         applier.refresh_status(&mut model);
-        if model.status.running() == 0 {
+        if model.status.running_jobs() == 0 {
             return log;
         }
     }

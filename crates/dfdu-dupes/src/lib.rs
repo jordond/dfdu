@@ -458,12 +458,6 @@ pub fn find(
     }
 }
 
-/// The hash as lower-case hex.
-#[must_use]
-pub fn hex(hash: &[u8; 32]) -> String {
-    hex::encode(hash)
-}
-
 /// Whether the file at the candidate's path is still the one it describes (its length and
 /// inode), for a caller about to act on it.
 #[must_use]

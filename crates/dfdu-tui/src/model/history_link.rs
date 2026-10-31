@@ -1,6 +1,9 @@
 //! The browser's link to the scan history (`dfdu_store::history`): the last scan's sizes, read
 //! in the background for the growth notes, and the scan recorded once it is complete. As in
 //! the CLI, problems with the history are reported (in the status line), never fatal.
+//!
+//! Quitting waits at most [`QUIT_WAIT`] for a record still being written. One cut off when the
+//! process ends is rolled back, as it is written in one transaction.
 
 use std::io;
 use std::path::PathBuf;
@@ -8,11 +11,16 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+use crossbeam_channel::RecvTimeoutError;
 use dfdu_engine::{Engine, WaitIdle};
 use dfdu_store::history::{self, Growth, Scanned};
 use dfdu_tree::now_secs;
 
-use crate::App;
+use crate::app::App;
+
+/// How long quitting waits for the record to be written. It cannot be cancelled, and another
+/// dfdu writing the history can hold it up for seconds.
+const QUIT_WAIT: Duration = Duration::from_secs(2);
 
 /// What the last scan's sizes came to: the sizes, `None` when there are none, or why they could
 /// not be read.
@@ -64,14 +72,30 @@ fn thread_error(e: &io::Error) -> io::Error {
     io::Error::new(e.kind(), format!("cannot start a thread: {e}"))
 }
 
-/// Records the scan once its first job is done, on a thread the drop waits for.
+/// The record being written on its thread.
+struct Writer {
+    thread: thread::JoinHandle<io::Result<()>>,
+    /// Disconnected once the thread is done: it holds the other end until then.
+    done: crossbeam_channel::Receiver<()>,
+}
+
+impl Writer {
+    /// Waits at most `wait` for the thread to end, and joins it if it did.
+    fn finish(self, wait: Duration) {
+        if self.done.recv_timeout(wait) == Err(RecvTimeoutError::Disconnected) {
+            let _ = self.thread.join();
+        }
+    }
+}
+
+/// Records the scan once its first job is done, on a thread the drop waits a bounded time for.
 pub(crate) struct Recorder {
     link: Option<HistoryLink>,
     /// The load's outcome was taken in.
     loaded: bool,
     /// The record was started; the writer is kept until its outcome is taken in.
     started: bool,
-    writer: Option<thread::JoinHandle<io::Result<()>>>,
+    writer: Option<Writer>,
     /// The writer could not be started: reported by the next poll.
     unstarted: Option<io::Error>,
 }
@@ -117,13 +141,9 @@ impl Recorder {
                 }
             }
         }
-        if self
-            .writer
-            .as_ref()
-            .is_some_and(std::thread::JoinHandle::is_finished)
-            && let Some(w) = self.writer.take()
-        {
+        if let Some(w) = self.writer.take_if(|w| w.thread.is_finished()) {
             let result = w
+                .thread
                 .join()
                 .unwrap_or_else(|_| Err(io::Error::other("the writer panicked")));
             if let Err(e) = result {
@@ -165,15 +185,17 @@ impl Recorder {
         };
         self.started = true;
         let link = link.clone();
+        let (running, done) = crossbeam_channel::bounded(0);
         let spawned = thread::Builder::new()
             .name("dfdu-history".into())
             .spawn(move || {
+                let _running: crossbeam_channel::Sender<()> = running;
                 let mut h = history::History::open(&link.db)?;
                 h.record(&scan.record(&link.options, link.started_at, now_secs()))
                     .map(drop)
             });
         match spawned {
-            Ok(w) => self.writer = Some(w),
+            Ok(thread) => self.writer = Some(Writer { thread, done }),
             Err(e) => self.unstarted = Some(thread_error(&e)),
         }
     }
@@ -189,7 +211,7 @@ impl Recorder {
 impl Drop for Recorder {
     fn drop(&mut self) {
         if let Some(w) = self.writer.take() {
-            let _ = w.join();
+            w.finish(QUIT_WAIT);
         }
     }
 }
@@ -265,5 +287,41 @@ mod tests {
         );
         assert!(!rec.busy());
         engine.shutdown(Duration::from_millis(200));
+    }
+
+    fn writer(f: impl FnOnce() + Send + 'static) -> Writer {
+        let (running, done) = crossbeam_channel::bounded(0);
+        let thread = thread::spawn(move || {
+            let _running: crossbeam_channel::Sender<()> = running;
+            f();
+            Ok(())
+        });
+        Writer { thread, done }
+    }
+
+    /// Quitting stops waiting for a record held up, and joins one that ends.
+    #[test]
+    fn the_writer_is_waited_for_a_bounded_time() {
+        let wait = Duration::from_millis(50);
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let t0 = std::time::Instant::now();
+        writer(move || {
+            let _ = held.recv();
+        })
+        .finish(wait);
+        let waited = t0.elapsed();
+        assert!(waited >= wait, "{waited:?}");
+        assert!(waited < Duration::from_secs(5), "{waited:?}");
+        drop(release);
+
+        let (ended, end) = crossbeam_channel::bounded(1);
+        writer(move || {
+            let _ = ended.send(());
+        })
+        .finish(Duration::from_secs(5));
+        assert!(end.try_recv().is_ok(), "joined after the thread ran");
+        let mut rec = Recorder::new(None);
+        rec.writer = Some(writer(|| ()));
+        drop(rec);
     }
 }

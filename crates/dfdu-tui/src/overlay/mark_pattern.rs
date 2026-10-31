@@ -3,7 +3,7 @@
 //! those of the rules ([`dfdu_rules::Glob`]): `*` and `?`, no `[...]`, and case ignored on macOS
 //! and Windows, where file names usually ignore it.
 
-use dfdu_rules::{Glob, Platform};
+use dfdu_rules::{Glob, GlobError, Platform};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -12,9 +12,9 @@ use ratatui::text::{Line, Span};
 
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect, Overlay};
+use crate::format::human;
 use crate::input::line::{Edit, LineInput};
 use crate::state::marks;
-use crate::theme::human;
 
 /// State of the open prompt, held in `Overlay::MarkPattern`.
 #[derive(Clone, Debug, Default)]
@@ -22,13 +22,13 @@ pub struct Prompt {
     input: LineInput,
     /// How many names the glob typed matches, or what is wrong with it; counted as it is typed,
     /// not with every frame.
-    matches: Option<Result<usize, String>>,
+    matches: Option<Result<usize, GlobError>>,
 }
 
 /// The glob of `pattern`, compared as file names are on this platform.
-fn glob(pattern: &str) -> Result<Glob, String> {
+fn glob(pattern: &str) -> Result<Glob, GlobError> {
     let fold = matches!(Platform::current(), Platform::MacOs | Platform::Windows);
-    Glob::new(pattern.trim(), fold).map_err(|e| e.to_string())
+    Glob::new(pattern.trim(), fold)
 }
 
 /// The entries the list shows that `g` matches, by index into the snapshot's entries. The
@@ -36,7 +36,7 @@ fn glob(pattern: &str) -> Result<Glob, String> {
 /// filter shows only some of their files.
 fn matched(app: &App, g: &Glob) -> Vec<usize> {
     let folders = !crate::overlay::type_filter::active(app);
-    (app.rows.iter().copied())
+    (app.list.rows.iter().copied())
         .filter(|&i| {
             let e = &app.snap.entries[i];
             !e.pseudo && (folders || !e.is_dir) && g.matches(&e.name)
@@ -54,11 +54,11 @@ pub fn open(app: &mut App) {
 }
 
 /// Typing edits the glob; `Enter` marks what it matches and closes the prompt, `Esc` closes it.
-pub fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
+pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let Overlay::MarkPattern(p) = &mut app.overlay else {
         return Vec::new();
     };
-    match p.input.key(k) {
+    match p.input.key(&k) {
         Edit::Changed => {
             let text = p.input.text().trim().to_owned();
             let matches = (!text.is_empty()).then(|| glob(&text).map(|g| matched(app, &g).len()));
@@ -119,7 +119,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         Some(Ok(n)) => Line::styled(
             format!(
                 " {n} of {} names here match · Enter marks them",
-                app.rows.len()
+                app.list.rows.len()
             ),
             t.fg_dim,
         ),

@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
@@ -96,7 +97,7 @@ fn duplicates_are_found_marked_and_shown() {
 
 /// A comparison done with `groups` found: files below `/r` with their dates, each still in the
 /// tree.
-fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
+pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
     let mut bits = 0;
     let mut file = |path: &str, mtime: i64| {
         bits += 1;
@@ -128,8 +129,8 @@ fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
             ..Found::default()
         })
         .unwrap();
+    app.view = View::Duplicates;
     app.dupes = Dupes {
-        on: true,
         run: Some(Run {
             root: "/r".into(),
             progress: Arc::default(),
@@ -277,7 +278,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
 /// compares on `Enter`; `Esc` goes back to Files instead.
 #[test]
 fn nothing_is_compared_until_asked() {
-    use crate::features::treemap::tests::{Fixture, sync};
+    use crate::tests::{Fixture, sync};
     let (mut fx, root) = Fixture::new();
     let big = 2 * min_size();
     for name in ["a.iso", "b.iso", "c.iso"] {
@@ -404,6 +405,29 @@ fn deleting_every_copy_of_a_group_is_refused() {
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char('d')), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
+}
+
+/// A read-only browser ticks nothing, a copy or a whole group, and says why.
+#[test]
+fn space_ticks_nothing_read_only() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
+    );
+    app.read_only = true;
+    for cursor in [0, 1] {
+        app.dupes.cursor = cursor;
+        app.status = None;
+        app.key(press(KeyCode::Char(' ')), t0);
+        assert!(app.marks.is_empty(), "row {cursor}");
+        assert_eq!(
+            app.status.as_deref(),
+            Some(crate::app::keys::READ_ONLY),
+            "row {cursor}"
+        );
+    }
 }
 
 /// The footer keeps every key of the view at 120 columns, and at 80 lets `q quit` go before

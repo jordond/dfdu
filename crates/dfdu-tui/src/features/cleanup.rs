@@ -16,24 +16,28 @@
 use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
-use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use dfdu_rules::CategoryIx;
+use dfdu_tree::{
+    Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Safety, Target, Totals, now_secs,
+};
+use ratatui::crossterm::event::KeyEvent;
 
+use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
+use crate::format::{human, plural};
 use crate::state::marks;
-use crate::theme::human;
 
 mod draw;
 mod pane;
 mod rows;
 
 pub use rows::enter_does;
-pub(crate) use rows::selected_item;
+pub(crate) use rows::selected;
 use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;
+pub use pane::command;
 
 /// Output lines the native pane keeps.
 const PANE_LINES: usize = 200;
@@ -41,11 +45,10 @@ const PANE_LINES: usize = 200;
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Cleanup {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     /// Categories shown with their items, by (category, safety); closed by default.
-    open: HashSet<(u16, Safety)>,
+    open: HashSet<(CategoryIx, Safety)>,
     /// Safety sections closed by the user; open by default.
     closed: HashSet<Safety>,
     /// Only items this safe or safer; `None` shows all.
@@ -87,7 +90,6 @@ pub struct Item {
 #[derive(Clone, Debug, Default)]
 pub struct NativeView {
     pub id: u64,
-    pub command: String,
     pub lines: Vec<String>,
     pub done: Option<Result<(), String>>,
 }
@@ -99,32 +101,33 @@ pub struct Info {
     pub native: Option<NativeView>,
     /// What native size commands reported, by rule name.
     pub native_sizes: Vec<(String, Result<u64, String>)>,
-    /// What the matches that can be ticked add up to, for the tab and the summary bar alike,
-    /// with the tree's version and number of matches it was counted at.
-    pub total: Option<((u64, usize), u64)>,
+    /// What the matches that can be ticked add up to, for the tab and the summary bar alike.
+    pub total: Option<Reclaim>,
+}
+
+/// What the matches that can be ticked add up to.
+#[derive(Clone, Copy, Debug)]
+pub struct Reclaim {
+    /// The tree's version and number of matches it was counted at ([`count_key`]).
+    pub at: (u64, usize),
+    pub size: u64,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
 pub fn active(app: &App) -> bool {
-    app.cleanup.on && app.snap.rules.is_some()
+    views::current(app) == View::Cleanup
 }
 
-/// Switches the view on or off. On, it asks the rules' native size commands for their
-/// numbers, and the first time also marks the recommended items ([`apply`]).
-pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
-    if on && app.snap.rules.is_none() {
-        app.status = Some("no rules: the cleanup view needs classification".into());
+/// The view was opened ([`views::switch`]), or opened `again` while shown: it reads its matches
+/// again, and until it once did, marks the recommended items ([`apply`]). Opened from another
+/// view, it also asks the rules' native size commands for their numbers.
+pub fn on_open(app: &mut App, again: bool) -> Vec<Effect> {
+    app.cleanup.fresh = false;
+    app.cleanup.premark = !app.cleanup.preselected && !app.read_only;
+    if again {
         return Vec::new();
     }
-    let was = app.cleanup.on;
-    app.cleanup.on = on;
-    app.cleanup.fresh = false;
-    app.cleanup.premark = on && !app.cleanup.preselected && !app.read_only;
-    if on && !was {
-        crate::features::treemap::show(app, false);
-        return vec![Effect::Send(Command::NativeSizes)];
-    }
-    Vec::new()
+    vec![Effect::Send(Command::NativeSizes)]
 }
 
 /// What the matches that can be ticked add up to: the summary bar's total, kept current while
@@ -142,18 +145,20 @@ fn count_key(m: &Model) -> (u64, usize) {
 
 /// The view needs a read: it was just switched on.
 pub fn stale(app: &App) -> bool {
-    app.cleanup.on && !app.cleanup.fresh
+    active(app) && !app.cleanup.fresh
 }
 
 /// The listed matches ([`dfdu_engine::listed`]), under the read lock. Matches are few: one per
 /// matched directory, and below it only those a rule that does not stop the descent lets in.
 pub fn read(m: &Model, app: &App) -> Info {
-    if !app.cleanup.on {
+    // Without the rules there is nothing to list or count, and the view is not shown
+    // ([`views::current`]).
+    let Some(rules) = &m.rules else {
+        return Info::default();
+    };
+    if !active(app) {
         // Closed, only the total for the tab, when the tree changed since it was counted.
         let at = count_key(m);
-        let Some(rules) = &m.rules else {
-            return Info::default();
-        };
         if app.snap.busy || app.cleanup.counted_at == Some(at) {
             return Info::default();
         }
@@ -162,7 +167,7 @@ pub fn read(m: &Model, app: &App) -> Info {
             .map(|l| l.total.alloc)
             .sum();
         return Info {
-            total: Some((at, total)),
+            total: Some(Reclaim { at, size: total }),
             ..Info::default()
         };
     }
@@ -180,11 +185,7 @@ pub fn read(m: &Model, app: &App) -> Info {
         scanning,
         rest: Vec::new(),
     };
-    let listed = match &m.rules {
-        Some(rules) => dfdu_engine::listed(t, rules),
-        None => Vec::new(),
-    };
-    let items: Vec<Item> = listed
+    let items: Vec<Item> = dfdu_engine::listed(t, rules)
         .into_iter()
         .map(|l| {
             let rest = (l.rest.iter())
@@ -201,7 +202,6 @@ pub fn read(m: &Model, app: &App) -> Info {
         .collect();
     let native = m.status.native.as_ref().map(|n| NativeView {
         id: n.id,
-        command: n.command.clone(),
         lines: n
             .lines
             .iter()
@@ -210,14 +210,9 @@ pub fn read(m: &Model, app: &App) -> Info {
             .collect(),
         done: n.done.clone(),
     });
-    let mut native_sizes: Vec<(String, Result<u64, String>)> = match &m.rules {
-        Some(rules) => m
-            .native_sizes
-            .iter()
-            .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
-            .collect(),
-        None => vec![],
-    };
+    let mut native_sizes: Vec<(String, Result<u64, String>)> = (m.native_sizes.iter())
+        .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
+        .collect();
     native_sizes.sort_by(|a, b| a.0.cmp(&b.0));
     let total = items
         .iter()
@@ -228,20 +223,23 @@ pub fn read(m: &Model, app: &App) -> Info {
         items,
         native,
         native_sizes,
-        total: Some((count_key(m), total)),
+        total: Some(Reclaim {
+            at: count_key(m),
+            size: total,
+        }),
     }
 }
 
-/// Takes in a read. The first read after the user opened the view ([`show`]) marks the
+/// Takes in a read. The first read after the user opened the view ([`on_open`]) marks the
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
-    if let Some((at, total)) = app.extras.cleanup.total {
-        app.cleanup.reclaimable = Some(total);
+    if let Some(Reclaim { at, size }) = app.extras.cleanup.total {
+        app.cleanup.reclaimable = Some(size);
         app.cleanup.counted_at = Some(at);
     }
     let premark = std::mem::take(&mut app.cleanup.premark);
-    if !app.cleanup.on || !premark || app.extras.cleanup.items.is_empty() {
+    if !active(app) || !premark || app.extras.cleanup.items.is_empty() {
         return;
     }
     app.cleanup.preselected = true;
@@ -251,15 +249,11 @@ pub fn apply(app: &mut App) {
     }
 }
 
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
-
 /// The status line after `n` suggested items of `size` in all were ticked.
 fn marked_status(n: usize, size: u64) -> String {
     format!(
         "Ticked {n} suggested item{} ({}) · {} untick all",
-        plural(n),
+        plural(n as u64),
         human(size),
         crate::app::keys::first_key(crate::app::keys::Action::ClearMarks)
     )
@@ -272,9 +266,8 @@ fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
         rules.rule(it.class.rule),
         it.class,
         it.size,
-        it.mtime,
+        now.saturating_sub(it.mtime),
         it.scanning,
-        now,
     ))
 }
 
@@ -349,6 +342,9 @@ fn markable(it: &Item) -> bool {
     it.class.safety < Safety::Protected
 }
 
+/// The rows the page keys move the view's cursor by.
+const PAGE: usize = 10;
+
 /// Keys the view takes before the action registry; `None` passes the key on.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     if app.cleanup.pane.is_some() {
@@ -358,19 +354,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     app.status = None;
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
-    let c = &mut app.cleanup;
-    if let Some(n) = crate::app::keys::half_page(k, 10) {
-        c.cursor = c.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.cleanup.cursor, last, PAGE) {
+        app.cleanup.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => c.cursor = c.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1).min(last),
-        KeyCode::PageUp => c.cursor = c.cursor.saturating_sub(10),
-        KeyCode::PageDown => c.cursor = (c.cursor + 10).min(last),
-        KeyCode::Home | KeyCode::Char('g') => c.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => c.cursor = last,
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(c.cursor) {
+    let c = &mut app.cleanup;
+    match action {
+        Action::Open | Action::Enter => match rows.get(c.cursor) {
             Some(&Row::Item(i)) => show_in_files(app, i),
             Some(&row) => {
                 let open = is_open(app, row);
@@ -378,7 +369,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             // The nearest open section or category at or above the cursor; none without rows.
             let at = (0..=c.cursor.min(last)).rev().find_map(|i| {
                 let row = *rows.get(i)?;
@@ -389,7 +380,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 app.cleanup.cursor = i;
             }
         }
-        KeyCode::Char(' ') => toggle(app, rows.get(app.cleanup.cursor).copied()),
+        Action::ToggleMark => toggle(app, rows.get(app.cleanup.cursor).copied()),
         _ => return None,
     }
     Some(Vec::new())
@@ -409,7 +400,7 @@ fn show_in_files(app: &mut App, i: usize) {
         return;
     };
     let root = app.snap.root_path.clone();
-    app.cleanup.on = false;
+    views::switch(app, View::Files);
     app.go_to(&path, &root);
 }
 
@@ -444,12 +435,6 @@ pub fn tick_suggested(app: &mut App) {
     } else {
         marked_status(n, size)
     });
-}
-
-/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
-/// native command, with its dry run.
-pub fn command(app: &mut App) -> Vec<Effect> {
-    pane::open_pane(app)
 }
 
 fn toggle(app: &mut App, row: Option<Row>) {
@@ -490,4 +475,4 @@ impl Cleanup {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

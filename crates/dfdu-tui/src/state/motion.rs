@@ -22,8 +22,8 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::format::ratio;
 use crate::model::snapshot::{EntryData, Mark, Snapshot};
-use crate::theme::ratio;
 
 /// Time between animation frames.
 const FRAME: Duration = Duration::from_millis(33);
@@ -221,7 +221,6 @@ impl Motion {
         new_rows: &[usize],
         entries: &[EntryData],
         auto: bool,
-        _now: Instant,
     ) {
         if !self.on {
             return;
@@ -324,7 +323,7 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     }
 
     let entries = &app.snap.entries;
-    let largest = app.rows_largest.max(1);
+    let largest = app.list.rows_largest.max(1);
     let step = 1.0 - (-dt.as_secs_f64() / TAU).exp();
     let mut easing = false;
     let mut bars = std::mem::take(&mut m.spare);
@@ -417,7 +416,7 @@ pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
 
 /// Effects applied to the finished frame: the flash of moved rows and the fade of deleted ones,
 /// on the rows where [`frame`] last found them, except where an overlay covers them.
-pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
+pub fn post_process(app: &App, buf: &mut Buffer, now: Instant) {
     let m = &app.motion;
     let rgb = effects::rgb_effects(&app.theme);
     let flash = m.flash_at.map(|t| now.saturating_duration_since(t));

@@ -6,8 +6,6 @@ use std::time::Duration;
 
 use dfdu_scan::Limits;
 
-use crate::crash::default_crash_dir;
-
 /// How an engine runs. [`Default`] reads nothing from the environment: no journal (deletion is
 /// refused), no crash reports and no invariant checks. The commands start from
 /// [`EngineOptions::from_env`].
@@ -93,8 +91,8 @@ impl EngineOptions {
     pub fn from_env() -> Self {
         EngineOptions {
             check_invariants: std::env::var_os("DFDU_CHECK").is_some(),
-            journal_dir: dfdu_clean::default_journal_dir(),
-            crash_dir: default_crash_dir(),
+            journal_dir: dfdu_sys::dirs::journal_dir(),
+            crash_dir: dfdu_sys::dirs::crash_dir(),
             ..EngineOptions::default()
         }
     }

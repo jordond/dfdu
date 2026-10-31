@@ -20,13 +20,14 @@ use super::{Keep, Row, kept, live, min_size, open, rows};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, Tally, Tick};
+use crate::format::{count, human, plural, truncate_middle};
 use crate::model::outside::tilde;
-use crate::theme::{Theme, count, human, truncate_middle};
+use crate::theme::Theme;
 use crate::view::columns::cursor;
 use crate::view::empty::{self, Empty};
 
 /// `path` relative to `root`, or whole when it is not below it.
-fn shown(path: &Path, root: &Path) -> PathBuf {
+fn relative_to_root(path: &Path, root: &Path) -> PathBuf {
     match path.strip_prefix(root) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.to_path_buf(),
         _ => path.to_path_buf(),
@@ -60,7 +61,7 @@ type GroupPaths = (PathBuf, Vec<(usize, PathBuf)>);
 fn group_paths(app: &App, group: &Group, root: &Path) -> GroupPaths {
     let paths: Vec<(usize, PathBuf)> = (group.files.iter().enumerate())
         .filter(|(_, c)| live(app, c).is_some())
-        .map(|(i, c)| (i, shown(&c.path, root)))
+        .map(|(i, c)| (i, relative_to_root(&c.path, root)))
         .collect();
     let all: Vec<PathBuf> = paths.iter().map(|(_, p)| p.clone()).collect();
     let dir = shared_dir(&all);
@@ -224,11 +225,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let (sum, groups) = tally(app, found);
-    let mut extra = format!(
-        " · {} group{}",
-        count(groups as u64),
-        if groups == 1 { "" } else { "s" },
-    );
+    let mut extra = format!(" · {} group{}", count(groups as u64), plural(groups as u64));
     if found.skipped > 0 {
         extra.push_str(&format!(" · {} skipped", count(found.skipped)));
     }
@@ -380,7 +377,7 @@ fn frees(c: &Candidate) -> String {
         format!(
             "has {} other name{} (hard links): deleting this one frees nothing",
             c.links,
-            if c.links == 1 { "" } else { "s" }
+            plural(u64::from(c.links))
         )
     } else {
         match c.private {
@@ -406,7 +403,7 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
     if let Row::File(_, i) = row {
         let c = &group.files[i];
         out.push(Line::styled(name(c), t.title));
-        let modified = dfdu_store::history::date_time(c.mtime);
+        let modified = dfdu_tree::date_time(c.mtime);
         out.push(Line::styled(
             format!("{} · modified {modified}", human(c.size)),
             t.fg_dim,
@@ -419,7 +416,7 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
         if live(app, c).is_none() {
             continue;
         }
-        let rel = shown(&c.path, root).display().to_string();
+        let rel = relative_to_root(&c.path, root).display().to_string();
         let (label, style) = if Some(i) == keep {
             ("kept", t.status_ok)
         } else {
@@ -432,3 +429,6 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

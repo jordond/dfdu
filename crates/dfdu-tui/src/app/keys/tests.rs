@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
 
 use super::*;
-use crate::tests::press;
+use crate::app::App;
 
 const ALL: [Action; 61] = [
     Action::Quit,
@@ -92,116 +92,6 @@ fn every_action_has_one_registry_row() {
     assert_eq!(keyless, [Action::MarkPattern, Action::InvertMarks]);
 }
 
-#[test]
-fn first_key_is_the_first_binding() {
-    assert_eq!(first_key(Action::Up), "↑");
-    assert_eq!(first_key(Action::Palette), ":");
-    assert_eq!(first_key(Action::ClearMarks), "X");
-    assert_eq!(first_key(Action::MarkPattern), "");
-}
-
-#[test]
-fn existing_keys_map_to_the_same_actions() {
-    let c = KeyCode::Char;
-    let table = [
-        (c('q'), Action::Quit),
-        (KeyCode::Up, Action::Up),
-        (c('k'), Action::Up),
-        (KeyCode::Down, Action::Down),
-        (c('j'), Action::Down),
-        (KeyCode::PageUp, Action::PageUp),
-        (KeyCode::PageDown, Action::PageDown),
-        (KeyCode::Home, Action::First),
-        (c('g'), Action::First),
-        (KeyCode::End, Action::Last),
-        (c('G'), Action::Last),
-        (KeyCode::Right, Action::Open),
-        (c('l'), Action::Open),
-        (KeyCode::Enter, Action::Enter),
-        (KeyCode::Left, Action::Parent),
-        (c('h'), Action::Parent),
-        (KeyCode::Backspace, Action::Parent),
-        (c('s'), Action::SortSize),
-        (c('n'), Action::SortName),
-        (c('C'), Action::SortItems),
-        (c('M'), Action::SortMtime),
-        (c('S'), Action::Resort),
-        (c('a'), Action::ToggleApparent),
-        (c('u'), Action::ToggleReferenced),
-        (c('e'), Action::ToggleHidden),
-        (c('c'), Action::Columns),
-        (c('r'), Action::Rescan),
-        (c('m'), Action::EnterMount),
-        (c('x'), Action::SkipStalled),
-        (c('d'), Action::Trash),
-        (c('D'), Action::DeletePermanent),
-        (c('U'), Action::Undo),
-        (c('?'), Action::Help),
-        (c('!'), Action::Errors),
-        (KeyCode::Esc, Action::Close),
-    ];
-    for (code, want) in table {
-        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
-    }
-    // Keys match whatever the modifiers: Shift for capitals, and Ctrl on a key without a
-    // Ctrl binding of its own.
-    let shifted = KeyEvent::new(c('G'), KeyModifiers::SHIFT);
-    assert_eq!(action_for(&shifted), Some(Action::Last));
-    let ctrl_j = KeyEvent::new(c('j'), KeyModifiers::CONTROL);
-    assert_eq!(action_for(&ctrl_j), Some(Action::Down));
-    let ctrl_p = KeyEvent::new(c('p'), KeyModifiers::CONTROL);
-    assert_eq!(action_for(&ctrl_p), Some(Action::Palette));
-    assert_eq!(action_for(&press(c('p'))), Some(Action::TreemapColor));
-    for (code, want) in [
-        (c(' '), Action::ToggleMark),
-        (c('/'), Action::Filter),
-        (c('i'), Action::Details),
-        (KeyCode::Tab, Action::FocusDetails),
-        (c(':'), Action::Palette),
-        (KeyCode::F(12), Action::Debug),
-        (KeyCode::F(1), Action::Help),
-        (c('<'), Action::Parent),
-        (c('1'), Action::ViewFiles),
-        (c('2'), Action::ViewMap),
-        (c('3'), Action::ViewCleanup),
-        (c('4'), Action::ViewDupes),
-        (c('t'), Action::Types),
-        (c('+'), Action::TreemapDeeper),
-        (c('-'), Action::TreemapShallower),
-        (c('T'), Action::ToggleTree),
-        (c('*'), Action::ExpandChain),
-        (c('z'), Action::CycleFold),
-    ] {
-        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
-    }
-    for code in [c('Z'), c('6'), KeyCode::F(2), KeyCode::Insert] {
-        assert_eq!(action_for(&press(code)), None, "{code:?}");
-    }
-}
-
-#[test]
-fn navigation_and_mark_keys() {
-    let c = KeyCode::Char;
-    for (code, want) in [
-        (c('y'), Action::CopyPath),
-        (c('o'), Action::OpenPath),
-        (c('v'), Action::RangeMark),
-        (c('5'), Action::ViewLargest),
-    ] {
-        assert_eq!(action_for(&press(code)), Some(want), "{code:?}");
-    }
-    // Ctrl-D and Ctrl-U move half a page; without Ctrl the keys stay what they were.
-    let ctrl = |ch| KeyEvent::new(c(ch), KeyModifiers::CONTROL);
-    assert_eq!(action_for(&ctrl('d')), Some(Action::HalfPageDown));
-    assert_eq!(action_for(&ctrl('u')), Some(Action::HalfPageUp));
-    assert_eq!(action_for(&press(c('d'))), Some(Action::Trash));
-    assert_eq!(action_for(&press(c('u'))), Some(Action::ToggleReferenced));
-    assert_eq!(half_page(&ctrl('d'), 20), Some(10));
-    assert_eq!(half_page(&ctrl('u'), 20), Some(-10));
-    assert_eq!(half_page(&ctrl('d'), 1), Some(1), "at least a row");
-    assert_eq!(half_page(&press(c('d')), 20), None);
-}
-
 /// What a view may do with a registry key before the registry sees it: move its own cursor
 /// (the navigation keys), mark the row its cursor is on (`Space`, as in the list), and, with
 /// nothing marked, say what to mark before the delete keys delete anything. Every other key
@@ -219,8 +109,8 @@ fn view_may_take(a: Action) -> bool {
 #[test]
 fn no_view_rebinds_a_global_key() {
     use crate::app::views::{self, View};
-    use crate::features::treemap::tests::{classified, sync};
     use crate::features::{cleanup, dupes, largest, treemap};
+    use crate::tests::{classified, sync};
     let fx = classified();
     let t0 = Instant::now();
     let opened = |view: View| {

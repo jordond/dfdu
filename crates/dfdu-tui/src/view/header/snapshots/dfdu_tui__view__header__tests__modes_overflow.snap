@@ -1,8 +1,0 @@
----
-source: crates/dfdu-tui/src/view/header/tests.rs
-expression: out
----
-120| /home/jo/dev                                      4.5M items · 163.3 GiB   size ↓ · apparent · hidden · /kmp · Δ 10-18
- 80| /home/jo/dev   4.5M items · 163.3 GiB   size ↓ · apparent · hidden · /kmp · +1
- 64| /home/jo/dev   4.5M items · 163.3 GiB   size ↓ · apparent · +3
- 48| /home…dev 4.5M items · 163.3 GiB   size ↓ · +4

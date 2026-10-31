@@ -3,12 +3,12 @@
 //! `mark_pattern` (the glob that marks names).
 //! Also the sizing and cursor keys the searchable lists among them share.
 
-pub mod confirm;
-pub mod error_list;
-pub mod help;
-pub mod mark_pattern;
-pub mod palette;
-pub mod type_filter;
+pub(crate) mod confirm;
+pub(crate) mod error_list;
+pub(crate) mod help;
+pub(crate) mod mark_pattern;
+pub(crate) mod palette;
+pub(crate) mod type_filter;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;

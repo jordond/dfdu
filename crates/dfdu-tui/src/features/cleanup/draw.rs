@@ -4,8 +4,8 @@
 //! them.
 
 use dfdu_engine::Verdict;
-use dfdu_rules::Safety;
-use dfdu_tree::{Class, now_secs};
+use dfdu_rules::CategoryIx;
+use dfdu_tree::{ClassFlags, Safety, now_secs};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -18,8 +18,8 @@ use super::{
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, CHECK_WIDTH, Tally, Tick};
+use crate::format::{count, human};
 use crate::model::outside::tilde;
-use crate::theme::{count, human};
 use crate::view::cells;
 use crate::view::columns::cursor;
 use crate::view::empty::{self, Empty};
@@ -224,10 +224,10 @@ fn section_line(app: &App, safety: Safety, width: usize) -> Line<'static> {
 }
 
 /// A category's row in its section, in the category's colour.
-fn group_line(app: &App, cat: u16, safety: Safety, width: usize) -> Line<'static> {
+fn group_line(app: &App, cat: CategoryIx, safety: Safety, width: usize) -> Line<'static> {
     let t = &app.theme;
     let ix = group_items(app, cat, safety);
-    let category = &dfdu_rules::CATEGORIES[cat as usize];
+    let category = cat.get();
     let arrow = if is_open(app, Row::Group { cat, safety }) {
         "   ▾ "
     } else {
@@ -345,9 +345,12 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
         return d;
     }
     let warnings: Vec<&str> = [
-        (Class::IN_USE, "in use"),
-        (Class::VCS_TRACKED, "tracked by git"),
-        (Class::VCS_UNKNOWN, "git could not tell if it is tracked"),
+        (ClassFlags::IN_USE, "in use"),
+        (ClassFlags::VCS_TRACKED, "tracked by git"),
+        (
+            ClassFlags::VCS_UNKNOWN,
+            "git could not tell if it is tracked",
+        ),
     ]
     .into_iter()
     .filter(|&(flag, _)| it.class.has(flag))

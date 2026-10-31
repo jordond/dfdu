@@ -1,9 +1,8 @@
 //! Scanner messages on the wire: metadata, errors, classes, and the messages; their chunks
 //! are in `chunk`.
 
-use dfdu_rules::protected::State;
 use dfdu_rules::{Hit, Inside, RuleSet};
-use dfdu_tree::{Class, ErrKind, Meta};
+use dfdu_tree::{Class, ClassFlags, ErrKind, Meta};
 
 use dfdu_scan::{DirId, JobId, ListingStatus, ScanMsg};
 
@@ -64,25 +63,15 @@ pub(super) fn dec_err(d: &mut Dec) -> R<ErrKind> {
 pub(super) fn enc_class(e: &mut Enc, c: Class) {
     e.rule(c.rule);
     e.safety(c.safety);
-    match c.degraded {
-        Some(r) => {
-            e.u8(1);
-            e.var(r.into());
-        }
-        None => e.u8(0),
-    }
-    e.u8(c.flags);
+    e.opt(c.degraded, |e, r| e.var(r.into()));
+    e.u8(c.flags.bits());
 }
 
 /// A class naming one of `rules` rules; none are known without rules.
 pub(super) fn dec_class(d: &mut Dec, rules: Option<&RuleSet>) -> R<Class> {
     let rule = d.rule()?;
     let safety = d.safety()?;
-    let degraded = match d.u8()? {
-        0 => None,
-        1 => Some(d.u16()?),
-        _ => return bad("degraded"),
-    };
+    let degraded = d.opt("degraded", Dec::u16)?;
     if !rules.is_some_and(|r| known(r, rule, degraded)) {
         return bad("class of an unknown rule");
     }
@@ -90,70 +79,41 @@ pub(super) fn dec_class(d: &mut Dec, rules: Option<&RuleSet>) -> R<Class> {
         rule,
         safety,
         degraded,
-        flags: d.u8()?,
+        flags: ClassFlags::from_bits(d.u8()?),
     })
 }
 
 pub(super) fn enc_wclass(e: &mut Enc, c: &WireClass) {
     e.bytes(&c.path);
-    e.var(c.inside.len() as u64);
-    for &r in &c.inside {
-        e.rule(r);
-    }
-    e.u8(c.protection as u8);
-    e.var(c.chain.len() as u64);
-    for h in &c.chain {
+    e.list(&c.inside, |e, &r| e.rule(r));
+    e.protection(c.protection);
+    e.list(&c.chain, |e, h| {
         e.rule(h.rule);
         e.safety(h.safety);
-        match h.degraded {
-            Some(r) => {
-                e.u8(1);
-                e.var(r.into());
-            }
-            None => e.u8(0),
-        }
+        e.opt(h.degraded, |e, r| e.var(r.into()));
         e.bool(h.inside == Inside::Check);
         e.bool(h.open);
-    }
+    });
 }
 
 /// A class to classify against; with `rules`, every rule it names must be one of them.
 pub(super) fn dec_wclass(d: &mut Dec, rules: Option<&RuleSet>) -> R<WireClass> {
     let path = d.bytes()?.to_vec();
-    let n = d.count(1)?;
-    let mut inside = Vec::with_capacity(n);
-    for _ in 0..n {
-        inside.push(d.rule()?);
-    }
-    let protection = match d.u8()? {
-        0 => State::Off,
-        1 => State::On,
-        2 => State::Sticky,
-        _ => return bad("protection"),
-    };
-    let n = d.count(5)?;
-    let mut chain = Vec::with_capacity(n);
-    for _ in 0..n {
-        let rule = d.rule()?;
-        let safety = d.safety()?;
-        let degraded = match d.u8()? {
-            0 => None,
-            1 => Some(d.u16()?),
-            _ => return bad("degraded"),
-        };
-        let inside = if d.bool()? {
-            Inside::Check
-        } else {
-            Inside::Done
-        };
-        chain.push(Hit {
-            rule,
-            safety,
-            degraded,
-            inside,
+    let inside = d.list(1, Dec::rule)?;
+    let protection = d.protection()?;
+    let chain = d.list(5, |d| {
+        Ok(Hit {
+            rule: d.rule()?,
+            safety: d.safety()?,
+            degraded: d.opt("degraded", Dec::u16)?,
+            inside: if d.bool()? {
+                Inside::Check
+            } else {
+                Inside::Done
+            },
             open: d.bool()?,
-        });
-    }
+        })
+    })?;
     let c = WireClass {
         path,
         inside,
@@ -193,13 +153,7 @@ pub(super) fn enc_msg(e: &mut Enc, m: &ScanMsg) {
                     e.u8(1);
                     e.var((*panicked).into());
                     e.var((*cancelled).into());
-                    match read_error {
-                        Some(k) => {
-                            e.u8(1);
-                            enc_err(e, *k);
-                        }
-                        None => e.u8(0),
-                    }
+                    e.opt(*read_error, enc_err);
                 }
                 ListingStatus::Failed(k) => {
                     e.u8(2);
@@ -207,11 +161,10 @@ pub(super) fn enc_msg(e: &mut Enc, m: &ScanMsg) {
                 }
                 ListingStatus::Cancelled => e.u8(3),
             }
-            e.var(classes.len() as u64);
-            for (d, c) in classes {
+            e.list(classes, |e, &(d, c)| {
                 e.var(d.0.into());
-                enc_class(e, *c);
-            }
+                enc_class(e, c);
+            });
         }
         ScanMsg::Stalled { job, dir } => {
             e.u8(2);
@@ -234,10 +187,7 @@ pub(super) fn enc_msg(e: &mut Enc, m: &ScanMsg) {
             e.var(job.0.into());
             e.var((*batch).into());
             for list in [changed, gone] {
-                e.var(list.len() as u64);
-                for &i in list {
-                    e.var(i.into());
-                }
+                e.list(list, |e, &i| e.var(i.into()));
             }
             e.u8(u8::from(*complete));
         }
@@ -256,21 +206,13 @@ pub(super) fn dec_msg(d: &mut Dec, rules: Option<&RuleSet>) -> R<ScanMsg> {
                 1 => ListingStatus::Partial {
                     panicked: d.u32()?,
                     cancelled: d.u32()?,
-                    read_error: match d.u8()? {
-                        0 => None,
-                        1 => Some(dec_err(d)?),
-                        _ => return bad("read error"),
-                    },
+                    read_error: d.opt("read error", dec_err)?,
                 },
                 2 => ListingStatus::Failed(dec_err(d)?),
                 3 => ListingStatus::Cancelled,
                 _ => return bad("listing status"),
             };
-            let n = d.count(5)?;
-            let mut classes = Vec::with_capacity(n);
-            for _ in 0..n {
-                classes.push((DirId(d.u32()?), dec_class(d, rules)?));
-            }
+            let classes = d.list(5, |d| Ok((DirId(d.u32()?), dec_class(d, rules)?)))?;
             ScanMsg::Close {
                 job,
                 dir,
@@ -288,15 +230,8 @@ pub(super) fn dec_msg(d: &mut Dec, rules: Option<&RuleSet>) -> R<ScanMsg> {
         },
         4 => {
             let (job, batch) = (JobId(d.u32()?), d.u32()?);
-            let mut lists = [Vec::new(), Vec::new()];
-            for list in &mut lists {
-                let n = d.count(1)?;
-                list.reserve(n);
-                for _ in 0..n {
-                    list.push(d.u32()?);
-                }
-            }
-            let [changed, gone] = lists;
+            let changed = d.list(1, Dec::u32)?;
+            let gone = d.list(1, Dec::u32)?;
             ScanMsg::Verified {
                 job,
                 batch,

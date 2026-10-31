@@ -142,3 +142,6 @@ impl Verify {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::HostPath;
+use dfdu_tree::{HostPath, Target};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -19,7 +19,7 @@ use super::{
     styled, text,
 };
 use crate::app::App;
-use crate::model::snapshot::{self, Mark, Target, test_entry};
+use crate::model::snapshot::{self, Mark, test_entry};
 use crate::theme::Theme;
 
 /// A scan of a home directory 14 s in, with entries that are scanning, stalled and unreadable,
@@ -184,7 +184,7 @@ fn target_survives_rescan_swap() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let sub_path = dir.join("sub");
     let mut target = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &HostPath::local(&sub_path)).expect("sub");
+        let sub = dfdu_tree::find_path(&m.tree, &HostPath::local(&sub_path)).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = target.node.expect("node");
@@ -271,6 +271,7 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
     let out = render(&mut app, t0, 90, 8);
     assert!(out.contains("(shared between entries)"), "{out}");
     let at = app
+        .list
         .rows
         .iter()
         .position(|&i| app.snap.entries[i].pseudo)
@@ -288,9 +289,9 @@ fn errors_are_listed_and_lead_to_the_entry() {
     let meta = |kind, ino| meta(kind, 100, ino);
     let mut m = dfdu_engine::Model::default();
     let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 1), true);
-    let a = m.tree.add_dir_flagged(root, b"a", &meta(Kind::Dir, 2), 0);
-    let b = m.tree.add_dir_flagged(a, b"b", &meta(Kind::Dir, 3), 0);
-    let locked = m.tree.add_dir_flagged(b, b"locked", &meta(Kind::Dir, 4), 0);
+    let a = m.tree.add_dir(root, b"a", &meta(Kind::Dir, 2));
+    let b = m.tree.add_dir(a, b"b", &meta(Kind::Dir, 3));
+    let locked = m.tree.add_dir(b, b"locked", &meta(Kind::Dir, 4));
     let gone = m
         .tree
         .add_file(root, b"gone", &meta(Kind::File, 5), false, None);
@@ -332,7 +333,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     assert!(out.contains("1 error inside"), "{out}");
     assert!(out.contains("! errors"), "{out}");
     let fx = app.key(press(KeyCode::Char('!')), t0);
-    assert!(matches!(fx[..], [crate::Effect::ShowErrors]));
+    assert!(matches!(fx[..], [crate::app::Effect::ShowErrors]));
     app.show_errors(list);
     let out = render(&mut app, t0, 100, 12);
     assert!(out.contains("2 not read"), "{out}");
@@ -363,7 +364,7 @@ fn disk_picker() {
         role: None,
         shares_space_with: vec![],
     };
-    let mut p = crate::Picker::new(vec![
+    let mut p = crate::features::picker::Picker::new(vec![
         Disk {
             also_at: vec!["/home".into()],
             ..disk(
@@ -374,6 +375,7 @@ fn disk_picker() {
                     total: 500 * gib,
                     used: 400 * gib,
                     available: 90 * gib,
+                    purgeable: None,
                 }),
             )
         },
@@ -386,6 +388,7 @@ fn disk_picker() {
                 total: 64 * gib,
                 used: 0,
                 available: 64 * gib,
+                purgeable: None,
             }),
         ),
     ]);
@@ -405,11 +408,13 @@ fn disk_picker() {
     assert!(p.key(KeyCode::Down).is_none());
     assert!(p.key(KeyCode::Down).is_none());
     match p.key(KeyCode::Enter) {
-        Some(crate::Picked::Scan(path)) => assert_eq!(path, std::path::Path::new("/mnt/usb")),
+        Some(crate::features::picker::Picked::Scan(path)) => {
+            assert_eq!(path, std::path::Path::new("/mnt/usb"))
+        }
         _ => panic!("expected a scan of /mnt/usb"),
     }
     assert!(matches!(
         p.key(KeyCode::Char('q')),
-        Some(crate::Picked::Quit)
+        Some(crate::features::picker::Picked::Quit)
     ));
 }

@@ -59,9 +59,9 @@ fn dev(t0: Instant) -> App {
         target,
         Some(Class {
             rule,
-            safety: dfdu_rules::Safety::Regenerable,
+            safety: dfdu_tree::Safety::Regenerable,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         }),
     );
     for (name, size) in [

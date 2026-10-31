@@ -36,10 +36,11 @@ use std::io;
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::io::{AsHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use dfdu_sys::{DirReader, LinkQuery, Volume};
 use dfdu_tree::{ErrKind, Kind, Meta, WinStat};
+use parking_lot::Mutex;
 
 use super::ntfs::{Boot, MftBuilder, MftIndex};
 use super::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock, portable_queries};
@@ -79,13 +80,7 @@ impl MftCache {
     /// The table of volume `serial`, which `path` is on, read on first use; other workers
     /// wanting it wait for that read.
     fn get(&self, serial: u32, path: &Path) -> Result<Arc<MftIndex>, Arc<io::Error>> {
-        let slot = self
-            .vols
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(serial)
-            .or_default()
-            .clone();
+        let slot = self.vols.lock().entry(serial).or_default().clone();
         slot.get_or_init(|| {
             let t = read_mft(path).map(Arc::new).map_err(Arc::new);
             (std::time::Instant::now(), t)
@@ -96,10 +91,7 @@ impl MftCache {
 
     /// Reads volume `serial`'s table again on its next use, unless it was read just now.
     fn forget(&self, serial: u32) {
-        let mut vols = self
-            .vols
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut vols = self.vols.lock();
         if vols
             .get(&serial)
             .and_then(|t| t.get())

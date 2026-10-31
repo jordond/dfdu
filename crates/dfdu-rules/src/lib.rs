@@ -7,7 +7,7 @@
 //! (`child`, `marker`) are checked when its listing arrives ([`RuleSet::check_inside`]).
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
 
-pub mod dirs;
+mod category;
 mod glob;
 pub mod hash;
 pub mod linked;
@@ -17,7 +17,7 @@ pub mod protected;
 pub mod schema;
 pub mod vars;
 
-pub use dfdu_tree::{RuleIx, Safety};
+pub use category::{CATEGORIES, Category, CategoryColor, CategoryIx};
 pub use glob::{Glob, GlobError};
 pub use linked::{Linked, linked_outside};
 pub use load::{LoadError, builtin, load, load_from, sources};
@@ -25,6 +25,8 @@ pub use matcher::{
     Candidate, Dir, Hit, Inside, MAX_RULES, Reach, ReadMarker, RuleSet, Stat, Verdict, stem,
 };
 pub use vars::{Env, ExpandError};
+
+use dfdu_tree::Safety;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Platform {
@@ -78,15 +80,21 @@ pub enum Action {
 }
 
 impl Action {
+    /// Which action it is, without the native commands.
+    #[must_use]
+    pub fn name(&self) -> ActionName {
+        match self {
+            Action::Delete => ActionName::Delete,
+            Action::Trash => ActionName::Trash,
+            Action::Native(_) => ActionName::Native,
+            Action::Report => ActionName::Report,
+        }
+    }
+
     /// Its name in rule files.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Action::Delete => "delete",
-            Action::Trash => "trash",
-            Action::Native(_) => "native",
-            Action::Report => "report",
-        }
+        self.name().as_str()
     }
 
     /// The native commands of a `native` action.
@@ -99,6 +107,39 @@ impl Action {
     }
 }
 
+/// An [`Action`] as rule files name it (`action = "trash"`); loading pairs `native` with the
+/// rule's native commands.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ActionName {
+    Delete,
+    Trash,
+    Native,
+    Report,
+}
+
+impl ActionName {
+    #[must_use]
+    pub fn parse(s: &str) -> Option<ActionName> {
+        Some(match s {
+            "delete" => ActionName::Delete,
+            "trash" => ActionName::Trash,
+            "native" => ActionName::Native,
+            "report" => ActionName::Report,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActionName::Delete => "delete",
+            ActionName::Trash => "trash",
+            ActionName::Native => "native",
+            ActionName::Report => "report",
+        }
+    }
+}
+
 /// What kind of entry a rule matches.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
@@ -107,121 +148,27 @@ pub enum Kind {
     Any,
 }
 
-/// The theme's colour slots for categories (`cat.*` tokens), in their order.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum CategoryColor {
-    Cache,
-    Build,
-    Vm,
-    Toolchain,
-    Media,
-    Download,
-    Container,
-    Other,
-}
+impl Kind {
+    /// From its name in rule files (`match.kind`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Kind> {
+        Some(match s {
+            "dir" => Kind::Dir,
+            "file" => Kind::File,
+            "any" => Kind::Any,
+            _ => return None,
+        })
+    }
 
-/// One category of the taxonomy.
-#[derive(Debug)]
-pub struct Category {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub color: CategoryColor,
-}
-
-const fn cat(id: &'static str, name: &'static str, color: CategoryColor) -> Category {
-    Category { id, name, color }
-}
-
-/// Every category. A rule's `category` must be one of these ids. The index is the category's
-/// number ([`category_index`]); 0 is never used, so a node can store 0 for "none".
-pub const CATEGORIES: &[Category] = &[
-    cat("", "", CategoryColor::Other),
-    cat("dev.build", "Project build output", CategoryColor::Build),
-    cat("dev.deps", "Project dependencies", CategoryColor::Build),
-    cat(
-        "dev.pkgcache",
-        "Package manager caches",
-        CategoryColor::Cache,
-    ),
-    cat(
-        "dev.xcode",
-        "Xcode and Apple simulators",
-        CategoryColor::Toolchain,
-    ),
-    cat(
-        "dev.android",
-        "Android SDK and emulators",
-        CategoryColor::Vm,
-    ),
-    cat(
-        "dev.toolchains",
-        "Toolchains and runtimes",
-        CategoryColor::Toolchain,
-    ),
-    cat(
-        "dev.containers",
-        "Containers and VMs",
-        CategoryColor::Container,
-    ),
-    cat("dev.ide", "IDE and editor caches", CategoryColor::Cache),
-    cat("dev.nix", "Nix", CategoryColor::Toolchain),
-    cat("sys.cache", "OS and user caches", CategoryColor::Cache),
-    cat("sys.logs", "Logs", CategoryColor::Other),
-    cat("sys.crash", "Crash reports and dumps", CategoryColor::Other),
-    cat("sys.trash", "Trash", CategoryColor::Download),
-    cat(
-        "sys.updates",
-        "OS update leftovers",
-        CategoryColor::Download,
-    ),
-    cat("sys.snapshots", "Snapshots", CategoryColor::Other),
-    cat("app.browser", "Browser caches", CategoryColor::Cache),
-    cat("app.chat", "Chat and meeting apps", CategoryColor::Cache),
-    cat("app.media", "Media apps", CategoryColor::Media),
-    cat("app.games", "Games", CategoryColor::Media),
-    cat("app.mail", "Mail", CategoryColor::Other),
-    cat("app.mobile", "Mobile device data", CategoryColor::Vm),
-    cat(
-        "content.large-old",
-        "Large, not recently used files",
-        CategoryColor::Other,
-    ),
-    cat(
-        "content.duplicates",
-        "Duplicate files",
-        CategoryColor::Other,
-    ),
-    cat(
-        "content.installers",
-        "Installers and disk images",
-        CategoryColor::Download,
-    ),
-    cat("content.media", "Large video files", CategoryColor::Media),
-    cat(
-        "content.extracted",
-        "Archives already extracted",
-        CategoryColor::Download,
-    ),
-    cat(
-        "content.empty",
-        "Empty files and folders",
-        CategoryColor::Other,
-    ),
-    cat(
-        "content.broken-links",
-        "Broken symbolic links",
-        CategoryColor::Other,
-    ),
-];
-
-/// The number of category `id`, `None` for an id outside the taxonomy.
-#[must_use]
-pub fn category_index(id: &str) -> Option<u16> {
-    CATEGORIES
-        .iter()
-        .skip(1)
-        .position(|c| c.id == id)
-        .and_then(|i| u16::try_from(i + 1).ok())
+    /// Its name in rule files.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Dir => "dir",
+            Kind::File => "file",
+            Kind::Any => "any",
+        }
+    }
 }
 
 /// A file inside a candidate whose presence (and first bytes) a rule checks.
@@ -263,8 +210,7 @@ pub enum Source {
 )]
 pub struct Rule {
     pub id: String,
-    /// Index into [`CATEGORIES`].
-    pub category: u16,
+    pub category: CategoryIx,
     pub name: String,
     pub safety: Safety,
     pub action: Action,
@@ -303,7 +249,7 @@ pub struct Rule {
 impl Rule {
     #[must_use]
     pub fn category(&self) -> &'static Category {
-        &CATEGORIES[self.category as usize]
+        self.category.get()
     }
 
     /// Whether some condition can only be checked once the candidate's own listing is known.
@@ -315,6 +261,7 @@ impl Rule {
 
 /// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
 /// the deletion-time protection check both read paths through this.
+#[must_use]
 pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
     rule_path_on(&dfdu_tree::HostPath::local(path))
 }
@@ -378,14 +325,25 @@ mod tests {
     }
 
     #[test]
-    fn categories() {
-        assert_eq!(category_index("dev.build"), Some(1));
-        assert_eq!(category_index(""), None);
-        assert_eq!(category_index("dev.nope"), None);
-        assert_eq!(
-            CATEGORIES[category_index("sys.trash").unwrap() as usize].name,
-            "Trash"
-        );
+    fn names_parse_back() {
+        for a in [
+            ActionName::Delete,
+            ActionName::Trash,
+            ActionName::Native,
+            ActionName::Report,
+        ] {
+            assert_eq!(ActionName::parse(a.as_str()), Some(a));
+        }
+        for k in [Kind::Dir, Kind::File, Kind::Any] {
+            assert_eq!(Kind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(Action::Trash.as_str(), "trash");
+        assert_eq!(ActionName::parse("Delete"), None);
+        assert_eq!(Kind::parse("pipe"), None);
+    }
+
+    #[test]
+    fn safety_orders_by_risk() {
         assert!(Safety::Safe < Safety::Review && Safety::Review < Safety::Protected);
     }
 }

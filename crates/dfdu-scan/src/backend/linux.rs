@@ -8,7 +8,7 @@
 //! The calls that happen once per directory at most (mount table, subvolume and extent probes)
 //! are the portable backend's.
 
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, OsStr};
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dfdu_tree::{ErrKind, Kind, Meta};
-use rustix::fs::{AtFlags, CWD, FileType, OFlags, RawDir, StatxFlags};
+use rustix::fs::{AtFlags, FileType, OFlags, RawDir, StatxFlags};
 
-use super::unix::{name_at, push_name};
+use super::unix::{UnixStat, name_at, push_name, unix_path_queries};
 use super::{Backend, Block, DirStream, PortableBackend, Raw, RawBlock, portable_queries};
 
 const MASK: StatxFlags = StatxFlags::TYPE
@@ -147,9 +147,18 @@ fn kind(t: FileType) -> Kind {
     }
 }
 
-/// Opens a directory by path, in pieces when the path is longer than the kernel accepts.
-fn open_dir(path: &Path) -> io::Result<OwnedFd> {
-    super::unix::open_dir(path, OFlags::empty())
+impl UnixStat for LinuxBackend {
+    /// A symlink as the last component of a directory's path is followed.
+    const OPEN_LAST: OFlags = OFlags::empty();
+
+    fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta> {
+        stat_at(dir, name, flags)
+    }
+
+    /// `statx` of the descriptor itself, for the mount id.
+    fn stat_fd(fd: BorrowedFd<'_>) -> io::Result<Meta> {
+        stat_at(fd, c"", AtFlags::EMPTY_PATH)
+    }
 }
 
 /// `getdents64` buffer per open directory.
@@ -224,37 +233,8 @@ impl Backend for LinuxBackend {
     type Loc = PathBuf;
     type Stream = LinuxStream;
 
-    fn read_prefix(&self, dir: &Self::Loc, name: &[u8], len: usize) -> Option<Vec<u8>> {
-        super::read_prefix_at(dir, name, len)
-    }
-
-    fn link_target_missing(&self, dir: &Self::Loc, name: &[u8]) -> bool {
-        super::link_target_missing_at(dir, name)
-    }
-
     fn loc_from_path(&self, path: &Path) -> PathBuf {
         path.to_path_buf()
-    }
-
-    fn stat_root(&self, loc: &PathBuf) -> io::Result<Meta> {
-        let name = CString::new(loc.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::empty()) {
-            // Too long for one call: stat the directory once it is open.
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                stat_at(open_dir(loc)?.as_fd(), c"", AtFlags::EMPTY_PATH)
-            }
-            r => r,
-        }
-    }
-
-    fn stat_dir(&self, path: &Path) -> io::Result<Meta> {
-        let name = CString::new(path.as_os_str().as_bytes())?;
-        match stat_at(CWD, &name, AtFlags::SYMLINK_NOFOLLOW) {
-            Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
-                stat_at(open_dir(path)?.as_fd(), c"", AtFlags::EMPTY_PATH)
-            }
-            r => r,
-        }
     }
 
     fn open(&self, loc: &PathBuf, storage: dfdu_sys::Storage) -> io::Result<LinuxStream> {
@@ -264,7 +244,7 @@ impl Backend for LinuxBackend {
             dfdu_sys::Storage::Unknown => self.inode_order,
         };
         Ok(LinuxStream {
-            fd: Arc::new(open_dir(loc)?),
+            fd: Arc::new(super::unix::open_dir(loc, Self::OPEN_LAST)?),
             path: Arc::new(loc.clone()),
             buf: Vec::new(),
             pending_err: None,
@@ -274,6 +254,7 @@ impl Backend for LinuxBackend {
     }
 
     portable_queries!(loc => loc);
+    unix_path_queries!();
 }
 
 #[cfg(test)]

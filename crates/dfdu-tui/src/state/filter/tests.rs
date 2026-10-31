@@ -132,7 +132,7 @@ fn query_typed_before_the_first_snapshot_stays() {
     app.reorder(t0);
     assert!(!editing(&app));
     assert_eq!(line_text(&app), None);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
 }
 
 #[test]
@@ -161,14 +161,14 @@ fn enter_keeps_filter_esc_clears() {
     app.reorder(t0);
     assert!(!editing(&app));
     assert_eq!(line_text(&app), None);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
 
     // Ctrl-U empties the input; Enter on an empty query closes it.
     filter_by(&mut app, "/xyz", t0);
-    assert_eq!(app.rows, [] as [usize; 0]);
+    assert_eq!(app.list.rows, [] as [usize; 0]);
     app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), t0);
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
     app.key(press(KeyCode::Enter), t0);
     assert_eq!(line_text(&app), None);
 }
@@ -185,11 +185,11 @@ fn esc_in_list_clears_before_closing() {
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.rows.len(), 3);
+    assert_eq!(app.list.rows.len(), 3);
     // Then Esc clears the filter, and a second Esc has nothing left to do.
     assert!(app.key(press(KeyCode::Esc), t0).is_empty());
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
     assert_eq!(line_text(&app), None);
     assert!(!clear(&mut app));
 }
@@ -213,7 +213,7 @@ fn hidden_toggle_and_filter_combine() {
     );
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 6, "hidden files stay hidden");
+    assert_eq!(app.list.rows.len(), 6, "hidden files stay hidden");
 }
 
 #[test]
@@ -222,18 +222,18 @@ fn new_entries_during_scan_are_filtered() {
     let mut app = app_with(Theme::no_color(), entries(), t0);
     filter_by(&mut app, "/li", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert_eq!(app.rows.len(), 3);
+    assert_eq!(app.list.rows.len(), 3);
     let mut es = entries();
     es.push(test_entry(7, "linux", 1 << 40));
     es.push(test_entry(8, "zzz", 1 << 40));
     let at = t0 + Duration::from_millis(100);
     app.refresh(snap_with_totals(es.clone(), 2), at);
-    assert_eq!((app.rows.len(), app.new_count), (3, 1));
-    assert_eq!(app.new_largest, 1 << 40);
+    assert_eq!((app.list.rows.len(), app.list.new_count), (3, 1));
+    assert_eq!(app.list.new_largest, 1 << 40);
     es.push(test_entry(9, "lilo.conf", 5));
     es.push(test_entry(10, "other", 5));
     app.refresh(snap_with_totals(es, 3), at);
-    assert_eq!((app.rows.len(), app.new_count), (3, 2));
+    assert_eq!((app.list.rows.len(), app.list.new_count), (3, 2));
     assert_eq!(
         line_text(&app).as_deref(),
         Some(" filter: \"li\" (5 of 11)   / edit  Esc clear")
@@ -272,7 +272,7 @@ fn filter_keeps_sort_order() {
     let picked = app.selected_entry().map(|e| e.name.to_vec());
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
     assert_eq!(with_o(row_names(&app)), filtered_by_name);
     assert_eq!(app.selected_entry().map(|e| e.name.to_vec()), picked);
     assert_eq!(picked.as_deref(), Some(filtered_by_name[2].as_bytes()));
@@ -306,7 +306,7 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
     assert_eq!(last.as_deref(), Some(&b"build.log"[..]));
     assert!(app.key(press(KeyCode::Esc), t0).is_empty());
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows.len(), 7);
     assert_eq!(picked(&app), last);
 }
 
@@ -314,7 +314,7 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
 fn exact_rows(app: &App) -> Vec<usize> {
     let mut o = crate::state::order::Order::default();
     let visible = |i: usize, e: &EntryData| {
-        !e.ghost && (!app.hide_hidden || !e.hidden()) && app.filter.matches(i, e)
+        !e.ghost && (!app.hide_hidden || !e.hidden()) && app.filter.matches(i)
     };
     o.sort_exact(&app.snap.entries, visible, app.sort);
     o.rows().to_vec()
@@ -343,8 +343,8 @@ fn filter_rows_are_those_of_an_exact_sort() {
             app.key(press(k), t0);
         }
         app.reorder(t0);
-        assert_eq!(app.rows, exact_rows(&app), "after {keys:?}");
-        seen.push(app.rows.len());
+        assert_eq!(app.list.rows, exact_rows(&app), "after {keys:?}");
+        seen.push(app.list.rows.len());
     }
     assert_eq!(seen, [6, 1, 6, 9, 6, 0, 9]);
 
@@ -352,11 +352,11 @@ fn filter_rows_are_those_of_an_exact_sort() {
     filter_by(&mut app, "/do", t0);
     es.push(test_entry(9, "docs", 10 << 30));
     app.refresh(snap_with_totals(es, 2), t0);
-    assert_eq!(app.new_count, 1);
+    assert_eq!(app.list.new_count, 1);
     filter_by(&mut app, "s", t0);
     assert_eq!(row_names(&app), ["docs", "Downloads"]);
-    assert_eq!(app.rows, exact_rows(&app));
-    assert_eq!(app.new_count, 0);
+    assert_eq!(app.list.rows, exact_rows(&app));
+    assert_eq!(app.list.new_count, 0);
 }
 
 #[test]
@@ -371,9 +371,9 @@ fn a_snapshot_before_the_cleared_filter_is_applied_is_sorted_in() {
     es.push(test_entry(7, "zeta", 1 << 30));
     app.refresh(snap_with_totals(es, 2), t0);
     app.reorder(t0);
-    assert_eq!(app.rows, exact_rows(&app));
+    assert_eq!(app.list.rows, exact_rows(&app));
     assert_eq!(row_names(&app)[0], "build.log");
-    assert_eq!(app.rows.len(), 8);
+    assert_eq!(app.list.rows.len(), 8);
 }
 
 #[test]
@@ -382,13 +382,13 @@ fn showing_hidden_files_before_the_cleared_filter_is_applied_shows_them() {
     let mut app = app_with(Theme::no_color(), entries(), t0);
     app.key(press(KeyCode::Char('e')), t0);
     app.reorder(t0);
-    assert_eq!(app.rows.len(), 6);
+    assert_eq!(app.list.rows.len(), 6);
     filter_by(&mut app, "/d", t0);
     app.key(press(KeyCode::Esc), t0);
     app.key(press(KeyCode::Char('e')), t0);
     app.reorder(t0);
-    assert_eq!(app.rows, exact_rows(&app));
-    assert_eq!(app.rows.len(), 7);
+    assert_eq!(app.list.rows, exact_rows(&app));
+    assert_eq!(app.list.rows.len(), 7);
 }
 
 #[test]
@@ -417,7 +417,7 @@ fn filter_rows_after_an_automatic_sort_are_those_of_an_exact_sort() {
     app.key(press(KeyCode::Backspace), later);
     app.reorder(later);
     assert_eq!(row_names(&app), ["x", "y"]);
-    assert_eq!(app.rows, exact_rows(&app));
+    assert_eq!(app.list.rows, exact_rows(&app));
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn first_keystroke_times(n: usize) {
         render_buffer(&mut app, later, 100, 30);
         times.push(t.elapsed());
     }
-    let shown = app.rows.len();
+    let shown = app.list.rows.len();
     println!(
         "first filter keystrokes on {n} entries, each with its frame: {times:?}, {shown} rows"
     );

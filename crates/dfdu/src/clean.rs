@@ -1,23 +1,37 @@
 //! `dfdu clean`: deletes the rules' matches that `dfdu report` recommends (or, with `--all`,
-//! every match that passes the filters), after the same checks as the browser's deletes. It
-//! is a dry run unless `--yes` is given, and runs the owning tools' commands only with
-//! `--allow-commands`.
+//! every match that passes the filters). It is a dry run unless `--yes` is given, and runs the
+//! owning tools' commands only with `--allow-commands`.
+//!
+//! The deletes go to the engine as the browser's do, with the same checks when they run. What
+//! it picks is stricter than what the browser's cleanup view lets you tick, which holds back
+//! only protected matches and shows the rest of these as reason chips: it also skips matches git
+//! could not tell about, ones a running process uses, and ones whose git or process checks did not
+//! finish, besides those still being scanned, report-only ones, ones only their tool's command
+//! cleans (without `--allow-commands`) and, without `--all`, ones not recommended. What it
+//! prints is in `output`.
+
+mod output;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Args;
-use dfdu_engine::{Command, Engine, Mode, Model, WaitIdle};
-use dfdu_rules::{Action, RuleSet, Safety};
+use dfdu_engine::{Command, Engine, Mode};
+use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, HostPath, NodeRef};
-use serde_json::{Value, json};
+use dfdu_tree::{ClassFlags, NodeRef, Safety};
 
-use crate::report::{self, Filter, Item};
-use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, json as js, launch, written};
+use crate::args::{BadValue, ReportFormat, safety_arg};
+use crate::matches::{self, Filter, Item};
+use crate::output::plural;
+use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
+use output::{Results, print_json, print_table};
+
+/// How long one tool's cleanup command may run before it counts as not finished.
+const NATIVE_WAIT: Duration = Duration::from_secs(3600);
 
 #[derive(Args)]
 #[expect(
@@ -57,8 +71,8 @@ pub struct CleanArgs {
     #[arg(long)]
     pub restore_staged: bool,
     /// Output: table or json (schema/clean.v1.json).
-    #[arg(long, value_enum, default_value_t = report::ReportFormat::Table)]
-    pub format: report::ReportFormat,
+    #[arg(long, value_enum, default_value_t = ReportFormat::Table)]
+    pub format: ReportFormat,
     /// Worker threads.
     #[arg(long)]
     pub threads: Option<usize>,
@@ -83,11 +97,11 @@ impl ModeArg {
     }
 }
 
-fn clean_safety(s: &str) -> Result<Safety, String> {
-    match report::safety_arg(s)? {
-        Safety::Manual | Safety::Protected => {
-            Err(format!("{s} matches are never deleted by dfdu clean"))
-        }
+fn clean_safety(s: &str) -> Result<Safety, BadValue> {
+    match safety_arg(s)? {
+        Safety::Manual | Safety::Protected => Err(BadValue::new(format!(
+            "{s} matches are never deleted by dfdu clean"
+        ))),
         l => Ok(l),
     }
 }
@@ -131,13 +145,14 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
             it.safety().as_str(),
             args.safety.as_str()
         )
-    } else if c.has(Class::VCS_TRACKED) {
+    } else if c.has(ClassFlags::VCS_TRACKED) {
         "tracked by version control".into()
-    } else if c.has(Class::VCS_UNKNOWN) {
+    } else if c.has(ClassFlags::VCS_UNKNOWN) {
         "git could not tell whether it tracks files in it".into()
-    } else if c.has(Class::IN_USE) {
+    } else if c.has(ClassFlags::IN_USE) {
         "in use: a process it belongs to is running".into()
-    } else if !c.has(Class::CHECKED) && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
+    } else if !c.has(ClassFlags::CHECKED)
+        && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
     {
         "its checks (git tracking, running processes) did not finish".into()
     } else if it.scanning {
@@ -157,7 +172,7 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
 /// `--restore-staged` (and `--yes`) finishes or restores their staged items. Returns whether
 /// something failed.
 fn earlier_sessions(args: &CleanArgs) -> bool {
-    let Some(dir) = dfdu_clean::default_journal_dir() else {
+    let Some(dir) = dfdu_sys::dirs::journal_dir() else {
         return false;
     };
     let mut r = match dfdu_clean::recover::scan(&dir) {
@@ -200,9 +215,8 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     }
     if !r.items.is_empty() {
         eprintln!(
-            "dfdu: {} item{} earlier sessions left unfinished (dfdu recover lists them{})",
-            r.items.len(),
-            if r.items.len() == 1 { "" } else { "s" },
+            "dfdu: {} earlier sessions left unfinished (dfdu recover lists them{})",
+            plural(r.items.len(), "item", "items"),
             if act {
                 ""
             } else {
@@ -213,21 +227,17 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     failed
 }
 
-pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
+pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
     let earlier_failed = earlier_sessions(args);
-    let (engine, _) = match report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)
-    {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let (engine, _) = matches::scan(&args.path, args.mounts, args.threads, rules.clone(), true)?;
     let now = dfdu_tree::now_secs();
     let (root, complete, items) = engine.read(|m| {
         let root = m.tree.roots().next().map(|r| m.tree.path_buf(r));
         let complete = m.tree.roots().next().is_some_and(|r| m.complete(r));
-        (root, complete, report::items(m, rules, &args.filter, now))
+        (root, complete, matches::items(m, rules, &args.filter, now))
     });
     let Some(root) = root else {
-        return ExitCode::from(1);
+        return Err(ExitCode::from(1));
     };
     let mut outcomes: Vec<Outcome> = items
         .iter()
@@ -239,36 +249,31 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
     if args.yes {
         execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
-    let code = engine.read(|m| {
-        let r = if args.format == report::ReportFormat::Json {
-            print_json(
-                m,
-                rules,
-                args,
-                &Results {
-                    root: &root,
-                    items: &items,
-                    outcomes: &outcomes,
-                    complete,
-                    now,
-                },
-            )
-        } else {
-            print_table(rules, args, &items, &outcomes)
-        };
-        if let Err(code) = written(r) {
-            return code;
-        }
+    engine.shutdown(launch::SHUTDOWN);
+    if args.format == ReportFormat::Json {
+        written(print_json(
+            rules,
+            args,
+            &Results {
+                root: &root,
+                items: &items,
+                outcomes: &outcomes,
+                complete,
+                now,
+            },
+        ))?;
+    } else {
+        print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
+    }
+    Ok(
         if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
             ExitCode::from(EXIT_DELETE_FAILED)
         } else if !complete {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
-        }
-    });
-    engine.shutdown(launch::SHUTDOWN);
-    code
+        },
+    )
 }
 
 /// Deletes the planned items in one plan, then runs the native commands one at a time.
@@ -293,14 +298,11 @@ fn execute<B: Backend>(
             items: deletes.iter().flat_map(|&i| items[i].targets()).collect(),
             mode,
         });
-        let summary = loop {
-            let stopped = matches!(engine.wait_idle(None), WaitIdle::Fatal(_));
-            let s = engine.read(|m| m.status.last_delete.clone());
-            if s.as_ref().map(|d| d.plan) != before || stopped {
-                break s;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let summary = launch::wait_for(engine, None, |m| {
+            (m.status.last_delete.as_ref())
+                .filter(|d| Some(d.plan) != before)
+                .cloned()
+        });
         let problems: HashMap<NodeRef, String> = summary
             .map(|s| s.problems.into_iter().collect())
             .unwrap_or_default();
@@ -318,9 +320,7 @@ fn execute<B: Backend>(
         });
         if mode == Mode::Stage {
             engine.send(Command::CommitStaged);
-            while engine.read(|m| m.status.staged.items > 0 && m.status.fatal.is_none()) {
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            launch::wait_for(engine, None, |m| (m.status.staged.items == 0).then_some(()));
         }
     }
     for (n, &i) in commands.iter().enumerate() {
@@ -331,169 +331,16 @@ fn execute<B: Backend>(
             variant: None,
             dry_run: false,
         });
-        let t0 = Instant::now();
-        let done = loop {
-            let d = engine.read(|m| {
-                m.status
-                    .native
-                    .as_ref()
-                    .filter(|r| r.id == id)
-                    .and_then(|r| r.done.clone())
-            });
-            if let Some(d) = d {
-                break d;
-            }
-            if engine.read(|m| m.status.fatal.is_some()) || t0.elapsed() > Duration::from_secs(3600)
-            {
-                break Err("did not finish".into());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        let done = launch::wait_for(engine, Some(NATIVE_WAIT), |m| {
+            (m.status.native.as_ref())
+                .filter(|r| r.id == id)
+                .and_then(|r| r.done.clone())
+        })
+        .unwrap_or_else(|| Err("did not finish".into()));
         outcomes[i] = match done {
             Ok(()) => Outcome::Deleted,
             Err(e) => Outcome::Failed(e),
         };
     }
     engine.wait_idle(None);
-}
-
-fn verb(mode: ModeArg) -> &'static str {
-    match mode {
-        ModeArg::Trash => "moved to the trash",
-        ModeArg::Stage | ModeArg::Delete => "deleted",
-    }
-}
-
-fn print_table(
-    rules: &RuleSet,
-    args: &CleanArgs,
-    items: &[Item],
-    outcomes: &[Outcome],
-) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
-    if items.is_empty() {
-        writeln!(w, "nothing found")?;
-        return w.flush();
-    }
-    for (it, o) in items.iter().zip(outcomes) {
-        let what = match o {
-            Outcome::Planned => "would delete".to_string(),
-            Outcome::Deleted if matches!(rules.rule(it.class.rule).action, Action::Native(_)) => {
-                "ran its command".into()
-            }
-            Outcome::Deleted => verb(args.mode).into(),
-            Outcome::Skipped(_) => "skipped".into(),
-            Outcome::Failed(_) => "FAILED".into(),
-        };
-        let why = o.reason().map(|r| format!("  ({r})")).unwrap_or_default();
-        let how = match rules.rule(it.class.rule).action.native() {
-            Some(n) => {
-                let command = dfdu_engine::native_argv(&n.command, &it.path);
-                format!("  `{}`", dfdu_engine::shown_argv(&command))
-            }
-            None => String::new(),
-        };
-        writeln!(
-            w,
-            "{:<14} {:>10}  {}{how}{why}",
-            what,
-            dfdu_engine::human(it.disk),
-            it.path.display()
-        )?;
-    }
-    let sum = |f: &dyn Fn(&Outcome) -> bool| {
-        items
-            .iter()
-            .zip(outcomes)
-            .filter(|(_, o)| f(o))
-            .fold((0usize, 0u64), |(n, b), (it, _)| (n + 1, b + it.disk))
-    };
-    writeln!(w)?;
-    if args.yes {
-        let (n, b) = sum(&|o| *o == Outcome::Deleted);
-        let (f, _) = sum(&|o| matches!(o, Outcome::Failed(_)));
-        writeln!(
-            w,
-            "{n} item{} ({}) {}{}",
-            if n == 1 { "" } else { "s" },
-            dfdu_engine::human(b),
-            verb(args.mode),
-            if f > 0 {
-                format!(", {f} failed")
-            } else {
-                String::new()
-            }
-        )?;
-    } else {
-        let (n, b) = sum(&|o| *o == Outcome::Planned);
-        writeln!(
-            w,
-            "dry run: {n} item{} ({}) would be {}; nothing was changed (--yes does it)",
-            if n == 1 { "" } else { "s" },
-            dfdu_engine::human(b),
-            verb(args.mode)
-        )?;
-    }
-    w.flush()
-}
-
-/// What `run` scanned and did, for its output.
-struct Results<'a> {
-    root: &'a std::path::Path,
-    items: &'a [Item],
-    outcomes: &'a [Outcome],
-    complete: bool,
-    now: i64,
-}
-
-fn print_json(m: &Model, rules: &RuleSet, args: &CleanArgs, r: &Results) -> std::io::Result<()> {
-    let &Results {
-        root,
-        items,
-        outcomes,
-        complete,
-        now,
-    } = r;
-    let mut doc = js::document(&HostPath::local(root));
-    doc.insert("generated_at".into(), now.into());
-    doc.insert("complete".into(), complete.into());
-    doc.insert("dry_run".into(), (!args.yes).into());
-    let mode = match args.mode {
-        ModeArg::Trash => "trash",
-        ModeArg::Stage => "stage",
-        ModeArg::Delete => "delete",
-    };
-    doc.insert("mode".into(), mode.into());
-    let list: Vec<Value> = items
-        .iter()
-        .zip(outcomes)
-        .map(|(it, o)| {
-            let mut v = report::item_json(m, rules, it, now);
-            v["outcome"] = o.name().into();
-            if let Some(r) = o.reason() {
-                v["reason"] = r.into();
-            }
-            v
-        })
-        .collect();
-    doc.insert("items".into(), list.into());
-    let count = |name: &str| {
-        let (n, b) = items
-            .iter()
-            .zip(outcomes)
-            .filter(|(_, o)| o.name() == name)
-            .fold((0u64, 0u64), |(n, b), (it, _)| (n + 1, b + it.disk));
-        json!({ "items": n, "disk": b })
-    };
-    doc.insert(
-        "summary".into(),
-        json!({
-            "planned": count("planned"),
-            "deleted": count("deleted"),
-            "skipped": count("skipped"),
-            "failed": count("failed"),
-        }),
-    );
-    js::print(doc)
 }

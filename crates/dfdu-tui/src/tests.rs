@@ -10,7 +10,6 @@
 mod blocked;
 #[cfg(target_os = "linux")]
 mod btrfs;
-pub(crate) mod caches;
 mod columns;
 mod frames;
 mod matrix;
@@ -22,9 +21,13 @@ mod tree;
 mod tree_frames;
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dfdu_tree::{HostPath, Kind, Meta, Totals};
+use dfdu_engine::Model;
+pub(crate) use dfdu_engine::test_support::meta;
+use dfdu_engine::test_support::{add_dir, add_file, node_at};
+use dfdu_tree::{DirState, HostPath, Ix, Kind, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -32,8 +35,9 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::app::App;
-use crate::model::snapshot::{EntryData, Mark, Snapshot, test_entry};
+use crate::app::{App, Overlay};
+use crate::model::extras;
+use crate::model::snapshot::{self, EntryData, Mark, Snapshot, test_entry};
 use crate::theme::Theme;
 use crate::view;
 
@@ -232,9 +236,8 @@ pub(crate) fn mid_scan_app(theme: Theme) -> (App, Instant) {
 
 /// A finished scan of `/r`: files `a` and `b` of 1000 bytes each, which hold 400 bytes alone
 /// and share 600 more, counted at the directory.
-pub(crate) fn shared_model() -> dfdu_engine::Model {
-    let mut m = dfdu_engine::Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+pub(crate) fn shared_model() -> Model {
+    let (mut m, root) = root_model();
     for (i, name) in [b"a".as_slice(), b"b"].iter().enumerate() {
         let f = m.tree.add_file(
             root,
@@ -251,7 +254,6 @@ pub(crate) fn shared_model() -> dfdu_engine::Model {
     m
 }
 
-/// A press of `code` without modifiers.
 /// Types `s` into whatever has the keyboard (an overlay's search, the filter), checking that no
 /// key had an effect for the run loop.
 pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
@@ -262,10 +264,47 @@ pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
 
 /// The names of the list rows, in display order.
 pub(crate) fn row_names(app: &App) -> Vec<String> {
-    app.rows
+    app.list
+        .rows
         .iter()
         .map(|&i| String::from_utf8_lossy(&app.snap.entries[i].name).into_owned())
         .collect()
+}
+
+/// Selects the row named `name`, as a cursor move of the user's.
+#[track_caller]
+pub(crate) fn select(app: &mut App, name: &str) {
+    let row = row_names(app)
+        .iter()
+        .position(|n| n == name)
+        .unwrap_or_else(|| panic!("{name} is not a row: {:?}", row_names(app)));
+    app.move_to(row);
+}
+
+/// The paths of the marked entries, in the order they were marked.
+pub(crate) fn marked_paths(app: &App) -> Vec<HostPath> {
+    (app.marks.items().iter())
+        .map(|it| it.target.path.clone())
+        .collect()
+}
+
+/// The names of the marked entries, in the order they were marked.
+pub(crate) fn marked_names(app: &App) -> Vec<String> {
+    (app.marks.items().iter())
+        .map(|it| {
+            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
+        })
+        .collect()
+}
+
+/// Presses `code` where it would delete, checking that no dialog opened and that the status
+/// line says why, with `says` in it.
+#[track_caller]
+pub(crate) fn refused(app: &mut App, code: KeyCode, says: &str, now: Instant) {
+    app.key(press(code), now);
+    assert!(matches!(app.overlay, Overlay::None), "a dialog opened");
+    let status = app.status.as_deref().unwrap_or_default();
+    assert!(status.contains(says), "{status:?} does not say {says:?}");
 }
 
 /// The path of `rel` (names separated by `/`) below the root `root`, as a tree of this
@@ -275,22 +314,108 @@ pub(crate) fn below(root: &str, rel: &str) -> HostPath {
         .fold(HostPath::from(root), |p, n| p.join(n.as_bytes()))
 }
 
+/// A press of `code` without modifiers.
 pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
-/// The metadata of a node of a test tree: `size` bytes, apparent and allocated, on device 1.
-pub(crate) fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-    Meta {
-        kind,
-        apparent: size,
-        alloc: size,
-        mtime: 0,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
+/// A model holding only the root `/r`, and the root.
+pub(crate) fn root_model() -> (Model, Ix) {
+    let mut m = Model::default();
+    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    (m, root)
+}
+
+/// A model of `/r` built up one directory or file at a time, each with an inode of its own.
+pub(crate) struct Fixture {
+    pub(crate) m: Model,
+    ino: u64,
+}
+
+impl Fixture {
+    pub(crate) fn new() -> (Self, Ix) {
+        let (m, root) = root_model();
+        (Fixture { m, ino: 1 }, root)
     }
+
+    pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
+        self.ino += 1;
+        add_dir(&mut self.m.tree, parent, name, self.ino)
+    }
+
+    pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) -> Ix {
+        self.ino += 1;
+        add_file(&mut self.m.tree, parent, name, size, self.ino)
+    }
+}
+
+/// `/r` with `big/` (`a/` with two files, and `b`), `mid/` (three files), `small` and dotfile
+/// `.hid`.
+pub(crate) fn tree() -> Fixture {
+    let (mut fx, root) = Fixture::new();
+    fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
+    let big = fx.dir(root, "big");
+    let a = fx.dir(big, "a");
+    fx.file(a, "a1", 30_000);
+    fx.file(a, "a2", 10_000);
+    fx.file(big, "b", 20_000);
+    let mid = fx.dir(root, "mid");
+    for (i, size) in [12_000, 8_000, 5_000].into_iter().enumerate() {
+        fx.file(mid, &format!("m{i}"), size);
+    }
+    fx.file(root, "small", 9_000);
+    fx.file(root, ".hid", 4_000);
+    fx
+}
+
+/// [`tree`] with the built-in rules, `big` matched as a Rust `target/` and `mid/m0` as a
+/// directory with a `CACHEDIR.TAG`.
+pub(crate) fn classified() -> Fixture {
+    let mut fx = tree();
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    let rules = dfdu_rules::builtin(&env).0;
+    let class = dfdu_tree::Class {
+        rule: rules.index("rust.target").unwrap(),
+        safety: dfdu_tree::Safety::Regenerable,
+        degraded: None,
+        flags: dfdu_tree::ClassFlags::NONE,
+    };
+    let cachedir = dfdu_tree::Class {
+        rule: rules.index("generic.cachedir-tag").unwrap(),
+        safety: dfdu_tree::Safety::Safe,
+        ..class
+    };
+    fx.m.rules = Some(Arc::new(rules));
+    let (big, m0) = (node_at(&fx.m.tree, "big"), node_at(&fx.m.tree, "mid/m0"));
+    fx.m.tree.set_class(big, Some(class));
+    fx.m.tree.set_class(m0, Some(cachedir));
+    fx
+}
+
+/// A browser of [`classified`] read once at `t0`, and the fixture it reads.
+pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
+    let fx = classified();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    (fx, app)
+}
+
+/// Reads the model as the run loop does for a frame with a new snapshot: the snapshot, then
+/// the extras until none is stale.
+pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
+    let mut target = app.target.clone();
+    let snap = snapshot::build(m, &mut target, app.size_mode);
+    app.target = target;
+    app.refresh(snap, now);
+    for _ in 0..3 {
+        let budget = dfdu_scan::Budget::new(1 << 20);
+        let x = extras::read(m, app, &budget, crate::features::debug::Counters::default());
+        extras::apply(app, x);
+        if !app.extras_stale() {
+            return;
+        }
+    }
+    panic!("the extras stay stale");
 }
 
 /// A snapshot of `/r` while it is scanned, holding `entries`, with its totals left at zero.

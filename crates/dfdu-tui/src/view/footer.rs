@@ -8,6 +8,7 @@ use ratatui::widgets::Paragraph;
 
 use super::spread;
 use crate::app::keys::{Action, first_key};
+use crate::app::views::{self, View};
 use crate::app::{App, Overlay};
 use crate::features::details;
 use crate::model::snapshot::Mark;
@@ -113,7 +114,7 @@ fn offered_now(app: &App) -> Vec<Hint> {
     if filter::editing(app) {
         return editing(&arrows, "move");
     }
-    if crate::features::marks_pane::shown(app) {
+    if crate::features::marks_pane::is_open(app) {
         return vec![
             hint(first_key(Action::Close), "back", 2),
             hint(arrows, "move", 2),
@@ -139,62 +140,7 @@ fn offered_now(app: &App) -> Vec<Hint> {
             quit,
         ];
     }
-    if crate::features::largest::active(app) {
-        let actions = vec![
-            hint(arrows, "move", 1),
-            hint("Enter", "show in Files", 2),
-            hint(first_key(Action::ToggleMark), "tick", 1),
-            hint(first_key(Action::ClearMarks), "untick all", 3),
-            hint(first_key(Action::CopyPath), "copy path", 4),
-            hint(first_key(Action::OpenPath), "open", 5),
-            hint(first_key(Action::Trash), "delete selected", 0),
-        ];
-        return in_view(actions, help, quit, views);
-    }
-    if crate::features::dupes::active(app) && !crate::features::dupes::compared(app) {
-        let mut actions = vec![hint(first_key(Action::Close), "back to Files", 1)];
-        // Only this machine's files are compared.
-        if app.outside.local {
-            actions.insert(0, hint(first_key(Action::Enter), "compare now", 0));
-        }
-        return in_view(actions, help, quit, views);
-    }
-    if crate::features::dupes::active(app) {
-        let actions = vec![
-            hint(arrows.clone(), "move", 1),
-            hint(first_key(Action::ToggleMark), "tick", 1),
-            hint(first_key(Action::TickSuggested), "tick suggested", 2),
-            hint(first_key(Action::ClearMarks), "untick all", 4),
-            hint(first_key(Action::DupesKeep), "keep rule", 4),
-            hint("Enter", "show in Files", 3),
-            hint(first_key(Action::CompareAgain), "compare again", 3),
-            hint(first_key(Action::Trash), "delete selected", 0),
-        ];
-        return in_view(actions, help, quit, views);
-    }
-    if crate::features::cleanup::active(app) {
-        let actions = vec![
-            hint(arrows, "move", 1),
-            hint("Enter", crate::features::cleanup::enter_does(app), 2),
-            hint(first_key(Action::ToggleMark), "tick", 1),
-            hint(first_key(Action::TickSuggested), "tick suggested", 3),
-            hint(first_key(Action::ClearMarks), "untick all", 4),
-            hint(first_key(Action::CleanupFilter), "filter", 4),
-            hint(first_key(Action::CleanupCommand), "command", 4),
-            hint(first_key(Action::Trash), "delete selected", 0),
-        ];
-        return in_view(actions, help, quit, views);
-    }
-    if crate::features::treemap::active(app) {
-        let actions = vec![
-            hint("←↑↓→", "move", 1),
-            hint("Enter", "zoom in", 2),
-            hint("Backspace", "zoom out", 3),
-            hint("+ -", "depth", 4),
-            hint(first_key(Action::TreemapColor), "colour", 4),
-            hint(first_key(Action::ToggleMark), "mark", 5),
-            hint(first_key(Action::Trash), "trash", 5),
-        ];
+    if let Some(actions) = view_actions(app, &arrows) {
         return in_view(actions, help, quit, views);
     }
     if let Some(tree) = app.tree_shown() {
@@ -213,6 +159,60 @@ fn offered_now(app: &App) -> Vec<Hint> {
         ];
     }
     list_hints(app, arrows, help, quit, views)
+}
+
+/// The actions of the view shown, as in [`App::key`]; `None` for the list, also where the
+/// map is drawn as the list.
+fn view_actions(app: &App, arrows: &str) -> Option<Vec<Hint>> {
+    Some(match views::current(app) {
+        View::Largest => vec![
+            hint(arrows, "move", 1),
+            hint("Enter", "show in Files", 2),
+            hint(first_key(Action::ToggleMark), "tick", 1),
+            hint(first_key(Action::ClearMarks), "untick all", 3),
+            hint(first_key(Action::CopyPath), "copy path", 4),
+            hint(first_key(Action::OpenPath), "open", 5),
+            hint(first_key(Action::Trash), "delete selected", 0),
+        ],
+        View::Duplicates if !crate::features::dupes::compared(app) => {
+            let mut actions = vec![hint(first_key(Action::Close), "back to Files", 1)];
+            // Only this machine's files are compared.
+            if app.outside.local {
+                actions.insert(0, hint(first_key(Action::Enter), "compare now", 0));
+            }
+            actions
+        }
+        View::Duplicates => vec![
+            hint(arrows, "move", 1),
+            hint(first_key(Action::ToggleMark), "tick", 1),
+            hint(first_key(Action::TickSuggested), "tick suggested", 2),
+            hint(first_key(Action::ClearMarks), "untick all", 4),
+            hint(first_key(Action::DupesKeep), "keep rule", 4),
+            hint("Enter", "show in Files", 3),
+            hint(first_key(Action::CompareAgain), "compare again", 3),
+            hint(first_key(Action::Trash), "delete selected", 0),
+        ],
+        View::Cleanup => vec![
+            hint(arrows, "move", 1),
+            hint("Enter", crate::features::cleanup::enter_does(app), 2),
+            hint(first_key(Action::ToggleMark), "tick", 1),
+            hint(first_key(Action::TickSuggested), "tick suggested", 3),
+            hint(first_key(Action::ClearMarks), "untick all", 4),
+            hint(first_key(Action::CleanupFilter), "filter", 4),
+            hint(first_key(Action::CleanupCommand), "command", 4),
+            hint(first_key(Action::Trash), "delete selected", 0),
+        ],
+        View::Map if crate::features::treemap::active(app) => vec![
+            hint("←↑↓→", "move", 1),
+            hint("Enter", "zoom in", 2),
+            hint("Backspace", "zoom out", 3),
+            hint("+ -", "depth", 4),
+            hint(first_key(Action::TreemapColor), "colour", 4),
+            hint(first_key(Action::ToggleMark), "mark", 5),
+            hint(first_key(Action::Trash), "trash", 5),
+        ],
+        View::Map | View::Files => return None,
+    })
 }
 
 /// The hints of a view (Map, Cleanup, Duplicates, Largest): its own actions keep their place

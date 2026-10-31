@@ -17,10 +17,10 @@ fault-injection = []
 [dependencies]
 dfdu-tree.workspace = true
 dfdu-rules.workspace = true
+dfdu-sys.workspace = true
 dunce.workspace = true
 trash.workspace = true
 crossbeam-channel.workspace = true
-etcetera.workspace = true
 crc32c.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,9 +28,6 @@ hex.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
-
-[target.'cfg(any(target_os = "linux", windows))'.dependencies]
-dfdu-sys.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

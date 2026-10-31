@@ -1,8 +1,9 @@
 //! The engine: its threads, the inbox the applier reads from, and the API over them.
 
 mod applier_loop;
-mod journal;
-pub use journal::Query as JournalQuery;
+mod inbox;
+mod resume;
+pub use resume::Query as JournalQuery;
 mod options;
 
 pub(crate) use options::default_measurers;
@@ -18,75 +19,18 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use dfdu_clean::{DeleterMsg, spawn_deleter};
 use dfdu_scan::runtime::Pool;
-use dfdu_scan::{Backend, Batch, Budget, PortableBackend, ScanMsg, Shared, Sink};
+use dfdu_scan::{Backend, Budget, PortableBackend, Shared};
 use dfdu_tree::{Host, HostPath, Tree};
 use parking_lot::{Mutex, RwLock};
 
-use crate::applier::{Command, Model};
+use crate::applier::{ApplierSettings, Command, Model};
 use crate::classifier::{CheckMsg, spawn_classifiers};
 use crate::crash::{CRASH_MODEL, record_applier_panic};
 use crate::measure::{MeasureMsg, spawn_measurers};
 use crate::threads::spawn;
 use applier_loop::{Channels, applier_loop};
+use inbox::Inbox;
 use options::scan_limits;
-
-/// The applier's inbox: one channel, so control messages keep their order relative to data,
-/// plus the byte budget that bounds data in transit.
-struct Inbox {
-    tx: Sender<Batch>,
-    budget: Arc<Budget>,
-    /// Messages sent so far, counted before they enter the channel: a reader that sees the
-    /// applier's count of messages received under the lock sees at least as many sent.
-    sent: Arc<AtomicU64>,
-}
-
-impl Inbox {
-    fn new(budget_bytes: usize) -> (Inbox, Receiver<Batch>, Arc<Budget>, Arc<AtomicU64>) {
-        let (tx, rx) = unbounded();
-        let budget = Arc::new(Budget::new(budget_bytes));
-        let sent = Arc::new(AtomicU64::new(0));
-        (
-            Inbox {
-                tx,
-                budget: budget.clone(),
-                sent: sent.clone(),
-            },
-            rx,
-            budget,
-            sent,
-        )
-    }
-
-    fn push(&self, batch: Batch) {
-        self.sent.fetch_add(batch.msgs.len() as u64, Relaxed);
-        let _ = self.tx.send(batch);
-    }
-}
-
-impl Sink for Inbox {
-    fn try_send(&self, mut batch: Batch) -> Result<(), Batch> {
-        match self.budget.try_acquire(batch.bytes) {
-            Some(n) => {
-                batch.bytes = n;
-                self.push(batch);
-                Ok(())
-            }
-            None => Err(batch),
-        }
-    }
-
-    fn send(&self, mut batch: Batch) {
-        batch.bytes = self.budget.acquire(batch.bytes);
-        self.push(batch);
-    }
-
-    fn send_control(&self, msg: ScanMsg) {
-        self.push(Batch {
-            msgs: vec![msg],
-            bytes: 0,
-        });
-    }
-}
 
 /// How [`Engine::wait_idle`] ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +56,7 @@ pub struct Engine<B: Backend> {
     cmd_tx: Sender<Command>,
     commands_sent: Arc<AtomicU64>,
     /// The resumes waiting for the change journal's answer ([`Engine::resume`]).
-    asking: Mutex<Vec<journal::Asking>>,
+    asking: Mutex<Vec<resume::Asking>>,
     changes_rx: Receiver<()>,
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
@@ -125,6 +69,20 @@ pub struct Engine<B: Backend> {
 }
 
 impl Engine<PortableBackend> {
+    /// An engine on the portable backend with `workers` scan workers and otherwise the
+    /// [`EngineOptions`] defaults, which read nothing from the environment: no deletion
+    /// journal (deletes are refused) and no crash reports.
+    #[must_use]
+    pub fn portable(workers: usize) -> Self {
+        Self::start(
+            PortableBackend::default(),
+            EngineOptions {
+                workers,
+                ..EngineOptions::default()
+            },
+        )
+    }
+
     /// An engine over a tree read from a file, whose paths may be another machine's or no
     /// longer exist: nothing is scanned, rescanned, deleted or run on them.
     #[must_use]
@@ -202,8 +160,16 @@ impl<B: Backend> Engine<B> {
                 (None, true)
             }
         };
-        if let Some(r) = &remote {
-            model.tree.set_host(r.link.host);
+        let measure_min = remote
+            .as_ref()
+            .map_or(crate::applier::MEASURE_MIN, |r| r.measure_min);
+        let privileged = remote
+            .as_ref()
+            .map_or_else(dfdu_sys::is_privileged, |r| r.privileged);
+        let remote = remote.map(|r| (r.link, r.reader));
+        let link = remote.as_ref().map(|(l, _)| l.clone());
+        if let Some(l) = &link {
+            model.tree.set_host(l.host);
         }
         let model = Arc::new(RwLock::new(model));
         *CRASH_MODEL.lock() = Some(Arc::downgrade(&model));
@@ -211,76 +177,68 @@ impl<B: Backend> Engine<B> {
         let (wake_tx, changes_rx) = bounded::<()>(1);
         let stop = Arc::new(AtomicBool::new(false));
 
-        let (link, reader, remote_min, privileged) = match remote {
-            Some(r) => (
-                Some(r.link),
-                Some(r.reader),
-                Some(r.measure_min),
-                r.privileged,
-            ),
-            None => (None, None, None, dfdu_sys::is_privileged()),
-        };
         let pool = link
             .is_none()
             .then(|| Pool::start(&shared, &inbox, opts.workers));
         let (del_tx, del_rx) = unbounded::<DeleterMsg>();
-        // A remote engine's plans run on the agent; their results come in through the link.
-        let deleter = match &link {
-            Some(l) => crate::remote::spawn_deleter(l.clone(), del_tx.clone()),
-            None => spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx.clone()),
-        };
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
-        // A remote engine's measurements run on the agent, when it can measure; their answers
-        // come in through the link.
-        let measurers = match (&link, remote_min) {
-            (Some(l), Some(min)) => (opts.measure_workers > 0 && min > 0)
-                .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone())),
-            _ => {
-                (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, &meas_tx))
+        let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
+        let (deleter, measurers, classifiers) = match remote {
+            // A remote engine's plans, guard checks and measurements (when the agent can
+            // measure) run on the agent; their answers come in through the link, which its
+            // reader thread reads.
+            Some((l, r)) => {
+                let deleter = crate::remote::spawn_deleter(l.clone(), del_tx.clone());
+                let measurers = (opts.measure_workers > 0 && measure_min > 0)
+                    .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone()));
+                let classifiers = Some(crate::remote::spawn_checker(l.clone()));
+                let wake = wake_tx.clone();
+                let answers = crate::remote::Answers {
+                    deleted: del_tx,
+                    checked: chk_tx,
+                    measured: meas_tx,
+                };
+                crate::remote::spawn_reader(
+                    l,
+                    r,
+                    inbox.clone(),
+                    answers,
+                    stop.clone(),
+                    move || {
+                        let _ = wake.try_send(());
+                    },
+                );
+                (deleter, measurers, classifiers)
             }
+            None => (
+                spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx),
+                (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, &meas_tx)),
+                (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, &chk_tx)),
+            ),
         };
-        let measure_min = remote_min.unwrap_or(crate::applier::MEASURE_MIN);
         // Without measurers the sender is dropped (measurement is off on macOS and Windows).
         let meas_rx = or_never(meas_rx, measurers.is_some());
-        let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
-        // A remote engine's guard checks run on the agent; their answers come in through the
-        // link.
-        let classifiers = match &link {
-            Some(l) => Some(crate::remote::spawn_checker(l.clone())),
-            None => (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, &chk_tx)),
-        };
         let chk_rx = or_never(chk_rx, classifiers.is_some());
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
-        if let (Some(l), Some(r)) = (&link, reader) {
-            let wake = wake_tx.clone();
-            let answers = crate::remote::Answers {
-                deleted: del_tx.clone(),
-                checked: chk_tx,
-                measured: meas_tx,
-            };
-            crate::remote::spawn_reader(
-                l.clone(),
-                r,
-                inbox.clone(),
-                answers,
-                stop.clone(),
-                move || {
-                    let _ = wake.try_send(());
-                },
-            );
-        }
-        let (m, sh, st, ln) = (model.clone(), shared.clone(), stop.clone(), link.clone());
+        let settings = ApplierSettings {
+            remote: link.clone(),
+            read_only: opts.read_only,
+            imported,
+            measure: measurers.is_some(),
+            measure_min,
+            privileged,
+            checks: classifiers.is_some(),
+        };
+        let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
         let chans = Channels {
             cmd_rx,
             inbox_rx,
+            budget,
             del_rx,
             plans: deleter.reqs,
             meas_rx,
             measure: measurers,
-            measure_min,
-            privileged,
-            imported,
             chk_rx,
             classify: classifiers,
             wake_tx,
@@ -290,7 +248,15 @@ impl<B: Backend> Engine<B> {
             let crash_dir = opts.crash_dir.clone();
             let model = m.clone();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                applier_loop(&m, sh, ln, chans, &budget, &st, &opts);
+                applier_loop(
+                    &m,
+                    sh,
+                    settings,
+                    chans,
+                    &st,
+                    opts.auto_abandon,
+                    opts.check_invariants,
+                );
             }));
             if let Err(p) = r {
                 // An applier panic is a bug. Record it where readers will see it, write a
@@ -352,8 +318,17 @@ impl<B: Backend> Engine<B> {
     /// Replaces the tree with one read from a file, before anything is scanned, to bring it up
     /// to date with [`Command::Resume`]. A tree that is only browsed is started with
     /// [`Engine::start_imported`] instead.
+    ///
+    /// # Panics
+    ///
+    /// When the tree already holds nodes (something was scanned, or the engine was started on
+    /// a tree): the applier's jobs and the model's state would point into the tree replaced.
     pub fn load(&self, tree: Tree) {
         let mut m = self.model.write();
+        assert!(
+            m.tree.live_nodes() == 0,
+            "Engine::load after something was scanned"
+        );
         m.tree = tree;
         m.tree.bump_version();
     }
@@ -363,8 +338,10 @@ impl<B: Backend> Engine<B> {
         &self.changes_rx
     }
 
-    pub fn scanner(&self) -> &Shared<B> {
-        &self.shared
+    /// The local scan pool: `None` for an engine scanning through an agent, whose jobs run
+    /// there (the wire carries no focus, and the agent keeps its own counters).
+    pub fn local_scanner(&self) -> Option<&Shared<B>> {
+        self.link.is_none().then_some(&*self.shared)
     }
 
     /// The byte budget on scanner data in transit to the applier.
@@ -421,6 +398,8 @@ impl<B: Backend> Engine<B> {
         }
         self.send(Command::CancelAll);
         self.stop.store(true, SeqCst);
+        // Wakes the applier's `select!` to see `stop` without waiting out its timeout; not
+        // counted in `commands_sent`, as the applier may stop before applying it.
         let _ = self.cmd_tx.send(Command::CancelAll);
         if let Some(a) = self.applier.take() {
             let _ = a.join();
@@ -432,8 +411,8 @@ impl<B: Backend> Engine<B> {
             l.close();
         }
         // The applier held the deleter's plan channel; with it gone the deleter finishes its
-        // current item, syncs and closes the journal, and exits. Wait for that, in what is left
-        // of `wait`.
+        // current item, syncs and closes the deletion journal, and exits. Wait for that, in
+        // what is left of `wait`.
         self.delete_abort.store(true, SeqCst);
         if let Some(d) = self.deleter.take() {
             while !d.is_finished() && Instant::now() < deadline {
@@ -468,7 +447,10 @@ struct Remote {
 }
 
 /// `path` made absolute and canonical, as scan roots are: on Windows the plain `C:\` form
-/// where it is equivalent (dunce), instead of the `\\?\` verbatim form std returns.
+/// where it is equivalent (dunce), instead of the `\\?\` verbatim form std returns. Absolute
+/// but not canonical when it cannot be resolved (it does not exist), and `path` itself when
+/// it cannot be made absolute either (an empty path, or no current directory): the scan of
+/// such a root fails, and deletion, which requires absolute paths, refuses inside it.
 pub(crate) fn resolve_root(path: PathBuf) -> PathBuf {
     dunce::canonicalize(&path)
         .or_else(|_| std::path::absolute(&path))

@@ -39,7 +39,7 @@ fn delete(sim: &mut Sim, paths: &[&str]) {
     let items = paths.iter().map(|p| node(sim, p)).collect();
     sim.command(dfdu_engine::Command::Delete {
         items,
-        mode: dfdu_clean::Mode::Permanent,
+        mode: dfdu_engine::Mode::Permanent,
     })
     .unwrap();
 }
@@ -86,17 +86,17 @@ fn rescan_while_delete_overlaps() {
         );
         assert_eq!(rescans_running(sim), 0);
         // The first plan deletes `b`; the queued plan starts.
-        assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
-        assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
+        assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
+        assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
         sim.applier_work().unwrap();
         assert!(sim.running_plan().unwrap()[0].ends_with("d"));
         rescan(sim, "a");
         assert_eq!(rescans_running(sim), 1, "a is no longer in a plan");
         assert!(
-            sim.delete_next(dfdu_clean::DeleteResult::Stale("changed".into()))
+            sim.delete_next(dfdu_engine::DeleteResult::Stale("changed".into()))
                 .unwrap()
         );
-        assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
+        assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
     });
 }
 
@@ -193,7 +193,7 @@ fn delete_while_scanning_then_late_messages() {
             assert!(cut >= 4, "{cut}");
             // After the detach, `f`'s task (published by that flush) finds its stop bit; its
             // Close is discarded too.
-            assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
+            assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
             sim.applier_work().unwrap();
             step_until(sim, 2, |s| {
                 s.workers[2].slot.outbox.lock().messages().iter().any(|m| {
@@ -211,15 +211,16 @@ fn delete_while_scanning_then_late_messages() {
             let st = &sim.model.status.stats;
             assert!(st.discarded_cut > cut && st.discarded_job == 0, "{st:?}");
             assert_eq!((st.corrupt, st.lost, st.duplicate), (0, 0, 0));
-            assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
+            assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
         },
     );
 }
 
 /// The results the unfinished-delete scenarios run through, and how each counts in the plan's summary
 /// `(stale, refused, failed, aborted)`.
-fn unfinished_results() -> Vec<(dfdu_clean::DeleteResult, (usize, usize, usize, usize))> {
-    use dfdu_clean::{DeleteResult, Refusal};
+fn unfinished_results() -> Vec<(dfdu_engine::DeleteResult, (usize, usize, usize, usize))> {
+    use dfdu_clean::Refusal;
+    use dfdu_engine::DeleteResult;
     let failed = |partial| DeleteResult::Failed {
         partial,
         err: dfdu_tree::ErrKind::Other,
@@ -241,7 +242,7 @@ fn unfinished_results() -> Vec<(dfdu_clean::DeleteResult, (usize, usize, usize, 
 fn answer_plan(
     sim: &mut Sim,
     items: &[&str],
-    result: &dfdu_clean::DeleteResult,
+    result: &dfdu_engine::DeleteResult,
     counts: (usize, usize, usize, usize),
     gone: Option<&str>,
     rescanned: bool,
@@ -257,7 +258,7 @@ fn answer_plan(
         assert!(sim.delete_next(result.clone()).unwrap());
     }
     assert!(
-        sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap(),
+        sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap(),
         "Done"
     );
     assert!(sim.running_plan().is_none());
@@ -308,7 +309,7 @@ fn unfinished_deletes_on_uncut_nodes() {
         for (result, counts) in unfinished_results() {
             let partial = matches!(
                 result,
-                dfdu_clean::DeleteResult::Failed { partial: true, .. }
+                dfdu_engine::DeleteResult::Failed { partial: true, .. }
             );
             let before = sim.model.tree.total(find(sim, "a")).alloc;
             delete(sim, &["a/b", "d/df0"]);
@@ -344,7 +345,7 @@ fn unfinished_deletes_on_cut_nodes() {
     for (result, counts) in unfinished_results() {
         let partial = matches!(
             result,
-            dfdu_clean::DeleteResult::Failed { partial: true, .. }
+            dfdu_engine::DeleteResult::Failed { partial: true, .. }
         );
         for_seeds(nested, cfg(), |sim| {
             scan_root(sim);
@@ -401,8 +402,8 @@ fn hard_links_across_delete_and_rescan() {
             assert_eq!(charged(sim, &["x/f", "y/h", "z/k"]), ["x/f"]);
             let before = sim.model.tree.total(find(sim, "")).alloc;
             delete(sim, &["x"]);
-            assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
-            assert!(sim.delete_next(dfdu_clean::DeleteResult::Deleted).unwrap());
+            assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
+            assert!(sim.delete_next(dfdu_engine::DeleteResult::Deleted).unwrap());
             sim.applier_work().unwrap();
             assert_eq!(charged(sim, &["y/h", "z/k"]), ["y/h"]);
             // Only the directory `x` itself is gone: the data is still referenced.
@@ -444,7 +445,7 @@ fn dense_links_swapped_in() {
         finish_jobs(&mut sim);
         rescan(&mut sim, "profiles");
         // Until the job finishes, then count the steps of the merge.
-        while sim.model.status.running() > 0 {
+        while sim.model.status.running_jobs() > 0 {
             for w in 0..sim.workers.len() {
                 sim.step_worker(w);
             }
@@ -499,8 +500,8 @@ fn mark_on_replaced_file_is_gone_after_swap() {
         finish_jobs(sim);
         let t = &sim.model.tree;
         let (f, g) = (
-            dfdu_tui::Target::of(t, find(sim, "w/f")),
-            dfdu_tui::Target::of(t, find(sim, "w/g")),
+            dfdu_tree::Target::of(t, find(sim, "w/f")),
+            dfdu_tree::Target::of(t, find(sim, "w/g")),
         );
         let w = sim.spec.nodes[0].children[0];
         let kids = sim.spec.nodes[w as usize].children.clone();

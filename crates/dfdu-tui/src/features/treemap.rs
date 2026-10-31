@@ -6,7 +6,7 @@
 //! the top are read from the engine model ([`read`]) for the largest directories only, one
 //! level even at depth 1, for the selected tile. A directory without a match of its own is
 //! coloured by the category most of what is matched inside it is in, however deep
-//! ([`dominant`]). The layout is recomputed when the list re-sorts (`App::sort_gen`), when the
+//! ([`dominant`]). The layout is recomputed when the list re-sorts (`List::sort_gen`), when the
 //! area or the depth changes, when the tree's matches change (a scan classifies as it goes),
 //! and otherwise kept, so tiles do not jump while sizes stream in; the labels of top-level
 //! tiles show live sizes.
@@ -17,9 +17,10 @@
 mod draw;
 mod fill;
 mod glyph;
-pub mod layout;
+pub(crate) mod layout;
 mod paint;
 mod place;
+mod tile;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Position, Rect};
 
 use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Name, Tag, class_below, tag_of};
 use place::Layout;
@@ -78,8 +80,6 @@ impl ColorBy {
 
 #[derive(Clone, Debug)]
 pub struct Treemap {
-    /// The view is the treemap (otherwise the list).
-    pub on: bool,
     /// Levels shown, [`MIN_DEPTH`] to [`MAX_DEPTH`].
     pub depth: u8,
     pub color: ColorBy,
@@ -92,7 +92,6 @@ pub struct Treemap {
 impl Default for Treemap {
     fn default() -> Self {
         Treemap {
-            on: false,
             depth: 1,
             color: ColorBy::default(),
             shown: false,
@@ -117,7 +116,7 @@ struct Key {
 fn key_of(app: &App) -> Key {
     Key {
         dir: app.snap.dir_node,
-        sort_gen: app.sort_gen,
+        sort_gen: app.list.sort_gen,
         depth: app.treemap.depth,
         mode: app.size_mode,
         hide_hidden: app.hide_hidden,
@@ -164,14 +163,14 @@ pub struct Kid {
 
 /// True when the treemap needs the levels below the top read again.
 pub fn stale(app: &App) -> bool {
-    app.treemap.on && app.extras.treemap.key != Some(key_of(app))
+    on(app) && app.extras.treemap.key != Some(key_of(app))
 }
 
 /// Reads the levels below the largest top-level directories. Runs under the read lock and
 /// visits at most [`READ_BUDGET`] children; nothing when the view is off or the last read is
 /// still current.
 pub fn read(m: &Model, app: &App) -> Info {
-    if !app.treemap.on {
+    if !on(app) {
         return Info::default();
     }
     let key = key_of(app);
@@ -192,6 +191,7 @@ pub fn read(m: &Model, app: &App) -> Info {
     };
     let entries = &app.snap.entries;
     let mut dirs: Vec<(u64, usize)> = app
+        .list
         .rows
         .iter()
         .filter(|&&i| entries[i].is_dir && !entries[i].pseudo)
@@ -335,14 +335,19 @@ fn read_kids(
     })
 }
 
-/// True when keys and the mouse act on the treemap: it is on and was drawn last frame.
-pub fn active(app: &App) -> bool {
-    app.treemap.on && app.treemap.shown
+/// The view is the treemap (otherwise the list), also while the terminal is too small for it.
+pub fn on(app: &App) -> bool {
+    views::current(app) == View::Map
 }
 
-/// Switches between the list and the treemap.
-pub fn show(app: &mut App, on: bool) {
-    app.treemap.on = on;
+/// True when keys and the mouse act on the treemap: it is on and was drawn last frame.
+pub fn active(app: &App) -> bool {
+    on(app) && app.treemap.shown
+}
+
+/// The view was opened ([`views::switch`]): a click before it does not count towards a double
+/// click.
+pub fn on_open(app: &mut App) {
     app.treemap.last_click = None;
 }
 
@@ -394,7 +399,7 @@ fn select_top(app: &mut App, top: usize) {
         return;
     };
     let entries = &app.snap.entries;
-    if let Some(row) = app.rows.iter().position(|&i| entries[i].node == node) {
+    if let Some(row) = app.list.rows.iter().position(|&i| entries[i].node == node) {
         app.move_to(row);
     }
 }
@@ -469,7 +474,7 @@ pub fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     select_top(app, top);
     if again {
         app.treemap.last_click = None;
-        return Some(keys::run(app, Action::Enter, now));
+        return Some(keys::run(app, Action::Enter));
     }
     app.treemap.last_click = Some((now, node));
     Some(Vec::new())

@@ -17,9 +17,13 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_tree::NodeRef;
 
 mod common;
-use common::loaded::{find, loaded, resume_with, write};
+use common::files::write;
 #[cfg(unix)]
-use common::loaded::{resume, scanned, totals};
+use common::journal::resume;
+use common::journal::resume_with;
+use common::loaded::{find, loaded};
+#[cfg(unix)]
+use common::portable::{scanned, totals};
 use common::tempdir;
 
 /// Sets the mtime of directory `p` a minute ahead, so that it differs from the one loaded

@@ -12,8 +12,7 @@ use dfdu_scan::runtime::RealClock;
 use dfdu_scan::{Backend, Batch, Budget, Clock, ScanMsg, Shared};
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-use super::EngineOptions;
-use crate::applier::{Applier, Command, Model};
+use crate::applier::{Applier, ApplierSettings, Command, Model};
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::measure::{MeasureMsg, MeasureReq};
 use crate::nanos::nanos;
@@ -34,17 +33,13 @@ const WAIT_LATE: Duration = Duration::from_millis(6);
 pub(super) struct Channels {
     pub(super) cmd_rx: Receiver<Command>,
     pub(super) inbox_rx: Receiver<Batch>,
+    /// The byte budget the inbox's batches are released to as they are applied.
+    pub(super) budget: Arc<Budget>,
     pub(super) del_rx: Receiver<DeleterMsg>,
     pub(super) plans: Sender<DeleterReq>,
     pub(super) meas_rx: Receiver<Vec<MeasureMsg>>,
     /// `None` when measurement is off. Dropping it ends the measurer threads.
     pub(super) measure: Option<Sender<MeasureReq>>,
-    /// Files allocating less are not measured.
-    pub(super) measure_min: u64,
-    /// Whoever deletes runs as root (the agent, for a remote engine).
-    pub(super) privileged: bool,
-    /// The tree was loaded from a file ([`Engine::start_imported`](super::Engine::start_imported)).
-    pub(super) imported: bool,
     pub(super) chk_rx: Receiver<Vec<CheckMsg>>,
     /// `None` when the classifier pool is off.
     pub(super) classify: Option<Sender<Vec<CheckReq>>>,
@@ -132,48 +127,38 @@ fn apply_inbox<B: Backend>(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one write-lock slice of the applier per iteration, its steps in order"
-)]
+/// Runs the applier until `stop` is set or the engine is dropped. A stalled directory is
+/// abandoned after `auto_abandon`, when set; with `check_invariants` the model is checked after
+/// every slice.
 pub(super) fn applier_loop<B: Backend>(
     model: &RwLock<Model>,
     shared: Arc<Shared<B>>,
-    remote: Option<Arc<crate::remote::Link>>,
+    settings: ApplierSettings,
     ch: Channels,
-    budget: &Budget,
     stop: &AtomicBool,
-    opts: &EngineOptions,
+    auto_abandon: Option<Duration>,
+    check_invariants: bool,
 ) {
     let Channels {
         cmd_rx,
         inbox_rx,
+        budget,
         del_rx,
         plans,
         meas_rx,
         measure,
-        measure_min,
-        privileged,
-        imported,
         chk_rx,
         classify,
         wake_tx,
     } = ch;
     let clock = RealClock::new();
-    let mut applier = Applier::new(shared);
-    applier.remote = remote;
-    applier.read_only = opts.read_only;
-    applier.imported = imported;
-    applier.measure = measure.is_some();
-    applier.measure_min = measure_min;
-    applier.privileged = privileged;
-    applier.checks = classify.is_some();
+    let mut applier = Applier::new(shared, settings);
     let mut chks: VecDeque<CheckMsg> = VecDeque::new();
     let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
     let mut meas: VecDeque<MeasureMsg> = VecDeque::new();
     let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
     let mut cmds: VecDeque<Command> = VecDeque::new();
-    let auto_abandon = opts.auto_abandon.map(nanos);
+    let auto_abandon = auto_abandon.map(nanos);
     while !stop.load(SeqCst) {
         if !applier.has_work()
             && cur.is_none()
@@ -183,7 +168,11 @@ pub(super) fn applier_loop<B: Backend>(
             && chks.is_empty()
         {
             select! {
-                recv(cmd_rx) -> c => if let Ok(c) = c { cmds.push_back(c) },
+                // Every sender is gone with the engine, dropped without a shutdown.
+                recv(cmd_rx) -> c => match c {
+                    Ok(c) => cmds.push_back(c),
+                    Err(_) => break,
+                },
                 recv(del_rx) -> d => if let Ok(d) = d { dels.push_back(d) },
                 recv(meas_rx) -> r => if let Ok(r) = r { meas.extend(r) },
                 recv(chk_rx) -> r => if let Ok(r) = r { chks.extend(r) },
@@ -224,7 +213,7 @@ pub(super) fn applier_loop<B: Backend>(
             &mut g,
             &mut cur,
             &inbox_rx,
-            budget,
+            &budget,
             now,
             started,
         );
@@ -233,9 +222,7 @@ pub(super) fn applier_loop<B: Backend>(
         }
         applier.tick(&mut g, now, auto_abandon);
         applier.refresh_status(&mut g);
-        if opts.check_invariants
-            && let Err(e) = applier.check(&g)
-        {
+        if check_invariants && let Err(e) = applier.check(&g) {
             g.status.incomplete = true;
             g.status.notices.push(format!("invariant violated: {e}"));
         }

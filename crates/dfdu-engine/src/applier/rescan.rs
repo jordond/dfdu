@@ -1,5 +1,6 @@
 //! Rescans of visible directories.
 
+use std::fmt;
 use std::sync::Arc;
 
 use dfdu_scan::classify::ClassOpts;
@@ -100,6 +101,57 @@ fn left_out(tree: &Tree, ix: Ix) -> bool {
         && !f.has(NodeFlags::KERNEL)
 }
 
+/// Why a directory is not rescanned ([`rescan_owner`]); said in a notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotRescanned {
+    /// An enter of what is not a mount the scan left out.
+    NotLeftOut,
+    NotADirectory,
+    /// Counted at another mount of it.
+    CountedElsewhere,
+    Kernel,
+    Network,
+    /// On a filesystem the scan did not enter.
+    OtherFilesystem,
+}
+
+impl fmt::Display for NotRescanned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            NotRescanned::NotLeftOut => "enter: that is not a mount the scan left out",
+            NotRescanned::NotADirectory => "rescan: not a directory",
+            NotRescanned::CountedElsewhere => {
+                "rescan: that directory is counted at another mount of it"
+            }
+            NotRescanned::Kernel => "rescan: that is a kernel filesystem, which is never scanned",
+            NotRescanned::Network => {
+                "rescan: that is a network filesystem; start dfdu with --network to scan it"
+            }
+            NotRescanned::OtherFilesystem => "rescan: that directory is on another filesystem",
+        })
+    }
+}
+
+/// The job that scanned directory `ix`, whose options its rescan takes, or why it is not
+/// rescanned: with `enter`, unless it is a mount the scan left out ([`left_out`]); otherwise
+/// when it is not a directory, is counted at another mount of it, or is on a filesystem the
+/// scan does not enter (a kernel or network one, or another filesystem).
+fn rescan_owner(tree: &Tree, ix: Ix, enter: bool) -> Result<u32, NotRescanned> {
+    if enter && !left_out(tree, ix) {
+        return Err(NotRescanned::NotLeftOut);
+    }
+    let f = tree.flags(ix);
+    match tree.dir(ix) {
+        Some(d) if enter => Ok(d.job.0),
+        None => Err(NotRescanned::NotADirectory),
+        Some(_) if f.has(NodeFlags::DUP_MOUNT) => Err(NotRescanned::CountedElsewhere),
+        Some(_) if f.has(NodeFlags::KERNEL) => Err(NotRescanned::Kernel),
+        Some(_) if f.has(NodeFlags::NETWORK) => Err(NotRescanned::Network),
+        Some(d) if d.state == DirState::Skipped => Err(NotRescanned::OtherFilesystem),
+        Some(d) => Ok(d.job.0),
+    }
+}
+
 impl<B: Backend> Applier<B> {
     /// Adds `entered` (a mount root's device and inode) to the mounts entered this session,
     /// and has `opts` enter all of them.
@@ -139,47 +191,20 @@ impl<B: Backend> Applier<B> {
         kept: Option<Box<Kept>>,
     ) {
         let Some(ix) = m.tree.resolve_visible(node) else {
-            m.status.notice("rescan: that directory is gone".into());
+            m.status
+                .push_notice("rescan: that directory is gone".into());
             return;
         };
-        if enter && !left_out(&m.tree, ix) {
-            m.status
-                .notice("enter: that is not a mount the scan left out".into());
-            return;
-        }
-        let owner_id = match m.tree.dir(ix) {
-            Some(d) if enter => d.job.0,
-            None => {
-                m.status.notice("rescan: not a directory".into());
+        let owner_id = match rescan_owner(&m.tree, ix, enter) {
+            Ok(id) => id,
+            Err(why) => {
+                m.status.push_notice(why.to_string());
                 return;
             }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::DUP_MOUNT) => {
-                m.status
-                    .notice("rescan: that directory is counted at another mount of it".into());
-                return;
-            }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::KERNEL) => {
-                m.status
-                    .notice("rescan: that is a kernel filesystem, which is never scanned".into());
-                return;
-            }
-            Some(_) if m.tree.flags(ix).has(NodeFlags::NETWORK) => {
-                m.status.notice(
-                    "rescan: that is a network filesystem; start dfdu with --network to scan it"
-                        .into(),
-                );
-                return;
-            }
-            Some(d) if d.state == DirState::Skipped => {
-                m.status
-                    .notice("rescan: that directory is on another filesystem".into());
-                return;
-            }
-            Some(d) => d.job.0,
         };
         // Overlap with deletes and other rescans.
         if self.plan_overlaps(&m.tree, ix) {
-            m.status.notice(
+            m.status.push_notice(
                 "rescan: a delete in this directory is in progress; rescan after it completes"
                     .into(),
             );
@@ -224,21 +249,15 @@ impl<B: Backend> Applier<B> {
             top = p;
         }
         // Not sent to an agent, which judges against its job's root.
-        opts.scope = self.remote.is_none().then(|| m.tree.path_buf(top));
+        opts.scope = self.settings.remote.is_none().then(|| m.tree.path_buf(top));
         opts.keep = kept.as_ref().map(|k| Arc::new(k.keep()));
         self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
             m.rules = Some(c.rules.clone());
-            m.tree
-                .set_protection(shadow, c.protection.protected(), false);
+            m.tree.set_protection(shadow, c.protection.root_mark());
         } else if let Some(c) = &mut opts.class {
             *c = rescan_class(&m.tree, ix, owner_root, c);
-            let f = m.tree.flags(ix);
-            m.tree.set_protection(
-                shadow,
-                f.has(NodeFlags::PROTECTED),
-                f.has(NodeFlags::EXCEPTED),
-            );
+            m.tree.set_protection(shadow, m.tree.protection(ix));
         }
         let start = JobStart {
             kind: JobKind::Rescan,
@@ -297,7 +316,7 @@ impl<B: Backend> Applier<B> {
             };
             if t == ix || Self::is_ancestor(&m.tree, t, ix) {
                 m.status
-                    .notice("rescan: already rescanning this directory or a parent".into());
+                    .push_notice("rescan: already rescanning this directory or a parent".into());
                 return false;
             }
             if Self::is_ancestor(&m.tree, ix, t) {
@@ -310,3 +329,6 @@ impl<B: Backend> Applier<B> {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;

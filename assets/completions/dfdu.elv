@@ -18,7 +18,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
     }
     var completions = [
         &'dfdu'= {
-            cand --resume-from 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done'
+            cand --resume-from 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done. A snapshot is rescanned with the mount options it was taken with'
             cand -f 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
             cand --file 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only'
             cand --remote 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history'
@@ -192,6 +192,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --restore 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it'
             cand --dismiss 'Close these interrupted items: nothing is done on disk'
             cand --journals 'The journal directory (the default is dfdu''s state directory)'
+            cand --yes 'Finish and restore. Without it nothing is changed: what would be done is printed'
             cand -h 'Print help'
             cand --help 'Print help'
         }

@@ -785,7 +785,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__recover)
-            opts="-h --finish --restore --dismiss --journals --help"
+            opts="-h --finish --restore --dismiss --yes --journals --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

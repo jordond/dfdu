@@ -56,6 +56,22 @@ fn an_atomic_write_removes_temporaries_of_dead_writers_only() {
 }
 
 #[test]
+fn temporary_names_say_their_file() {
+    let name = temp_name(std::ffi::OsStr::new("a.snap"), 42);
+    assert_eq!(name, ".a.snap.42.tmp");
+    assert_eq!(temp_target(name.as_encoded_bytes()), Some(&b"a.snap"[..]));
+    for n in [
+        "a.snap.42.tmp",
+        "..42.tmp",
+        ".a.snap..tmp",
+        ".a.snap.4x.tmp",
+        ".a.snap.42",
+    ] {
+        assert_eq!(temp_target(n.as_bytes()), None, "{n}");
+    }
+}
+
+#[test]
 fn an_atomic_write_needs_a_file_name() {
     let e = write_atomic(Path::new("/"), |_| Ok(())).unwrap_err();
     assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
@@ -63,7 +79,7 @@ fn an_atomic_write_needs_a_file_name() {
 
 #[test]
 fn open_refuses_what_is_in_no_format() {
-    let limits = ncdu::Limits::default();
+    let limits = Limits::default();
     assert!(matches!(
         open(&b"not a scan"[..], &limits),
         Err(ImportError::Format { .. })

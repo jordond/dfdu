@@ -1,90 +1,97 @@
+use dfdu_tree::{Kind, Meta};
+
 use super::*;
+use crate::matches::tests::{DAY, item, rule_with, rules};
 
-#[test]
-fn sizes_and_ages_parse() {
-    assert_eq!(size_arg("100M"), Ok(100 << 20));
-    assert_eq!(size_arg("1.5GiB"), Ok(3 << 29));
-    assert_eq!(size_arg("500 KB"), Ok(500_000));
-    assert_eq!(size_arg("0"), Ok(0));
-    assert!(size_arg("lots").is_err());
-    assert_eq!(age_arg("30d"), Ok(30 * 86_400));
-    assert_eq!(age_arg("2w"), Ok(14 * 86_400));
-    assert_eq!(age_arg("12h"), Ok(12 * 3_600));
-    assert_eq!(age_arg("3"), Ok(3 * 86_400));
-    assert!(age_arg("3y").is_err() && age_arg("d").is_err());
-    assert!(category_arg("dev").is_ok() && category_arg("dev.build").is_ok());
-    assert!(category_arg("de").is_err() && category_arg("build-cache").is_err());
-}
-
-/// The user caches with pip's cache (300 bytes) and other things (1000 bytes) in them: pip
-/// is listed on its own, the user caches for the rest, and the total counts each once.
-#[test]
-fn caches_inside_the_user_caches_are_listed_on_their_own() {
-    use dfdu_tree::Meta;
-    let env = dfdu_rules::Env::with(dfdu_rules::Platform::MacOs, &[("HOME", "/Users/u")]);
-    let rules = dfdu_rules::builtin(&env).0;
+/// A model of the one directory `/r`, complete or not.
+fn scanned(complete: bool) -> (Model, Ix) {
     let mut m = Model::default();
-    let t = &mut m.tree;
-    let meta = |kind, size, ino| Meta {
-        kind,
-        apparent: size,
-        alloc: size,
+    let meta = Meta {
+        kind: Kind::Dir,
+        apparent: 0,
+        alloc: 0,
         mtime: 0,
         dev: 1,
-        ino,
+        ino: 1,
         nlink: 1,
         mount: 0,
     };
-    let root = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
-    let mut ino = 1;
-    let mut dir = |t: &mut dfdu_tree::Tree, parent, name: &str, file: u64| {
-        ino += 2;
-        let d = t.add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
-        let own = t.own(d);
-        t.propagate_add(d, &own);
-        let f = t.add_file(d, b"f", &meta(Kind::File, file, ino + 1), false, None);
-        let own = t.own(f);
-        t.propagate_add(d, &own);
-        d
+    let root = m.tree.new_root(b"/r", &meta, true);
+    m.status.incomplete = !complete;
+    (m, root)
+}
+
+/// `--safety` keeps the matches as safe as the level given or safer, in their order; without
+/// it every match is listed.
+#[test]
+fn safety_keeps_the_matches_at_most_that_level() {
+    let rules = rules();
+    let rule = rule_with(&rules, "delete");
+    let list = || {
+        vec![
+            item(rule, Safety::Review, 3),
+            item(rule, Safety::Safe, 2),
+            item(rule, Safety::Protected, 1),
+        ]
     };
-    let cache = dir(t, root, "Caches", 1000);
-    let pip = dir(t, cache, "pip", 300);
-    for (ix, id) in [(cache, "sys.user-caches"), (pip, "pip.cache")] {
-        let class = Class {
-            rule: rules.index(id).expect(id),
-            safety: Safety::Safe,
-            degraded: None,
-            flags: 0,
-        };
-        t.set_class(ix, Some(class));
-    }
-    let pip_ref = t.node_ref(pip);
-    let all = Filter {
-        min_size: None,
-        category: vec![],
-        older_than: None,
-    };
-    let list = items(&m, &rules, &all, 0);
-    let paths: Vec<_> = list.iter().map(|i| i.path.clone()).collect();
-    let caches_path = HostPath::from("/r").join(b"Caches");
-    assert_eq!(paths, [caches_path.clone(), caches_path.join(b"pip")]);
-    let (caches, pip_item) = (&list[0], &list[1]);
-    assert_eq!((caches.disk, caches.matches_inside), (1000, 1));
-    assert_eq!(pip_item.disk, 300);
-    assert_eq!(reclaimable(&list), m.tree.total(cache).alloc);
-    // Cleaning the user caches up deletes their rest, not pip's cache.
-    let rest = caches.targets();
-    assert_eq!(rest.len(), 1);
-    assert!(!rest.contains(&pip_ref) && !rest.contains(&caches.node));
-    assert_eq!(pip_item.targets(), [pip_ref]);
-    // Left out by a filter, pip's cache still is not counted with the user caches.
-    let sys = Filter {
-        category: vec!["sys".into()],
-        ..all
-    };
-    let list = items(&m, &rules, &sys, 0);
-    assert_eq!(list.len(), 1);
-    assert_eq!(reclaimable(&list), 1000);
-    let json = item_json(&m, &rules, &list[0], 0);
-    assert_eq!(json["matches_inside"], 1);
+    let disks = |l: Vec<Item>| l.iter().map(|i| i.disk).collect::<Vec<_>>();
+    assert_eq!(disks(at_most(list(), None)), [3, 2, 1]);
+    assert_eq!(disks(at_most(list(), Some(Safety::Review))), [3, 2]);
+    assert_eq!(disks(at_most(list(), Some(Safety::Safe))), [2]);
+}
+
+/// The threshold is exceeded only past `--fail-above`, and protected matches do not count
+/// towards it.
+#[test]
+fn the_threshold_leaves_protected_matches_out() {
+    let rules = rules();
+    let rule = rule_with(&rules, "delete");
+    let list = [
+        item(rule, Safety::Safe, 60),
+        item(rule, Safety::Protected, 1000),
+    ];
+    assert!(!exceeded(&list, None));
+    assert!(!exceeded(&list, Some(60)));
+    assert!(exceeded(&list, Some(59)));
+    assert!(!exceeded(&[], Some(0)));
+}
+
+/// Exceeding the threshold wins over an incomplete scan.
+#[test]
+fn exit_codes_put_the_threshold_first() {
+    assert_eq!(exit_code(true, false), ExitCode::from(EXIT_THRESHOLD));
+    assert_eq!(exit_code(true, true), ExitCode::from(EXIT_THRESHOLD));
+    assert_eq!(exit_code(false, false), ExitCode::from(EXIT_PARTIAL));
+    assert_eq!(exit_code(false, true), ExitCode::SUCCESS);
+}
+
+/// The document lists every match with the summary, says whether the scan is complete and how
+/// long it took, and has a threshold only with `--fail-above`.
+#[test]
+fn the_document_lists_the_matches_and_the_threshold_when_given() {
+    let rules = rules();
+    let rule = rule_with(&rules, "delete");
+    let list = [
+        item(rule, Safety::Safe, 100),
+        item(rule, Safety::Review, 20),
+    ];
+    let (m, root) = scanned(true);
+    let elapsed = Duration::from_millis(1500);
+    let doc = document(&m, root, &rules, &list, 10 * DAY, elapsed, Some(100));
+    assert_eq!(doc["generated_at"], 10 * DAY);
+    assert_eq!(doc["complete"], true);
+    assert_eq!(doc["elapsed_ms"], 1500);
+    let items = doc["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["disk"], 100);
+    assert_eq!(doc["summary"]["disk"], 120);
+    assert_eq!(
+        doc["threshold"],
+        json!({ "fail_above": 100, "exceeded": true })
+    );
+    let (m, root) = scanned(false);
+    let doc = document(&m, root, &rules, &[], 0, Duration::ZERO, None);
+    assert_eq!(doc["complete"], false);
+    assert_eq!(doc["items"], json!([]));
+    assert!(!doc.contains_key("threshold"));
 }

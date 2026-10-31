@@ -1,6 +1,7 @@
 //! Resuming a tree loaded from a file with the directories a change journal names: each is
 //! listed again, the loaded subdirectories it still has are kept, and what is new is scanned.
-//! The journal's answers are given by hand; the trees are on disk.
+//! The journal's answers are given by hand; the trees are on disk. The timing runs are in
+//! `resume_timing.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -8,16 +9,24 @@ use std::fs;
 use std::time::Duration;
 
 #[cfg(unix)]
-use dfdu_engine::Mode;
-use dfdu_engine::{Command, Engine, EngineOptions, Timing};
-use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::{DirState, Kind, Meta, NodeRef, Tree};
+use dfdu_engine::{Command, Engine, EngineOptions, Mode};
+use dfdu_scan::JobOptions;
+#[cfg(unix)]
+use dfdu_scan::PortableBackend;
+use dfdu_tree::NodeRef;
 
 mod common;
+use common::files::write;
 #[cfg(unix)]
-use common::loaded::{OLD, age, set_mtime};
-use common::loaded::{find, loaded, resume, resume_since, scanned, stat, totals, write};
+use common::files::{OLD, age, set_mtime};
+#[cfg(unix)]
+use common::journal::{answer, resume_held};
+use common::journal::{resume, resume_since};
+use common::loaded::{find, loaded};
+use common::portable::{scanned, totals};
 use common::tempdir;
+#[cfg(unix)]
+use common::wait_for;
 
 /// A change in the root lists the root again: what was removed goes, what is new is scanned,
 /// the subdirectories still there keep their loaded subtrees (the very nodes), and the totals
@@ -186,7 +195,6 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     write(&root.join("junk/big"), 2_000);
     write(&root.join("file"), 1_000);
     let tree = loaded(&root);
-    let node = tree.node_ref(tree.roots().next().unwrap());
     let junk = tree.node_ref(find(&tree, "junk").unwrap());
     let file = tree.node_ref(find(&tree, "file").unwrap());
     let journal = tempdir();
@@ -199,7 +207,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
             ..Default::default()
         },
     );
-    e.load(tree);
+    resume_held(&e, tree, JobOptions::default(), 0);
     e.send(Command::Delete {
         items: vec![junk, file],
         mode: Mode::Permanent,
@@ -211,7 +219,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
         dry_run: false,
     });
     e.send(Command::Rescan { node: junk });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
+    wait_for(&e, |m| m.status.commands_applied == 3);
     e.read(|m| {
         let refused: Vec<_> = m
             .status
@@ -226,13 +234,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     });
     assert!(root.join("junk/big").exists() && root.join("file").exists());
 
-    e.send(Command::Resume {
-        node,
-        opts: JobOptions::default(),
-        changed: Some(vec![]),
-        since: 0,
-        root: stat(&root),
-    });
+    answer(&root, vec![]);
     assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.send(Command::Delete {
         items: vec![junk],
@@ -242,227 +244,5 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     let s = e.read(|m| m.status.last_delete.clone()).unwrap();
     assert_eq!((s.deleted, s.refused), (1, 0), "{s:?}");
     assert!(!root.join("junk").exists());
-    e.shutdown(Duration::from_secs(1));
-}
-
-/// The longest write-lock slice while a resume takes over a loaded tree of about a million
-/// entries that the journal says did not change (`--ignored`, release): the resume walks the
-/// whole tree, classifying it, a step at a time, while the workers stat its 111,101
-/// directories, which are on disk (the files are not), and find them as loaded.
-#[test]
-#[ignore = "a timing run"]
-fn resume_lock_hold_on_a_large_tree() {
-    let dir = tempdir();
-    let root = dir.path().to_path_buf();
-    let mut t = Tree::default();
-    let meta = Meta::from_metadata(&fs::metadata(&root).unwrap());
-    let r = t.new_root(&dfdu_tree::name_bytes(root.as_os_str()), &meta, true);
-    let names = ["target", "node_modules", "src", "build", ".git", "cache"];
-    let files = [
-        "Cargo.toml",
-        "package.json",
-        "a.rs",
-        "b.o",
-        "c.txt",
-        "d",
-        "e",
-        "f",
-        "g",
-    ];
-    let leaf = |k: usize| format!("{}{}", names[k % names.len()], k / names.len());
-    for i in 0..100 {
-        for j in 0..100 {
-            for k in 0..10 {
-                fs::create_dir_all(root.join(format!("d{i}/e{j}/{}", leaf(k)))).unwrap();
-            }
-        }
-    }
-    let mut ino = u64::MAX / 2;
-    let mut file = || {
-        ino += 1;
-        Meta {
-            kind: Kind::File,
-            apparent: 100,
-            alloc: 4096,
-            mtime: 1,
-            dev: meta.dev,
-            ino,
-            nlink: 1,
-            mount: 0,
-        }
-    };
-    let on_disk = |p: &std::path::Path| Meta::from_metadata(&fs::metadata(p).unwrap());
-    let mut dirs = vec![r];
-    for i in 0..100 {
-        let pa = root.join(format!("d{i}"));
-        let a = t.add_dir(r, format!("d{i}").as_bytes(), &on_disk(&pa));
-        dirs.push(a);
-        for j in 0..100 {
-            let pb = pa.join(format!("e{j}"));
-            let b = t.add_dir(a, format!("e{j}").as_bytes(), &on_disk(&pb));
-            dirs.push(b);
-            for k in 0..10 {
-                let pc = pb.join(leaf(k));
-                let c = t.add_dir(b, leaf(k).as_bytes(), &on_disk(&pc));
-                dirs.push(c);
-                for f in files {
-                    t.add_file(c, f.as_bytes(), &file(), true, None);
-                }
-            }
-        }
-    }
-    for d in dirs {
-        let r = t.dir_mut(d).unwrap();
-        r.state = DirState::Complete;
-        r.outcome = r.state;
-        r.listing_closed = true;
-        r.reported = true;
-    }
-    let n = t.live_nodes();
-    let node = t.node_ref(r);
-    let e = Engine::start(
-        PortableBackend::default(),
-        EngineOptions {
-            workers: 2,
-            journal_dir: None,
-            measure_workers: 0,
-            ..Default::default()
-        },
-    );
-    e.load(t);
-    let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
-    let class = dfdu_scan::classify::ClassOpts::for_root(std::sync::Arc::new(rules), &root);
-    let before = e.read(|m| m.status.timing.clone());
-    let started = std::time::Instant::now();
-    e.send(Command::Resume {
-        node,
-        opts: JobOptions {
-            class: Some(class),
-            ..JobOptions::default()
-        },
-        changed: Some(vec![]),
-        since: 0,
-        root: stat(&root),
-    });
-    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
-    let took = started.elapsed();
-    let timing = e.read(|m| m.status.timing.clone());
-    let mut hold = timing.hold;
-    for (h, b) in hold.iter_mut().zip(before.hold) {
-        *h -= b;
-    }
-    let longest = Timing::percentile(&hold, 1.0);
-    let p99 = Timing::percentile(&hold, 0.99);
-    // The resume's own job, and the rescan of the root, whose mtime moved as it was filled.
-    let jobs = e.read(|m| m.status.jobs.len());
-    eprintln!(
-        "{n} nodes resumed in {took:?}: {} slices, longest write-lock hold under {longest:?}, \
-         p99 under {p99:?}, {jobs} jobs",
-        timing.slices - before.slices
-    );
-    assert!(jobs <= 2, "a directory found changed");
-    e.shutdown(Duration::from_secs(1));
-}
-
-/// The longest write-lock slice while a resume lists again thousands of directories the
-/// journal names (`--ignored`, release): 2,000 below the root, each keeping two subdirectories,
-/// 2,000 in a directory of 100,000 entries, and two named directories of their own, one of
-/// 100,000 entries and one of 100,000 subdirectories, which it keeps. The files are in the
-/// loaded tree alone: a listing again finds them gone.
-#[test]
-#[ignore = "a timing run"]
-fn resume_lock_hold_with_many_changed_directories() {
-    const WIDE: usize = 100_000;
-    const KEPT: usize = 100_000;
-    let dir = tempdir();
-    let root = dir.path().to_path_buf();
-    let mut changed = Vec::new();
-    for i in 0..50 {
-        for j in 0..40 {
-            for k in ["x", "y"] {
-                fs::create_dir_all(root.join(format!("d{i}/e{j}/{k}"))).unwrap();
-            }
-            changed.push(format!("d{i}/e{j}"));
-        }
-    }
-    for k in 0..2_000 {
-        fs::create_dir_all(root.join(format!("wide/s{k}"))).unwrap();
-        changed.push(format!("wide/s{k}"));
-    }
-    fs::create_dir_all(root.join("files")).unwrap();
-    changed.push("files".into());
-    for k in 0..KEPT {
-        fs::create_dir_all(root.join(format!("kept/k{k}"))).unwrap();
-    }
-    changed.push("kept".into());
-    let mut t = loaded(&root);
-    let meta = Meta::from_metadata(&fs::metadata(&root).unwrap());
-    let mut ino = u64::MAX / 2;
-    for at in ["wide", "files"] {
-        let d = find(&t, at).unwrap();
-        for k in 0..WIDE - t.children(d).count() {
-            ino += 1;
-            let f = Meta {
-                kind: Kind::File,
-                apparent: 100,
-                alloc: 4096,
-                mtime: 1,
-                dev: meta.dev,
-                ino,
-                nlink: 1,
-                mount: 0,
-            };
-            let f = t.add_file(d, format!("f{k}").as_bytes(), &f, true, None);
-            let own = t.own(f);
-            t.propagate_add(d, &own);
-        }
-    }
-    let n = t.live_nodes();
-    let node = t.node_ref(t.roots().next().unwrap());
-    let e = Engine::start(
-        PortableBackend::default(),
-        EngineOptions {
-            workers: 2,
-            journal_dir: None,
-            measure_workers: 0,
-            ..Default::default()
-        },
-    );
-    e.load(t);
-    let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
-    let class = dfdu_scan::classify::ClassOpts::for_root(std::sync::Arc::new(rules), &root);
-    let before = e.read(|m| m.status.timing.clone());
-    let started = std::time::Instant::now();
-    e.send(Command::Resume {
-        node,
-        opts: JobOptions {
-            class: Some(class),
-            ..JobOptions::default()
-        },
-        changed: Some(changed.iter().map(std::path::PathBuf::from).collect()),
-        since: 0,
-        root: stat(&root),
-    });
-    assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
-    let took = started.elapsed();
-    let timing = e.read(|m| m.status.timing.clone());
-    let mut hold = timing.hold;
-    for (h, b) in hold.iter_mut().zip(before.hold) {
-        *h -= b;
-    }
-    let longest = Timing::percentile(&hold, 1.0);
-    let p99 = Timing::percentile(&hold, 0.99);
-    eprintln!(
-        "{n} nodes, {} named directories resumed in {took:?}: {} slices, longest write-lock \
-         hold under {longest:?}, p99 under {p99:?}",
-        changed.len(),
-        timing.slices - before.slices
-    );
-    e.read(|m| {
-        let t = &m.tree;
-        assert_eq!(t.children(find(t, "kept").unwrap()).count(), KEPT);
-        assert_eq!(t.children(find(t, "files").unwrap()).count(), 0);
-        assert_eq!(t.children(find(t, "wide").unwrap()).count(), WIDE);
-    });
     e.shutdown(Duration::from_secs(1));
 }

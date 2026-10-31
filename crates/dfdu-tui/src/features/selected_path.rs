@@ -16,23 +16,25 @@ use std::process::{Command, Stdio};
 
 use dfdu_tree::HostPath;
 
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::features::{cleanup, dupes, largest};
 use crate::model::outside::tilde;
 
 /// The path of what is selected in the view shown, and whether it is a directory.
 fn selected(app: &App) -> Option<(HostPath, bool)> {
-    if largest::active(app) {
-        return largest::selected(app).map(|(path, _)| (path, false));
+    match views::current(app) {
+        View::Largest => return largest::selected(app).map(|(path, _)| (path, false)),
+        View::Duplicates => {
+            return dupes::selected(app).map(|p| (HostPath::local(&p), false));
+        }
+        View::Cleanup => {
+            let it = cleanup::selected(app)?;
+            return Some((it.path.clone(), it.kind == dfdu_tree::Kind::Dir));
+        }
+        View::Files | View::Map => {}
     }
-    if dupes::active(app) {
-        return dupes::selected_path(app).map(|p| (HostPath::local(&p), false));
-    }
-    if cleanup::active(app) {
-        let it = cleanup::selected_item(app)?;
-        return Some((it.path.clone(), it.kind == dfdu_tree::Kind::Dir));
-    }
-    let index = app.rows[app.selected_index()?];
+    let index = app.list.rows[app.selected_index()?];
     let e = &app.snap.entries[index];
     if e.pseudo {
         return None;

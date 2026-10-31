@@ -24,10 +24,7 @@ pub(super) fn enc_check_req(e: &mut Enc, r: &CheckReq) {
             e.rule(*rule);
             enc_path(e, path);
             e.bool(*vcs);
-            e.var(processes.len() as u64);
-            for p in processes {
-                e.bytes(p.as_bytes());
-            }
+            e.list(processes, |e, p| e.bytes(p.as_bytes()));
         }
         // The agent builds the command from its own rules.
         CheckReq::NativeSize { rule, .. } => {
@@ -44,11 +41,7 @@ pub(super) fn dec_check_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<CheckReq>
             let rule = d.rule()?;
             let path = dec_path(d)?;
             let vcs = d.bool()?;
-            let n = d.count(1)?;
-            let mut processes = Vec::with_capacity(n);
-            for _ in 0..n {
-                processes.push(d.lossy()?);
-            }
+            let processes = d.list(1, Dec::lossy)?;
             Ok(CheckReq::Guards {
                 node,
                 rule,
@@ -92,13 +85,7 @@ pub(super) fn enc_check_msg(e: &mut Enc, m: &CheckMsg) {
                 Some(false) => 1,
                 Some(true) => 2,
             });
-            match running {
-                Some(p) => {
-                    e.u8(1);
-                    e.bytes(p.as_bytes());
-                }
-                None => e.u8(0),
-            }
+            e.opt(running.as_ref(), |e, p| e.bytes(p.as_bytes()));
         }
         CheckMsg::NativeSize { rule, result } => {
             e.u8(1);
@@ -123,11 +110,7 @@ pub(super) fn dec_check_msg(d: &mut Dec) -> R<CheckMsg> {
                 2 => Some(true),
                 _ => return bad("tracked"),
             },
-            running: match d.u8()? {
-                0 => None,
-                1 => Some(d.lossy()?),
-                _ => return bad("running"),
-            },
+            running: d.opt("running", Dec::lossy)?,
         },
         1 => CheckMsg::NativeSize {
             rule: d.rule()?,
@@ -140,21 +123,18 @@ pub(super) fn dec_check_msg(d: &mut Dec) -> R<CheckMsg> {
 pub(super) fn enc_measure_req(e: &mut Enc, r: &MeasureReq) {
     e.var(r.round);
     enc_path(e, &r.dir);
-    e.var(r.files.len() as u64);
-    for f in &r.files {
+    e.list(&r.files, |e, f| {
         e.var(f.node.to_bits());
         e.bytes(&f.name);
         e.var(f.inode.0);
         e.var(f.inode.1);
-    }
+    });
 }
 
 pub(super) fn dec_measure_req(d: &mut Dec) -> R<MeasureReq> {
     let round = d.var()?;
     let dir = dec_path(d)?;
-    let n = d.count(4)?;
-    let mut files = Vec::with_capacity(n);
-    for _ in 0..n {
+    let files = d.list(4, |d| {
         let node = NodeRef::from_bits(d.var()?);
         let name = d.bytes()?;
         // A name, not a path: the measurer opens it relative to `dir`.
@@ -165,12 +145,12 @@ pub(super) fn dec_measure_req(d: &mut Dec) -> R<MeasureReq> {
         {
             return bad("file name");
         }
-        files.push(MeasureFile {
+        Ok(MeasureFile {
             node,
             name: name.to_vec(),
             inode: (d.var()?, d.var()?),
-        });
-    }
+        })
+    })?;
     Ok(MeasureReq { round, dir, files })
 }
 
@@ -186,15 +166,11 @@ pub(super) fn enc_measure_msg(e: &mut Enc, m: &MeasureMsg) {
             e.var(me.excl);
             e.bool(me.compressed);
             e.bool(me.exact);
-            e.var(me.ranges.len() as u64);
-            for &(a, b) in &me.ranges {
-                e.var(a);
-                e.var(b);
-            }
-            e.var(me.points.len() as u64);
-            for &(a, n) in &me.points {
-                e.var(a);
-                e.var(n);
+            for list in [&me.ranges, &me.points] {
+                e.list(list, |e, &(a, b)| {
+                    e.var(a);
+                    e.var(b);
+                });
             }
         }
         MeasureResult::Changed => e.u8(1),
@@ -215,20 +191,14 @@ pub(super) fn dec_measure_msg(d: &mut Dec) -> R<MeasureMsg> {
             let excl = d.var()?;
             let compressed = d.bool()?;
             let exact = d.bool()?;
-            let n = d.count(2)?;
-            let mut ranges = Vec::with_capacity(n);
-            for _ in 0..n {
+            let ranges = d.list(2, |d| {
                 let (a, b) = (d.var()?, d.var()?);
                 if a > b {
                     return bad("extent range");
                 }
-                ranges.push((a, b));
-            }
-            let n = d.count(2)?;
-            let mut points = Vec::with_capacity(n);
-            for _ in 0..n {
-                points.push((d.var()?, d.var()?));
-            }
+                Ok((a, b))
+            })?;
+            let points = d.list(2, |d| Ok((d.var()?, d.var()?)))?;
             MeasureResult::Measured(Measurement {
                 fs,
                 excl,

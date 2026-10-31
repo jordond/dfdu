@@ -1,14 +1,14 @@
 //! The pane's text: what it says about the entry [`super::read`] found, wrapped to the pane.
 
-use dfdu_store::history::date_time;
-use dfdu_tree::Kind;
+use dfdu_tree::{Kind, date_time};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use super::{BAR, Facts, Largest, Matched};
 use crate::app::App;
+use crate::format::{bar, count, human, plural, ratio};
 use crate::model::snapshot::Mark;
-use crate::theme::{Theme, bar, count, human, ratio};
+use crate::theme::Theme;
 
 /// The pane's lines being built, each wrapped to the inner width.
 struct Text {
@@ -121,7 +121,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
     }
     if f.is_dir {
         disk.push_str(" · ");
-        disk.push_str(&plural(f.total.items, "item", "items"));
+        disk.push_str(&counted(f.total.items, "item"));
     }
     out.add(&disk, plain);
     let other = format!(
@@ -133,7 +133,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
     let size = app.size_mode.of(&f.total);
     if let Some((d, then, at)) = crate::model::growth::since(app, &f.path, size, f.mark) {
         let s = if d == 0 {
-            format!("the same as on {}", dfdu_store::history::day(at))
+            format!("the same as on {}", dfdu_tree::day(at))
         } else {
             format!(
                 "{} (was {})",
@@ -154,7 +154,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
         out.add(p, t.status_error);
     }
     if f.errors_below > 0 {
-        let s = format!("{} below", plural(f.errors_below, "error", "errors"));
+        let s = format!("{} below", counted(f.errors_below, "error"));
         out.add(&s, t.status_error);
     }
 }
@@ -178,19 +178,19 @@ fn rule_match(out: &mut Text, t: &Theme, c: &Matched) {
     }
     for (flag, note) in [
         (
-            dfdu_tree::Class::VCS_TRACKED,
+            dfdu_tree::ClassFlags::VCS_TRACKED,
             "version control tracks files in it: protected",
         ),
         (
-            dfdu_tree::Class::IN_USE,
+            dfdu_tree::ClassFlags::IN_USE,
             "a program that uses it was running",
         ),
         (
-            dfdu_tree::Class::VCS_UNKNOWN,
+            dfdu_tree::ClassFlags::VCS_UNKNOWN,
             "git could not tell whether it tracks files in it: not recommended",
         ),
     ] {
-        if c.flags & flag != 0 {
+        if c.flags.has(flag) {
             out.add(note, t.status_warn);
         }
     }
@@ -240,10 +240,10 @@ fn identity(out: &mut Text, t: &Theme, f: &Facts) {
     if mounts + ro > 0 {
         let mut parts = Vec::new();
         if mounts > 0 {
-            parts.push(plural(mounts, "mount", "mounts"));
+            parts.push(counted(mounts, "mount"));
         }
         if ro > 0 {
-            parts.push(plural(ro, "read-only subvolume", "read-only subvolumes"));
+            parts.push(counted(ro, "read-only subvolume"));
         }
         let s = format!("inside: {}; deletion stops at them", parts.join(", "));
         out.add(&s, t.status_warn);
@@ -277,8 +277,9 @@ fn kind_name(kind: Kind) -> &'static str {
     }
 }
 
-fn plural(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", count(n), if n == 1 { one } else { many })
+/// `n` and `noun`, in the plural unless `n` is one: `1 item`, `1.2k items`.
+fn counted(n: u64, noun: &str) -> String {
+    format!("{} {noun}{}", count(n), plural(n))
 }
 
 /// `text` in lines of at most `width` characters, broken at spaces; a word longer than a line

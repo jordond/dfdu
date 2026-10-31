@@ -1,6 +1,7 @@
 //! Scanner state shared by workers, the watchdog and the applier. The worker step function is
 //! in the `worker` submodule, the watchdog's in `watchdog`, each worker's own state in `slot`,
-//! and the applier's control of jobs in `jobs`.
+//! the applier's control of jobs in `jobs`, the tasks the workers run in `task` and the limits
+//! of the mounts the scan entered in `mounts`.
 
 use fixedbitset::FixedBitSet;
 use std::collections::{HashMap, HashSet};
@@ -9,14 +10,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 
-use crate::backend::{Backend, Raw};
-use crate::classify::{ClassOpts, Listing, TaskClass};
-use crate::gate::{Gate, GateStats};
-use crate::proto::{Batch, DirId, JobId, ListingStatus, ScanMsg};
+use crate::backend::Backend;
+use crate::classify::ClassOpts;
+use crate::proto::{Batch, DirId, JobId, ScanMsg};
 use crate::sync::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Injector, Mutex, RwLock};
 
 mod jobs;
+mod mounts;
 mod slot;
+mod task;
 mod verify;
 mod watchdog;
 mod worker;
@@ -24,10 +26,14 @@ mod worker;
 #[cfg(test)]
 mod test_util;
 
+use mounts::Gates;
+pub use mounts::{MAX_MOUNT_WORKERS, TaskGate};
 pub use slot::{Outbox, WorkerSlot};
+pub use task::Task;
+use task::{ChunkWork, DirParts, LISTING_PART, TaskKind};
 pub use verify::VerifyDir;
 pub use watchdog::WatchdogReport;
-pub use worker::{StepResult, Worker};
+pub use worker::{RunningPart, StepResult, Worker};
 
 /// Monotonic time in nanoseconds; never returns 0 (0 means "not set" in the slot fields).
 pub trait Clock: Sync {
@@ -69,9 +75,6 @@ pub struct Limits {
     pub network_parts: usize,
 }
 
-/// At most this many workers are added to the pool for limited mounts, all mounts together.
-pub const MAX_MOUNT_WORKERS: usize = 16;
-
 impl Default for Limits {
     fn default() -> Self {
         Limits {
@@ -108,125 +111,6 @@ pub struct JobOptions {
     /// resume's, which keeps them from the tree it loaded.
     pub keep: Option<Arc<crate::journal::Keep>>,
 }
-
-pub struct Task<L> {
-    pub job: JobId,
-    pub dir: DirId,
-    pub loc: L,
-    focus_epoch: u32,
-    is_root: bool,
-    /// The directory's own `dev` and mount id (the root's are filled in when it is opened).
-    dev: u64,
-    mount: u64,
-    /// Ask the backend for a subvolume record when opening (`dev` changed from the parent).
-    probe_subvol: bool,
-    /// Set for a chunk task: one block of the directory to stat. Otherwise this is the
-    /// directory's listing task.
-    chunk: Option<Box<ChunkWork<L>>>,
-    /// Set for a batch of a resume's check of the directories it keeps ([`Shared::verify`]):
-    /// no directory is listed, each of the batch's is stat'ed.
-    verify: Option<Box<verify::VerifyWork>>,
-    /// The limit of the directory's mount, if it has one. Set for a job root once it is opened;
-    /// the root task itself runs without a permit.
-    gate: Option<Arc<TaskGate<L>>>,
-    /// What the directory's mount is stored on, as the backend reported it when the scan
-    /// entered the mount; handed to [`Backend::open`]. A directory inherits its parent's.
-    storage: dfdu_sys::Storage,
-    /// What the directory's entries are classified against, when the job classifies.
-    class: Option<Box<TaskClass>>,
-}
-
-/// A mount's concurrency limit, holding the tasks that wait for a permit.
-pub type TaskGate<L> = Gate<Task<L>>;
-
-/// Storage class and limit of each mount the scan entered, by mount key; the limit is `None`
-/// for a mount without one.
-type Gates<L> = HashMap<(u64, u64), (dfdu_sys::Storage, Option<Arc<TaskGate<L>>>)>;
-
-impl<L: std::fmt::Debug> std::fmt::Debug for Task<L> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Task")
-            .field("job", &self.job)
-            .field("dir", &self.dir)
-            .field("loc", &self.loc)
-            .field("chunk", &self.chunk.as_ref().map(|c| c.seq))
-            .finish_non_exhaustive()
-    }
-}
-
-/// A block handed from a directory's listing task to a chunk task.
-pub struct ChunkWork<L> {
-    raw: Raw<L>,
-    seq: u32,
-    parts: Arc<DirParts>,
-    class: Option<Arc<Listing>>,
-}
-
-/// The parts of a directory read by more than one task: its listing task and the chunk tasks it
-/// handed blocks to. Whoever finishes the last part sends the directory's one `Close`, with
-/// every part's outcome in its status.
-#[derive(Default)]
-pub struct DirParts {
-    /// The listing task (until it finishes) plus chunk tasks not finished.
-    unfinished: AtomicU32,
-    /// Chunk messages of the directory, all parts; set by the listing task when it finishes.
-    chunks: AtomicU32,
-    panicked: AtomicU32,
-    cancelled: AtomicU32,
-    /// The listing task's own outcome, set when it finishes.
-    listing: Mutex<Option<ListingStatus>>,
-}
-
-impl DirParts {
-    fn new() -> Self {
-        DirParts {
-            unfinished: AtomicU32::new(1),
-            ..Default::default()
-        }
-    }
-
-    /// Chunk tasks handed out and not finished.
-    fn in_flight(&self) -> usize {
-        self.unfinished.load(SeqCst).saturating_sub(1) as usize
-    }
-
-    /// The directory's status once every part has finished.
-    fn status(&self) -> ListingStatus {
-        let (mut panicked, mut cancelled, mut read_error) = (
-            self.panicked.load(SeqCst),
-            self.cancelled.load(SeqCst),
-            None,
-        );
-        match self.listing.lock().clone() {
-            Some(ListingStatus::Partial {
-                panicked: p,
-                cancelled: c,
-                read_error: e,
-            }) => {
-                panicked += p;
-                cancelled += c;
-                read_error = e;
-            }
-            // Parts exist only once entries were read, so the listing did not fail or end
-            // before its first entry.
-            Some(ListingStatus::Cancelled) => cancelled += 1,
-            Some(ListingStatus::Failed(e)) => read_error = Some(e),
-            Some(ListingStatus::Complete) | None => {}
-        }
-        if panicked == 0 && cancelled == 0 && read_error.is_none() {
-            ListingStatus::Complete
-        } else {
-            ListingStatus::Partial {
-                panicked,
-                cancelled,
-                read_error,
-            }
-        }
-    }
-}
-
-/// Part number of a directory's listing task; chunk task `seq` is part `seq + 1`.
-const LISTING_PART: u32 = 0;
 
 struct JobState {
     ended: AtomicBool,
@@ -294,16 +178,11 @@ pub struct Shared<B: Backend> {
     pub idle: AtomicUsize,
     slots: RwLock<Vec<Arc<WorkerSlot<B::Loc>>>>,
     waker: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
-    /// Limits by mount key ([`mount_key`]); `None` for mounts without one. Looked up when a
+    /// Limits by mount key (`mounts::mount_key`); `None` for mounts without one. Looked up when a
     /// task for a mount root is created.
     gates: Mutex<Gates<B::Loc>>,
     /// Workers the pool adds for limited mounts other than job roots'.
     mount_workers: AtomicUsize,
-}
-
-/// A mount's key in [`Shared::gates`]: its id, or its device when there are no mount ids.
-fn mount_key(mount: u64, dev: u64) -> (u64, u64) {
-    if mount != 0 { (mount, 0) } else { (0, dev) }
 }
 
 impl<B: Backend> Shared<B> {
@@ -328,60 +207,6 @@ impl<B: Backend> Shared<B> {
             gates: Mutex::new(HashMap::new()),
             mount_workers: AtomicUsize::new(0),
         }
-    }
-
-    /// The storage class and the limit of the mount `(mount, dev)`, created when the scan first
-    /// enters the mount: `Limits::rotational_parts` on a spinning disk, `Limits::network_parts`
-    /// on a network mount, none on other storage. The mount of a job root gets the pool's size
-    /// instead; any other limited mount adds its limit to the pool, so its tasks do not take
-    /// workers from the rest of the scan. The backend answers from the mount table and sysfs,
-    /// without touching the mount.
-    fn gate_for(
-        &self,
-        mount: u64,
-        dev: u64,
-        job_root: bool,
-    ) -> (dfdu_sys::Storage, Option<Arc<TaskGate<B::Loc>>>) {
-        let key = mount_key(mount, dev);
-        let mut gates = self.gates.lock();
-        if let Some(g) = gates.get(&key) {
-            return g.clone();
-        }
-        let storage = self.backend.mount_storage(mount, dev);
-        let class_limit = match storage {
-            dfdu_sys::Storage::Rotational => self.limits.rotational_parts,
-            dfdu_sys::Storage::Network => self.limits.network_parts,
-            dfdu_sys::Storage::Solid | dfdu_sys::Storage::Unknown => 0,
-        };
-        let limit = match class_limit {
-            0 => 0,
-            _ if job_root && self.limits.pool_workers > 0 => self.limits.pool_workers,
-            l => l,
-        };
-        let gate = (limit > 0).then(|| Arc::new(Gate::new(key.0, key.1, limit)));
-        if gate.is_some() && !job_root {
-            let extra = self.mount_workers.load(SeqCst);
-            self.mount_workers
-                .store((extra + limit).min(MAX_MOUNT_WORKERS), SeqCst);
-        }
-        gates.insert(key, (storage, gate.clone()));
-        (storage, gate)
-    }
-
-    /// Workers the pool adds for limited mounts the scans entered.
-    pub fn mount_workers(&self) -> usize {
-        self.mount_workers.load(SeqCst)
-    }
-
-    /// Every mount limit created so far.
-    pub fn gate_stats(&self) -> Vec<GateStats> {
-        let gates: Vec<_> = self
-            .gates
-            .lock()
-            .values()
-            .filter_map(|g| g.1.clone())
-            .collect();
-        gates.iter().map(|g| g.stats()).collect()
     }
 
     /// Called after tasks are published, so idle threads can be woken (real runtime only).
@@ -444,6 +269,8 @@ impl<B: Backend> Shared<B> {
         !self.priority.is_empty() || !self.injector.is_empty()
     }
 
+    /// Tasks not yet done (queued or running), and how many of those are parts the applier
+    /// abandoned: `(outstanding, abandoned)`.
     pub fn outstanding(&self) -> (u64, u64) {
         (
             self.outstanding.load(SeqCst),

@@ -26,13 +26,8 @@ fn shown(app: &App, width: u16) -> String {
 /// Cleanup's footer keeps its own keys before `[ ] views`, `? help` and `q quit`.
 #[test]
 fn view_keys_come_before_help_and_quit() {
-    use crate::features::treemap::tests::{classified, sync};
-    let fx = classified();
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
+    let fx = crate::tests::classified();
+    let app = crate::features::cleanup::tests::opened(&fx.m, Instant::now());
     let wide = shown(&app, 160);
     for want in ["f filter", "N command", "[ ] views", "q quit"] {
         assert!(wide.contains(want), "{wide}");

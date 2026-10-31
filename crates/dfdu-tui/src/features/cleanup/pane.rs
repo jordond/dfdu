@@ -11,7 +11,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use super::{Item, selected_item};
+use super::{Item, selected};
 use crate::app::{App, Effect};
 
 /// The native command pane of one item.
@@ -27,9 +27,10 @@ pub(super) struct Pane {
     pub(super) armed: bool,
 }
 
-/// Opens the selected item's native command, starting with its dry run if it has one.
-pub(super) fn open_pane(app: &mut App) -> Vec<Effect> {
-    let Some(it) = selected_item(app).cloned() else {
+/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
+/// native command, starting with its dry run if it has one.
+pub fn command(app: &mut App) -> Vec<Effect> {
+    let Some(it) = selected(app).cloned() else {
         return Vec::new();
     };
     let Some(rules) = app.snap.rules.clone() else {

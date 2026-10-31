@@ -48,7 +48,7 @@ impl<B: Backend> Applier<B> {
         if !dry_run {
             self.rescan_paths.push(path);
         }
-        self.outgoing_controls.push(DeleterReq::Native(req));
+        self.delete.controls.push(DeleterReq::Native(req));
     }
 }
 

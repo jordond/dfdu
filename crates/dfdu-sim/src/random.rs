@@ -6,7 +6,7 @@ use dfdu_scan::Clock;
 
 use crate::check::random_dir;
 use crate::deleter::{deleter_step, pick_deletable};
-use crate::{Sim, sim_check};
+use crate::{Sim, SimError, sim_check};
 
 impl Sim {
     /// One step chosen at random: a worker step, answers to the applier's requests, applied
@@ -15,7 +15,7 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn random_step(&mut self) -> Result<(), String> {
+    pub fn random_step(&mut self) -> Result<(), SimError> {
         self.report.ticks += 1;
         self.check_q.extend(self.applier.take_check_requests());
         self.queue_measurements()?;
@@ -57,21 +57,7 @@ impl Sim {
             60..80 => {
                 for _ in 0..=self.rng.below(20) {
                     if let Some(d) = self.del_q.pop_front() {
-                        if let (Some(tr), DeleterMsg::Item { node, result, .. }) = (trace(), &d) {
-                            match self.model.tree.resolve(*node) {
-                                Some(ix) => {
-                                    let p = String::from_utf8_lossy(&self.model.tree.path(ix))
-                                        .into_owned();
-                                    if tr.starts_with(&p) || p.starts_with(&tr) {
-                                        eprintln!("[{}] result {p}: {result:?}", self.report.ticks);
-                                    }
-                                }
-                                None => eprintln!(
-                                    "[{}] result for unresolvable node: {result:?}",
-                                    self.report.ticks
-                                ),
-                            }
-                        }
+                        self.trace_delete_result(&d);
                         self.applier.apply_delete(&mut self.model, d);
                         self.applier.refresh_status(&mut self.model);
                         self.check("")?;
@@ -108,8 +94,28 @@ impl Sim {
         Ok(())
     }
 
+    /// With `DFDU_SIM_TRACE` set, prints a deleter result for the traced path or one above or
+    /// below it.
+    fn trace_delete_result(&self, d: &DeleterMsg) {
+        let (Some(tr), DeleterMsg::Item { node, result, .. }) = (trace(), d) else {
+            return;
+        };
+        match self.model.tree.resolve(*node) {
+            Some(ix) => {
+                let p = String::from_utf8_lossy(&self.model.tree.path(ix)).into_owned();
+                if tr.starts_with(&p) || p.starts_with(&tr) {
+                    eprintln!("[{}] result {p}: {result:?}", self.report.ticks);
+                }
+            }
+            None => eprintln!(
+                "[{}] result for unresolvable node: {result:?}",
+                self.report.ticks
+            ),
+        }
+    }
+
     /// Time passes, and maybe a cancel, a delete or a rescan is issued.
-    fn random_command(&mut self) -> Result<(), String> {
+    fn random_command(&mut self) -> Result<(), SimError> {
         self.clock.advance(self.rng.below(3) * 1_000_000);
         if self.cancels_left > 0 && self.rng.chance(8) {
             let running: Vec<_> = self
@@ -170,3 +176,6 @@ impl Sim {
 fn trace() -> Option<String> {
     std::env::var("DFDU_SIM_TRACE").ok()
 }
+
+#[cfg(test)]
+mod tests;

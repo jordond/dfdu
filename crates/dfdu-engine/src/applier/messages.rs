@@ -8,7 +8,9 @@ use dfdu_scan::{
     Backend, Chunk, ChunkStatus, DirId, Entry, JobId, ListingStatus, Mark, Probe, ScanMsg,
     SkipReason,
 };
-use dfdu_tree::{Class, DirRec, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Totals, Tree};
+use dfdu_tree::{
+    Class, DirRec, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Protection, Totals, Tree,
+};
 
 use super::work::Work;
 use super::{Applier, Job, JobPhase, Model, Slot, empty_dir_meta};
@@ -65,7 +67,7 @@ impl<B: Backend> Applier<B> {
                     }
                     // Nothing wants this directory any more (job ended, subtree cut or gone):
                     // give the stuck task up so it stops counting as outstanding work.
-                    None => self.scanner_abandon(JobId(job.0), dir),
+                    None => self.scanner_abandon(job, dir),
                 }
             }
             ScanMsg::Quiescent { submitted_seq } => {
@@ -114,7 +116,7 @@ impl<B: Backend> Applier<B> {
                 st.corrupt += 1;
                 m.status.incomplete = true;
                 m.status
-                    .anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
+                    .push_anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
                 return None;
             }
         };
@@ -174,13 +176,11 @@ impl<B: Backend> Applier<B> {
         for f in &c.files {
             let name = c.name(f.name);
             let fx = if f.meta.is_hardlink() {
-                let mut fx = Ix(0);
                 self.links
                     .add_scanned((f.meta.dev, f.meta.ino), f.meta.nlink, scope, |charged| {
-                        fx = m.tree.add_file(ix, name, &f.meta, charged, None);
-                        m.tree.node_ref(fx)
-                    });
-                fx
+                        let fx = m.tree.add_file(ix, name, &f.meta, charged, None);
+                        (m.tree.node_ref(fx), fx)
+                    })
             } else {
                 m.tree.add_file(ix, name, &f.meta, false, None)
             };
@@ -268,7 +268,7 @@ impl<B: Backend> Applier<B> {
             Ordering::Greater => {
                 m.status.stats.corrupt += 1;
                 m.status.incomplete = true;
-                m.status.anomaly(format!(
+                m.status.push_anomaly(format!(
                     "close with {chunks} chunks after {seen}: job {} dir {}",
                     job.0, dir.0
                 ));
@@ -410,7 +410,7 @@ fn add_subdirs(
         .iter()
         .zip(subdir_ids(c.first_subdir, c.subdirs.len()))
     {
-        let mut flags = 0;
+        let mut flags = NodeFlags::default();
         if s.mount_root {
             flags |= NodeFlags::MOUNT_ROOT;
         }
@@ -460,8 +460,8 @@ fn apply_marks(m: &mut Model, c: &Chunk, file_ix: &[Ix], subdir_ix: &[Ix]) {
         };
         match *mark {
             Mark::Class(class) => m.tree.set_class(node, Some(class)),
-            Mark::Protected => m.tree.set_protection(node, true, false),
-            Mark::Excepted => m.tree.set_protection(node, false, true),
+            Mark::Protected => m.tree.set_protection(node, Protection::Protected),
+            Mark::Excepted => m.tree.set_protection(node, Protection::Excepted),
         }
     }
 }

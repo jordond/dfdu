@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-store"
-description = "Persistence: ncdu JSON import and export, snapshots, scan history, zstd, atomic writes"
+description = "Persistence: ncdu JSON import and export, snapshots, the scan cache, scan history, zstd, atomic writes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
-dfdu-rules.workspace = true
 dfdu-scan.workspace = true
+dfdu-sys.workspace = true
 ruzstd.workspace = true
 crc32c.workspace = true
 rusqlite.workspace = true
@@ -24,4 +24,5 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-dfdu-engine.workspace = true
+dfdu-rules.workspace = true
+dfdu-engine = { workspace = true, features = ["test-support"] }

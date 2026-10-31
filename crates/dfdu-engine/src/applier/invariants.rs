@@ -19,7 +19,9 @@ impl<B: Backend> Applier<B> {
     ///
     /// A description of the first inode that is not.
     pub fn check_settled(&self, m: &Model) -> Result<(), String> {
-        self.extents.check_settled(&m.tree)
+        self.extents
+            .check_settled(&m.tree)
+            .map_err(|e| e.to_string())
     }
 
     /// Checks the tree's structure and totals, and the pending counts of running jobs. Linear
@@ -32,7 +34,7 @@ impl<B: Backend> Applier<B> {
         m.tree
             .check(&self.shadow_roots(&m.tree))
             .map_err(|v| format!("{v:?}"))?;
-        self.extents.check(&m.tree)?;
+        self.extents.check(&m.tree).map_err(|e| e.to_string())?;
         for j in self.jobs.values().filter(|j| j.phase == JobPhase::Running) {
             let Some(root) = m.tree.resolve(j.root) else {
                 continue;

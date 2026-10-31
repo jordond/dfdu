@@ -7,7 +7,7 @@ use dfdu_engine::Command;
 use dfdu_tree::NodeFlags;
 
 use crate::check::{check_classes, check_pool_flags, compare, topmost_incomplete};
-use crate::{Sim, SimReport};
+use crate::{Sim, SimError, SimReport};
 
 impl Sim {
     /// Nothing is running, queued or in flight anywhere.
@@ -15,7 +15,7 @@ impl Sim {
     pub fn settled(&self) -> bool {
         let (out, ab) = self.shared.outstanding();
         out == ab
-            && self.model.status.running() == 0
+            && self.model.status.running_jobs() == 0
             && !self.applier.has_work()
             && !self.model.status.settling
             && self.cur.is_none()
@@ -35,21 +35,21 @@ impl Sim {
     /// # Errors
     ///
     /// When a check of the run fails; the message names the seed and what went wrong.
-    pub fn run_to_end(mut self) -> Result<SimReport, String> {
+    pub fn run_to_end(mut self) -> Result<SimReport, SimError> {
         self.settle()?;
         self.finish()
     }
 
     /// Steps in random order until everything has settled and no directory is left
     /// incomplete.
-    pub(crate) fn settle(&mut self) -> Result<(), String> {
+    pub(crate) fn settle(&mut self) -> Result<(), SimError> {
         loop {
             if self.report.ticks >= self.cfg.max_ticks {
                 let (out, ab) = self.shared.outstanding();
                 eprintln!("{}", self.shared.debug_parts());
                 return Err(self.fail(format!(
                     "did not finish: running jobs {}, outstanding {out}, abandoned {ab}, queued batches {}",
-                    self.model.status.running(),
+                    self.model.status.running_jobs(),
                     self.sink.q.lock().len()
                 )));
             }
@@ -75,7 +75,7 @@ impl Sim {
         }
     }
 
-    pub(crate) fn finish(mut self) -> Result<SimReport, String> {
+    pub(crate) fn finish(mut self) -> Result<SimReport, SimError> {
         let (spec, model) = (&self.spec, &self.model);
         let report = &mut self.report;
         report.chunk_tasks = self.shared.chunk_tasks.load(SeqCst);
@@ -85,9 +85,9 @@ impl Sim {
             report.revoked += g.revoked;
             // Parts still stuck forever lost their permits; nothing else is left running.
             if g.running != 0 || g.pending != 0 {
-                return Err(format!(
-                    "seed {}: mount limit left with work at the end: {g:?}",
-                    self.seed
+                return Err(SimError::new(
+                    self.seed,
+                    format!("mount limit left with work at the end: {g:?}"),
                 ));
             }
         }
@@ -127,23 +127,28 @@ impl Sim {
         let seed = self.seed;
         self.applier
             .check(model)
-            .map_err(|e| format!("seed {seed}: final invariant: {e}"))?;
+            .map_err(|e| SimError::new(seed, format!("final invariant: {e}")))?;
         self.applier
             .check_settled(model)
-            .map_err(|e| format!("seed {seed}: settled: {e}"))?;
+            .map_err(|e| SimError::new(seed, format!("settled: {e}")))?;
         if let Some(rules) = &self.cfg.rules {
             report.classified = check_classes(spec, model, rules)
-                .map_err(|e| format!("seed {seed}: classes: {e}"))?;
+                .map_err(|e| SimError::new(seed, format!("classes: {e}")))?;
             if self.cfg.checks {
                 (report.tracked, report.in_use) = check_pool_flags(model, rules)
-                    .map_err(|e| format!("seed {seed}: classifier pool: {e}"))?;
+                    .map_err(|e| SimError::new(seed, format!("classifier pool: {e}")))?;
             }
         }
         if let Ok(v) = std::env::var("DFDU_SIM_INODE") {
             let mut it = v.split(',').map(str::parse::<u64>);
             let key = match (it.next(), it.next()) {
                 (Some(Ok(dev)), Some(Ok(ino))) => (dev, ino),
-                _ => return Err(format!("DFDU_SIM_INODE={v}: expected dev,ino")),
+                _ => {
+                    return Err(SimError::new(
+                        seed,
+                        format!("DFDU_SIM_INODE={v}: expected dev,ino"),
+                    ));
+                }
             };
             eprintln!("{}", self.applier.describe_extents(model, key));
             for n in spec
@@ -163,13 +168,14 @@ impl Sim {
         )
         .map_err(|e| {
             let n = &model.status.notices;
-            format!(
-                "seed {seed}: {e}; last notices: {:?}",
-                &n[n.len().saturating_sub(6)..]
-            )
+            let last = &n[n.len().saturating_sub(6)..];
+            SimError::new(seed, format!("{e}; last notices: {last:?}"))
         })?;
         self.report.dirs = dirs;
         self.report.abandoned = abandoned;
         Ok(self.report)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -5,12 +5,12 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, DirId, JobId};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::reclassify::ClassifyLoaded;
 use super::rescans::Rescans;
 use super::verify::Verify;
+use crate::applier::links::{LinkTable, VISIBLE};
 use crate::applier::work::{STEP_UNITS, Work};
 use crate::applier::{Applier, Model};
-use crate::links::{LinkTable, VISIBLE};
-use crate::reclassify::ClassifyLoaded;
 
 /// A resume's walk over the loaded tree, a step at a time: the directories still to take over,
 /// and what the rescans that follow it need.
@@ -85,7 +85,7 @@ fn own(
     for c in linked {
         links.add_scanned(tree.dev_ino(c), 0, VISIBLE, |charged| {
             tree.set_charged(c, charged);
-            tree.node_ref(c)
+            (tree.node_ref(c), ())
         });
     }
     // Mounts below keep journals of their own, or none, and so do btrfs subvolumes below
@@ -109,7 +109,7 @@ impl<B: Backend> Applier<B> {
     pub(in crate::applier) fn resume_step(&mut self, m: &mut Model, mut walk: Box<ResumeWalk>) {
         let Some(root) = m.tree.resolve_visible(walk.root) else {
             if walk.verify.is_some() {
-                self.scan.end_job(JobId(walk.id));
+                self.scanner_end_job(JobId(walk.id));
             }
             return;
         };
@@ -126,7 +126,7 @@ impl<B: Backend> Applier<B> {
         }
         if walk.rescans.is_none() {
             if walk.verify.take().is_some() {
-                self.scan.end_job(JobId(walk.id));
+                self.scanner_end_job(JobId(walk.id));
             }
             walk.rescans = Some(self.resume_rescans(m, root, &walk));
         }
@@ -149,35 +149,34 @@ impl<B: Backend> Applier<B> {
         let (id, links) = (*id, &mut self.links);
         // Nothing more is checked once cancelled: the rescans that would use it are not run.
         let mut verify = verify.as_mut().filter(|_| !*cancelled);
-        let done = match class {
-            Some((c, w)) => w.step(&mut m.tree, c, &self.scan.backend, STEP_UNITS, |t, ix| {
+        let done = if let Some((c, w)) = class {
+            w.step(&mut m.tree, c, &self.scan.backend, STEP_UNITS, |t, ix| {
                 own(t, links, id, root, ix, mounts);
                 if let Some(v) = verify.as_deref_mut() {
                     v.add(t, ix);
                 }
-            }),
-            None => {
-                let mut n = 0;
-                while n < STEP_UNITS
-                    && let Some(r) = stack.pop()
-                {
-                    let Some(ix) = m.tree.resolve_visible(r) else {
-                        continue;
-                    };
-                    own(&mut m.tree, links, id, root, ix, mounts);
-                    let t = &m.tree;
-                    if let Some(v) = verify.as_deref_mut() {
-                        v.add(t, ix);
-                    }
-                    n += 1 + t.children(ix).count();
-                    stack.extend(
-                        t.children(ix)
-                            .filter(|&c| t.dir(c).is_some())
-                            .map(|c| t.node_ref(c)),
-                    );
+            })
+        } else {
+            let mut n = 0;
+            while n < STEP_UNITS
+                && let Some(r) = stack.pop()
+            {
+                let Some(ix) = m.tree.resolve_visible(r) else {
+                    continue;
+                };
+                own(&mut m.tree, links, id, root, ix, mounts);
+                let t = &m.tree;
+                if let Some(v) = verify.as_deref_mut() {
+                    v.add(t, ix);
                 }
-                stack.is_empty()
+                n += 1 + t.children(ix).count();
+                stack.extend(
+                    t.children(ix)
+                        .filter(|&c| t.dir(c).is_some())
+                        .map(|c| t.node_ref(c)),
+                );
             }
+            stack.is_empty()
         };
         if let Some(v) = verify {
             v.send(&m.tree, &self.scan, id, done);
@@ -189,7 +188,7 @@ impl<B: Backend> Applier<B> {
     /// by its rescans. The last answer lets a walk that waits for it go on.
     pub(in crate::applier) fn resume_verified(
         &mut self,
-        m: &mut Model,
+        m: &Model,
         job: u32,
         batch: u32,
         (changed, gone): (&[u32], &[u32]),
@@ -243,16 +242,23 @@ impl<B: Backend> Applier<B> {
             Work::Resume(walk) => Some(&mut **walk),
             _ => None,
         });
+        let mut checking = Vec::new();
         for walk in walking.chain(self.resume.waiting.as_deref_mut()) {
             if job.is_none_or(|j| j == walk.id) {
                 walk.cancelled = true;
                 if walk.verify.is_some() {
-                    self.scan.end_job(JobId(walk.id));
+                    checking.push(walk.id);
                 }
             }
+        }
+        for id in checking {
+            self.scanner_end_job(JobId(id));
         }
         if let Some(w) = self.resume.waiting.take_if(|w| w.cancelled) {
             self.work.push_front(Work::Resume(w));
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

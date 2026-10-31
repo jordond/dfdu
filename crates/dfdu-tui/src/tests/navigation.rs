@@ -7,11 +7,13 @@ use std::time::Instant;
 use dfdu_tree::{Host, HostPath, Kind};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{below, library_snap, meta, press, render, snap_with_totals, typed};
+use super::{
+    below, library_snap, marked_names as marked, meta, press, render, snap_with_totals, typed,
+};
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect};
-use crate::features::treemap::tests::sync;
-use crate::model::snapshot::{self, test_entry};
+use crate::model::snapshot::test_entry;
+use crate::tests::sync;
 use crate::theme::Theme;
 
 fn ctrl(c: char) -> KeyEvent {
@@ -28,14 +30,6 @@ fn twenty() -> (App, Instant) {
     app.refresh(snap_with_totals(entries, 1), t0);
     app.list_height = 10;
     (app, t0)
-}
-
-fn marked(app: &App) -> Vec<String> {
-    (app.marks.items().iter())
-        .map(|it| {
-            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
-        })
-        .collect()
 }
 
 #[test]
@@ -131,10 +125,10 @@ fn paths_of_another_kind_of_host_are_shown_and_found_as_they_are() {
     let mut m = dfdu_engine::Model::default();
     m.tree.set_host(host);
     let root = (m.tree).new_root(root_name.as_bytes(), &meta(Kind::Dir, 0, 1), true);
-    let dir = (m.tree).add_dir_flagged(root, name.as_bytes(), &meta(Kind::Dir, 0, 2), 0);
+    let dir = (m.tree).add_dir(root, name.as_bytes(), &meta(Kind::Dir, 0, 2));
     let path = HostPath::new(host, want.as_bytes().to_vec());
     assert_eq!(m.tree.host_path(dir), path);
-    assert_eq!(snapshot::find_path(&m.tree, &path), Some(dir));
+    assert_eq!(dfdu_tree::find_path(&m.tree, &path), Some(dir));
 
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
@@ -202,7 +196,7 @@ fn filter_enter_opens_the_only_match() {
     // Two matches: Enter keeps the filter and stays.
     app.key(press(KeyCode::Char('/')), t0);
     typed(&mut app, "i", t0);
-    assert_eq!(app.rows.len(), 2);
+    assert_eq!(app.list.rows.len(), 2);
     app.key(press(KeyCode::Enter), t0);
     assert!(!app.target.path.to_local().ends_with("Library"));
     // One file: stays too.
@@ -215,7 +209,7 @@ fn filter_enter_opens_the_only_match() {
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "libr", t0);
-    assert_eq!(app.rows.len(), 1);
+    assert_eq!(app.list.rows.len(), 1);
     app.key(press(KeyCode::Enter), t0);
     assert_eq!(app.target.path, below("/r", "Library"));
 }

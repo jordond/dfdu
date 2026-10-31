@@ -137,7 +137,8 @@ fn scan<B: Backend>(backend: B, root: &Path) -> (Totals, u64) {
         (m.tree.total(r), m.status.stats.chunks)
     });
     let chunk_tasks = e
-        .scanner()
+        .local_scanner()
+        .unwrap()
         .chunk_tasks
         .load(std::sync::atomic::Ordering::SeqCst);
     e.shutdown(Duration::from_secs(1));

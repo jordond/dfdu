@@ -21,4 +21,4 @@ parking_lot.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
-dfdu-tui.workspace = true
+dfdu-engine = { workspace = true, features = ["test-support"] }

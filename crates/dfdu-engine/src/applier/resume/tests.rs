@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
+use dfdu_scan::{JobId, Limits, PortableBackend, Shared};
+use dfdu_tree::{DirState, Kind};
+
 use super::rescans::kept_by_target;
 use super::*;
-use crate::test_util::meta;
-use dfdu_scan::JobId;
-use dfdu_tree::{DirState, Kind};
+use crate::applier::ApplierSettings;
+use crate::test_support::meta;
 
 mod cancel;
 
@@ -12,7 +16,7 @@ mod cancel;
     clippy::many_single_char_names,
     reason = "nodes named as in the fixture's diagram"
 )]
-fn tree() -> (Tree, [Ix; 4]) {
+pub(super) fn tree() -> (Tree, [Ix; 4]) {
     let mut t = Tree::new();
     let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     let add = |t: &mut Tree, p: Ix, ix: Ix| {
@@ -36,6 +40,33 @@ fn tree() -> (Tree, [Ix; 4]) {
         rec.reported = true;
     }
     (t, [r, a, b, c])
+}
+
+/// An applier with `t` in its model and a resume of its root `r` applied: the paths `changed`
+/// below it changed since `since`, and `root` the root's stat. No worker runs.
+pub(super) fn resumed(
+    t: Tree,
+    r: Ix,
+    changed: &[&str],
+    since: u64,
+    root: Option<Meta>,
+) -> (Applier<PortableBackend>, Model) {
+    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
+    let mut ap = Applier::new(shared, ApplierSettings::default());
+    let mut m = Model::default();
+    let node = t.node_ref(r);
+    m.tree = t;
+    ap.apply_command(
+        &mut m,
+        Command::Resume {
+            node,
+            opts: JobOptions::default(),
+            changed: Some(changed.iter().map(PathBuf::from).collect()),
+            since,
+            root: root.map(Box::new),
+        },
+    );
+    (ap, m)
 }
 
 #[test]
@@ -66,6 +97,10 @@ fn keys(k: &Kept) -> Vec<(u64, u64)> {
 /// A change in `b` lists `r`, `a` and `b` again, keeping `c`: the rescan is of the root
 /// when it changed, of `b` alone when it did not.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn what_is_listed_again_keeps_the_rest() {
     let (t, [r, a, b, c]) = tree();
     let kept = kept_by_target(&t, r, &[r, b], &[r], &[]);
@@ -73,9 +108,9 @@ fn what_is_listed_again_keeps_the_rest() {
     let kept = kept_by_target(&t, r, &[a], &[a], &[]);
     assert_eq!(keys(&kept[0]), [t.dev_ino(b)]);
     let kept = kept_by_target(&t, r, &[b], &[b], &[]);
-    assert!(keys(&kept[0]).is_empty());
+    assert_eq!(keys(&kept[0]), []);
     // A mount is scanned in full.
-    assert!(keys(&kept_by_target(&t, r, &[a], &[a], &[a])[0]).is_empty());
+    assert_eq!(keys(&kept_by_target(&t, r, &[a], &[a], &[a])[0]), []);
 }
 
 /// A directory whose listing was not read to the end is listed again.
@@ -91,29 +126,15 @@ fn an_incomplete_directory_is_not_kept() {
 /// gone; a batch that could not be stat'ed to the end lists all of its directories and their
 /// parents. The rescans start once the last batch is answered.
 #[test]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "nodes named as in the fixture's diagram"
+)]
 fn what_the_check_finds_is_listed_again() {
-    use std::sync::Arc;
-
-    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
-
-    use crate::applier::Applier;
+    use dfdu_scan::ScanMsg;
 
     let (t, [r, a, b, c]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
-    let mut m = Model::default();
-    let root = t.node_ref(r);
-    m.tree = t;
-    ap.apply_command(
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![]),
-            since: 0,
-            root: None,
-        },
-    );
+    let (mut ap, mut m) = resumed(t, r, &[], 0, None);
     while ap.has_work() {
         ap.work_step(&mut m);
     }
@@ -183,11 +204,7 @@ fn what_the_check_finds_is_listed_again() {
 /// not known, and scanned again in full when it is another directory.
 #[test]
 fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
-    use std::sync::Arc;
-
-    use dfdu_scan::{Limits, PortableBackend, ScanMsg, Shared};
-
-    use crate::applier::Applier;
+    use dfdu_scan::ScanMsg;
 
     let loaded = Meta {
         mtime: 5,
@@ -214,21 +231,9 @@ fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
             rec.listing_closed = true;
             rec.reported = true;
         }
-        let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-        let mut ap = Applier::new(shared);
-        let mut m = Model::default();
         let root = t.node_ref(r);
-        m.tree = t;
-        ap.apply_command(
-            &mut m,
-            Command::Resume {
-                node: root,
-                opts: JobOptions::default(),
-                changed: Some(vec![]),
-                since,
-                root: now.map(|mtime| Box::new(Meta { mtime, ..loaded })),
-            },
-        );
+        let now = now.map(|mtime| Meta { mtime, ..loaded });
+        let (mut ap, mut m) = resumed(t, r, &[], since, now);
         while ap.has_work() {
             ap.work_step(&mut m);
         }
@@ -256,21 +261,8 @@ fn the_root_is_listed_again_unless_its_stat_vouches_for_it() {
     }
     // Another directory where the root was is scanned again in full, without a resume.
     let (t, [r, ..]) = tree();
-    let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
-    let mut m = Model::default();
     let root = t.node_ref(r);
-    m.tree = t;
-    ap.apply_command(
-        &mut m,
-        Command::Resume {
-            node: root,
-            opts: JobOptions::default(),
-            changed: Some(vec![]),
-            since: 0,
-            root: Some(Box::new(meta(Kind::Dir, 0, 77))),
-        },
-    );
+    let (ap, _) = resumed(t, r, &[], 0, Some(meta(Kind::Dir, 0, 77)));
     assert!(!ap.resuming());
     assert_eq!(ap.jobs.values().filter(|j| j.target == root).count(), 1);
 }

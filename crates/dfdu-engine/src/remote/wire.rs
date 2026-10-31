@@ -29,7 +29,8 @@ use crate::classifier::{CheckMsg, CheckReq};
 use crate::measure::{MeasureMsg, MeasureReq};
 use dfdu_clean::{DeleterMsg, DeleterReq};
 use dfdu_rules::protected::State;
-use dfdu_rules::{Hit, RuleIx, RuleSet};
+use dfdu_rules::{Hit, RuleSet};
+use dfdu_tree::RuleIx;
 
 use dfdu_scan::{DirId, JobId, ScanMsg};
 

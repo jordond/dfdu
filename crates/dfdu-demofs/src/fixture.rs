@@ -1,4 +1,5 @@
-//! The fixture file: what the filesystem serves, read from TOML and built into a [`Tree`].
+//! The fixture file: what the filesystem serves, read from TOML and built into a
+//! [`Tree`](crate::Tree).
 //!
 //! ```toml
 //! now = "2026-10-01T09:00:00Z"     # the time the recording runs at; ages count back from it
@@ -28,13 +29,19 @@
 //! `import` lists real paths copied in at the same place when the fixture is built, for a root
 //! a shell can run in; [`Fixture::build_at`] builds one fixture inside another's tree.
 
-use std::time::Duration;
+mod build;
+mod import;
+mod values;
 
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, bail};
 use serde::Deserialize;
 
-use crate::fill::{self, Fill};
-use crate::tree::{Data, Fault, Kind, Tree, seed_of};
+pub(crate) use build::{insert, mkdir_p};
+pub use values::{format_time, parse_age};
+pub(crate) use values::{parse_duration, parse_size, parse_time};
+
+use crate::Error;
+use crate::fill::Fill;
 
 #[derive(Debug)]
 pub struct Fixture {
@@ -105,12 +112,8 @@ pub enum Amount {
 }
 
 impl Amount {
-    /// The size in bytes.
-    ///
-    /// # Errors
-    ///
-    /// Text that is not a size.
-    pub fn bytes(&self) -> anyhow::Result<u64> {
+    /// The size in bytes, or an error for text that is not a size.
+    pub(crate) fn bytes(&self) -> anyhow::Result<u64> {
         match self {
             Amount::Bytes(b) => Ok(*b),
             Amount::Text(t) => parse_size(t),
@@ -157,10 +160,10 @@ impl Fixture {
     /// # Errors
     ///
     /// The text is not a fixture.
-    pub fn parse(text: &str) -> anyhow::Result<Fixture> {
-        Fixture::parse_over(text, |name| {
+    pub fn parse(text: &str) -> Result<Fixture, Error> {
+        Ok(Fixture::parse_over(text, |name| {
             bail!("extends {name:?}: only a fixture read from a file can extend another")
-        })
+        })?)
     }
 
     /// Reads the fixture file at `path`, and the ones it extends.
@@ -168,8 +171,8 @@ impl Fixture {
     /// # Errors
     ///
     /// A file cannot be read or is not a fixture, or the files extend one another in a loop.
-    pub fn load(path: &std::path::Path) -> anyhow::Result<Fixture> {
-        Fixture::load_chain(path, 0)
+    pub fn load(path: &std::path::Path) -> Result<Fixture, Error> {
+        Ok(Fixture::load_chain(path, 0)?)
     }
 
     fn load_chain(path: &std::path::Path, depth: usize) -> anyhow::Result<Fixture> {
@@ -186,11 +189,7 @@ impl Fixture {
     }
 
     /// Reads fixture text; `base` gives the fixture named by its `extends`.
-    ///
-    /// # Errors
-    ///
-    /// The text is not a fixture, or `base` fails.
-    pub fn parse_over(
+    pub(crate) fn parse_over(
         text: &str,
         base: impl FnOnce(&str) -> anyhow::Result<Fixture>,
     ) -> anyhow::Result<Fixture> {
@@ -242,403 +241,10 @@ impl Fixture {
     /// # Errors
     ///
     /// `now` is not a time.
-    pub fn now(&self) -> anyhow::Result<i64> {
-        parse_time(&self.now).with_context(|| format!("now = {:?}", self.now))
-    }
-
-    /// The tree the fixture describes.
-    ///
-    /// # Errors
-    ///
-    /// An entry is malformed, its path runs through a file, it is given twice, or it links to
-    /// a path that is not an earlier file; an import cannot be read.
-    pub fn build(&self) -> anyhow::Result<Tree> {
-        let mut tree = Tree::new(0, (self.uid, self.gid));
-        self.build_at(&mut tree, "")?;
-        Ok(tree)
-    }
-
-    /// Builds the fixture into `tree` with its root at the directory `at` (made with its
-    /// parents when missing), owned by the fixture's uid and gid. Imports come first, then the
-    /// entries.
-    ///
-    /// # Errors
-    ///
-    /// As [`Fixture::build`], or `at` runs through a file.
-    pub fn build_at(&self, tree: &mut Tree, at: &str) -> anyhow::Result<()> {
-        let now = self.now()?;
-        let default_mtime = now - parse_age(&self.age)?;
-        tree.owner = (self.uid, self.gid);
-        let root = mkdir_p(tree, at, default_mtime)?;
-        let node = &mut tree.nodes[root];
-        node.mtime = default_mtime;
-        (node.uid, node.gid) = tree.owner;
-        let under = |p: &str| {
-            let p = p.trim_start_matches('/');
-            if at.is_empty() {
-                p.to_owned()
-            } else {
-                format!("{at}/{p}")
-            }
-        };
-        for pattern in &self.import {
-            for from in expand(pattern).with_context(|| format!("import {pattern:?}"))? {
-                let dir = mkdir_p(tree, &parent_of(&under(&from)), default_mtime)?;
-                import(tree, dir, std::path::Path::new(&from), default_mtime)
-                    .with_context(|| format!("import {from:?}"))?;
-            }
-        }
-        for e in &self.entries {
-            add(tree, e, &under, now, default_mtime)
-                .with_context(|| format!("entry {:?}", e.path))?;
-        }
-        Ok(())
+    pub fn now(&self) -> Result<i64, Error> {
+        Ok(parse_time(&self.now).with_context(|| format!("now = {:?}", self.now))?)
     }
 }
 
-fn parent_of(path: &str) -> String {
-    path.rsplit_once('/')
-        .map_or(String::new(), |(p, _)| p.to_owned())
-}
-
-/// The paths an import names: itself, or with `*` in a component (any run of characters, not
-/// `/`) every path that matches, in name order, so one list serves each architecture's
-/// library paths. A pattern that matches nothing is an error, as a missing path is.
-fn expand(pattern: &str) -> anyhow::Result<Vec<String>> {
-    if !pattern.contains('*') {
-        return Ok(vec![pattern.to_owned()]);
-    }
-    let mut paths = vec![String::new()];
-    for part in pattern.split('/').filter(|p| !p.is_empty()) {
-        let mut next = vec![];
-        for dir in &paths {
-            if !part.contains('*') {
-                next.push(format!("{dir}/{part}"));
-                continue;
-            }
-            let Ok(entries) = std::fs::read_dir(if dir.is_empty() { "/" } else { dir }) else {
-                continue;
-            };
-            let mut names: Vec<_> = entries
-                .filter_map(|e| e.ok()?.file_name().into_string().ok())
-                .filter(|n| matches_glob(part, n))
-                .collect();
-            names.sort();
-            next.extend(names.into_iter().map(|n| format!("{dir}/{n}")));
-        }
-        paths = next;
-    }
-    paths.retain(|p| std::fs::symlink_metadata(p).is_ok());
-    if paths.is_empty() {
-        bail!("no path matches");
-    }
-    Ok(paths)
-}
-
-/// Whether `name` matches `pattern`, where `*` stands for any run of characters.
-fn matches_glob(pattern: &str, name: &str) -> bool {
-    let mut parts = pattern.split('*');
-    let first = parts.next().unwrap_or_default();
-    let Some(mut rest) = name.strip_prefix(first) else {
-        return false;
-    };
-    let parts: Vec<_> = parts.collect();
-    let Some((last, middle)) = parts.split_last() else {
-        return rest.is_empty();
-    };
-    for p in middle {
-        match rest.find(p) {
-            Some(i) => rest = &rest[i + p.len()..],
-            None => return false,
-        }
-    }
-    rest.len() >= last.len() && rest.ends_with(last)
-}
-
-/// Copies the file, symlink or directory at `from` into `dir` under its own name, with its
-/// permission bits; a directory with everything below it, in name order.
-#[cfg(unix)]
-fn import(tree: &mut Tree, dir: usize, from: &std::path::Path, mtime: i64) -> anyhow::Result<()> {
-    use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
-    use std::os::unix::fs::PermissionsExt as _;
-    let name = from
-        .file_name()
-        .with_context(|| format!("{} has no name", from.display()))?;
-    let meta = std::fs::symlink_metadata(from).with_context(|| from.display().to_string())?;
-    let mode = meta.permissions().mode() & 0o7777;
-    let kind = if meta.is_symlink() {
-        Kind::Symlink(std::fs::read_link(from)?.into_os_string().into_vec())
-    } else if meta.is_dir() {
-        Kind::dir()
-    } else if meta.is_file() {
-        let b = std::fs::read(from).with_context(|| from.display().to_string())?;
-        Kind::File {
-            size: b.len() as u64,
-            alloc: None,
-            data: Data::Bytes(b),
-        }
-    } else {
-        bail!("{} is not a file, directory or symlink", from.display());
-    };
-    let is_dir = matches!(kind, Kind::Dir { .. });
-    let n = tree
-        .insert(dir, name.as_bytes(), kind, mtime, mode)
-        .map_err(|e| anyhow!("{}: {e:?}", from.display()))?;
-    if is_dir {
-        let mut names: Vec<_> = std::fs::read_dir(from)?
-            .map(|e| e.map(|e| e.path()))
-            .collect::<Result<_, _>>()?;
-        names.sort();
-        for p in names {
-            import(tree, n, &p, mtime)?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn import(_: &mut Tree, _: usize, _: &std::path::Path, _: i64) -> anyhow::Result<()> {
-    bail!("imports need a Unix system")
-}
-
-fn add(
-    tree: &mut Tree,
-    e: &Entry,
-    under: &impl Fn(&str) -> String,
-    now: i64,
-    default_mtime: i64,
-) -> anyhow::Result<()> {
-    let mtime = e
-        .age
-        .as_deref()
-        .map_or(Ok(default_mtime), |a| parse_age(a).map(|a| now - a))?;
-    let path = under(&e.path);
-    let (parent, name) = path.rsplit_once('/').unwrap_or(("", &path));
-    let dir = mkdir_p(tree, parent, mtime)?;
-    if let Some(to) = &e.link {
-        let target = tree
-            .resolve(&under(to))
-            .map_err(|_| anyhow!("link {to:?}: no such entry"))?;
-        return tree
-            .link(target, dir, name.as_bytes())
-            .map_err(|err| anyhow!("link {to:?}: {err:?}"));
-    }
-    let kind = e.kind.unwrap_or(if e.fill.is_some() {
-        EntryKind::Dir
-    } else if e.target.is_some() {
-        EntryKind::Symlink
-    } else {
-        EntryKind::File
-    });
-    let n = match kind {
-        EntryKind::Dir => match tree.lookup(dir, name.as_bytes()) {
-            // A directory made for an earlier entry's path: this entry sets its attributes.
-            Ok(n) if tree.nodes[n].is_dir() => n,
-            _ => insert(tree, dir, name, Kind::dir(), mtime, 0o755)?,
-        },
-        EntryKind::Symlink => {
-            let target = e.target.as_deref().context("a symlink needs a target")?;
-            let kind = Kind::Symlink(target.as_bytes().to_vec());
-            insert(tree, dir, name, kind, mtime, 0o777)?
-        }
-        EntryKind::File => {
-            let (size, data) = match (&e.text, &e.size) {
-                (Some(t), _) => (t.len() as u64, Data::Bytes(t.as_bytes().to_vec())),
-                (None, s) => {
-                    let id = e.content.as_deref().unwrap_or(&e.path);
-                    let size = s.as_ref().map_or(Ok(0), Amount::bytes)?;
-                    let seed = seed_of(id.as_bytes());
-                    (size, Data::Seeded { seed, len: size })
-                }
-            };
-            let alloc = e.alloc.as_ref().map(Amount::bytes).transpose()?;
-            insert(
-                tree,
-                dir,
-                name,
-                Kind::File { size, alloc, data },
-                mtime,
-                0o644,
-            )?
-        }
-    };
-    let node = &mut tree.nodes[n];
-    node.mtime = mtime;
-    if let Some(m) = e.mode {
-        node.mode = m;
-    }
-    node.fault = e.error.as_ref().map(|f| match f {
-        FaultName::Denied => Fault::Denied,
-        FaultName::Io => Fault::Io,
-    });
-    if let Some(d) = &e.delay {
-        node.delay = parse_duration(d)?;
-    }
-    if let Some(f) = &e.fill {
-        fill::fill(tree, n, f, mtime, &e.path)?;
-    }
-    Ok(())
-}
-
-fn insert(
-    tree: &mut Tree,
-    dir: usize,
-    name: &str,
-    kind: Kind,
-    mtime: i64,
-    mode: u32,
-) -> anyhow::Result<usize> {
-    tree.insert(dir, name.as_bytes(), kind, mtime, mode)
-        .map_err(|e| anyhow!("{e:?}"))
-}
-
-/// The directory at `path`, made with its parents when missing.
-fn mkdir_p(tree: &mut Tree, path: &str, mtime: i64) -> anyhow::Result<usize> {
-    let mut d = 0;
-    for part in path.split('/').filter(|p| !p.is_empty()) {
-        d = match tree.lookup(d, part.as_bytes()) {
-            Ok(n) if tree.nodes[n].is_dir() => n,
-            Ok(_) => bail!("{part:?} in {path:?} is not a directory"),
-            Err(_) => insert(tree, d, part, Kind::dir(), mtime, 0o755)?,
-        };
-    }
-    Ok(d)
-}
-
-/// Parses a size: a number with an optional fraction and unit (`B`, `KB`/`MB`/`GB`/`TB` in
-/// powers of 1000, `KiB`/`MiB`/`GiB`/`TiB` in powers of 1024).
-///
-/// # Errors
-///
-/// Not a size.
-pub fn parse_size(s: &str) -> anyhow::Result<u64> {
-    let t = s.trim().replace('_', "");
-    let split = t
-        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .unwrap_or(t.len());
-    let (num, unit) = t.split_at(split);
-    let mult: u64 = match unit.trim() {
-        "" | "B" => 1,
-        "KB" => 1_000,
-        "MB" => 1_000_000,
-        "GB" => 1_000_000_000,
-        "TB" => 1_000_000_000_000,
-        "KiB" => 1 << 10,
-        "MiB" => 1 << 20,
-        "GiB" => 1 << 30,
-        "TiB" => 1 << 40,
-        u => bail!("size {s:?}: unknown unit {u:?}"),
-    };
-    let (whole, frac) = num.split_once('.').unwrap_or((num, ""));
-    let whole: u64 = whole.parse().with_context(|| format!("size {s:?}"))?;
-    let frac_val: u64 = if frac.is_empty() {
-        0
-    } else {
-        frac.parse().with_context(|| format!("size {s:?}"))?
-    };
-    let den = 10u128.pow(u32::try_from(frac.len())?);
-    let part = u128::from(frac_val) * u128::from(mult) / den;
-    whole
-        .checked_mul(mult)
-        .and_then(|b| b.checked_add(u64::try_from(part).ok()?))
-        .with_context(|| format!("size {s:?} is too large"))
-}
-
-/// Parses a duration: a whole number and `ms`, `s`, `m`, `h`, `d`, `w` or `y` (365 days).
-///
-/// # Errors
-///
-/// Not a duration.
-pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
-    let t = s.trim();
-    let split = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
-    let n: u64 = t[..split]
-        .parse()
-        .with_context(|| format!("duration {s:?}"))?;
-    let secs = match &t[split..] {
-        "ms" => return Ok(Duration::from_millis(n)),
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86_400,
-        "w" => 7 * 86_400,
-        "y" => 365 * 86_400,
-        u => bail!("duration {s:?}: unknown unit {u:?}"),
-    };
-    let secs = n
-        .checked_mul(secs)
-        .with_context(|| format!("duration {s:?} is too long"))?;
-    Ok(Duration::from_secs(secs))
-}
-
-/// [`parse_duration`] in whole seconds.
-///
-/// # Errors
-///
-/// Not a duration.
-pub fn parse_age(s: &str) -> anyhow::Result<i64> {
-    Ok(i64::try_from(parse_duration(s)?.as_secs())?)
-}
-
-/// Parses `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SS` or `YYYY-MM-DD HH:MM:SS`, UTC, with an optional
-/// trailing `Z`, into seconds since the epoch.
-///
-/// # Errors
-///
-/// Not such a time.
-pub fn parse_time(s: &str) -> anyhow::Result<i64> {
-    let t = s.trim().trim_end_matches('Z');
-    let (date, time) = t.split_once(['T', ' ']).unwrap_or((t, "00:00:00"));
-    let num = |p: &str| p.parse::<i64>().with_context(|| format!("time {s:?}"));
-    let d: Vec<&str> = date.split('-').collect();
-    let h: Vec<&str> = time.split(':').collect();
-    let ([y, mo, da], [hh, mm, ss]) = (d.as_slice(), h.as_slice()) else {
-        bail!("time {s:?}: expected YYYY-MM-DD[THH:MM:SS]");
-    };
-    let (y, mo, da) = (num(y)?, num(mo)?, num(da)?);
-    let (hh, mm, ss) = (num(hh)?, num(mm)?, num(ss)?);
-    // A date that does not exist (February 31st) comes back as another one.
-    let days = days_from_civil(y, mo, da);
-    if !(1..=12).contains(&mo) || civil_from_days(days) != (y, mo, da) {
-        bail!("time {s:?}: no such date");
-    }
-    if !(0..24).contains(&hh) || !(0..60).contains(&mm) || !(0..60).contains(&ss) {
-        bail!("time {s:?}: no such time of day");
-    }
-    Ok(days * 86_400 + hh * 3600 + mm * 60 + ss)
-}
-
-/// `secs` as `YYYY-MM-DD HH:MM:SS` UTC, as libfaketime's `FAKETIME` takes it after an `@`.
-#[must_use]
-pub fn format_time(secs: i64) -> String {
-    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
-        rem / 3600,
-        rem % 3600 / 60,
-        rem % 60
-    )
-}
-
-/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
-}
+#[cfg(test)]
+mod tests;

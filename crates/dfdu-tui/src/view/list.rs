@@ -14,34 +14,36 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use super::columns::{self, CATEGORY_MAX, Col, ColSet, cursor, left, right};
+use super::columns::{self, CATEGORY_MAX, Col, ColSet, blank, cursor, gaps, left, right};
 use crate::app::App;
+use crate::format::{bar, count, human, percent, ratio, spinner};
 use crate::model::growth::{self, RowNote};
 use crate::model::snapshot::{EntryData, Mark};
 use crate::state::{marks, motion};
-use crate::theme::{Theme, bar, count, human, percent, ratio, spinner};
+use crate::theme::Theme;
 
 /// Draws the column header on `head` and the rows on `area`.
 pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, frame: u64) {
     let height = area.height as usize;
     app.list_height = height;
-    let extra = usize::from(app.new_count > 0);
-    let rows = app.rows.len();
+    let extra = usize::from(app.list.new_count > 0);
+    let rows = app.list.rows.len();
     // Never scroll further than needed to fill the screen, then keep the selection visible.
-    app.scroll = app.scroll.min((rows + extra).saturating_sub(height));
+    app.list.scroll = app.list.scroll.min((rows + extra).saturating_sub(height));
     if let Some(sel) = app.selected_index() {
-        if sel < app.scroll {
-            app.scroll = sel;
-        } else if sel >= app.scroll + height.saturating_sub(extra).max(1) {
-            app.scroll = sel + 1 - height.saturating_sub(extra).max(1);
+        if sel < app.list.scroll {
+            app.list.scroll = sel;
+        } else if sel >= app.list.scroll + height.saturating_sub(extra).max(1) {
+            app.list.scroll = sel + 1 - height.saturating_sub(extra).max(1);
         }
     }
-    app.scroll = app.scroll.min(rows.saturating_sub(1));
+    app.list.scroll = app.list.scroll.min(rows.saturating_sub(1));
     // Entry indices of the rows on screen.
     let visible: Vec<usize> = app
+        .list
         .rows
         .iter()
-        .skip(app.scroll)
+        .skip(app.list.scroll)
         .take(height.saturating_sub(extra))
         .copied()
         .collect();
@@ -62,7 +64,7 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     f.render_widget(Paragraph::new(header(app, &cols)), head);
 
     let mut lines = Vec::with_capacity(height);
-    if rows == 0 && app.new_count == 0 {
+    if rows == 0 && app.list.new_count == 0 {
         let msg = match app.snap.dir_mark {
             Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "  (scanning…)",
             Some(Mark::Error) => "  (could not be read)",
@@ -71,7 +73,7 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
         };
         lines.push(Line::styled(msg, t.fg_dim));
     }
-    let max = app.rows_largest.max(1);
+    let max = app.list.rows_largest.max(1);
     let total = app.size_mode.of(&app.snap.dir_total).max(1);
     let sel = app.selected_index();
     for (row, (&i, &change)) in visible.iter().zip(&changes).enumerate() {
@@ -84,18 +86,18 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
             tree: trees.as_ref().map(|v| &v[row]),
         };
         let mut line = entry_line(app, &row_of, &cols);
-        if sel == Some(app.scroll + row) {
+        if sel == Some(app.list.scroll + row) {
             line = cursor(t, line, width);
         }
         lines.push(line);
     }
-    if app.new_count > 0 && lines.len() < height {
-        let n = app.new_count;
+    if app.list.new_count > 0 && lines.len() < height {
+        let n = app.list.new_count;
         lines.push(Line::styled(
             format!(
                 "   + {n} new entr{} since last sort (largest {})   S to sort now",
                 if n == 1 { "y" } else { "ies" },
-                human(app.new_largest)
+                human(app.list.new_largest)
             ),
             t.fg_dim,
         ));
@@ -103,7 +105,7 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     f.render_widget(Paragraph::new(lines), area);
     if scrollbar {
         let mut state = ScrollbarState::new((rows + extra).saturating_sub(height) + 1)
-            .position(app.scroll)
+            .position(app.list.scroll)
             .viewport_content_length(height);
         let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
@@ -119,14 +121,12 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
 /// The cells before the name column of `cols`.
 fn name_offset(cols: &[(Col, u16)]) -> u16 {
     let mut x = 0;
-    let mut prev = None;
-    for &(c, w) in cols {
-        x += c.gap(prev);
+    for (gap, c, w) in gaps(cols) {
+        x += gap;
         if c == Col::Name {
             break;
         }
         x += w;
-        prev = Some(c);
     }
     x
 }
@@ -166,10 +166,8 @@ fn present(app: &App, visible: &[usize], changes: &[Option<RowNote>]) -> ColSet 
 /// The dim line above the rows that names the columns.
 fn header(app: &App, cols: &[(Col, u16)]) -> Line<'static> {
     let mut spans = Vec::new();
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         let title = match c {
             Col::Delta => growth::column_title(app),
             c => c.title().to_owned(),
@@ -225,10 +223,8 @@ fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
     let e = &app.snap.entries[row.index];
     let mut spans = Vec::new();
     let mut notes = Vec::new();
-    let mut prev = None;
-    for &(c, w) in cols {
-        spans.push(Span::raw(" ".repeat(c.gap(prev).into())));
-        prev = Some(c);
+    for (gap, c, w) in gaps(cols) {
+        spans.push(blank(gap));
         match c {
             Col::Gutter => {
                 // A fold row stands for many entries: it has no mark of its own.
@@ -268,7 +264,7 @@ fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
             }
             Col::Items => spans.push(right(count(e.items), w, t.fg_dim)),
             Col::Mtime => {
-                let day = (e.mtime > 0 && !e.pseudo).then(|| dfdu_store::history::day(e.mtime));
+                let day = (e.mtime > 0 && !e.pseudo).then(|| dfdu_tree::day(e.mtime));
                 spans.push(left(day.unwrap_or_default(), w, t.fg_dim));
             }
             Col::Delta => spans.push(match row.change {

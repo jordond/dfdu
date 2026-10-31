@@ -2,24 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
-use fixedbitset::FixedBitSet;
-
 use super::*;
 use crate::proto::{JobId, ListingStatus};
 use crate::shared::test_util::{Inbox, Local, close_of, run, task};
 use crate::shared::{JobOptions, Limits};
-use crate::sync::{AtomicBool, AtomicU32, Mutex, RwLock};
-
-fn job(opts: JobOptions, dup_mounts: Option<HashSet<u64>>) -> JobState {
-    JobState {
-        ended: AtomicBool::new(false),
-        next_dir: AtomicU32::new(1),
-        early_stop: RwLock::new(FixedBitSet::new()),
-        dup_mounts,
-        mount_roots: Mutex::new(HashSet::new()),
-        opts,
-    }
-}
 
 /// A directory on device `dev` and mount `mount`, with inode `ino`.
 fn dir_meta(dev: u64, mount: u64, ino: u64) -> Meta {
@@ -52,7 +38,7 @@ fn shared() -> Shared<Local> {
 fn subdirectories_of_the_same_mount_are_read_when_they_can_be() {
     let sh = shared();
     let t = task(DirId(1), PathBuf::new(), 1, 1);
-    let j = job(JobOptions::default(), None);
+    let j = JobState::new(JobOptions::default(), None);
     let m = dir_meta(1, 1, 5);
     assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (false, None));
     let unreadable = Some(SkipReason::Excluded);
@@ -73,7 +59,7 @@ fn kept_directories_are_not_read() {
     let sh = shared();
     let t = task(DirId(1), PathBuf::new(), 1, 1);
     let keep = crate::journal::Keep::new([((1, 5), 0), ((2, 6), 0), ((1, 7), 0)]);
-    let j = job(
+    let j = JobState::new(
         JobOptions {
             keep: Some(Arc::new(keep)),
             ..JobOptions::default()
@@ -101,7 +87,7 @@ fn mounts_are_read_as_the_job_options_say() {
     let sh = shared();
     let t = task(DirId(1), PathBuf::new(), 1, 1);
     let skip = |opts: JobOptions, mount: u64| {
-        let j = job(opts, None);
+        let j = JobState::new(opts, None);
         subdir_skip(&sh, &t, &j, &dir_meta(2, mount, 5), true).1
     };
     let cross = JobOptions {
@@ -144,13 +130,13 @@ fn a_mount_seen_again_is_a_duplicate() {
         ..JobOptions::default()
     };
     // Without a mount table, by the device and inode of its root.
-    let j = job(cross.clone(), None);
+    let j = JobState::new(cross.clone(), None);
     let m = dir_meta(2, DISK, 5);
     assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (true, None));
     let dup = Some(SkipReason::DuplicateMount);
     assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (true, dup));
     // With one, as it says.
-    let j = job(cross, Some(HashSet::from([DISK])));
+    let j = JobState::new(cross, Some(HashSet::from([DISK])));
     assert_eq!(subdir_skip(&sh, &t, &j, &m, true), (true, dup));
 }
 

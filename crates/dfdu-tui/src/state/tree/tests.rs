@@ -3,7 +3,13 @@ use crate::model::snapshot::{EntryData, test_entry};
 use crate::state::order::{SortSpec, tree_order};
 
 /// Row `i` named `name` of `size` bytes, below row `parent`.
-fn row(i: u32, name: &str, size: u64, parent: Option<usize>, entries: &[EntryData]) -> EntryData {
+pub(crate) fn row(
+    i: u32,
+    name: &str,
+    size: u64,
+    parent: Option<usize>,
+    entries: &[EntryData],
+) -> EntryData {
     let (depth, parent) = match parent {
         Some(p) => (entries[p].depth + 1, u32::try_from(p).expect("small")),
         None => (0, u32::MAX),
@@ -27,7 +33,7 @@ fn row(i: u32, name: &str, size: u64, parent: Option<usize>, entries: &[EntryDat
 /// └─only
 ///   └─deep
 /// ```
-fn sample() -> Vec<EntryData> {
+pub(crate) fn sample() -> Vec<EntryData> {
     let mut es: Vec<EntryData> = Vec::new();
     for (name, size, parent) in [
         ("a", 100, None),
@@ -43,6 +49,17 @@ fn sample() -> Vec<EntryData> {
         let i = u32::try_from(es.len()).expect("small");
         let e = row(i, name, size, parent, &es);
         es.push(e);
+    }
+    es
+}
+
+/// [`sample`] with its leaves files: only `a`, `y`, `b` and `only` are directories.
+pub(crate) fn sample_with_files() -> Vec<EntryData> {
+    let mut es = sample();
+    for e in &mut es {
+        e.is_dir = ["a", "y", "b", "only"]
+            .iter()
+            .any(|d| e.name[..] == *d.as_bytes());
     }
     es
 }
@@ -92,12 +109,13 @@ fn guides_follow_the_display_order() {
 }
 
 #[test]
-fn inside_follows_the_parents() {
+fn parent_follows_the_rows_up() {
     let es = sample();
-    assert!(inside(&es, 3, 2));
-    assert!(inside(&es, 3, 0));
-    assert!(!inside(&es, 3, 6));
-    assert!(!inside(&es, 0, 0), "a row is not inside itself");
+    assert_eq!(parent(&es, 3), Some(2));
+    assert_eq!(parent(&es, 2), Some(0));
+    assert_eq!(parent(&es, 8), Some(7));
+    assert_eq!(parent(&es, 0), None, "a top row has no parent");
+    assert_eq!(parent(&es, 6), None);
 }
 
 #[test]

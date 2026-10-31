@@ -58,7 +58,7 @@ const NOISE_LINES: usize = 64;
 /// Bytes they may print.
 const NOISE_BYTES: u64 = 16 << 10;
 /// The longest line the script prints after the marker.
-const LINE: u64 = 4096;
+const MAX_LINE_BYTES: u64 = 4096;
 const MARKER: &[u8] = b"DFDU-BOOT 1 ";
 
 /// Runs the bootstrap on the script's stdout `r` and stdin `w`: on success the agent is
@@ -136,7 +136,9 @@ fn marker(r: &mut impl BufRead) -> io::Result<(String, String)> {
 /// The script's next status line.
 fn line(r: &mut impl BufRead) -> io::Result<String> {
     let mut buf = Vec::new();
-    r.by_ref().take(LINE).read_until(b'\n', &mut buf)?;
+    r.by_ref()
+        .take(MAX_LINE_BYTES)
+        .read_until(b'\n', &mut buf)?;
     if buf.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
@@ -164,20 +166,35 @@ fn status_error(status: &str) -> io::Error {
     }
 }
 
+/// An agent not sent: the user said no, or could not be asked.
+#[derive(Debug)]
+pub struct Declined;
+
+impl std::fmt::Display for Declined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no dfdu {} agent there; install dfdu there or pass --remote-agent upload",
+            env!("CARGO_PKG_VERSION")
+        )
+    }
+}
+
+impl std::error::Error for Declined {}
+
 /// Whether to send an agent in `mode`: `upload` always does, `auto` asks when `terminal`
 /// (`answer` reads the reply) and refuses otherwise, so scripts never upload unasked.
 pub fn decide(
     mode: AgentMode,
     terminal: bool,
     answer: impl FnOnce() -> io::Result<String>,
-) -> Result<(), &'static str> {
-    const HINT: &str = "install dfdu there or pass --remote-agent upload";
+) -> Result<(), Declined> {
     match mode {
         AgentMode::Upload => Ok(()),
-        _ if !terminal => Err(HINT),
+        _ if !terminal => Err(Declined),
         _ => match answer() {
             Ok(a) if matches!(a.trim(), "y" | "Y" | "yes" | "Yes") => Ok(()),
-            _ => Err(HINT),
+            _ => Err(Declined),
         },
     }
 }

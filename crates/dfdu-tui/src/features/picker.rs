@@ -12,7 +12,8 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::theme::{Theme, bar, human, ratio};
+use crate::format::{bar, human, ratio};
+use crate::theme::Theme;
 
 pub struct Picker {
     pub disks: Vec<Disk>,
@@ -145,6 +146,12 @@ fn row<'a>(d: &Disk, selected: bool, bw: usize, t: &Theme) -> Line<'a> {
                 spans.push(Span::styled(bar(frac, bw, t.bars), t.bar_fill));
             }
             spans.push(Span::raw(format!("  {:>3.0}%", frac * 100.0)));
+            if let Some(p) = s.purgeable.filter(|&p| p > 0) {
+                spans.push(Span::styled(
+                    format!("  (+{} purgeable)", human(p)),
+                    t.fg_dim,
+                ));
+            }
         }
         None => spans.push(Span::styled("  not responding", t.status_warn)),
     }
@@ -216,6 +223,7 @@ mod tests {
                 total: 926 * gib,
                 used: 822 * gib,
                 available: 104 * gib,
+                purgeable: Some(30 * gib),
             }),
             role,
             shares_space_with: vec![with.into()],
