@@ -277,7 +277,7 @@ pub fn print_debug_stats(m: &Model) {
         s.late,
         s.stalled
     );
-    let (names, garbage) = m.tree.name_bytes();
+    let (names, garbage) = m.tree.name_storage();
     let (kids, kids_freed) = m.tree.child_slots();
     eprintln!(
         "tree: {} nodes, {:.1} MiB of names ({:.1} MiB freed), {:.1} MiB of child lists \

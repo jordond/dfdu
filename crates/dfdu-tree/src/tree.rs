@@ -86,10 +86,10 @@ impl Tree {
         self.live
     }
 
-    /// Bytes in the name arena, freed names included, and how many of them are freed names:
-    /// `(stored, garbage)`.
+    /// Bytes in the name arena, freed names included, and how many of them freed names left
+    /// unused: `(stored, garbage)`.
     #[must_use]
-    pub fn name_bytes(&self) -> (u64, u64) {
+    pub fn name_storage(&self) -> (u64, u64) {
         (self.names.bytes(), self.names_garbage)
     }
 
