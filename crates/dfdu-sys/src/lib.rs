@@ -27,9 +27,9 @@ mod linux;
 pub use linux::*;
 
 #[cfg(not(target_os = "linux"))]
-mod other;
+mod not_linux;
 #[cfg(not(target_os = "linux"))]
-pub use other::*;
+pub use not_linux::*;
 
 #[cfg(any(target_os = "macos", test))]
 mod bulk;
