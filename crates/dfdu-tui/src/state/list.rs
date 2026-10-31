@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use dfdu_tree::HostPath;
 
 use crate::app::Selection;
+use crate::model::snapshot::EntryData;
 use crate::state::order::Order;
 
 #[derive(Default)]
@@ -32,9 +33,50 @@ pub struct List {
     pub(crate) sel_hint: Cell<usize>,
 }
 
+impl List {
+    /// Counts the entries new since the last sort and finds the largest of them and of the
+    /// rows, once the order has been brought up to date.
+    pub(crate) fn tally(&mut self, entries: &[EntryData]) {
+        let largest = |rows: &[usize]| rows.iter().map(|&i| entries[i].size).max().unwrap_or(0);
+        self.new_count = self.order.new_entries().len();
+        self.new_largest = largest(self.order.new_entries());
+        self.rows_largest = largest(&self.rows);
+    }
+}
+
 /// Remembered position in a directory, restored when the user comes back to it.
 #[derive(Clone, Debug)]
 pub(crate) struct Cursor {
     pub(crate) selected: Option<Selection>,
     pub(crate) scroll: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::snapshot::test_entry;
+    use crate::state::order::SortSpec;
+
+    #[test]
+    fn tally_sizes_up_the_rows_and_the_new_entries() {
+        let mut list = List::default();
+        list.tally(&[]);
+        assert_eq!(
+            (list.new_count, list.new_largest, list.rows_largest),
+            (0, 0, 0)
+        );
+
+        let all = |_: usize, _: &EntryData| true;
+        let mut entries = vec![test_entry(0, "a", 40), test_entry(1, "b", 70)];
+        list.order.sort_exact(&entries, all, SortSpec::default());
+        // Two entries arrive between sorts: they are new, not rows.
+        entries.push(test_entry(2, "c", 500));
+        entries.push(test_entry(3, "d", 9));
+        list.order.sync(&entries, all, SortSpec::default());
+        list.rows = list.order.rows().to_vec();
+        list.tally(&entries);
+        assert_eq!(list.new_count, 2);
+        assert_eq!(list.new_largest, 500);
+        assert_eq!(list.rows_largest, 70);
+    }
 }

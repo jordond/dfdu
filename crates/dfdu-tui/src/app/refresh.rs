@@ -150,6 +150,14 @@ enum Reorder {
     Top,
 }
 
+impl Reorder {
+    /// Whether the rows are sorted again. Sorting the first screen leaves the rows below it
+    /// waiting for the automatic sort.
+    fn resorts(self) -> bool {
+        !matches!(self, Reorder::Sync | Reorder::Top)
+    }
+}
+
 impl App {
     /// Whether a fresh snapshot sorts the rows on the first screen: while the user has not moved
     /// the cursor in this directory, or it is on the first row (`index`, before the snapshot).
@@ -308,8 +316,7 @@ impl App {
                     .sort_top(entries, visible, self.sort, self.list_height);
             }
         }
-        // Sorting the first screen leaves the rows below it waiting for the automatic sort.
-        let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
+        let resorted = mode.resorts();
         if resorted {
             self.list.sort_gen += 1;
             self.sort_schedule.record_sort(now);
@@ -328,29 +335,20 @@ impl App {
             self.motion
                 .resorted(&old_rows, &self.list.rows, entries, auto);
         }
-        self.list.new_count = self.list.order.new_entries().len();
-        self.list.new_largest = self
-            .list
-            .order
-            .new_entries()
-            .iter()
-            .map(|&i| entries[i].size)
-            .max()
-            .unwrap_or(0);
-        self.list.rows_largest = self
-            .list
-            .rows
-            .iter()
-            .map(|&i| entries[i].size)
-            .max()
-            .unwrap_or(0);
+        self.list.tally(entries);
+        self.restore_cursor(mode, dir_changed, old_index);
+    }
 
+    /// Finds the selection again in the rows just updated by `mode` and puts the scroll position
+    /// back: a cursor the user has not moved stays at the top, a moved one on its screen line
+    /// across a re-sort in the same directory.
+    fn restore_cursor(&mut self, mode: Reorder, dir_changed: bool, old_index: Option<usize>) {
         self.fix_selection(old_index);
         if mode == Reorder::Top && !self.list.moved {
             self.select(0);
             self.list.scroll = 0;
         }
-        if resorted && !dir_changed {
+        if mode.resorts() && !dir_changed {
             if self.list.moved {
                 // Keep the selected row on the same screen line.
                 if let (Some(old), Some(new)) = (old_index, self.selected_index()) {
