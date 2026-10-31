@@ -42,7 +42,8 @@ enum Cmd {
         #[arg(long)]
         fix: bool,
     },
-    /// The fast checks: fmt, clippy, unused dependencies, cargo-deny, zizmor and shellcheck.
+    /// The fast checks: fmt, clippy, unused dependencies, cargo-deny, zizmor, shellcheck and the
+    /// fuzz build.
     Lint,
     /// Find unused dependencies.
     Machete,
@@ -228,7 +229,20 @@ fn lint() -> anyhow::Result<()> {
         ("deny", Box::new(|| deny(false))),
         ("zizmor", Box::new(zizmor)),
         ("shellcheck", Box::new(shellcheck)),
+        ("fuzz-build", Box::new(fuzz_build)),
     ])
+}
+
+/// The fuzz crate is not a workspace member, so its lockfile only goes stale where nothing
+/// builds it; CI checks it with `--locked`.
+fn fuzz_build() -> anyhow::Result<()> {
+    run(&mut cargo([
+        "check",
+        "--manifest-path",
+        "fuzz/Cargo.toml",
+        "--bins",
+        "--locked",
+    ]))
 }
 
 /// The script `--remote` runs on hosts without dfdu.
