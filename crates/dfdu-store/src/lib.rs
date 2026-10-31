@@ -3,7 +3,6 @@
 
 pub mod cache;
 pub mod history;
-mod json;
 pub mod ncdu;
 pub mod snapshot;
 

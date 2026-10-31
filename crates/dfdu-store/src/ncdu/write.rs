@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use dfdu_tree::{DirState, Ix, Kind, NodeFlags, Tree};
 
 use super::Metadata;
-use crate::json::write_str;
+use super::json::write_str;
 
 /// What [`export`] wrote.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -22,14 +22,15 @@ use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
 
 pub mod binary;
+mod json;
 mod write;
 
 pub use write::{ExportStats, export};
 
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
-use crate::json::{Num, Reader};
 use crate::{ImportError, Limits};
+use json::{Num, Reader};
 
 /// The metadata block.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
