@@ -80,11 +80,8 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     };
     let name_style = if e.is_dir { t.dir } else { Style::new() };
     let width_of = |spans: &[Span]| spans.iter().map(Span::width).sum::<usize>();
-    // The items go first when the line is too long, then what is after the size is cut.
-    let at_items = usize::from(share.is_some());
-    let mut parts: Vec<Span> = share.into_iter().chain(items).chain(rest).collect();
     let name_room = room.saturating_sub(lead.width() + size.width());
-    let full = |name: &str| {
+    let full = |name: &str, parts: &[Span]| {
         lead.width()
             + Span::raw(name).width()
             + size.width()
@@ -93,13 +90,15 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
                 .map(|p| dot().width() + p.width())
                 .sum::<usize>()
     };
+    let mut parts: Vec<Span> = share.iter().chain(&items).chain(&rest).cloned().collect();
     // The longer path only when the whole line fits with it.
     let name = names
         .iter()
-        .find(|n| full(n) <= room)
+        .find(|n| full(n, &parts) <= room)
         .unwrap_or(&names[names.len() - 1]);
-    if full(name) > room && e.is_dir && e.items > 0 {
-        parts.remove(at_items);
+    // The items go first when the line is too long, then what is after the size is cut.
+    if items.is_some() && full(name, &parts) > room {
+        parts = share.into_iter().chain(rest).collect();
     }
     let mut left = vec![
         lead,
