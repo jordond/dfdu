@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 
-use super::{JobState, Shared, Task};
+use super::{JobState, Shared, Task, TaskKind};
 use crate::backend::Backend;
 use crate::proto::{DirId, JobId};
 
@@ -23,6 +23,7 @@ pub struct VerifyDir {
 }
 
 /// A batch task's directories and what it found so far.
+#[derive(Default)]
 pub(super) struct VerifyWork {
     pub batch: u32,
     pub dirs: Vec<VerifyDir>,
@@ -58,8 +59,7 @@ impl<B: Backend> Shared<B> {
             dev: 0,
             mount: 0,
             probe_subvol: false,
-            chunk: None,
-            verify: Some(Box::new(VerifyWork {
+            kind: TaskKind::Verify(Box::new(VerifyWork {
                 batch,
                 dirs,
                 at: 0,
@@ -73,3 +73,6 @@ impl<B: Backend> Shared<B> {
         self.wake();
     }
 }
+
+#[cfg(test)]
+mod tests;

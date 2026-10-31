@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # backticks in single quotes are Markdown fences
 # Writes lcov.info and the coverage summary from a finished `cargo llvm-cov --no-report` run.
-# With a base revision, also writes coverage.md: workspace and changed-line coverage.
+# With a base revision, also writes coverage.md, the PR comment section: workspace and
+# changed-line coverage, listing only the changed files with lines left uncovered.
 # Usage: coverage-report.sh <min-line-percent> [base-rev]
 set -euo pipefail
 
@@ -23,10 +24,10 @@ lines=$(awk '/^TOTAL/ {print $10}' <<<"$table")
     echo
     echo "Lines: $lines of the workspace ($min% required)."
     echo
-    sed '/^## Diff:/d; s/^# Diff Coverage/### Changed lines/; s/^## /#### /' diff-cover.md
+    # Fully covered files, the source excerpts and the per-file table stay in the job summary:
+    # on a large pull request they push the comment past GitHub's size limit.
+    sed '/^## Diff:/d; /^- .* (100%)$/d; s/^# Diff Coverage/### Changed lines/; s/^## /#### /' diff-cover.md |
+        awk '/^#### / && !/^#### Summary/ {done = 1} !done'
     echo
-    echo '<details><summary>Per file</summary>'
-    echo
-    printf '```\n%s\n```\n' "$table"
-    echo '</details>'
+    echo 'The job summary has the rest: fully covered files, the uncovered lines and the per-file table.'
 } >coverage.md

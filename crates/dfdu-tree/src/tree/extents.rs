@@ -6,7 +6,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use super::{Ix, NodeFlags, Tree};
 
 /// Hashes a slot number. [`Tree::own`] looks a node up for every total it computes, so this
-/// is a multiply, not SipHash.
+/// is a multiply, not `SipHash`.
 #[derive(Default)]
 pub(super) struct SlotHasher(u64);
 

@@ -8,7 +8,9 @@ use dfdu_scan::{
     Backend, Chunk, ChunkStatus, DirId, Entry, JobId, ListingStatus, Mark, Probe, ScanMsg,
     SkipReason,
 };
-use dfdu_tree::{Class, DirRec, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Totals, Tree};
+use dfdu_tree::{
+    Class, DirRec, DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Protection, Totals, Tree,
+};
 
 use super::work::Work;
 use super::{Applier, Job, JobPhase, Model, Slot, empty_dir_meta};
@@ -65,7 +67,7 @@ impl<B: Backend> Applier<B> {
                     }
                     // Nothing wants this directory any more (job ended, subtree cut or gone):
                     // give the stuck task up so it stops counting as outstanding work.
-                    None => self.scanner_abandon(JobId(job.0), dir),
+                    None => self.scanner_abandon(job, dir),
                 }
             }
             ScanMsg::Quiescent { submitted_seq } => {
@@ -410,7 +412,7 @@ fn add_subdirs(
         .iter()
         .zip(subdir_ids(c.first_subdir, c.subdirs.len()))
     {
-        let mut flags = 0;
+        let mut flags = NodeFlags::default();
         if s.mount_root {
             flags |= NodeFlags::MOUNT_ROOT;
         }
@@ -460,8 +462,8 @@ fn apply_marks(m: &mut Model, c: &Chunk, file_ix: &[Ix], subdir_ix: &[Ix]) {
         };
         match *mark {
             Mark::Class(class) => m.tree.set_class(node, Some(class)),
-            Mark::Protected => m.tree.set_protection(node, true, false),
-            Mark::Excepted => m.tree.set_protection(node, false, true),
+            Mark::Protected => m.tree.set_protection(node, Protection::Protected),
+            Mark::Excepted => m.tree.set_protection(node, Protection::Excepted),
         }
     }
 }

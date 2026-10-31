@@ -2,7 +2,8 @@
 
 use super::bad;
 use crate::ImportError;
-use crate::ncdu::{Info, Limits};
+use crate::Limits;
+use crate::ncdu::Info;
 
 pub(super) enum Ref {
     Abs(u64),

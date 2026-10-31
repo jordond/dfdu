@@ -7,7 +7,6 @@
 //! (`child`, `marker`) are checked when its listing arrives ([`RuleSet::check_inside`]).
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
 
-pub mod dirs;
 mod glob;
 pub mod hash;
 pub mod linked;
@@ -17,7 +16,6 @@ pub mod protected;
 pub mod schema;
 pub mod vars;
 
-pub use dfdu_tree::{RuleIx, Safety};
 pub use glob::{Glob, GlobError};
 pub use linked::{Linked, linked_outside};
 pub use load::{LoadError, builtin, load, load_from, sources};
@@ -25,6 +23,8 @@ pub use matcher::{
     Candidate, Dir, Hit, Inside, MAX_RULES, Reach, ReadMarker, RuleSet, Stat, Verdict, stem,
 };
 pub use vars::{Env, ExpandError};
+
+use dfdu_tree::Safety;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Platform {
@@ -315,6 +315,7 @@ impl Rule {
 
 /// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
 /// the deletion-time protection check both read paths through this.
+#[must_use]
 pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
     rule_path_on(&dfdu_tree::HostPath::local(path))
 }

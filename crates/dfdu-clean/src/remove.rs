@@ -248,9 +248,4 @@ mod imp {
 }
 
 #[cfg(test)]
-#[cfg(unix)]
 mod tests;
-
-#[cfg(test)]
-#[cfg(windows)]
-mod windows_tests;

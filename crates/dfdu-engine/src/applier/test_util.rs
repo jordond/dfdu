@@ -1,16 +1,19 @@
 //! An applier fed by hand, for the unit tests of its submodules: job 1 scans `/r`, and each
-//! test writes out the scanner's messages for it. Nothing runs on the filesystem.
+//! test writes out the scanner's messages for it. Nothing runs on the filesystem. Also what job 1
+//! classifies against, and a loaded project tree to classify.
 
 use std::sync::Arc;
 
+use dfdu_rules::protected::State;
+use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
     Chunk, ChunkStatus, DirId, FileRec, JobId, JobOptions, Limits, ListingStatus, NameSpan,
     PortableBackend, ScanMsg, Shared, SkipReason, SubdirRec,
 };
-use dfdu_tree::{DirState, Ix, Kind, Meta};
+use dfdu_tree::{DirState, Ix, Kind, Meta, Tree};
 
-use super::{Applier, Command, JobPhase, Model};
-use crate::test_util::meta;
+use super::{Applier, ApplierSettings, Command, JobPhase, Model};
+use crate::test_support::{meta, node_at};
 
 /// The `submitted_seq` the scanner gave job 1.
 pub(super) const SEQ: u64 = 1;
@@ -24,7 +27,7 @@ impl Rig {
     /// Job 1 started on `/r`, nothing applied yet.
     pub fn scan() -> Rig {
         let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-        let mut a = Applier::new(shared);
+        let mut a = Applier::new(shared, ApplierSettings::default());
         let mut m = Model::default();
         let scan = Command::Scan {
             path: "/r".into(),
@@ -67,15 +70,7 @@ impl Rig {
     ///
     /// If there is none.
     pub fn at(&self, path: &str) -> Ix {
-        let t = &self.m.tree;
-        let mut ix = t.roots().next().unwrap_or_else(|| panic!("no root"));
-        for name in path.split('/').filter(|n| !n.is_empty()) {
-            ix = t
-                .children(ix)
-                .find(|&c| t.name(c) == name.as_bytes())
-                .unwrap_or_else(|| panic!("no {name} in {path}"));
-        }
-        ix
+        node_at(&self.m.tree, path)
     }
 
     /// The state of the directory at `path`.
@@ -177,4 +172,29 @@ pub(super) fn close_with(dir: u32, chunks: u32, status: ListingStatus) -> ScanMs
 /// [`close_with`] a complete listing.
 pub(super) fn close(dir: u32, chunks: u32) -> ScanMsg {
     close_with(dir, chunks, ListingStatus::Complete)
+}
+
+/// What job 1 classified against: the built-in rules for Linux, from `/home/u/r`.
+pub(super) fn job_class() -> ClassOpts {
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    ClassOpts {
+        rules: Arc::new(dfdu_rules::builtin(&env).0),
+        path: b"/home/u/r".to_vec(),
+        inside: Vec::new(),
+        protection: State::Off,
+        chain: Vec::new(),
+    }
+}
+
+/// `/r/p/node_modules`, with `package.json` beside it when `project`; returns the tree and r,
+/// p, `node_modules`.
+pub(super) fn project(project: bool) -> (Tree, [Ix; 3]) {
+    let mut t = Tree::new();
+    let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    let p = t.add_dir(r, b"p", &meta(Kind::Dir, 0, 2));
+    if project {
+        t.add_file(p, b"package.json", &meta(Kind::File, 10, 3), false, None);
+    }
+    let nm = t.add_dir(p, b"node_modules", &meta(Kind::Dir, 0, 4));
+    (t, [r, p, nm])
 }

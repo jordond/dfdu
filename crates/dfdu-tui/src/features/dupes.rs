@@ -18,16 +18,19 @@ use std::sync::{Arc, OnceLock};
 
 use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
 use dfdu_engine::Model;
-use dfdu_tree::{HostPath, Kind, NodeRef};
+use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 mod draw;
+mod rows;
 
 pub use draw::draw;
+use rows::{Row, copies, kept, live, mark_all, mark_of, open, rows};
 
 /// Files smaller than this are not compared: the size `dfdu dupes` starts from.
 pub fn min_size() -> u64 {
@@ -37,7 +40,6 @@ pub fn min_size() -> u64 {
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Dupes {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     run: Option<Run>,
@@ -92,7 +94,6 @@ impl Keep {
     }
 }
 
-/// The next keep rule, with the status line saying so.
 /// The next keep rule, with the status line saying so. A copy the new rule keeps is unticked:
 /// the copy kept is never one that `d` deletes.
 pub fn cycle_keep(app: &mut App) {
@@ -120,15 +121,14 @@ pub fn cycle_keep(app: &mut App) {
 }
 
 /// The nodes of the files the view lists (still in the tree), for `d` to act on its ticks
-/// only; `None` before a comparison finished.
-pub fn listed(app: &App) -> Option<HashSet<NodeRef>> {
-    let f = found(app)?;
-    Some(
+/// only; none before a comparison finished.
+pub fn listed(app: &App) -> HashSet<NodeRef> {
+    found(app).map_or_else(HashSet::new, |f| {
         (f.groups.iter())
             .flat_map(|g| &g.files)
             .filter_map(|c| live(app, c))
-            .collect(),
-    )
+            .collect()
+    })
 }
 
 /// A group whose every copy still in the tree is ticked, by its file's name: deleting what is
@@ -155,13 +155,15 @@ struct Run {
     result: Arc<OnceLock<Found>>,
 }
 
+/// True when the view is shown, and so takes the keys it knows. Nothing is compared until the
+/// user asks (`Enter` or `R`): before that the view says how many files a comparison would read.
 pub fn active(app: &App) -> bool {
-    app.dupes.on
+    views::current(app) == View::Duplicates
 }
 
 /// A comparison is running: the view's progress line needs frames.
 pub fn running(app: &App) -> bool {
-    app.dupes.on
+    active(app)
         && app
             .dupes
             .run
@@ -173,27 +175,25 @@ fn found(app: &App) -> Option<&Found> {
     app.dupes.run.as_ref()?.result.get()
 }
 
-/// For the view's tab: `None` before a comparison was started, `Some(None)` while one runs,
-/// and then the number of groups. While the view is open only groups with two files left
-/// count; closed, the files are not looked up and every group found counts.
-pub fn groups(app: &App) -> Option<Option<usize>> {
-    let run = app.dupes.run.as_ref()?;
-    let Some(f) = run.result.get() else {
-        return Some(None);
-    };
-    Some(Some(app.dupes.live_groups.unwrap_or(f.groups.len())))
+/// Where a comparison is, for the view's tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Groups {
+    Running,
+    /// It ended with this many groups.
+    Found(usize),
 }
 
-/// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):
-/// before that the view says how many files a comparison would read.
-pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
-    app.dupes.on = on;
-    if !on {
-        return Vec::new();
-    }
-    crate::features::treemap::show(app, false);
-    crate::features::cleanup::show(app, false);
-    Vec::new()
+/// For the view's tab: `None` before a comparison was started. While the view is open only
+/// groups with two files left count; closed, the files are not looked up and every group found
+/// counts.
+pub fn groups(app: &App) -> Option<Groups> {
+    let run = app.dupes.run.as_ref()?;
+    let Some(f) = run.result.get() else {
+        return Some(Groups::Running);
+    };
+    Some(Groups::Found(
+        app.dupes.live_groups.unwrap_or(f.groups.len()),
+    ))
 }
 
 /// A comparison was asked for: it runs or it is done.
@@ -203,7 +203,7 @@ pub fn compared(app: &App) -> bool {
 
 /// The view waits to be asked to compare this machine's files, and the scan is done.
 fn waits(app: &App) -> bool {
-    app.dupes.on && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
+    active(app) && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
 }
 
 /// The view waits, and the files to compare were never counted.
@@ -242,28 +242,27 @@ pub fn apply(app: &mut App) {
         });
 }
 
-/// Whether a comparison can start now; when not, the status line says why.
-fn can_start(app: &mut App) -> bool {
+/// Why a comparison cannot start now, as the status line says it; `None` when it can.
+fn cannot_start(app: &App) -> Option<String> {
     // The comparison reads the files here: for another machine's tree it would read this
     // one's files at the same paths, and a delete would then remove the other's.
     if !app.outside.local {
-        app.status = Some(
+        return Some(
             "duplicates reads this machine's files; this scan is remote or from a file".into(),
         );
-        return false;
     }
     if app.snap.busy {
         let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
-        app.status = Some(format!(
+        return Some(format!(
             "duplicates: wait until the scan is done, then press {again}"
         ));
-        return false;
     }
-    true
+    None
 }
 
 fn start(app: &mut App) -> Vec<Effect> {
-    if !can_start(app) {
+    if let Some(why) = cannot_start(app) {
+        app.status = Some(why);
         return Vec::new();
     }
     app.dupes.cursor = 0;
@@ -300,7 +299,7 @@ pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
 /// nodes yet.
 pub fn stale(app: &App) -> bool {
     wants_count(app)
-        || app.dupes.on
+        || active(app)
             && found(app).is_some_and(|f| {
                 f.groups
                     .iter()
@@ -312,7 +311,7 @@ pub fn stale(app: &App) -> bool {
 /// Under the read lock: the node of every file of the result, found once by path and then
 /// checked to still be in the tree. `None` once a file is gone from the tree (deleted).
 pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
-    let Some(f) = found(app).filter(|_| app.dupes.on) else {
+    let Some(f) = found(app).filter(|_| active(app)) else {
         return HashMap::new();
     };
     f.groups
@@ -322,7 +321,7 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
             let node = match app.extras.dupes.get(&c.path) {
                 Some(Some(n)) => m.tree.resolve_visible(*n).map(|_| *n),
                 Some(None) => None,
-                None => crate::model::snapshot::find_path(&m.tree, &HostPath::local(&c.path))
+                None => dfdu_tree::find_path(&m.tree, &HostPath::local(&c.path))
                     .filter(|&ix| m.tree.dev_ino(ix) == c.dev_ino)
                     .map(|ix| m.tree.node_ref(ix)),
             };
@@ -331,109 +330,8 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
         .collect()
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Row {
-    Group(usize),
-    File(usize, usize),
-}
-
-/// A file still in the tree.
-fn live(app: &App, c: &Candidate) -> Option<NodeRef> {
-    app.extras.dupes.get(&c.path).copied().flatten()
-}
-
-/// Whether group `g` shows its files: by default unless it is clones, which free nothing.
-fn open(app: &App, g: usize, group: &Group) -> bool {
-    !group.all_clones() ^ app.dupes.toggled.contains(&g)
-}
-
-/// The groups with at least two files left, clones last; each open one followed by its files.
-fn rows(app: &App) -> Vec<Row> {
-    let Some(f) = found(app) else {
-        return Vec::new();
-    };
-    let mut order: Vec<usize> = (0..f.groups.len()).collect();
-    order.sort_by_key(|&g| f.groups[g].all_clones());
-    let mut out = Vec::new();
-    for g in order {
-        let group = &f.groups[g];
-        let left: Vec<usize> = (0..group.files.len())
-            .filter(|&i| live(app, &group.files[i]).is_some())
-            .collect();
-        if left.len() < 2 {
-            continue;
-        }
-        out.push(Row::Group(g));
-        if open(app, g, group) {
-            out.extend(left.into_iter().map(|i| Row::File(g, i)));
-        }
-    }
-    out
-}
-
-fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
-    marks::Item {
-        target: Target {
-            node: Some(node),
-            path: HostPath::local(&c.path),
-            ident: Some(Ident {
-                dev_ino: c.dev_ino,
-                kind: Kind::File,
-            }),
-        },
-        is_dir: false,
-        size: c.freed(),
-        items: 1,
-        shared_out: 0,
-        scanning: false,
-        inside: false,
-    }
-}
-
-/// The index in `group` of the file still in the tree that the keep rule keeps.
-fn kept(app: &App, group: &Group) -> Option<usize> {
-    let left = (group.files.iter().enumerate()).filter(|(_, c)| live(app, c).is_some());
-    // Compared by reference: this runs for every group on every frame.
-    let order = |a: &Candidate, b: &Candidate| match app.dupes.keep {
-        Keep::Oldest => a.mtime.cmp(&b.mtime),
-        Keep::Newest => b.mtime.cmp(&a.mtime),
-        Keep::ShortestPath => (a.path.as_os_str().len()).cmp(&b.path.as_os_str().len()),
-        Keep::FirstPath => std::cmp::Ordering::Equal,
-    };
-    left.min_by(|(_, a), (_, b)| order(a, b).then_with(|| a.path.cmp(&b.path)))
-        .map(|(i, _)| i)
-}
-
-/// The files of `group` still in the tree, but the one [`kept`].
-fn copies(app: &App, group: &Group) -> Vec<(Candidate, NodeRef)> {
-    let keep = kept(app, group);
-    (group.files.iter().enumerate())
-        .filter(|&(i, _)| Some(i) != keep)
-        .filter_map(|(_, c)| Some((c.clone(), live(app, c)?)))
-        .collect()
-}
-
-/// Marks every copy but the one kept in each group that frees something; returns how many were
-/// newly marked.
-fn mark_all(app: &mut App) -> usize {
-    let Some(f) = found(app) else {
-        return 0;
-    };
-    let picks: Vec<(Candidate, NodeRef)> = f
-        .groups
-        .iter()
-        .filter(|g| !g.all_clones())
-        .flat_map(|g| copies(app, g))
-        .filter(|(_, n)| !app.marks.contains(*n))
-        .collect();
-    for (c, n) in &picks {
-        marks::set(app, mark_of(c, *n), true);
-    }
-    picks.len()
-}
-
 /// The path of the selected file, for `y` and `o`; `None` on a group's row.
-pub(crate) fn selected_path(app: &App) -> Option<PathBuf> {
+pub fn selected_path(app: &App) -> Option<PathBuf> {
     match rows(app).get(app.dupes.cursor)? {
         &Row::File(g, i) => Some(found(app)?.groups[g].files[i].path.clone()),
         Row::Group(_) => None,
@@ -447,19 +345,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let page = app.list_height.max(1);
-    let d = &mut app.dupes;
-    if let Some(n) = crate::app::keys::half_page(k, page) {
-        d.cursor = d.cursor.saturating_add_signed(n).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.dupes.cursor, last, page) {
+        app.dupes.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => d.cursor = d.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => d.cursor = (d.cursor + 1).min(last),
-        KeyCode::PageUp => d.cursor = d.cursor.saturating_sub(page),
-        KeyCode::PageDown => d.cursor = (d.cursor + page).min(last),
-        KeyCode::Home | KeyCode::Char('g') => d.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => d.cursor = last,
-        KeyCode::Char(' ') => {
+    let d = &mut app.dupes;
+    match action {
+        Action::ToggleMark => {
             let Some(f) = found(app) else {
                 return Some(Vec::new());
             };
@@ -482,7 +375,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 None => {}
             }
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => match rows.get(d.cursor) {
+        Action::Open | Action::Enter => match rows.get(d.cursor) {
             Some(&Row::Group(g)) => {
                 if !d.toggled.remove(&g) {
                     d.toggled.insert(g);
@@ -494,12 +387,12 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                     f.groups[g].files[i].path.clone(),
                     app.dupes.run.as_ref()?.root.clone(),
                 );
-                app.dupes.on = false;
+                views::switch(app, View::Files);
                 app.go_to(&HostPath::local(&path), &HostPath::local(&root));
             }
             None => {}
         },
-        KeyCode::Left | KeyCode::Char('h') => {
+        Action::Parent => {
             let at = (0..=d.cursor.min(last))
                 .rev()
                 .find(|&i| matches!(rows.get(i), Some(Row::Group(_))));
@@ -522,7 +415,8 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 /// if one does, and starts another.
 pub fn compare_again(app: &mut App) -> Vec<Effect> {
     // What there is stays shown when a new comparison cannot start.
-    if !can_start(app) {
+    if let Some(why) = cannot_start(app) {
+        app.status = Some(why);
         return Vec::new();
     }
     if let Some(r) = app.dupes.run.take() {

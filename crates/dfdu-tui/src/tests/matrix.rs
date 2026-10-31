@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use dfdu_engine::{ErrorItem, ErrorList, SizeMode};
 use dfdu_scan::Budget;
+use dfdu_tree::Target;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::{Color, Modifier, Style};
@@ -17,10 +18,11 @@ use super::{
 use crate::app::{App, Effect, Overlay};
 use crate::features::debug::Counters;
 use crate::features::details;
+use crate::format::spinner;
 use crate::model::extras;
-use crate::model::snapshot::{self, EntryData, Mark, Target, test_entry};
+use crate::model::snapshot::{self, EntryData, Mark, test_entry};
 use crate::state::filter;
-use crate::theme::{BuiltinTheme, ColorLevel, Theme, choose_theme, detect_color_level, spinner};
+use crate::theme::{BuiltinTheme, ColorLevel, Theme, choose_theme, detect_color_level};
 
 /// The built-in themes `auto` picks for a dark or light truecolor terminal, a 16-colour one
 /// and `NO_COLOR`, each at that colour level.

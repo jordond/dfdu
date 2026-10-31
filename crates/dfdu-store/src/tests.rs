@@ -63,7 +63,7 @@ fn an_atomic_write_needs_a_file_name() {
 
 #[test]
 fn open_refuses_what_is_in_no_format() {
-    let limits = ncdu::Limits::default();
+    let limits = Limits::default();
     assert!(matches!(
         open(&b"not a scan"[..], &limits),
         Err(ImportError::Format { .. })

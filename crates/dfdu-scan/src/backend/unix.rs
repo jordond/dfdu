@@ -1,12 +1,25 @@
-//! What the Linux and macOS backends share: opening a directory by a path longer than the
-//! kernel accepts, and the buffer of NUL-terminated names a raw block keeps.
+//! What the Linux and macOS backends share: opening and stat'ing a directory by a path longer
+//! than the kernel accepts, the [`Backend`](super::Backend) methods built on that, and the
+//! buffer of NUL-terminated names a raw block keeps.
 
-use std::ffi::{CStr, OsStr};
+use std::ffi::{CStr, CString, OsStr};
 use std::io;
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
-use rustix::fs::{CWD, Mode, OFlags};
+use dfdu_tree::Meta;
+use rustix::fs::{AtFlags, CWD, Mode, OFlags};
+
+/// The calls in which the Unix backends differ, around the path handling they share.
+pub(crate) trait UnixStat {
+    /// Added to the flags of the open that reaches a directory itself ([`open_dir`]).
+    const OPEN_LAST: OFlags;
+    /// The metadata of `name` in `dir`, with `flags`.
+    fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta>;
+    /// The metadata of the directory open as `fd`.
+    fn stat_fd(fd: BorrowedFd<'_>) -> io::Result<Meta>;
+}
 
 /// Paths are opened in pieces of at most this many bytes when the whole is too long.
 #[cfg(target_os = "linux")]
@@ -48,6 +61,43 @@ pub(crate) fn open_dir(path: &Path, last: OFlags) -> io::Result<OwnedFd> {
         Mode::empty(),
     )?)
 }
+
+/// `path`'s metadata, by path with `flags`, or once it is open ([`open_dir`]) when the path is
+/// too long for one call.
+pub(crate) fn stat_path<S: UnixStat>(path: &Path, flags: AtFlags) -> io::Result<Meta> {
+    let name = CString::new(path.as_os_str().as_bytes())?;
+    match S::stat_at(CWD, &name, flags) {
+        Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NAMETOOLONG.raw_os_error()) => {
+            S::stat_fd(open_dir(path, S::OPEN_LAST)?.as_fd())
+        }
+        r => r,
+    }
+}
+
+/// The [`Backend`](super::Backend) methods of a Unix backend whose location is a path and
+/// which implements [`UnixStat`]: a root's stat follows a symlink, a directory's does not.
+macro_rules! unix_path_queries {
+    () => {
+        fn read_prefix(
+            &self,
+            dir: &std::path::PathBuf,
+            name: &[u8],
+            len: usize,
+        ) -> Option<Vec<u8>> {
+            crate::backend::read_prefix_at(dir, name, len)
+        }
+        fn link_target_missing(&self, dir: &std::path::PathBuf, name: &[u8]) -> bool {
+            crate::backend::link_target_missing_at(dir, name)
+        }
+        fn stat_root(&self, loc: &std::path::PathBuf) -> std::io::Result<dfdu_tree::Meta> {
+            crate::backend::unix::stat_path::<Self>(loc, rustix::fs::AtFlags::empty())
+        }
+        fn stat_dir(&self, path: &std::path::Path) -> std::io::Result<dfdu_tree::Meta> {
+            crate::backend::unix::stat_path::<Self>(path, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+        }
+    };
+}
+pub(crate) use unix_path_queries;
 
 /// Appends `name` and its NUL to `names`; returns where it starts.
 #[expect(

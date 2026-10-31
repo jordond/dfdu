@@ -97,6 +97,49 @@ fn second_instance_leaves_a_live_session_alone() {
     assert!(recover::scan(&state.join("ops")).unwrap().items.is_empty());
 }
 
+/// Finishing a staged item deletes only that item: something else put at its stage path since
+/// the session ended is left alone, the item stays restorable, and it can be finished once it
+/// is back.
+#[test]
+fn finish_leaves_a_swapped_stage_path_alone() {
+    let tmp = canonical_tempdir();
+    let (root, state) = (tmp.path().join("tree"), tmp.path().join("state"));
+    let (tx, rx) = unbounded();
+    let d = spawn_deleter(Some(state.join("ops")), Duration::from_secs(3600), tx);
+    d.reqs.send(DeleterReq::Plan(plan(&root, 3))).unwrap();
+    until_done(&rx);
+    drop(d.reqs);
+    d.thread.join().unwrap();
+    let staged = staged_dir(&state);
+    assert_eq!(staged.len(), 1);
+    let aside = tmp.path().join("aside");
+    fs::rename(&staged[0], &aside).unwrap();
+    fs::create_dir(&staged[0]).unwrap();
+    fs::write(staged[0].join("precious"), b"p").unwrap();
+
+    let mut r = recover::scan(&state.join("ops")).unwrap();
+    assert_eq!(r.items.len(), 1);
+    assert!(r.finish(0).is_err());
+    assert!(staged[0].join("precious").exists());
+    assert_eq!(r.items.len(), 1);
+    drop(r);
+
+    fs::remove_dir_all(&staged[0]).unwrap();
+    fs::rename(&aside, &staged[0]).unwrap();
+    let mut r = recover::scan(&state.join("ops")).unwrap();
+    assert_eq!(
+        r.items[0].state,
+        Pending::Staged {
+            stage: staged[0].clone()
+        },
+        "the refused finish left the item restorable"
+    );
+    r.finish(0).unwrap();
+    assert!(!staged[0].exists());
+    drop(r);
+    assert!(recover::scan(&state.join("ops")).unwrap().items.is_empty());
+}
+
 /// Killed during a staged delete, the item is reported as partly deleted; it can
 /// be finished, never restored as if whole.
 #[test]

@@ -1,14 +1,17 @@
-use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use dfdu_scan::JobOptions;
 use dfdu_tree::{Ix, Kind, Meta, Tree};
 
 use super::*;
-use crate::ncdu::tests::dump;
+
+mod files;
+#[cfg(unix)]
+mod private;
 
 /// A tree of the directory `root` with `files` files in it.
-fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
+pub(super) fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
     let mut t = Tree::new();
     let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
     let r = t.new_root(root.as_os_str().as_encoded_bytes(), &meta, true);
@@ -31,7 +34,7 @@ fn tree_of(root: &Path, files: usize) -> (Tree, Ix) {
     (t, r)
 }
 
-fn header(written: u64, last_full_scan: u64) -> Header {
+pub(super) fn header(written: u64, last_full_scan: u64) -> Header {
     Header {
         tool_version: "test".into(),
         written,
@@ -44,20 +47,20 @@ fn header(written: u64, last_full_scan: u64) -> Header {
 }
 
 /// A cache in a temporary directory, a directory to scan, and its slot.
-fn setup() -> (tempfile::TempDir, Cache, Slot) {
+pub(super) fn setup() -> (tempfile::TempDir, Cache, Slot) {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("scanned")).unwrap();
     let cache = Cache::at(tmp.path().join("cache/scans")).unwrap();
-    let key = Key::new(&tmp.path().join("scanned"), false, false, false).unwrap();
+    let key = Key::new(&tmp.path().join("scanned"), &JobOptions::default(), false).unwrap();
     let slot = cache.slot(key);
     (tmp, cache, slot)
 }
 
-fn save(slot: &Slot, t: &Tree, h: &Header) -> Saved {
+pub(super) fn save(slot: &Slot, t: &Tree, h: &Header) -> Saved {
     slot.save(h, |f| f(t), &AtomicBool::new(false)).unwrap()
 }
 
-fn set_mtime(path: &Path, secs: u64) {
+pub(super) fn set_mtime(path: &Path, secs: u64) {
     let f = fs::File::options().write(true).open(path).unwrap();
     f.set_modified(UNIX_EPOCH + Duration::from_secs(secs))
         .unwrap();
@@ -68,13 +71,16 @@ fn keys_follow_the_directory_and_the_options() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("d");
     fs::create_dir(&dir).unwrap();
-    let k = Key::new(&dir, false, false, false).unwrap();
+    let k = Key::new(&dir, &JobOptions::default(), false).unwrap();
     // The same directory by another name is the same key.
-    assert_eq!(Key::new(&dir.join("."), false, false, false).unwrap(), k);
+    assert_eq!(
+        Key::new(&dir.join("."), &JobOptions::default(), false).unwrap(),
+        k
+    );
     assert_eq!(k.root(), dunce::canonicalize(&dir).unwrap());
     let name = k.file_name();
     assert_eq!(name.len(), 16 + ".snap".len(), "{name}");
-    assert!(name.ends_with(".snap"));
+    assert_eq!(Path::new(&name).extension(), Some("snap".as_ref()));
     let names: std::collections::HashSet<String> = [
         (false, false, false),
         (true, false, false),
@@ -82,298 +88,26 @@ fn keys_follow_the_directory_and_the_options() {
         (false, false, true),
     ]
     .iter()
-    .map(|&(c, n, m)| Key::new(&dir, c, n, m).unwrap().file_name())
+    .map(|&(c, n, m)| {
+        let job = JobOptions {
+            cross_mounts: c,
+            network: n,
+            ..JobOptions::default()
+        };
+        Key::new(&dir, &job, m).unwrap().file_name()
+    })
     .collect();
     assert_eq!(names.len(), 4);
     // A directory replaced by another of the same name is another key.
     fs::remove_dir(&dir).unwrap();
     fs::create_dir(tmp.path().join("other")).unwrap();
     fs::create_dir(&dir).unwrap();
-    let again = Key::new(&dir, false, false, false).unwrap();
+    let again = Key::new(&dir, &JobOptions::default(), false).unwrap();
     assert_eq!(again.root(), k.root());
     assert_ne!(again.file_name(), name);
     fs::write(tmp.path().join("f"), b"").unwrap();
-    assert!(Key::new(&tmp.path().join("f"), false, false, false).is_err());
-    assert!(Key::new(&tmp.path().join("missing"), false, false, false).is_err());
-}
-
-/// What is saved loads back as it was: the tree, and the header.
-#[test]
-fn a_saved_scan_loads_back() {
-    let (_tmp, _cache, slot) = setup();
-    let now = now();
-    assert!(!slot.cached(now));
-    assert!(slot.load(now).unwrap().is_none());
-    let (t, r) = tree_of(slot.key.root(), 50);
-    let h = header(now, now - 60);
-    let Saved::Written { entries, bytes, .. } = save(&slot, &t, &h) else {
-        panic!("not written")
-    };
-    assert_eq!(entries, 51);
-    assert_eq!(bytes, fs::metadata(&slot.path).unwrap().len());
-    assert!(slot.cached(now));
-    let hit = slot.load(now).unwrap().expect("a hit");
-    assert!(!hit.full_rescan);
-    assert_eq!(hit.loaded.header, h);
-    assert_eq!(dump(&t, r), dump(&hit.loaded.tree, hit.loaded.root));
-}
-
-/// A file written more than the maximum age ago is not loaded and is removed; a tree whose
-/// last full scan is older than a week is loaded to be rescanned whole.
-#[test]
-fn old_scans_expire() {
-    let (_tmp, _cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), 3);
-    save(
-        &slot,
-        &t,
-        &header(now - FULL_RESCAN_AFTER - 10, now - FULL_RESCAN_AFTER - 10),
-    );
-    let hit = slot.load(now).unwrap().expect("a hit");
-    assert!(hit.full_rescan);
-    // Brought up to date from the journal since: still the old full scan.
-    save(&slot, &t, &header(now, now - FULL_RESCAN_AFTER - 10));
-    assert!(slot.load(now).unwrap().expect("a hit").full_rescan);
-    save(&slot, &t, &header(now, now - FULL_RESCAN_AFTER + 10));
-    assert!(!slot.load(now).unwrap().expect("a hit").full_rescan);
-    // Formats before 4 do not say; when it was written stands in.
-    save(&slot, &t, &header(now - 60, 0));
-    assert!(!slot.load(now).unwrap().expect("a hit").full_rescan);
-
-    save(&slot, &t, &header(now - MAX_AGE - 10, now - MAX_AGE - 10));
-    assert!(slot.cached(now), "the file itself is new");
-    assert!(slot.load(now).unwrap().is_none());
-    assert!(!slot.path.exists(), "an expired scan is removed");
-    save(&slot, &t, &header(now, now));
-    set_mtime(&slot.path, now - MAX_AGE - 10);
-    assert!(!slot.cached(now));
-}
-
-/// The sweep removes expired files, then the least recently written ones over the cap, but
-/// never the one to keep, and leaves other files alone.
-#[test]
-fn the_sweep_keeps_the_newest_under_the_cap() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cache = Cache::at(tmp.path().to_path_buf()).unwrap();
-    let now = now();
-    let file = |name: &str, len: usize, age: u64| {
-        let p = tmp.path().join(name);
-        fs::write(&p, vec![0u8; len]).unwrap();
-        set_mtime(&p, now - age);
-        p
-    };
-    let expired = file("000000000000000a.snap", 10, MAX_AGE + 1);
-    let newest = file("000000000000000b.snap", 100, 10);
-    let middle = file("000000000000000c.snap", 100, 20);
-    let oldest = file("000000000000000d.snap", 100, 30);
-    let other = file("notes.txt", 1000, MAX_AGE + 1);
-    // Not named as the cache names its files.
-    let users = [
-        file("notes.snap", 1000, MAX_AGE + 1),
-        file("000000000000000E.snap", 1000, MAX_AGE + 1),
-        file(".notes.snap.1.tmp", 10, 0),
-    ];
-    let dead = file(".000000000000000b.snap.1.tmp", 10, 0);
-    assert_eq!(
-        cache.sweep(now, 250, Some(&oldest)),
-        Removed {
-            files: 2,
-            bytes: 110
-        }
-    );
-    assert!(!expired.exists() && !middle.exists() && !dead.exists());
-    assert!(newest.exists() && oldest.exists() && other.exists());
-    assert!(users.iter().all(|p| p.exists()));
-    assert_eq!(cache.sweep(now, 250, None).files, 0);
-    assert_eq!(cache.sweep(now, 150, None).files, 1);
-    assert!(newest.exists() && !oldest.exists());
-    assert_eq!(cache.clear().unwrap().files, 1);
-    assert!(!newest.exists() && other.exists());
-    assert!(users.iter().all(|p| p.exists()));
-}
-
-#[test]
-fn only_the_caches_own_names_are_its_files() {
-    assert!(is_scan_name("0123456789abcdef.snap"));
-    for n in [
-        "0123456789abcde.snap",
-        "0123456789ABCDEF.snap",
-        "0123456789abcdefa.snap",
-        "0123456789abcdef.snapx",
-        "0123456789abcdefsnap",
-        "notes.snap",
-        ".0123456789abcdef.snap",
-    ] {
-        assert!(!is_scan_name(n), "{n}");
-    }
-    assert!(is_temp_name(".0123456789abcdef.snap.42.tmp"));
-    for n in [
-        ".0123456789abcdef.snap..tmp",
-        ".0123456789abcdef.snap.4x.tmp",
-        ".notes.snap.1.tmp",
-        "0123456789abcdef.snap.1.tmp",
-        ".0123456789abcdef.snap.1",
-    ] {
-        assert!(!is_temp_name(n), "{n}");
-    }
-}
-
-/// A damaged or cut-short file is an error and is removed; one of another directory is not
-/// used, nor is a symbolic link.
-#[test]
-fn bad_files_are_not_loaded() {
-    let (tmp, _cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), 20);
-    save(&slot, &t, &header(now, now));
-    let good = fs::read(&slot.path).unwrap();
-    fs::write(&slot.path, &good[..good.len() / 2]).unwrap();
-    assert!(slot.load(now).is_err());
-    assert!(!slot.path.exists());
-    fs::write(&slot.path, b"not a snapshot").unwrap();
-    assert!(slot.load(now).is_err());
-    assert!(!slot.path.exists());
-
-    // Another directory's scan under this name.
-    fs::create_dir(tmp.path().join("elsewhere")).unwrap();
-    let (other, _) = tree_of(
-        &dunce::canonicalize(tmp.path().join("elsewhere")).unwrap(),
-        2,
-    );
-    let mut bytes = vec![];
-    snapshot::write(
-        &other,
-        other.roots().next().unwrap(),
-        &mut bytes,
-        &header(now, now),
-    )
-    .unwrap();
-    fs::write(&slot.path, &bytes).unwrap();
-    assert!(slot.load(now).unwrap().is_none());
-    // Other options.
-    let mut cross = header(now, now);
-    cross.cross_mounts = true;
-    let mut bytes = vec![];
-    snapshot::write(&t, t.roots().next().unwrap(), &mut bytes, &cross).unwrap();
-    fs::write(&slot.path, &bytes).unwrap();
-    assert!(slot.load(now).unwrap().is_none());
-
-    #[cfg(unix)]
-    {
-        let real = tmp.path().join("real.snap");
-        fs::write(&real, &good).unwrap();
-        fs::remove_file(&slot.path).unwrap();
-        std::os::unix::fs::symlink(&real, &slot.path).unwrap();
-        assert!(!slot.cached(now));
-        assert!(slot.load(now).unwrap().is_none());
-        assert!(real.exists());
-    }
-}
-
-/// The directory created is the user's alone and the files are readable by the user only. A
-/// directory that exists is used as it is, unless other users can write to it.
-#[cfg(unix)]
-#[test]
-fn files_are_private() {
-    use std::os::unix::fs::PermissionsExt;
-    let (tmp, cache, slot) = setup();
-    let (t, _) = tree_of(slot.key.root(), 2);
-    save(&slot, &t, &header(now(), now()));
-    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode(cache.dir()), 0o700);
-    assert_eq!(mode(&slot.path), 0o600);
-    fs::set_permissions(cache.dir(), fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(Cache::at(cache.dir().to_path_buf()).is_ok());
-    save(&slot, &t, &header(now(), now()));
-    assert_eq!(mode(cache.dir()), 0o755, "not changed");
-    for loose in [0o775, 0o757] {
-        fs::set_permissions(cache.dir(), fs::Permissions::from_mode(loose)).unwrap();
-        let e = Cache::at(cache.dir().to_path_buf()).unwrap_err();
-        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
-        assert!(e.to_string().ends_with("is writable by other users"), "{e}");
-        let e = slot
-            .save(&header(now(), now()), |f| f(&t), &AtomicBool::new(false))
-            .unwrap_err();
-        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(mode(cache.dir()), loose, "not changed");
-    }
-    fs::set_permissions(cache.dir(), fs::Permissions::from_mode(0o700)).unwrap();
-    let leftovers: Vec<_> = fs::read_dir(cache.dir())
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    assert_eq!(leftovers.len(), 1, "{leftovers:?}");
-    drop(tmp);
-}
-
-/// A cache below a directory of another user is not used (`/` is root's).
-#[cfg(unix)]
-#[test]
-fn another_users_directory_is_not_used() {
-    if euid() == 0 {
-        return;
-    }
-    assert!(Cache::at(PathBuf::from("/dfdu-test-no-such-dir/scans")).is_err());
-    assert!(Cache::at(PathBuf::from("/")).is_err());
-    let tmp = tempfile::tempdir().unwrap();
-    assert!(Cache::at(tmp.path().join("a/b")).is_ok());
-}
-
-/// A tree that changes between the parts of a save is not written, nor is anything once
-/// cancelled; the file cached before stays, and no temporary file is left.
-#[test]
-fn a_changing_tree_or_a_cancel_writes_nothing() {
-    let (_tmp, cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), STEP_ENTRIES + 10);
-    let h = header(now, now);
-    assert!(matches!(save(&slot, &t, &h), Saved::Written { .. }));
-    let before = fs::read(&slot.path).unwrap();
-    let tree = Mutex::new(t);
-    let mut calls = 0;
-    let changed = slot
-        .save(
-            &header(now + 1, now + 1),
-            |f| {
-                let mut t = tree.lock().unwrap();
-                if calls == 1 {
-                    t.bump_version();
-                }
-                calls += 1;
-                f(&t);
-            },
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-    assert_eq!(changed, Saved::Changed);
-    assert_eq!(calls, 2);
-    let t = tree.into_inner().unwrap();
-    let cancelled = slot.save(&h, |f| f(&t), &AtomicBool::new(true)).unwrap();
-    assert_eq!(cancelled, Saved::Cancelled);
-    // A tree of another directory.
-    let (other, _) = tree_of(cache.dir(), 1);
-    assert_eq!(save(&slot, &other, &h), Saved::Changed);
-    assert_eq!(fs::read(&slot.path).unwrap(), before);
-    assert_eq!(fs::read_dir(cache.dir()).unwrap().count(), 1);
-}
-
-/// The listing reads each file's root, header and entries.
-#[test]
-fn the_list_says_what_each_file_holds() {
-    let (_tmp, cache, slot) = setup();
-    let now = now();
-    let (t, _) = tree_of(slot.key.root(), 4);
-    save(&slot, &t, &header(now, now));
-    fs::write(cache.dir().join("0123456789abcdef.snap"), b"DFDUSNAP").unwrap();
-    let list = cache.list();
-    assert_eq!(list.len(), 2);
-    let ok = list.iter().find(|l| l.path == slot.path).unwrap();
-    let (root, h) = ok.scan.as_ref().unwrap();
-    assert_eq!(root, slot.key.root());
-    assert_eq!(h.scan_ms, 4_000);
-    assert_eq!(ok.entries, Some(5));
-    assert!(list.iter().any(|l| l.scan.is_none()));
+    assert!(Key::new(&tmp.path().join("f"), &JobOptions::default(), false).is_err());
+    assert!(Key::new(&tmp.path().join("missing"), &JobOptions::default(), false).is_err());
 }
 
 #[test]
@@ -384,68 +118,4 @@ fn the_cache_turns_off_by_environment() {
     for v in ["1", "", "yes", "on"] {
         assert!(!is_off(std::ffi::OsStr::new(v)), "{v}");
     }
-}
-
-/// Measures a save and a load of about a million entries: how long the tree is held still at
-/// once, and how long each takes. `cargo test --release -p dfdu-store -- --ignored --nocapture
-/// measure_a_million`.
-#[test]
-#[ignore = "a measurement, not a check"]
-fn measure_a_million() {
-    let (_tmp, _cache, slot) = setup();
-    let mut t = Tree::new();
-    let root_path = slot.key.root();
-    let meta = Meta::from_metadata(&fs::metadata(root_path).unwrap());
-    let r = t.new_root(root_path.as_os_str().as_encoded_bytes(), &meta, true);
-    let mut ino = 10u64;
-    for d in 0..10_000u64 {
-        ino += 1;
-        let dm = Meta { ino, ..meta };
-        let dir = t.add_dir_flagged(r, format!("dir-{d:05}").as_bytes(), &dm, 0);
-        let own = t.own(dir);
-        t.propagate_add(r, &own);
-        for f in 0..100u64 {
-            ino += 1;
-            let m = Meta {
-                kind: Kind::File,
-                apparent: f * 1000,
-                alloc: 4096,
-                ino,
-                nlink: 1,
-                ..meta
-            };
-            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
-            let own = t.own(x);
-            t.propagate_add(dir, &own);
-        }
-    }
-    let lock = std::sync::RwLock::new(t);
-    let mut holds = vec![];
-    let t0 = Instant::now();
-    let saved = slot
-        .save(
-            &header(now(), now()),
-            |f| {
-                let g = lock.read().unwrap();
-                let h = Instant::now();
-                f(&g);
-                holds.push(h.elapsed());
-            },
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-    let save = t0.elapsed();
-    holds.sort();
-    let p = |q: usize| holds[(holds.len() - 1) * q / 100];
-    let t0 = Instant::now();
-    let hit = slot.load(now()).unwrap().unwrap();
-    let load = t0.elapsed();
-    eprintln!(
-        "{saved:?}\nsave {save:?} in {} steps: hold p50 {:?} p99 {:?} max {:?}\nload {load:?}, {} entries",
-        holds.len(),
-        p(50),
-        p(99),
-        p(100),
-        hit.loaded.entries
-    );
 }

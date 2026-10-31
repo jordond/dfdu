@@ -1,7 +1,7 @@
 //! `dfdu dupes`: scans a directory, then compares the files that share a size
 //! ([`dfdu_dupes`]) and lists the groups of identical files, the most space to free first.
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +11,7 @@ use clap::Args;
 use dfdu_dupes::{Found, Options, Progress};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, report, written};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, report};
 
 #[derive(Args)]
 pub struct DupesArgs {
@@ -39,13 +39,10 @@ enum Format {
     Json,
 }
 
-pub fn run(args: &DupesArgs) -> ExitCode {
+pub fn run(args: &DupesArgs) -> Result<ExitCode, ExitCode> {
     let t0 = Instant::now();
     // Its own --threads are the threads reading files.
-    let engine = match launch::scan(&args.path, args.mounts, None, None, false) {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let engine = launch::scan(&args.path, args.mounts, None, None, false)?;
     let (cands, errors) = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
             return (Vec::new(), 0);
@@ -75,24 +72,26 @@ pub fn run(args: &DupesArgs) -> ExitCode {
         if show {
             eprint!("\r\x1b[K");
         }
-        job.join().unwrap_or_default()
+        job.join()
     });
-    let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
-    let r = match args.format {
-        Format::Table => {
-            table(&found, args.top);
-            Ok(())
-        }
-        Format::Json => {
-            let doc = to_json(&found, args.top, args.min_size);
-            serde_json::to_writer_pretty(&mut *w, &doc)
-                .map_err(std::io::Error::from)
-                .and_then(|()| std::io::Write::write_all(w, b"\n"))
+    let found = match found {
+        Ok(f) => f,
+        Err(p) => {
+            eprintln!(
+                "dfdu: duplicate search failed: {}",
+                dfdu_scan::panic_message(&*p)
+            );
+            return Err(ExitCode::from(1));
         }
     };
-    if let Err(code) = written(r.and_then(|()| std::io::Write::flush(w))) {
-        return code;
-    }
+    print_out(|w| match args.format {
+        Format::Table => table(w, &found, args.top),
+        Format::Json => {
+            let doc = to_json(&found, args.top, args.min_size);
+            serde_json::to_writer_pretty(&mut *w, &doc)?;
+            w.write_all(b"\n")
+        }
+    })?;
     if args.format == Format::Table {
         eprintln!(
             "{} files compared, {}{:.2}s",
@@ -104,11 +103,11 @@ pub fn run(args: &DupesArgs) -> ExitCode {
             t0.elapsed().as_secs_f64()
         );
     }
-    if errors > 0 || found.skipped > 0 {
+    Ok(if errors > 0 || found.skipped > 0 {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 fn progress_line(p: &Progress) -> String {
@@ -126,7 +125,9 @@ fn progress_line(p: &Progress) -> String {
     )
 }
 
-fn table(found: &Found, top: Option<usize>) {
+/// Writes the groups of `found` to `w`, the first `top` of them, and what deleting the copies
+/// of all would free.
+fn table(w: &mut dyn Write, found: &Found, top: Option<usize>) -> std::io::Result<()> {
     let mut wasted = 0;
     for (i, g) in found.groups.iter().enumerate() {
         wasted += g.wasted();
@@ -134,35 +135,38 @@ fn table(found: &Found, top: Option<usize>) {
             continue;
         }
         if i > 0 {
-            outln!();
+            writeln!(w)?;
         }
         let free = if g.all_clones() {
             "clones sharing their data: deleting copies frees nothing".to_string()
         } else {
             format!("{} to free", dfdu_engine::human(g.wasted()))
         };
-        outln!(
+        writeln!(
+            w,
             "{} copies of {} ({free})",
             g.files.len(),
             dfdu_engine::human(g.size),
-        );
+        )?;
         for f in &g.files {
-            outln!("  {}", f.path.display());
+            writeln!(w, "  {}", f.path.display())?;
         }
     }
     if found.groups.is_empty() {
-        outln!("no duplicates");
+        writeln!(w, "no duplicates")?;
     } else {
-        outln!();
-        outln!(
+        writeln!(w)?;
+        writeln!(
+            w,
             "{} of identical files; deleting all but one of each would free {}",
             match found.groups.len() {
                 1 => "1 group".to_string(),
                 n => format!("{n} groups"),
             },
             dfdu_engine::human(wasted)
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
@@ -257,6 +261,35 @@ mod tests {
         assert_eq!(all["groups"][1]["clones"], true);
         assert_eq!(all["groups"][1]["wasted"], 0);
         assert_eq!(all["groups"][2]["files"][0]["private"], 1024);
+    }
+
+    #[test]
+    fn the_table_lists_the_top_groups_and_the_waste_of_all() {
+        let text = |found: &Found, top| {
+            let mut out = Vec::new();
+            table(&mut out, found, top).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        assert_eq!(text(&Found::default(), None), "no duplicates\n");
+        let found = Found {
+            groups: vec![
+                group(vec![file("/a", None), file("/b", None)]),
+                group(vec![file("/c", None), file("/d", None)]),
+            ],
+            ..Found::default()
+        };
+        let one = text(&found, Some(1));
+        assert!(
+            one.starts_with("2 copies of 100 B (4.0 KiB to free)\n  "),
+            "{one}"
+        );
+        assert!(!one.contains("/c"), "{one}");
+        assert!(
+            one.ends_with(
+                "2 groups of identical files; deleting all but one of each would free 8.0 KiB\n"
+            ),
+            "{one}"
+        );
     }
 
     #[test]

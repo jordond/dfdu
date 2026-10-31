@@ -5,7 +5,7 @@
 //! pattern per value.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::Platform;
 
@@ -115,8 +115,10 @@ impl Env {
             Links::Off => Vec::new(),
             Links::Resolve(seen) => seen
                 .lock()
-                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default(),
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             Links::Given(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         }
     }
@@ -162,9 +164,9 @@ impl Env {
             return vec![pattern];
         }
         let there = format!("{real}{}", &pattern[have.len()..]);
-        if let Ok(mut seen) = seen.lock() {
-            seen.insert(pattern.clone(), there.clone());
-        }
+        seen.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(pattern.clone(), there.clone());
         vec![pattern, there]
     }
 

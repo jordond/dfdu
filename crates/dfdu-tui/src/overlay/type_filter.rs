@@ -20,8 +20,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Effect, Overlay};
+use crate::format::{count, human};
 use crate::input::line::{Edit, LineInput};
-use crate::theme::{count, human};
 
 /// Why a directory cannot be marked or deleted while the filter is on.
 pub const NO_FOLDERS: &str = "folders cannot be marked or deleted while the type filter is on: their sizes count only some files (Esc shows all)";
@@ -291,11 +291,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
 mod tests {
     use std::time::Instant;
 
-    use dfdu_tree::Kind;
+    use dfdu_tree::{Kind, Target};
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::model::snapshot::{self, Target};
+    use crate::model::snapshot;
     use crate::tests::{press, render};
     use crate::theme::Theme;
 

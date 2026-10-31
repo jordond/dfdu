@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::Ordering::Relaxed;
 
-use dfdu_engine::EngineOptions;
+use dfdu_engine::test_support::{Gate, wide_tree};
 use dfdu_scan::PortableBackend;
 use dfdu_store::cache::{Cache, Key};
 
@@ -18,7 +17,7 @@ fn link(tmp: &Path) -> CacheLink {
     fs::write(dir.join("sub/b"), vec![0u8; 5000]).unwrap();
     let cache = Cache::at(tmp.join("cache")).unwrap();
     CacheLink {
-        slot: cache.slot(Key::new(&dir, false, false, false).unwrap()),
+        slot: cache.slot(Key::new(&dir, &JobOptions::default(), false).unwrap()),
         path: dir,
         job: JobOptions::default(),
         save: true,
@@ -32,17 +31,6 @@ fn cacher(link: &CacheLink) -> Cacher {
     c.min_scan_ms = 0;
     c.position = |_| None;
     c
-}
-
-fn engine() -> Engine<PortableBackend> {
-    Engine::start(
-        PortableBackend::default(),
-        EngineOptions {
-            workers: 2,
-            journal_dir: None,
-            ..Default::default()
-        },
-    )
 }
 
 /// Polls until `done` holds, at most 10 s.
@@ -74,19 +62,29 @@ fn ages_are_short() {
     assert_eq!(ago(200, 100), "0 s", "a time ahead of the clock");
 }
 
+#[test]
+fn a_load_error_says_what_failed() {
+    let limit = LoadError::Read(dfdu_store::ImportError::Limit("too many entries".into()));
+    assert_eq!(limit.to_string(), "over a limit: too many entries");
+    assert_eq!(LoadError::Panicked.to_string(), "the loader panicked");
+}
+
 /// The first run scans and saves the complete scan; the next opens it at once, says it is
 /// cached while it is brought up to date, and then shows the scan as any other.
 #[test]
 fn a_complete_scan_is_saved_and_opened_next_time() {
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     assert!(c.poll(&mut app, &e), "the scan is sent at once");
     assert_eq!(app.cached, None, "nothing was cached");
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert!(link.slot.path.exists());
     assert_eq!(app.status, None);
@@ -94,7 +92,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     drop(c);
     e.shutdown(Duration::from_millis(200));
 
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
@@ -109,8 +107,8 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     e.shutdown(Duration::from_millis(200));
 }
 
-/// Holds the change journal's answer in the test below until set.
-static ANSWER: AtomicBool = AtomicBool::new(false);
+/// Holds the change journal's answer in the test below until opened.
+static ANSWER: Gate = Gate::new();
 
 /// A rescan sent while the resume waits for the change journal is refused (no resume has
 /// taken the cached tree over yet), which leaves it not yet brought up to date: nothing is
@@ -124,12 +122,15 @@ fn nothing_is_saved_before_the_resume_ended() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     let scanned = items(&e).unwrap();
     drop(c);
@@ -138,14 +139,12 @@ fn nothing_is_saved_before_the_resume_ended() {
     // Changed since, as the journal will say.
     fs::write(link.path.join("new"), b"new").unwrap();
 
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
     c.changed_since = |_, _, _| {
-        while !ANSWER.load(Relaxed) {
-            thread::sleep(Duration::from_millis(1));
-        }
+        ANSWER.wait();
         Some(vec![PathBuf::new()])
     };
     c.poll(&mut app, &e);
@@ -168,7 +167,12 @@ fn nothing_is_saved_before_the_resume_ended() {
         c.poll(&mut app, &e);
         thread::sleep(Duration::from_millis(2));
     }
-    assert!(c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_none()));
+    assert!(
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as == SavedAs::Pending)
+    );
     assert!(matches!(app.cached, Some(Cached::Refreshing { .. })));
     assert_eq!(fs::read(&link.slot.path).unwrap(), before);
     assert_eq!(
@@ -177,9 +181,12 @@ fn nothing_is_saved_before_the_resume_ended() {
         "the cached tree, without the new file"
     );
 
-    ANSWER.store(true, Relaxed);
+    ANSWER.open();
     poll_until(&mut c, &mut app, &e, |c, _| {
-        c.writer.is_none() && c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert_eq!(app.cached, None);
     assert_eq!(items(&e), Some(scanned + 1));
@@ -200,7 +207,7 @@ fn a_damaged_cache_is_reported_and_scanned_instead() {
     let link = link(tmp.path());
     fs::create_dir_all(link.slot.path.parent().unwrap()).unwrap();
     fs::write(&link.slot.path, b"DFDUSNAP\x04\0\0\0cut").unwrap();
-    let e = engine();
+    let e = Engine::portable(2);
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
@@ -224,12 +231,14 @@ fn quick_or_read_only_scans_are_not_saved() {
             save,
             ..link(tmp.path())
         };
-        let e = engine();
+        let e = Engine::portable(2);
         let mut app = App::new(Theme::no_color(), Instant::now());
         let mut c = cacher(&link);
         c.min_scan_ms = min;
         poll_until(&mut c, &mut app, &e, |c, _| {
-            c.run.as_ref().is_some_and(|r| r.saved_as.is_some())
+            c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
         });
         assert!(c.writer.is_none());
         assert!(!c.busy());
@@ -245,45 +254,11 @@ fn quick_or_read_only_scans_are_not_saved() {
 #[test]
 #[ignore = "a measurement, not a check"]
 fn measure_opening_a_million() {
-    use dfdu_tree::{Kind, Meta, Tree};
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
     let root = link.slot.key.root();
-    let meta = Meta::from_metadata(&fs::metadata(root).unwrap());
-    let mut t = Tree::new();
-    let r = t.new_root(root.as_os_str().as_encoded_bytes(), &meta, true);
-    if let Some(d) = t.dir_mut(r) {
-        d.state = DirState::Complete;
-    }
-    let mut ino = 10;
-    for d in 0..10_000 {
-        ino += 1;
-        let dir = t.add_dir_flagged(
-            r,
-            format!("dir-{d:05}").as_bytes(),
-            &Meta { ino, ..meta },
-            0,
-        );
-        if let Some(x) = t.dir_mut(dir) {
-            x.state = DirState::Complete;
-        }
-        let own = t.own(dir);
-        t.propagate_add(r, &own);
-        for f in 0..100 {
-            ino += 1;
-            let m = Meta {
-                kind: Kind::File,
-                apparent: f * 1000,
-                alloc: 4096,
-                ino,
-                nlink: 1,
-                ..meta
-            };
-            let x = t.add_file(dir, format!("file-{f:03}.dat").as_bytes(), &m, true, None);
-            let own = t.own(x);
-            t.propagate_add(dir, &own);
-        }
-    }
+    let meta = dfdu_tree::Meta::from_metadata(&fs::metadata(root).unwrap());
+    let t = wide_tree(root, &meta, 10_000, 100);
     let now = cache::now();
     let header = Header {
         tool_version: "test".into(),
@@ -299,7 +274,7 @@ fn measure_opening_a_million() {
         .save(&header, |f| f(&t), &AtomicBool::new(false))
         .unwrap();
     drop(t);
-    let e = engine();
+    let e = Engine::portable(2);
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let mut c = Cacher::new(Some(link.clone()));

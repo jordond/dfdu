@@ -3,10 +3,26 @@
 use std::collections::HashSet;
 
 use dfdu_engine::{CheckMsg, CheckReq, Model};
+use dfdu_rules::protected::State;
 use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
-use dfdu_tree::{Class, DirState, Ix, Kind};
+use dfdu_tree::{Class, DirState, Ix, Kind, RuleIx};
 
 use crate::{ROOT, ROOT_NAME, Spec};
+
+/// A directory [`check_classes`] has still to walk, with the rule state carried down to it.
+struct Frame {
+    /// Its node in the spec.
+    spec_node: u32,
+    /// Its node in the tree.
+    ix: Ix,
+    path: Vec<u8>,
+    /// The rules decided above it.
+    inside: Vec<RuleIx>,
+    /// Its protection.
+    prot: State,
+    /// The class in effect at it.
+    above: Option<Class>,
+}
 
 /// Every node's class in effect and protection against a reference classifier run on the spec,
 /// over every directory whose listing and whose parents' listings completed (a directory left
@@ -20,23 +36,29 @@ use crate::{ROOT, ROOT_NAME, Spec};
     reason = "one walk of the tree carrying each node's rule state down"
 )]
 pub(crate) fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Result<u64, String> {
-    use dfdu_rules::protected::State;
     let tree = &model.tree;
     let Some(root) = tree.roots().next() else {
         return Ok(0);
     };
     let complete = |ix: Ix| tree.dir(ix).is_some_and(|d| d.state == DirState::Complete);
-    // (spec node, tree node, its path, rules decided above, protection, class in effect)
-    let mut stack = vec![(
-        ROOT,
-        root,
-        ROOT_NAME.as_bytes().to_vec(),
-        Vec::<dfdu_rules::RuleIx>::new(),
-        State::Off,
-        None::<Class>,
-    )];
+    let mut stack = vec![Frame {
+        spec_node: ROOT,
+        ix: root,
+        path: ROOT_NAME.as_bytes().to_vec(),
+        inside: Vec::new(),
+        prot: State::Off,
+        above: None,
+    }];
     let mut classified = 0;
-    while let Some((sn, ix, path, inside, prot, above)) = stack.pop() {
+    while let Some(Frame {
+        spec_node: sn,
+        ix,
+        path,
+        inside,
+        prot,
+        above,
+    }) = stack.pop()
+    {
         if !complete(ix) {
             continue;
         }
@@ -141,7 +163,14 @@ pub(crate) fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Resu
             if is_dir {
                 let mut ci = inside.clone();
                 ci.extend(own.map(|c| c.rule));
-                stack.push((c, cix, cpath, ci, cprot, want));
+                stack.push(Frame {
+                    spec_node: c,
+                    ix: cix,
+                    path: cpath,
+                    inside: ci,
+                    prot: cprot,
+                    above: want,
+                });
             }
         }
     }
@@ -220,7 +249,7 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
                 show()
             ));
         }
-        if t && c.safety != dfdu_rules::Safety::Protected {
+        if t && c.safety != dfdu_tree::Safety::Protected {
             return Err(format!("{}: git-tracked but not protected", show()));
         }
         tracked += u64::from(t);
@@ -228,3 +257,6 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
     }
     Ok((tracked, in_use))
 }
+
+#[cfg(test)]
+mod tests;

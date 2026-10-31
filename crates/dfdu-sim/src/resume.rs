@@ -16,7 +16,7 @@ use dfdu_engine::Command;
 use dfdu_scan::Backend as _;
 use dfdu_tree::{DirState, Ix, Kind, Meta, NodeFlags, NodeRef, Tree};
 
-use crate::{ROOT, Rng, Sim, SimConfig, SimReport, Spec};
+use crate::{ROOT, Rng, Sim, SimConfig, SimError, SimReport, Spec};
 
 /// At most this many entries are created after the snapshot, and as many removed.
 const CHANGES: u64 = 5;
@@ -26,7 +26,7 @@ const CHANGES: u64 = 5;
 /// # Errors
 ///
 /// When a check of either run fails; the message names the seed and what went wrong.
-pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
+pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, SimError> {
     let mut rng = Rng::new(seed);
     let mut spec = Spec::generate(&mut rng, &cfg.spec, cfg.limits.block_entries);
     // Directories last changed over a few seconds, around when the journal position is read.
@@ -49,7 +49,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
         ..cfg.clone()
     };
     let mut first = Sim::start(seed, rng, &quiet, spec.clone());
-    first.settle().map_err(|e| format!("scan: {e}"))?;
+    first.settle().map_err(|e| e.during("scan"))?;
     let tree = loaded_copy(&first.model.tree);
     let resumed = SimConfig {
         cross_mounts: Some(first.cross_mounts),
@@ -81,7 +81,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, String> {
 
     let mut sim = Sim::build(seed, rng, &resumed, spec);
     let Some(root) = tree.roots().next() else {
-        return Err(format!("seed {seed}: the scan left no root"));
+        return Err(SimError::new(seed, "the scan left no root"));
     };
     let node = tree.node_ref(root);
     let dirs = all_dirs(&tree);
@@ -223,7 +223,7 @@ fn all_dirs(tree: &Tree) -> Vec<NodeRef> {
 /// being read as partial); no classes, no jobs, no measured extents, and a hard link charged
 /// where it is first met.
 fn loaded_copy(from: &Tree) -> Tree {
-    const KEPT: [u16; 4] = [
+    const KEPT: [NodeFlags; 4] = [
         NodeFlags::MOUNT_ROOT,
         NodeFlags::KERNEL,
         NodeFlags::NETWORK,
@@ -265,7 +265,7 @@ fn loaded_copy(from: &Tree) -> Tree {
                 let flags = KEPT
                     .iter()
                     .filter(|&&k| from.flags(c).has(k))
-                    .fold(0, |a, &k| a | k);
+                    .fold(NodeFlags::default(), |a, &k| a | k);
                 let ix = t.add_dir_flagged(to, from.name(c), &m, flags);
                 let own = t.own(ix);
                 t.propagate_add(to, &own);

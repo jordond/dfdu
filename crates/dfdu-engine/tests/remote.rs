@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use dfdu_engine::wire::{self, FromAgent};
 use dfdu_engine::{Command, Engine, RemoteIo, RemoteRules};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{JobOptions, PortableBackend};
@@ -141,6 +142,59 @@ fn a_closed_link_is_reported() {
     e.shutdown(Duration::from_secs(1));
 }
 
+/// Why an agent that sends `frames` and then hangs up is refused at the greeting.
+fn rejected(frames: &[FromAgent]) -> String {
+    let mut buf = Vec::new();
+    for f in frames {
+        wire::write_frame(&mut buf, &f.encode()).unwrap();
+    }
+    let started = Engine::start_remote(
+        PortableBackend::default(),
+        opts(),
+        RemoteIo {
+            reader: Box::new(std::io::Cursor::new(buf)),
+            writer: Box::new(std::io::sink()),
+            child: None,
+        },
+        Path::new("/"),
+        None,
+    );
+    match started {
+        Ok(_) => panic!("{frames:?} was accepted"),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// An agent is refused when it does not say hello first, speaks no version this one does, or
+/// does not describe its host next, and its own fatal error is passed on.
+#[test]
+fn handshake_rejections() {
+    let hello = |v: u32| FromAgent::Hello {
+        min: v,
+        max: v,
+        tool: "fake".into(),
+    };
+    let cases = [
+        (vec![], "before saying hello"),
+        (vec![hello(wire::VERSION + 1)], "speaks protocol versions"),
+        (vec![FromAgent::Fatal("boom".into())], "boom"),
+        (vec![FromAgent::Heartbeat], "did not say hello"),
+        (
+            vec![hello(wire::VERSION), FromAgent::Batch(vec![])],
+            "did not describe its host",
+        ),
+        (
+            vec![hello(wire::VERSION), FromAgent::Fatal("boom".into())],
+            "boom",
+        ),
+        (vec![hello(wire::VERSION)], "closed the link"),
+    ];
+    for (frames, want) in cases {
+        let why = rejected(&frames);
+        assert!(why.contains(want), "{frames:?}: {why}");
+    }
+}
+
 /// An agent that says nothing for longer than `DEAD` is taken for gone: its process is
 /// killed and the scan ends with an error.
 #[cfg(unix)]
@@ -197,7 +251,7 @@ fn a_silent_agent_is_given_up() {
 type ClassRow = (
     std::path::PathBuf,
     String,
-    Option<dfdu_rules::Safety>,
+    Option<dfdu_tree::Safety>,
     u8,
     u8,
 );

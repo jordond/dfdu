@@ -1,0 +1,8 @@
+---
+source: crates/dfdu-tui/src/view/header/modes/tests.rs
+expression: "modes(&|_, _| {}, \"video\")"
+---
+120| /home/jo/dev               4.5M items · 163.3 GiB · only video: 163.3 GiB in 4.5M files here   size ↓ · disk · t video
+ 80| /home/jo/dev 4.5M items · 163.3 GiB · only video: 163.3 GiB in 4.5M files here
+ 64| 4.5M items · 163.3 GiB · only video: 163.3 GiB in 4.5M files he
+ 48| 4.5M items · 163.3 GiB · only video: 163.3 GiB

@@ -1,7 +1,7 @@
 //! The scan cache: the browser's last complete scan of a directory, kept as a snapshot so the
 //! next `dfdu PATH` opens it at once and brings it up to date in the background, as
 //! `--resume-from` does with a file. One file per directory and set of scan options, named by
-//! a hash of them ([`Key`]), in [`dfdu_rules::dirs::cache_dir`].
+//! a hash of them ([`Key`]), in [`dfdu_sys::dirs::cache_dir`].
 //!
 //! What is read is the user's own: the directory is created `0700` and the files `0600`, and a
 //! file or directory of another user (a `sudo dfdu` that kept `HOME`) is never read nor
@@ -21,9 +21,9 @@ use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use dfdu_scan::Backend;
+use dfdu_scan::{Backend, JobOptions};
 
-use crate::ncdu::Limits;
+use crate::Limits;
 use crate::snapshot::{self, Header};
 
 mod slot;
@@ -168,12 +168,12 @@ pub struct Key {
 }
 
 impl Key {
-    /// The key of a scan of the directory `path` with these options.
+    /// The key of a scan of the directory `path` made with `job`, read from the MFT when `mft`.
     ///
     /// # Errors
     ///
     /// When `path` cannot be made canonical or read, or is not a directory.
-    pub fn new(path: &Path, cross_mounts: bool, network: bool, mft: bool) -> io::Result<Key> {
+    pub fn new(path: &Path, job: &JobOptions, mft: bool) -> io::Result<Key> {
         let root = dunce::canonicalize(path)?;
         let m = fs::metadata(&root)?;
         if !m.is_dir() {
@@ -188,8 +188,8 @@ impl Key {
         let meta = dfdu_scan::PortableBackend::default().stat_dir(&root)?;
         Ok(Key {
             root,
-            cross_mounts,
-            network,
+            cross_mounts: job.cross_mounts,
+            network: job.network,
             mft,
             euid: euid(),
             dev: meta.dev,
@@ -251,14 +251,14 @@ struct File {
 }
 
 impl Cache {
-    /// The cache in [`dfdu_rules::dirs::cache_dir`]; `None` when [`off_by_env`] or without a
+    /// The cache in [`dfdu_sys::dirs::cache_dir`]; `None` when [`off_by_env`] or without a
     /// cache directory, and why it is not used when [`Cache::at`] refuses it.
     #[must_use]
     pub fn open_default() -> Option<io::Result<Cache>> {
         if off_by_env() {
             return None;
         }
-        Some(Cache::at(dfdu_rules::dirs::cache_dir()?))
+        Some(Cache::at(dfdu_sys::dirs::cache_dir()?))
     }
 
     /// The cache in `dir`, which need not exist yet: it is then created when a scan is saved.
@@ -297,8 +297,8 @@ impl Cache {
     pub fn slot(&self, key: Key) -> Slot {
         Slot {
             path: self.dir.join(key.file_name()),
-            dir: self.dir.clone(),
             key,
+            cache: self.clone(),
         }
     }
 

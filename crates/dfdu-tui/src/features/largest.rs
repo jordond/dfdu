@@ -10,16 +10,16 @@
 //! Files, in its directory, and `d` deletes what is ticked.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
-use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use dfdu_tree::{HostPath, Ident, Ix, Kind, NodeRef, Target, Tree};
+use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::keys;
+use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 mod draw;
@@ -34,7 +34,6 @@ const MIN_INTERVAL: Duration = Duration::from_secs(1);
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Largest {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     /// The files the last walk found, largest first.
@@ -79,25 +78,19 @@ pub struct Info {
 
 /// True when the view is shown, and so takes the keys it knows.
 pub fn active(app: &App) -> bool {
-    app.largest.on
+    views::current(app) == View::Largest
 }
 
-/// Switches the view on, the other views off, or the view off. On, it walks again before the
-/// next frame, so what it shows is never older than the opening.
-pub fn show(app: &mut App, on: bool) {
-    app.largest.on = on;
-    if on {
-        app.largest.walked = None;
-        crate::features::dupes::show(app, false);
-        crate::features::cleanup::show(app, false);
-        crate::features::treemap::show(app, false);
-    }
+/// The view was opened ([`views::switch`]): it walks again before the next frame, so what it
+/// shows is never older than the opening.
+pub fn on_open(app: &mut App) {
+    app.largest.walked = None;
 }
 
 /// The view needs a walk at once: it was just opened, or shows another directory, size mode
 /// or choice of hidden files than the last walk was for.
 pub fn stale(app: &App) -> bool {
-    app.largest.on
+    active(app)
         && !app.largest.walked.as_ref().is_some_and(|w| {
             w.dir == app.snap.dir_path
                 && w.mode == app.size_mode
@@ -108,7 +101,7 @@ pub fn stale(app: &App) -> bool {
 /// Under the read lock, while the view is open and a walk is due: the largest [`TOP`] files
 /// below the current directory. `None` keeps what the last walk found.
 pub fn read(m: &Model, app: &App) -> Option<Info> {
-    if !app.largest.on {
+    if !active(app) {
         return None;
     }
     let fingerprint = m.fingerprint();
@@ -220,7 +213,7 @@ pub fn apply(app: &mut App) {
 }
 
 /// The selected file, its path joined to the directory shown.
-pub(crate) fn selected(app: &App) -> Option<(HostPath, &File)> {
+pub fn selected(app: &App) -> Option<(HostPath, &File)> {
     let f = app.largest.files.get(app.largest.cursor)?;
     Some((app.snap.dir_path.join(f.path.as_bytes()), f))
 }
@@ -230,27 +223,21 @@ pub(crate) fn selected(app: &App) -> Option<(HostPath, &File)> {
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let last = app.largest.files.len().saturating_sub(1);
     let page = app.list_height.max(1);
-    let l = &mut app.largest;
-    if let Some(d) = keys::half_page(k, page) {
-        l.cursor = l.cursor.saturating_add_signed(d).min(last);
+    let action = keys::action_for(k)?;
+    if let Some(c) = keys::cursor_after(action, app.largest.cursor, last, page) {
+        app.largest.cursor = c;
         return Some(Vec::new());
     }
-    match k.code {
-        KeyCode::Up | KeyCode::Char('k') => l.cursor = l.cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => l.cursor = (l.cursor + 1).min(last),
-        KeyCode::PageUp => l.cursor = l.cursor.saturating_sub(page),
-        KeyCode::PageDown => l.cursor = (l.cursor + page).min(last),
-        KeyCode::Home | KeyCode::Char('g') => l.cursor = 0,
-        KeyCode::End | KeyCode::Char('G') => l.cursor = last,
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => go(app),
-        KeyCode::Char(' ') => toggle(app),
+    match action {
+        Action::Open | Action::Enter => go(app),
+        Action::ToggleMark => toggle(app),
         _ => return None,
     }
     Some(Vec::new())
 }
 
 /// The nodes of the files the view lists, for `d` to act on its ticks only.
-pub fn listed(app: &App) -> std::collections::HashSet<NodeRef> {
+pub fn listed(app: &App) -> HashSet<NodeRef> {
     app.largest.files.iter().map(|f| f.node).collect()
 }
 
@@ -260,7 +247,7 @@ fn go(app: &mut App) {
         return;
     };
     let dir = app.snap.dir_path.clone();
-    app.largest.on = false;
+    views::switch(app, View::Files);
     app.go_to(&path, &dir);
 }
 

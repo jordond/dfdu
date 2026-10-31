@@ -1,11 +1,33 @@
 //! Mounted filesystems with their sizes, for the disk list (`dfdu disks`, the browser's picker).
 //! Like `df`: kernel filesystems and those without blocks are left out, and a filesystem
-//! mounted at several places (btrfs subvolumes, bind mounts) is listed once.
+//! mounted at several places (btrfs subvolumes, bind mounts) is listed once. Each system's
+//! listing is in a module of its own: `linux`, `macos` and, from `sysinfo`, `other`.
 
+#[cfg(any(target_os = "linux", test))]
+mod linux;
+#[cfg(any(target_os = "macos", test))]
+mod macos;
+#[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
+mod other;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::time::Instant;
+
+#[cfg(target_os = "linux")]
+pub use linux::disks;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::statvfs_space;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::Volume;
+#[cfg(target_os = "macos")]
+pub use macos::disks;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub use other::disks;
 
 use crate::FsClass;
 
@@ -77,62 +99,15 @@ pub(crate) fn on_thread<T: Send + 'static>(
     Some(rx)
 }
 
-/// The mounted filesystems, sorted by mount point. Each filesystem gets `timeout` to report
-/// its size; those that do not answer are listed without one.
-///
-/// # Errors
-///
-/// When the mount table cannot be read.
-#[cfg(target_os = "linux")]
-pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
-    use std::collections::BTreeMap;
-    let table = crate::mount_table()?;
-    // One entry per filesystem, by device: the mount of its top directory if there is one,
-    // else the shortest mount point.
-    // Left out: kernel filesystems, mounts below them (`/sys/fs/cgroup`, `/dev/shm`), which a
-    // scan never reaches, and mounts hidden by a later mount at the same place.
-    let kernel: Vec<&std::path::Path> = table
-        .iter()
-        .filter(|e| crate::classify_fs(&e.fstype) == FsClass::Kernel)
-        .map(|e| e.mount_point.as_path())
-        .filter(|p| p.parent().is_some())
-        .collect();
-    let mut by_dev: BTreeMap<u64, Vec<&crate::MountEntry>> = BTreeMap::new();
-    for (i, e) in table.iter().enumerate() {
-        let hidden = table[i + 1..]
-            .iter()
-            .any(|later| later.mount_point == e.mount_point);
-        let below_kernel = kernel.iter().any(|k| e.mount_point.starts_with(k));
-        if !hidden && !below_kernel {
-            by_dev.entry(e.st_dev()).or_default().push(e);
-        }
-    }
-    let deadline = Instant::now() + timeout;
-    let mut pending = vec![];
-    for (_, mut mounts) in by_dev {
-        mounts.sort_by_key(|e| {
-            (
-                e.root.as_os_str() != "/",
-                e.mount_point.as_os_str().len(),
-                e.mount_point.clone(),
-            )
-        });
-        mounts.dedup_by(|a, b| a.mount_point == b.mount_point);
-        let first = mounts[0];
-        let mp = first.mount_point.clone();
-        let rx = on_thread(move || statvfs_space(&mp));
-        let disk = Disk {
-            mount_point: first.mount_point.clone(),
-            also_at: mounts[1..].iter().map(|e| e.mount_point.clone()).collect(),
-            fstype: first.fstype.clone(),
-            source: first.source.clone(),
-            class: crate::classify_fs(&first.fstype),
-            space: None,
-            role: None,
-            shares_space_with: vec![],
-        };
-        pending.push((disk, rx));
-    }
+/// A disk whose size is being asked for on its own thread ([`on_thread`]).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+type Pending = (Disk, Option<mpsc::Receiver<io::Result<Space>>>);
+
+/// The disks of `pending` with the sizes that arrived by `deadline`, sorted by mount point.
+/// A disk that did not answer is listed without a size; one that failed or has no blocks is
+/// left out.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn gather(pending: Vec<Pending>, deadline: Instant) -> Vec<Disk> {
     let mut out = vec![];
     for (mut disk, rx) in pending {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -149,178 +124,12 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
         out.push(disk);
     }
     out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
-    Ok(out)
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
-    let s = rustix::fs::statvfs(path).map_err(io::Error::from)?;
-    let unit = if s.f_frsize > 0 {
-        s.f_frsize
-    } else {
-        s.f_bsize
-    };
-    Ok(Space {
-        total: s.f_blocks.saturating_mul(unit),
-        used: s.f_blocks.saturating_sub(s.f_bfree).saturating_mul(unit),
-        available: s.f_bavail.saturating_mul(unit),
-    })
-}
-
-/// The mounted filesystems, sorted by mount point, from `sysinfo`. The whole listing gets
-/// `timeout`.
-///
-/// # Errors
-///
-/// When no thread can be started for the listing, when `sysinfo` cannot list the disks, or
-/// `TimedOut` when the listing takes longer than `timeout`.
-#[cfg(not(target_os = "linux"))]
-pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
-    let deadline = Instant::now() + timeout;
-    let rx = on_thread(|| {
-        let disks = sysinfo::Disks::new_with_refreshed_list().map_err(|e| match e {
-            sysinfo::Error::Io(e) => e,
-            e => io::Error::other(e),
-        })?;
-        let list = disks
-            .iter()
-            .map(|d| {
-                let fstype = d.file_system().to_string_lossy().into_owned();
-                let (total, available) = (d.total_space(), d.available_space());
-                Disk {
-                    mount_point: d.mount_point().to_path_buf(),
-                    also_at: vec![],
-                    class: crate::classify_fs(&fstype),
-                    fstype,
-                    source: d.name().to_string_lossy().into_owned(),
-                    space: Some(Space {
-                        total,
-                        used: total.saturating_sub(available),
-                        available,
-                    }),
-                    role: None,
-                    shares_space_with: vec![],
-                }
-            })
-            .collect::<Vec<_>>();
-        Ok::<_, io::Error>(list)
-    })
-    .ok_or_else(|| io::Error::other("could not start a thread"))?;
-    let mut out = rx
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the disk list did not answer"))??;
-    out.retain(|d| d.class != FsClass::Kernel && d.space.is_some_and(|s| s.total > 0));
-    out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
-    #[cfg(target_os = "macos")]
-    if let Ok(volumes) = crate::macos::volumes() {
-        describe_volumes(&mut out, &volumes);
-    }
-    Ok(out)
-}
-
-/// A mounted volume as it describes itself: where it is mounted, what from, and its role.
-#[cfg(any(target_os = "macos", test))]
-pub(crate) struct Volume {
-    pub at: PathBuf,
-    /// The device (`/dev/disk3s5`; `/dev/disk3s1s1` for a snapshot of `disk3s1`).
-    pub from: String,
-    pub role: Option<Role>,
-}
-
-/// The APFS container a volume's device is part of: `disk3` for `/dev/disk3s5`.
-#[cfg(any(target_os = "macos", test))]
-fn container(dev: &str) -> Option<&str> {
-    let name = dev.strip_prefix("/dev/")?;
-    let digits = name.strip_prefix("disk")?;
-    let n = digits.bytes().take_while(u8::is_ascii_digit).count();
-    (n > 0 && digits.as_bytes().get(n) == Some(&b's')).then(|| &name[..4 + n])
-}
-
-/// Sets each disk's role, and the other disks on the same APFS container, from `volumes`.
-#[cfg(any(target_os = "macos", test))]
-fn describe_volumes(disks: &mut [Disk], volumes: &[Volume]) {
-    let of = |d: &Disk| volumes.iter().find(|v| v.at == d.mount_point);
-    let containers: Vec<Option<&str>> = disks
-        .iter()
-        .map(|d| {
-            of(d)
-                .filter(|_| d.fstype == "apfs")
-                .and_then(|v| container(&v.from))
-        })
-        .collect();
-    for i in 0..disks.len() {
-        disks[i].role = of(&disks[i]).and_then(|v| v.role);
-        let Some(c) = containers[i] else { continue };
-        let others: Vec<PathBuf> = (0..disks.len())
-            .filter(|&j| j != i && containers[j] == Some(c))
-            .map(|j| disks[j].mount_point.clone())
-            .collect();
-        disks[i].shares_space_with = others;
-    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn disk(at: &str, fstype: &str) -> Disk {
-        Disk {
-            mount_point: at.into(),
-            also_at: vec![],
-            fstype: fstype.into(),
-            source: String::new(),
-            class: FsClass::Local,
-            space: None,
-            role: None,
-            shares_space_with: vec![],
-        }
-    }
-
-    fn volume(at: &str, from: &str, role: Option<Role>) -> Volume {
-        Volume {
-            at: at.into(),
-            from: from.into(),
-            role,
-        }
-    }
-
-    #[test]
-    fn containers_come_from_the_device_name() {
-        assert_eq!(container("/dev/disk3s5"), Some("disk3"));
-        assert_eq!(container("/dev/disk3s1s1"), Some("disk3"));
-        assert_eq!(container("/dev/disk12s2"), Some("disk12"));
-        assert_eq!(container("/dev/disk4"), None);
-        assert_eq!(container("map auto_home"), None);
-        assert_eq!(container("/dev/sda1"), None);
-    }
-
-    #[test]
-    fn apfs_volumes_of_one_container_share_space_and_keep_their_roles() {
-        let mut disks = vec![
-            disk("/", "apfs"),
-            disk("/System/Volumes/Data", "apfs"),
-            disk("/Volumes/Backup", "apfs"),
-            disk("/Volumes/USB", "msdos"),
-        ];
-        let volumes = [
-            volume("/", "/dev/disk3s1s1", Some(Role::System)),
-            volume("/System/Volumes/Data", "/dev/disk3s5", Some(Role::Data)),
-            volume("/System/Volumes/VM", "/dev/disk3s6", None),
-            volume("/Volumes/Backup", "/dev/disk5s1", None),
-            volume("/Volumes/USB", "/dev/disk6s1", None),
-        ];
-        describe_volumes(&mut disks, &volumes);
-        let roles: Vec<Option<Role>> = disks.iter().map(|d| d.role).collect();
-        assert_eq!(roles, [Some(Role::System), Some(Role::Data), None, None]);
-        assert_eq!(
-            disks[0].shares_space_with,
-            [PathBuf::from("/System/Volumes/Data")]
-        );
-        assert_eq!(disks[1].shares_space_with, [PathBuf::from("/")]);
-        let none: [PathBuf; 0] = [];
-        assert_eq!(disks[2].shares_space_with, none);
-        assert_eq!(disks[3].shares_space_with, none);
-    }
 
     #[test]
     fn lists_the_root_filesystem_once() {

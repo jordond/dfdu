@@ -7,7 +7,11 @@
 //! On other systems the functions report "not available": `Ok(None)` for lookups (`mount_id`,
 //! `subvol_info`), `Ok(false)` for yes/no questions (`is_btrfs`, `shares_extents`), and
 //! `Unsupported` where no answer can be given (`mount_table`).
+//!
+//! [`dirs`] owns where dfdu keeps its files: the config, state, cache, crash and rule
+//! directories every other crate asks for.
 
+pub mod dirs;
 mod disks;
 mod mounted;
 mod profile;
@@ -32,22 +36,17 @@ mod bulk;
 #[cfg(target_os = "macos")]
 pub use bulk::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG, parse_bulk_record};
 #[cfg(target_os = "macos")]
-pub mod fsevents;
-#[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
-    CloneAt, CloneInfo, clone_info, clone_info_at, performance_cores, read_bulk, shares_extents,
+    CloneAt, CloneInfo, clone_info, clone_info_at, fsevents, performance_cores, read_bulk,
+    shares_extents,
 };
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use windows::*;
-#[cfg(windows)]
-mod usn;
-#[cfg(windows)]
-pub use usn::{UsnChanges, usn_changes_since, usn_position};
 
 /// Whether this process runs as root, so it may read every directory, delete read-only btrfs
 /// snapshots and read extent trees.

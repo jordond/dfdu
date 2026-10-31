@@ -4,8 +4,8 @@
 use dfdu_scan::Backend;
 use dfdu_tree::{DirState, ErrKind, NodeRef};
 
+use super::links::{Scope, VISIBLE};
 use super::{Applier, Model};
-use crate::links::{Scope, VISIBLE};
 
 #[cfg(test)]
 mod tests;
@@ -13,7 +13,7 @@ mod tests;
 pub(super) enum Work {
     Free,
     /// Drop freed links from these inodes' lists
-    /// ([`LinkTable::prune`](crate::links::LinkTable::prune)).
+    /// ([`LinkTable::prune`](super::links::LinkTable::prune)).
     Prune {
         keys: Vec<(u64, u64)>,
     },

@@ -8,11 +8,11 @@ use ratatui::symbols::border;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Widget};
 
-use super::draw::{
-    LABEL_MIN, SLIVER, base_style, candidate, fit_name, hatch, put, texts, third_line,
-};
 use super::paint;
 use super::place::Tile;
+use super::tile::{
+    LABEL_MIN, SLIVER, base_style, candidate, fit_name, hatch, put, texts, third_line,
+};
 use crate::app::App;
 use crate::theme::Bars;
 
@@ -145,5 +145,75 @@ pub(super) fn glyph_tile(
         hatch(buf, inner, below, style, t.bars, 2);
     } else {
         shade_rows(buf, inner, below, glyph, fill_style);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::features::treemap::tests::buffer_row as row;
+    use crate::model::snapshot::test_entry;
+    use crate::theme::Theme;
+
+    const AREA: Rect = Rect::new(0, 0, 16, 6);
+
+    /// Tile 0 of `tiles` drawn into a buffer of [`AREA`], selected when `selected`.
+    fn drawn(theme: Theme, tiles: &[Tile], selected: bool) -> Buffer {
+        let app = App::new(theme, Instant::now());
+        let mut buf = Buffer::empty(AREA);
+        glyph_tile(&mut buf, &app, tiles, 0, selected.then_some(0), 0);
+        buf
+    }
+
+    #[test]
+    fn a_tile_is_framed_labelled_and_shaded_by_depth() {
+        let tiles = [Tile::of(AREA, "notes", 300)];
+        let buf = drawn(Theme::no_color(), &tiles, false);
+        assert_eq!(row(&buf, 0), format!("┌{}┐", "─".repeat(14)));
+        assert!(row(&buf, 1).starts_with("│ notes "), "{:?}", row(&buf, 1));
+        assert!(row(&buf, 2).starts_with("│ 300 B "), "{:?}", row(&buf, 2));
+        let shade = paint::shade(Bars::Unicode, 0);
+        assert_eq!(row(&buf, 3), format!("│{}│", shade.repeat(14)));
+    }
+
+    #[test]
+    fn the_selected_tile_has_a_heavy_frame_and_ascii_has_its_own() {
+        let node = test_entry(0, "notes", 300).node;
+        let tiles = [Tile {
+            entry: Some((node, 0)),
+            ..Tile::of(AREA, "notes", 300)
+        }];
+        let buf = drawn(Theme::no_color(), &tiles, true);
+        assert_eq!(buf[(0, 0)].symbol(), "┏");
+        assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD));
+        let mut ascii = Theme::no_color();
+        ascii.bars = Bars::Ascii;
+        assert_eq!(drawn(ascii.clone(), &tiles, true)[(0, 0)].symbol(), "#");
+        assert_eq!(drawn(ascii, &tiles, false)[(0, 0)].symbol(), "+");
+    }
+
+    #[test]
+    fn slivers_are_shaded_only_when_wide_enough_or_selected() {
+        let narrow = |w| [Tile::of(Rect::new(0, 0, w, 6), "s", 1)];
+        let shade = paint::shade(Bars::Unicode, 0);
+        assert_eq!(
+            drawn(Theme::no_color(), &narrow(3), false)[(1, 2)].symbol(),
+            shade
+        );
+        assert_eq!(
+            drawn(Theme::no_color(), &narrow(2), false)[(1, 2)].symbol(),
+            " "
+        );
+        let node = test_entry(0, "s", 1).node;
+        let selected = [Tile {
+            entry: Some((node, 0)),
+            ..narrow(2)[0].clone()
+        }];
+        assert_eq!(
+            drawn(Theme::no_color(), &selected, true)[(1, 2)].symbol(),
+            shade
+        );
     }
 }

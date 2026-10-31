@@ -1,13 +1,15 @@
 //! Shared-extent measurement: walking measured subtrees, requests for the measurers, their
 //! results, and keeping measurements on the charged hard link.
 
+use std::collections::HashMap;
+
 use dfdu_scan::Backend;
 use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, Tree};
 
+use super::links::VISIBLE;
 use super::work::STEP_UNITS;
 use super::{Applier, JobKind, JobPhase, Model};
 use crate::extents::Inode;
-use crate::links::VISIBLE;
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 
 #[cfg(test)]
@@ -29,28 +31,45 @@ const MEASURE_TIMEOUT_NS: u64 = 60_000_000_000;
 
 /// Where a measurement walk goes next.
 #[derive(Clone, Copy)]
-pub(super) enum MeasureAt {
+enum MeasureAt {
     /// A directory whose listing closed: its own files.
     Files(NodeRef),
     /// A subtree: the files of each directory in it not queued already.
     Subtree(NodeRef),
 }
 
+/// What the applier keeps of extent measurement: where its walk goes next and the requests
+/// it has in flight.
+#[derive(Default)]
+pub(super) struct Measuring {
+    stack: Vec<MeasureAt>,
+    /// The node each inode with a measurement in flight was requested for.
+    awaited: HashMap<Inode, NodeRef>,
+    /// Requests for the measurers, taken by the runtime after each slice.
+    outgoing: Vec<MeasureReq>,
+    /// Files in the requests in flight.
+    inflight: usize,
+    /// Results of earlier rounds (abandoned after a timeout) are ignored.
+    round: u64,
+    /// When the last result came, or when nothing was in flight.
+    last: u64,
+}
+
 impl<B: Backend> Applier<B> {
     /// Queues what is left to measure below `root`, whose job ended.
     pub(super) fn start_measure(&mut self, m: &mut Model, root: NodeRef) {
-        if !self.measure || self.extent_devs.is_empty() {
+        if !self.settings.measure || self.extent_devs.is_empty() {
             return;
         }
         m.status.measuring.get_or_insert_with(Default::default);
-        self.measure_stack.push(MeasureAt::Subtree(root));
+        self.measure.stack.push(MeasureAt::Subtree(root));
     }
 
     /// Queues the files of directory `ix`, whose listing just closed, when its filesystem can
     /// share extents: they are measured while the scan goes on. Only for initial scans, whose
     /// tree is visible; a rescan's shadow is measured when it swaps in.
     pub(super) fn measure_listing(&mut self, m: &mut Model, job: u32, ix: Ix) {
-        if !self.measure
+        if !self.settings.measure
             || self.extent_devs.is_empty()
             || !self.extent_devs.contains(&m.tree.dev_ino(ix).0)
         {
@@ -68,19 +87,20 @@ impl<B: Backend> Applier<B> {
             rec.measure_queued = true;
         }
         m.status.measuring.get_or_insert_with(Default::default);
-        self.measure_stack
+        self.measure
+            .stack
             .push(MeasureAt::Files(m.tree.node_ref(ix)));
     }
 
     pub(super) fn measure_ready(&self) -> bool {
-        !self.measure_stack.is_empty() && self.measure_inflight < MEASURE_INFLIGHT
+        !self.measure.stack.is_empty() && self.measure.inflight < MEASURE_INFLIGHT
     }
 
     /// Nothing is queued or in flight, and no running scan queues more: the progress shown
     /// ends.
     pub(super) fn measure_idle(&self) -> bool {
-        self.measure_stack.is_empty()
-            && self.measure_inflight == 0
+        self.measure.stack.is_empty()
+            && self.measure.inflight == 0
             && !self
                 .jobs
                 .values()
@@ -89,7 +109,8 @@ impl<B: Backend> Applier<B> {
 
     /// Whether a measurement of `inode` is in flight for a node still visible.
     fn awaited(&self, tree: &Tree, inode: Inode) -> bool {
-        self.measure_awaited
+        self.measure
+            .awaited
             .get(&inode)
             .is_some_and(|&r| tree.resolve_visible(r).is_some())
     }
@@ -98,8 +119,8 @@ impl<B: Backend> Applier<B> {
     /// measured or in flight yet (for hard links, the charged link).
     pub(super) fn measure_step(&mut self, m: &mut Model) {
         let mut units = 0;
-        while units < STEP_UNITS && self.measure_inflight < MEASURE_INFLIGHT {
-            let Some(at) = self.measure_stack.pop() else {
+        while units < STEP_UNITS && self.measure.inflight < MEASURE_INFLIGHT {
+            let Some(at) = self.measure.stack.pop() else {
                 break;
             };
             units += 1;
@@ -121,7 +142,8 @@ impl<B: Backend> Applier<B> {
                 units += 1;
                 if tree.dir(c).is_some() {
                     if below {
-                        self.measure_stack
+                        self.measure
+                            .stack
                             .push(MeasureAt::Subtree(tree.node_ref(c)));
                     }
                     continue;
@@ -133,7 +155,7 @@ impl<B: Backend> Applier<B> {
                 let inode = tree.dev_ino(c);
                 if tree.kind(c) != Kind::File
                     || f.has(NodeFlags::MEASURED)
-                    || tree.raw_size(c).1 < self.measure_min.max(1)
+                    || tree.raw_size(c).1 < self.settings.measure_min.max(1)
                     || !self.extent_devs.contains(&inode.0)
                     || (f.has(NodeFlags::HARDLINK) && !f.has(NodeFlags::CHARGED))
                     || self
@@ -151,9 +173,9 @@ impl<B: Backend> Applier<B> {
                 });
             }
             if !files.is_empty() {
-                self.measure_inflight += files.len();
+                self.measure.inflight += files.len();
                 for f in &files {
-                    self.measure_awaited.insert(f.inode, f.node);
+                    self.measure.awaited.insert(f.inode, f.node);
                 }
                 m.status
                     .measuring
@@ -161,8 +183,8 @@ impl<B: Backend> Applier<B> {
                     .requested += files.len() as u64;
                 let dir = tree.host_path(ix);
                 for part in files.chunks(MEASURE_BATCH) {
-                    self.outgoing_measure.push(MeasureReq {
-                        round: self.measure_round,
+                    self.measure.outgoing.push(MeasureReq {
+                        round: self.measure.round,
                         dir: dir.clone(),
                         files: part.to_vec(),
                     });
@@ -180,8 +202,8 @@ impl<B: Backend> Applier<B> {
         let Some(parent) = tree.parent(ix) else {
             return;
         };
-        self.outgoing_measure.push(MeasureReq {
-            round: self.measure_round,
+        self.measure.outgoing.push(MeasureReq {
+            round: self.measure.round,
             dir: tree.host_path(parent),
             files: vec![MeasureFile {
                 node,
@@ -189,8 +211,8 @@ impl<B: Backend> Applier<B> {
                 inode,
             }],
         });
-        self.measure_inflight += 1;
-        self.measure_awaited.insert(inode, node);
+        self.measure.inflight += 1;
+        self.measure.awaited.insert(inode, node);
         m.status
             .measuring
             .get_or_insert_with(Default::default)
@@ -199,20 +221,20 @@ impl<B: Backend> Applier<B> {
 
     /// Requests for the measurers, taken by the runtime after each slice.
     pub fn take_measure_requests(&mut self) -> Vec<MeasureReq> {
-        std::mem::take(&mut self.outgoing_measure)
+        std::mem::take(&mut self.measure.outgoing)
     }
 
     pub fn apply_measure(&mut self, m: &mut Model, msg: MeasureMsg, now: u64) {
-        if msg.round != self.measure_round {
+        if msg.round != self.measure.round {
             return;
         }
-        self.measure_inflight = self.measure_inflight.saturating_sub(1);
-        self.measure_last = now;
+        self.measure.inflight = self.measure.inflight.saturating_sub(1);
+        self.measure.last = now;
         if let Some(p) = m.status.measuring.as_mut() {
             p.done += 1;
         }
-        if self.measure_awaited.get(&msg.inode) == Some(&msg.node) {
-            self.measure_awaited.remove(&msg.inode);
+        if self.measure.awaited.get(&msg.inode) == Some(&msg.node) {
+            self.measure.awaited.remove(&msg.inode);
         }
         let tree = &m.tree;
         let still = tree.resolve_visible(msg.node).is_some_and(|ix| {
@@ -259,7 +281,7 @@ impl<B: Backend> Applier<B> {
     pub(super) fn sync_extents(&mut self, m: &mut Model, key: Inode, moved: bool) {
         let Some(at) = self.extents.counted_at(key) else {
             if moved
-                && self.measure
+                && self.settings.measure
                 && self.extent_devs.contains(&key.0)
                 && !self.awaited(&m.tree, key)
                 && let Some(c) = self.links.charged(key, VISIBLE)
@@ -282,23 +304,23 @@ impl<B: Backend> Applier<B> {
     /// Abandons a measurement round that has had no result for a while (a filesystem not
     /// answering), so the engine does not stay busy forever.
     pub(super) fn measure_watchdog(&mut self, m: &mut Model, now: u64) {
-        if self.measure_inflight == 0 {
-            self.measure_last = now;
+        if self.measure.inflight == 0 {
+            self.measure.last = now;
             return;
         }
-        if now.saturating_sub(self.measure_last) < MEASURE_TIMEOUT_NS {
+        if now.saturating_sub(self.measure.last) < MEASURE_TIMEOUT_NS {
             return;
         }
-        m.status.unmeasured += self.measure_inflight as u64;
+        m.status.unmeasured += self.measure.inflight as u64;
         m.status.notice(
             "extent measurement stopped: a filesystem did not answer; shared data may be \
              counted more than once"
                 .into(),
         );
-        self.measure_round += 1;
-        self.measure_inflight = 0;
-        self.measure_stack.clear();
-        self.measure_awaited.clear();
-        self.measure_last = now;
+        self.measure.round += 1;
+        self.measure.inflight = 0;
+        self.measure.stack.clear();
+        self.measure.awaited.clear();
+        self.measure.last = now;
     }
 }

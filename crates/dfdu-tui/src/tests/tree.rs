@@ -4,14 +4,15 @@
 use std::fs;
 use std::time::{Duration, Instant};
 
+use dfdu_engine::test_support::{add_dir, add_file};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, SizeMode};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tree::{DirState, ErrKind, HostPath, Ix, Kind};
+use dfdu_tree::{DirState, ErrKind, HostPath, Ix, Kind, Target};
 
 use super::meta;
 use crate::app::App;
-use crate::model::snapshot::{self, EntryData, Mark, Snapshot, Target};
+use crate::model::snapshot::{self, EntryData, Mark, Snapshot};
 use crate::state::order::{SortSpec, tree_order};
 use crate::state::tree::{MAX_CHAIN, MAX_TREE_ROWS, TreeState};
 use crate::theme::Theme;
@@ -44,28 +45,12 @@ impl Fx {
 
     pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
         self.ino += 1;
-        let d = self
-            .m
-            .tree
-            .add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, self.ino));
-        let own = self.m.tree.own(d);
-        self.m.tree.propagate_add(d, &own);
-        self.m.tree.dir_mut(d).expect("directory").state = DirState::Complete;
-        d
+        add_dir(&mut self.m.tree, parent, name, self.ino)
     }
 
     pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) -> Ix {
         self.ino += 1;
-        let f = self.m.tree.add_file(
-            parent,
-            name.as_bytes(),
-            &meta(Kind::File, size, self.ino),
-            false,
-            None,
-        );
-        let own = self.m.tree.own(f);
-        self.m.tree.propagate_add(parent, &own);
-        f
+        add_file(&mut self.m.tree, parent, name, size, self.ino)
     }
 
     pub(crate) fn expand(&self, t: &mut TreeState, ix: Ix) {
@@ -329,7 +314,7 @@ fn expanded_directories_survive_a_rescan_swap() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let mut t = TreeState::default();
     let sub = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &HostPath::local(&dir.join("sub"))).expect("sub");
+        let sub = dfdu_tree::find_path(&m.tree, &HostPath::local(&dir.join("sub"))).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = sub.node.expect("node");

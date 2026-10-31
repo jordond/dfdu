@@ -20,11 +20,20 @@ fn tab_separator(bars: Bars) -> &'static str {
     }
 }
 
-/// One form of the tab bar: its spans after the title, and the column offset and width of each
-/// tab in them.
+/// One form of the tab bar: its spans after the title, and where each tab is in them.
 pub struct Tabs {
     pub spans: Vec<Span<'static>>,
-    pub hits: Vec<(usize, usize, View)>,
+    pub hits: Vec<TabHit>,
+}
+
+/// Where a tab is in the bar's spans.
+#[derive(Clone, Copy, Debug)]
+pub struct TabHit {
+    /// Its column offset.
+    pub x: usize,
+    /// Its width in columns.
+    pub w: usize,
+    pub view: View,
 }
 
 /// The tab of the view shown: the focus colour as its background, bold. Reverse video carries
@@ -62,7 +71,7 @@ pub fn tabs(app: &App, named: bool, badges: bool) -> Tabs {
         x += Span::raw(&sep).width();
         spans.push(Span::styled(sep, t.fg_dim));
         let w = Span::raw(&text).width();
-        hits.push((x, w, view));
+        hits.push(TabHit { x, w, view });
         spans.push(Span::styled(
             text,
             if active { active_tab(t) } else { t.fg_dim },
@@ -70,4 +79,72 @@ pub fn tabs(app: &App, named: bool, badges: bool) -> Tabs {
         x += w;
     }
     Tabs { spans, hits }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::tests::library_snap;
+
+    fn text(spans: &[Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn app(theme: Theme) -> App {
+        let t0 = Instant::now();
+        let mut app = App::new(theme, t0);
+        app.refresh(library_snap(), t0);
+        app
+    }
+
+    #[test]
+    fn named_tabs_list_every_view_and_short_ones_name_the_one_shown() {
+        let app = app(Theme::no_color());
+        let named = tabs(&app, true, false);
+        assert_eq!(
+            text(&named.spans),
+            "│ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest "
+        );
+        let short = tabs(&app, false, false);
+        assert_eq!(text(&short.spans), "│ [1 Files] 2 3 4 5");
+        let views: Vec<View> = short.hits.iter().map(|h| h.view).collect();
+        assert_eq!(views, View::ALL);
+    }
+
+    #[test]
+    fn each_hit_is_where_its_tab_is_drawn() {
+        let app = app(Theme::no_color());
+        for named in [true, false] {
+            let bar = tabs(&app, named, false);
+            let line = text(&bar.spans);
+            for &TabHit { x, w, view } in &bar.hits {
+                let at: String = line.chars().skip(x).take(w).collect();
+                assert!(at.contains(first_key(view.action())), "{at:?} for {view:?}");
+                assert_eq!(Span::raw(&at).width(), w);
+            }
+        }
+    }
+
+    #[test]
+    fn the_tab_shown_stands_out_and_ascii_has_its_own_separator() {
+        let mut theme = Theme::no_color();
+        theme.bars = Bars::Ascii;
+        let app = app(theme);
+        let bar = tabs(&app, true, false);
+        assert!(text(&bar.spans).starts_with("| 1 Files |"));
+        let files = bar
+            .spans
+            .iter()
+            .find(|s| s.content == " 1 Files ")
+            .expect("Files");
+        assert_eq!(files.style, active_tab(&app.theme));
+        let map = bar
+            .spans
+            .iter()
+            .find(|s| s.content == " 2 Map ")
+            .expect("Map");
+        assert_eq!(map.style, app.theme.fg_dim);
+    }
 }

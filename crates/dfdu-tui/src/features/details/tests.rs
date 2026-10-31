@@ -1,13 +1,15 @@
 use std::time::Instant;
 
+use dfdu_engine::{Model, SizeMode};
 use dfdu_scan::Budget;
-use dfdu_tree::{DirState, ErrKind, Meta, NodeFlags};
+use dfdu_tree::{DirState, ErrKind, Ix, Meta, NodeFlags, Target, Tree};
 use ratatui::crossterm::event::KeyCode;
 
+use super::read::read_within;
 use super::*;
 use crate::features::debug::Counters;
 use crate::model::extras;
-use crate::model::snapshot::{self, Target};
+use crate::model::snapshot::{self, Mark};
 use crate::tests::{assert_cue, press, render, render_buffer};
 use crate::theme::Theme;
 
@@ -23,7 +25,7 @@ fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
 
 /// `/r` holds `proj/`, partly read, with six files, a directory that could not be read, a
 /// mount and a read-only subvolume, and data also used outside the scan; and `notes.txt`.
-fn model() -> Model {
+pub(super) fn model() -> Model {
     let mut m = Model::default();
     let tree = &mut m.tree;
     let root = tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
@@ -42,7 +44,7 @@ fn model() -> Model {
         tree.propagate_add(parent, &own);
     };
     tree.dir_mut(root).expect("root").state = DirState::Complete;
-    let proj = dir(tree, root, b"proj", 2, 0);
+    let proj = dir(tree, root, b"proj", 2, NodeFlags::default());
     for (i, (name, size)) in [
         ("big.iso", 50_000),
         ("a.o", 12_000),
@@ -56,7 +58,7 @@ fn model() -> Model {
     {
         file(tree, proj, name.as_bytes(), size, 10 + i as u64);
     }
-    let locked = dir(tree, proj, b"locked", 3, 0);
+    let locked = dir(tree, proj, b"locked", 3, NodeFlags::default());
     tree.dir_mut(locked).expect("dir").state = DirState::Failed;
     tree.set_error(locked, ErrKind::PermissionDenied);
     dir(tree, proj, b"mnt", 4, NodeFlags::MOUNT_ROOT);
@@ -70,7 +72,7 @@ fn model() -> Model {
 }
 
 /// The browser on `/r` with the details pane open and read.
-fn app_on(m: &Model) -> App {
+pub(super) fn app_on(m: &Model) -> App {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let snap = snapshot::build(m, &mut Target::root(), SizeMode::Disk);
@@ -97,7 +99,7 @@ fn read_full(m: &Model, app: &mut App) {
 }
 
 /// The child `name` of `/r`.
-fn child(m: &Model, name: &[u8]) -> Ix {
+pub(super) fn child(m: &Model, name: &[u8]) -> Ix {
     let tree = &m.tree;
     let root = tree.roots().next().expect("root");
     tree.children(root)
@@ -163,7 +165,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     let mut m = model();
     let tree = &mut m.tree;
     let root = tree.roots().next().expect("root");
-    let logs = tree.add_dir_flagged(root, b"logs", &meta(Kind::Dir, 0, 30), 0);
+    let logs = tree.add_dir(root, b"logs", &meta(Kind::Dir, 0, 30));
     let own = tree.own(logs);
     tree.propagate_add(logs, &own);
     tree.dir_mut(logs).expect("dir").state = DirState::Complete;
@@ -171,7 +173,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     let f = tree.add_file(logs, b"big.log", &big, false, None);
     let own = tree.own(f);
     tree.propagate_add(logs, &own);
-    let locked = tree.add_dir_flagged(logs, b"locked", &meta(Kind::Dir, 0, 32), 0);
+    let locked = tree.add_dir(logs, b"locked", &meta(Kind::Dir, 0, 32));
     let own = tree.own(locked);
     tree.propagate_add(locked, &own);
     tree.dir_mut(locked).expect("dir").state = DirState::Failed;
@@ -404,30 +406,6 @@ fn long_text_wraps_at_spaces_and_cuts_long_words() {
     assert_eq!(wrap("ab cd ef", 5), ["ab cd", "ef"]);
     assert_eq!(wrap("/very/long/path", 6), ["/very/", "long/p", "ath"]);
     assert_eq!(wrap("", 4), [""]);
-}
-
-/// The pane names the rule the cleanup view lists an entry under: pip's cache inside the user
-/// caches is pip's cache, and a file in it is in pip's cache.
-#[test]
-fn the_pane_names_the_nearest_match_like_the_cleanup_view() {
-    let fx = crate::tests::caches::caches();
-    let (pip, wheel) = (fx.find("Caches/pip"), fx.find("Caches/pip/wheel"));
-    let nm = fx.find("target/node_modules");
-    let name = |id: &str| fx.rules.get(id).expect(id).name.clone();
-    let (pip_name, target_name) = (name("pip.cache"), name("rust.target"));
-    let m = Model {
-        tree: fx.tree,
-        rules: Some(std::sync::Arc::new(fx.rules)),
-        ..Model::default()
-    };
-    let at = matched(&m, pip).expect("pip");
-    assert_eq!((at.rule.as_str(), at.above), (pip_name.as_str(), None));
-    let at = matched(&m, wheel).expect("wheel");
-    assert_eq!(at.rule, pip_name);
-    assert_eq!(at.above, Some(m.tree.host_path(pip)));
-    // A match below a rule that stops the descent is covered by that one.
-    let at = matched(&m, nm).expect("node_modules");
-    assert_eq!(at.rule, target_name);
 }
 
 /// A mount the scan did not enter: the pane gives its type, used and total space as looked up

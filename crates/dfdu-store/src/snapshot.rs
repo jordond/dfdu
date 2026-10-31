@@ -47,7 +47,7 @@ const CLOSE: u8 = 2;
 const ENTRY: u8 = 3;
 
 /// Flags of a directory that are kept.
-const DIR_FLAGS: [u16; 4] = [
+const DIR_FLAGS: [NodeFlags; 4] = [
     NodeFlags::MOUNT_ROOT,
     NodeFlags::KERNEL,
     NodeFlags::NETWORK,

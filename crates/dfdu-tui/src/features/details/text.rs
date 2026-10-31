@@ -1,14 +1,14 @@
 //! The pane's text: what it says about the entry [`super::read`] found, wrapped to the pane.
 
-use dfdu_store::history::date_time;
-use dfdu_tree::Kind;
+use dfdu_tree::{Kind, date_time};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use super::{BAR, Facts, Largest, Matched};
 use crate::app::App;
+use crate::format::{bar, count, human, ratio};
 use crate::model::snapshot::Mark;
-use crate::theme::{Theme, bar, count, human, ratio};
+use crate::theme::Theme;
 
 /// The pane's lines being built, each wrapped to the inner width.
 struct Text {
@@ -133,7 +133,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
     let size = app.size_mode.of(&f.total);
     if let Some((d, then, at)) = crate::model::growth::since(app, &f.path, size, f.mark) {
         let s = if d == 0 {
-            format!("the same as on {}", dfdu_store::history::day(at))
+            format!("the same as on {}", dfdu_tree::day(at))
         } else {
             format!(
                 "{} (was {})",

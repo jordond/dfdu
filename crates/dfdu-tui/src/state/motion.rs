@@ -22,8 +22,8 @@ use ratatui::layout::Rect;
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::format::ratio;
 use crate::model::snapshot::{EntryData, Mark, Snapshot};
-use crate::theme::ratio;
 
 /// Time between animation frames.
 const FRAME: Duration = Duration::from_millis(33);
@@ -221,7 +221,6 @@ impl Motion {
         new_rows: &[usize],
         entries: &[EntryData],
         auto: bool,
-        _now: Instant,
     ) {
         if !self.on {
             return;

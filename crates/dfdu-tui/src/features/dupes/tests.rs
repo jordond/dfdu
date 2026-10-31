@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
@@ -96,7 +97,7 @@ fn duplicates_are_found_marked_and_shown() {
 
 /// A comparison done with `groups` found: files below `/r` with their dates, each still in the
 /// tree.
-fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
+pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
     let mut bits = 0;
     let mut file = |path: &str, mtime: i64| {
         bits += 1;
@@ -128,8 +129,8 @@ fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
             ..Found::default()
         })
         .unwrap();
+    app.view = View::Duplicates;
     app.dupes = Dupes {
-        on: true,
         run: Some(Run {
             root: "/r".into(),
             progress: Arc::default(),

@@ -12,7 +12,7 @@ use crate::classify::BlockParts;
 use crate::proto::{
     Chunk, ChunkStatus, DirId, EntryError, FileRec, ScanMsg, SkipReason, SubdirRec,
 };
-use crate::shared::{Clock, JobState, Shared, Task, TaskGate, pack};
+use crate::shared::{Clock, JobState, Shared, Task, TaskGate, TaskKind, pack};
 
 #[cfg(test)]
 mod tests;
@@ -98,8 +98,7 @@ impl<B: Backend> Worker<B> {
                     dev: c.dev,
                     mount: c.mount,
                     probe_subvol: c.probe_subvol,
-                    chunk: None,
-                    verify: None,
+                    kind: TaskKind::Listing,
                     gate: c.gate,
                     storage: c.storage,
                     class: class.as_mut().and_then(|c| c.subdirs[i].take()),

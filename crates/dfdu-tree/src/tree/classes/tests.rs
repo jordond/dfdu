@@ -23,8 +23,8 @@ fn a_reused_slot_has_no_class_or_protection() {
         flags: 0,
     };
     t.set_class(d, Some(class));
-    t.set_protection(root, true, false);
-    t.set_protection(d, false, true);
+    t.set_protection(root, Protection::Protected);
+    t.set_protection(d, Protection::Excepted);
     assert_eq!(t.class_in_effect(f, |_| false), Some((d, class)));
     assert!(t.is_protected(root) && !t.is_protected(f));
     t.detach(d);
@@ -92,15 +92,23 @@ fn the_nearest_protection_mark_decides() {
     let f = add_file(&mut t, again, "f", 1);
     let g = add_file(&mut t, lifted, "g", 1);
     assert!(!t.is_protected(f), "nothing is marked");
-    t.set_protection(kept, true, false);
-    t.set_protection(lifted, false, true);
-    t.set_protection(again, true, false);
+    t.set_protection(kept, Protection::Protected);
+    t.set_protection(lifted, Protection::Excepted);
+    t.set_protection(again, Protection::Protected);
+    assert_eq!(
+        [kept, lifted, f].map(|ix| t.protection(ix)),
+        [
+            Protection::Protected,
+            Protection::Excepted,
+            Protection::None
+        ]
+    );
     assert!(!t.is_protected(root));
     assert!(t.is_protected(kept));
     assert!(!t.is_protected(lifted) && !t.is_protected(g));
     assert!(t.is_protected(again) && t.is_protected(f));
     let before = t.total(root);
-    t.set_protection(again, false, false);
+    t.set_protection(again, Protection::None);
     assert!(!t.is_protected(f));
     assert_eq!(t.total(root), before, "marks are not counted in totals");
 }

@@ -11,7 +11,7 @@ use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
 use crate::table::{print_by_type, print_tree, shown_total};
-use crate::{EXIT_PARTIAL, MountArgs, remote, written_to};
+use crate::{EXIT_PARTIAL, MountArgs, print_out, remote, written_to};
 
 #[derive(Args)]
 pub struct ExportArgs {
@@ -40,10 +40,13 @@ pub struct ExportArgs {
     /// (--remote-agent).
     #[arg(long, value_name = "HOST")]
     pub remote: Option<String>,
-    /// How to start the agent on HOST: auto (an installed dfdu that speaks this one's
-    /// protocol, else one sent earlier, else send this version's, asking first), installed, or
-    /// upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT].
-    #[arg(long, value_name = "HOW", value_enum, requires = "remote")]
+    #[arg(
+        long,
+        value_name = "HOW",
+        value_enum,
+        requires = "remote",
+        help = crate::remote::AGENT_MODE_HELP
+    )]
     pub remote_agent: Option<crate::remote::AgentMode>,
     #[command(flatten)]
     pub mounts: MountArgs,
@@ -77,7 +80,7 @@ pub struct ImportArgs {
 
 /// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
 pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
-    let limits = dfdu_store::ncdu::Limits::default();
+    let limits = dfdu_store::Limits::default();
     let r = if file == Path::new("-") {
         dfdu_store::open(std::io::stdin().lock(), &limits)
     } else {
@@ -96,11 +99,8 @@ pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
 }
 
 /// `dfdu import`: the summary `dfdu scan` prints, for a scan read from a file.
-pub fn import(args: &ImportArgs) -> ExitCode {
-    let im = match read_export(&args.file) {
-        Ok(im) => im,
-        Err(code) => return code,
-    };
+pub fn import(args: &ImportArgs) -> Result<ExitCode, ExitCode> {
+    let im = read_export(&args.file)?;
     let m = Model {
         tree: im.tree,
         ..Model::default()
@@ -112,24 +112,24 @@ pub fn import(args: &ImportArgs) -> ExitCode {
     };
     let total = m.tree.total(im.root);
     let filter = args.types.as_ref();
-    if args.bytes {
-        outln!("{}", mode.of(&shown_total(&m.tree, im.root, filter)));
-    } else {
-        print_tree(&m, im.root, args.depth, args.top, mode, filter);
-        if args.by_type {
-            print_by_type(&m.tree, im.root, mode, filter);
+    print_out(|w| {
+        if args.bytes {
+            return writeln!(w, "{}", mode.of(&shown_total(&m.tree, im.root, filter)));
         }
-        let by = im
-            .written_by
-            .map(|w| format!(", written by {w}"))
+        print_tree(w, &m, im.root, args.depth, args.top, mode, filter)?;
+        if args.by_type {
+            print_by_type(w, &m.tree, im.root, mode, filter)?;
+        }
+        let by = (im.written_by.as_ref())
+            .map(|by| format!(", written by {by}"))
             .unwrap_or_default();
-        outln!("{} entries{by}", im.entries);
-    }
-    if total.errors > 0 {
+        writeln!(w, "{} entries{by}", im.entries)
+    })?;
+    Ok(if total.errors > 0 {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// The snapshot in `f`, read; reports a failure.
@@ -137,10 +137,7 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
     std::fs::File::open(f)
         .map_err(dfdu_store::ImportError::from)
         .and_then(|r| {
-            dfdu_store::snapshot::read(
-                std::io::BufReader::new(r),
-                &dfdu_store::ncdu::Limits::default(),
-            )
+            dfdu_store::snapshot::read(std::io::BufReader::new(r), &dfdu_store::Limits::default())
         })
         .map_err(|e| {
             eprintln!("dfdu: {}: {e}", f.display());
@@ -149,27 +146,19 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
 }
 
 /// `dfdu export`: scans `path` and writes it in ncdu's format.
-pub fn export(args: &ExportArgs) -> ExitCode {
-    let resumed = match args.resume_from.as_deref().map(read_snapshot).transpose() {
-        Ok(l) => l,
-        Err(code) => return code,
-    };
-    let mut job = args.mounts.job();
+pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
+    let resumed = args.resume_from.as_deref().map(read_snapshot).transpose()?;
+    let job = args
+        .mounts
+        .job_resuming(resumed.as_ref().map(|l| &l.header));
     let path = match &resumed {
-        Some(l) => {
-            job.cross_mounts = l.header.cross_mounts;
-            job.network = l.header.network;
-            l.tree.path_buf(l.root)
-        }
+        Some(l) => l.tree.path_buf(l.root),
         None => args.path.clone(),
     };
     let opts = launch::headless(false);
     // A remote scan's root is the one the agent resolved on its host.
     let (engine, job, root) = if let Some(host) = &args.remote {
-        match remote::engine(host, opts, &path, None, args.remote_agent) {
-            Ok((e, _, root)) => (e, job, root),
-            Err(code) => return code,
-        }
+        remote::engine(host, opts, job, &path, None, args.remote_agent)?
     } else {
         let local = Local {
             mft: args.mounts.use_mft(&path),
@@ -209,10 +198,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
             None
         }
     };
-    let engine = match launch::wait_scan(engine) {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let engine = launch::wait_scan(engine)?;
     let (last_full_scan, scan_ms) = full_scan.unwrap_or_else(|| {
         let ms = u64::try_from(started.0.elapsed().as_millis()).unwrap_or(u64::MAX);
         (started.1, ms)
@@ -246,10 +232,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
         Ok::<_, std::io::Error>((stats, partial))
     });
     engine.shutdown(launch::SHUTDOWN);
-    let (stats, partial) = match written_to(&args.output.display(), result) {
-        Ok(r) => r,
-        Err(code) => return code,
-    };
+    let (stats, partial) = written_to(&args.output.display(), result)?;
     if stats.non_utf8 > 0 {
         eprintln!(
             "dfdu: {} names are not UTF-8 and were written as they are; ncdu reads them, most \
@@ -257,11 +240,11 @@ pub fn export(args: &ExportArgs) -> ExitCode {
             stats.non_utf8
         );
     }
-    if partial {
+    Ok(if partial {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// Writes the scan below `root` to `w`: as a snapshot with `header` when there is one, else in
@@ -331,5 +314,38 @@ mod tests {
         assert!(write(Some(&header), true).starts_with(b"DFDUSNAP"));
         assert!(write(None, true).starts_with(&[0x28, 0xb5, 0x2f, 0xfd]));
         assert!(write(None, false).starts_with(b"[1,2,{\"progname\":\"dfdu\""));
+    }
+
+    /// A snapshot read back for `--resume-from` is rescanned with its own mount options, an
+    /// ncdu export with those given.
+    #[test]
+    fn a_resumed_snapshot_keeps_its_mount_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = dfdu_tree::Meta::from_metadata(&std::fs::metadata(tmp.path()).unwrap());
+        let mut tree = dfdu_tree::Tree::new();
+        let root = tree.new_root(tmp.path().as_os_str().as_encoded_bytes(), &meta, true);
+        let header = dfdu_store::snapshot::Header {
+            cross_mounts: true,
+            network: true,
+            ..Default::default()
+        };
+        let reread = |header: Option<&dfdu_store::snapshot::Header>, name: &str| {
+            let file = tmp.path().join(name);
+            let mut out = Vec::new();
+            write_export(&mut out, &tree, root, header, false, &ncdu_meta()).unwrap();
+            std::fs::write(&file, out).unwrap();
+            read_export(&file).unwrap_or_else(|_| panic!("{name} reads back"))
+        };
+        let given = MountArgs {
+            one_file_system: true,
+            ..MountArgs::default()
+        };
+        let snap = reread(Some(&header), "scan.dfdu");
+        let job = given.job_resuming(snap.header.as_ref());
+        assert!(job.cross_mounts && job.network);
+        let ncdu = reread(None, "scan.json");
+        assert!(ncdu.header.is_none());
+        let job = given.job_resuming(ncdu.header.as_ref());
+        assert!(!job.cross_mounts && !job.network);
     }
 }

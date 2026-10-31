@@ -15,7 +15,7 @@ impl<B: Backend> Applier<B> {
     /// Queues the guard checks of every visible class not checked or queued yet. Classes are
     /// few (one per match, nothing below it), so this walks all of them.
     pub(super) fn queue_checks(&mut self, m: &mut Model) {
-        let Some(rules) = m.rules.clone().filter(|_| self.checks) else {
+        let Some(rules) = m.rules.clone().filter(|_| self.settings.checks) else {
             return;
         };
         let todo: Vec<(Ix, Class)> = m
@@ -41,7 +41,7 @@ impl<B: Backend> Applier<B> {
     }
 
     pub(super) fn native_sizes(&mut self, m: &mut Model) {
-        let Some(rules) = m.rules.clone().filter(|_| self.checks) else {
+        let Some(rules) = m.rules.clone().filter(|_| self.settings.checks) else {
             return;
         };
         let mut matched: Vec<RuleIx> = m.tree.classes().map(|(_, c)| c.rule).collect();

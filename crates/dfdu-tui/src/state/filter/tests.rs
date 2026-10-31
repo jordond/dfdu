@@ -314,7 +314,7 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
 fn exact_rows(app: &App) -> Vec<usize> {
     let mut o = crate::state::order::Order::default();
     let visible = |i: usize, e: &EntryData| {
-        !e.ghost && (!app.hide_hidden || !e.hidden()) && app.filter.matches(i, e)
+        !e.ghost && (!app.hide_hidden || !e.hidden()) && app.filter.matches(i)
     };
     o.sort_exact(&app.snap.entries, visible, app.sort);
     o.rows().to_vec()

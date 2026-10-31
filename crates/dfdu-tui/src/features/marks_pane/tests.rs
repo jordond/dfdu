@@ -9,7 +9,7 @@ use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
 use crate::features::details;
 use crate::model::snapshot::{EntryData, Snapshot, test_entry};
-use crate::tests::{press, render, snap_with_totals};
+use crate::tests::{marked_names, press, refused, render, snap_with_totals};
 use crate::theme::Theme;
 
 const GIB: u64 = 1 << 30;
@@ -86,9 +86,9 @@ fn tab_cycles_the_list_the_details_and_the_marks() {
     render(&mut app, t0, 120, 24);
     app.key(press(KeyCode::Tab), t0);
     assert!(details::focused(&app));
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     let fx = app.key(press(KeyCode::Tab), t0);
-    assert!(shown(&app), "Tab from the details opens the marks");
+    assert!(is_open(&app), "Tab from the details opens the marks");
     assert!(!details::focused(&app));
     assert_eq!(asked(&fx).map(|a| a.1), Some(2), "{fx:?}");
     let out = render(&mut app, t0, 120, 24);
@@ -97,16 +97,19 @@ fn tab_cycles_the_list_the_details_and_the_marks() {
         "the marks take the details' place: {out}"
     );
     app.key(press(KeyCode::Tab), t0);
-    assert!(!shown(&app) && !details::focused(&app), "back to the list");
+    assert!(
+        !is_open(&app) && !details::focused(&app),
+        "back to the list"
+    );
     let out = render(&mut app, t0, 120, 24);
     assert!(!out.contains(" Marks "), "the details are back: {out}");
 
     // Without the details, Tab goes from the list to the marks, and Esc comes back.
     app.key(press(KeyCode::Char('i')), t0);
     app.key(press(KeyCode::Tab), t0);
-    assert!(shown(&app));
+    assert!(is_open(&app));
     app.key(press(KeyCode::Esc), t0);
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     assert_eq!(app.marks.items().len(), 2, "Esc keeps the marks");
 }
 
@@ -197,10 +200,7 @@ fn star_inverts_the_marks_of_the_directory() {
     );
     // Again, back to the first mark. In the list `*` is tree mode's, not the marks'.
     app.key(press(KeyCode::Char('*')), t0);
-    let names: Vec<_> = (app.marks.items().iter())
-        .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
-        .collect();
-    assert_eq!(names, ["target"]);
+    assert_eq!(marked_names(&app), ["target"]);
 }
 
 #[test]
@@ -212,9 +212,7 @@ fn star_marks_nothing_in_a_read_only_browser() {
     assert!(app.marks.is_empty());
     assert_eq!(app.status.as_deref(), Some(READ_ONLY));
     // `d` there deletes nothing either.
-    app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+    refused(&mut app, KeyCode::Char('d'), READ_ONLY, t0);
 }
 
 #[test]
@@ -222,13 +220,7 @@ fn d_asks_to_delete_the_marks_as_the_list_does() {
     let (mut app, t0) = browser();
     // With nothing marked, `d` in the pane does not fall back to the list's selection.
     app.key(press(KeyCode::Tab), t0);
-    app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::None));
-    assert!(
-        app.status
-            .as_deref()
-            .is_some_and(|s| s.contains("nothing is marked"))
-    );
+    refused(&mut app, KeyCode::Char('d'), "nothing is marked", t0);
     app.key(press(KeyCode::Esc), t0);
     mark(&mut app, 2, t0);
     app.key(press(KeyCode::Tab), t0);
@@ -241,7 +233,7 @@ fn d_asks_to_delete_the_marks_as_the_list_does() {
     let (id, _) = asked(&fx).expect("asked");
     answer(&mut app, id, 4 * GIB);
     app.key(press(KeyCode::Esc), t0);
-    assert!(shown(&app), "cancelling keeps the pane open");
+    assert!(is_open(&app), "cancelling keeps the pane open");
     let out = render(&mut app, t0, 100, 24);
     assert!(out.contains("would free about 4.0 GiB"), "{out}");
 }
@@ -271,6 +263,6 @@ fn no_room_closes_the_pane_and_says_so() {
     mark(&mut app, 1, t0);
     app.key(press(KeyCode::Tab), t0);
     let out = render(&mut app, t0, 70, 12);
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     assert!(out.contains("no room for the marks pane"), "{out}");
 }

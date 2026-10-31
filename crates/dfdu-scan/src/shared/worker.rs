@@ -9,8 +9,8 @@ use std::sync::atomic::Ordering::SeqCst;
 use dfdu_tree::ErrKind;
 
 use super::{
-    Clock, DirParts, JobState, LISTING_PART, NO_TASK, Outbox, Shared, Sink, Task, WorkerSlot, pack,
-    panic_message,
+    Clock, DirParts, JobState, LISTING_PART, NO_TASK, Outbox, Shared, Sink, Task, TaskKind,
+    WorkerSlot, pack, panic_message,
 };
 use crate::backend::{Backend, Block, Raw};
 use crate::classify::Listing;
@@ -59,6 +59,17 @@ struct Running<B: Backend> {
     parts: Option<Arc<DirParts>>,
     /// The directory's classification, shared with its chunk tasks.
     class: Option<Arc<Listing>>,
+}
+
+/// The task a worker runs, as [`Worker::running_part`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningPart<L> {
+    /// Where the task reads.
+    pub loc: L,
+    /// Whether it is a job root.
+    pub is_root: bool,
+    /// Whether the worker holds a permit of the mount's limit for it.
+    pub has_permit: bool,
 }
 
 /// One worker's private state. `blocking` selects real-thread behaviour (flushes wait for
@@ -112,19 +123,22 @@ impl<B: Backend> Worker<B> {
         let Some(mut r) = self.running.take() else {
             return;
         };
-        if let Some(work) = r.task.verify.take() {
-            self.report_verify(&r.task, *work, false, clock);
-            return;
-        }
         let now = clock.now();
-        if let Some(work) = r.task.chunk.take() {
-            let chunk = empty_chunk(&r.task, work.seq, ChunkStatus::Panicked(msg));
-            work.parts.panicked.fetch_add(1, SeqCst);
-            let mut ob = self.slot.outbox.lock();
-            ob.push(ScanMsg::Chunk(chunk), now);
-            let class = work.class.as_deref();
-            self.finish_part(&mut ob, &r.task, &work.parts, class, work.seq + 1, now);
-            return;
+        match r.task.kind.take() {
+            TaskKind::Verify(work) => {
+                self.report_verify(&r.task, *work, false, clock);
+                return;
+            }
+            TaskKind::Chunk(work) => {
+                let chunk = empty_chunk(&r.task, work.seq, ChunkStatus::Panicked(msg));
+                work.parts.panicked.fetch_add(1, SeqCst);
+                let mut ob = self.slot.outbox.lock();
+                ob.push(ScanMsg::Chunk(chunk), now);
+                let class = work.class.as_deref();
+                self.finish_part(&mut ob, &r.task, &work.parts, class, work.seq + 1, now);
+                return;
+            }
+            TaskKind::Listing => {}
         }
         if let Some(block) = r.inline.take() {
             let chunk = empty_chunk(&r.task, block.seq, ChunkStatus::Panicked(msg));
@@ -261,7 +275,7 @@ impl<B: Backend> Worker<B> {
     fn take_task(&self, sh: &Shared<B>) -> Option<Task<B::Loc>> {
         let set = |ob: &mut Outbox<B::Loc>, t: &Task<B::Loc>, permit: bool| {
             self.slot.current.store(pack(t.job, t.dir), SeqCst);
-            let part = t.chunk.as_ref().map_or(LISTING_PART, |c| c.seq + 1);
+            let part = t.kind.chunk().map_or(LISTING_PART, |c| c.seq + 1);
             self.slot.part.store(part, SeqCst);
             if permit {
                 ob.permit.clone_from(&t.gate);
@@ -316,23 +330,25 @@ impl<B: Backend> Worker<B> {
             .map(|t| t.loc.clone())
     }
 
-    /// What the worker runs now, for tests: the task's location, whether it is a job root,
-    /// and whether it holds a permit of its mount's limit.
-    pub fn running_part(&self) -> Option<(B::Loc, bool, bool)> {
+    /// What the worker runs now, for tests.
+    pub fn running_part(&self) -> Option<RunningPart<B::Loc>> {
         let r = self.running.as_ref()?;
-        let permit = self.slot.outbox.lock().permit.is_some();
-        Some((r.task.loc.clone(), r.task.is_root, permit))
+        let has_permit = self.slot.outbox.lock().permit.is_some();
+        Some(RunningPart {
+            loc: r.task.loc.clone(),
+            is_root: r.task.is_root,
+            has_permit,
+        })
     }
 
     fn step_inner(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {
         let Some(r) = self.running.as_ref() else {
             return self.start_task(sh, sink, clock);
         };
-        if r.task.verify.is_some() {
-            return self.verify_step(sh, clock);
-        }
-        if r.task.chunk.is_some() {
-            return self.chunk_step(sh, clock);
+        match r.task.kind {
+            TaskKind::Verify(_) => return self.verify_step(sh, clock),
+            TaskKind::Chunk(_) => return self.chunk_step(sh, clock),
+            TaskKind::Listing => {}
         }
         if r.stream.is_none() {
             return self.open_step(sh, clock);
@@ -361,9 +377,9 @@ impl<B: Backend> Worker<B> {
             self.cancel_task(task, clock);
             return StepResult::Progress;
         };
-        let class = match (&task.chunk, task.class.take(), &job.opts.class) {
-            (Some(work), _, _) => work.class.clone(),
-            (None, Some(tc), Some(opts)) => {
+        let class = match (&task.kind, task.class.take(), &job.opts.class) {
+            (TaskKind::Chunk(work), _, _) => work.class.clone(),
+            (_, Some(tc), Some(opts)) => {
                 Some(Arc::new(Listing::new(opts.rules.clone(), task.dir, *tc)))
             }
             _ => None,
@@ -387,14 +403,15 @@ impl<B: Backend> Worker<B> {
     /// directory's count is right; a listing task closes its directory as cancelled; a batch
     /// of a resume's check reports that it stat'ed nothing.
     fn cancel_task(&self, mut task: Task<B::Loc>, clock: &dyn Clock) {
-        if let Some(work) = task.verify.take() {
+        let kind = task.kind.take();
+        if let TaskKind::Verify(work) = kind {
             self.report_verify(&task, *work, false, clock);
             return;
         }
         let task = &task;
         let mut ob = self.slot.outbox.lock();
         let now = clock.now();
-        if let Some(work) = &task.chunk {
+        if let TaskKind::Chunk(work) = kind {
             let chunk = empty_chunk(task, work.seq, ChunkStatus::Cancelled);
             ob.push(ScanMsg::Chunk(chunk), now);
             work.parts.cancelled.fetch_add(1, SeqCst);

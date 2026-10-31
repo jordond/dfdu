@@ -3,7 +3,6 @@
 
 pub mod cache;
 pub mod history;
-mod json;
 pub mod ncdu;
 pub mod snapshot;
 
@@ -14,10 +13,10 @@ use std::io;
 #[derive(Debug)]
 pub enum ImportError {
     Io(io::Error),
-    /// Not valid input: what was wrong and where, in bytes from the start (of the
+    /// Not valid input: what was wrong and, when known, where, in bytes from the start (of the
     /// decompressed stream).
     Format {
-        offset: u64,
+        offset: Option<u64>,
         msg: String,
     },
     /// Past one of the import's limits.
@@ -34,13 +33,38 @@ impl fmt::Display for ImportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ImportError::Io(e) => write!(f, "{e}"),
-            ImportError::Format { offset, msg } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format {
+                offset: Some(offset),
+                msg,
+            } => write!(f, "at byte {offset}: {msg}"),
+            ImportError::Format { offset: None, msg } => write!(f, "{msg}"),
             ImportError::Limit(msg) => write!(f, "over a limit: {msg}"),
         }
     }
 }
 
 impl std::error::Error for ImportError {}
+
+/// Limits on what an import accepts, so a hostile or broken file cannot use unbounded memory
+/// or stack.
+#[derive(Clone, Debug)]
+pub struct Limits {
+    /// Directory nesting below the root.
+    pub max_depth: usize,
+    /// Bytes in a name (the default is ncdu's own limit).
+    pub max_name: usize,
+    pub max_entries: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_depth: 4096,
+            max_name: 32_768,
+            max_entries: 200_000_000,
+        }
+    }
+}
 
 /// Compresses what is written to it with zstd, as a series of frames of at most [`ZSTD_FRAME`]
 /// bytes each (zstd readers read concatenated frames as one stream). Encoding into memory frame
@@ -258,8 +282,9 @@ pub struct Opened {
     pub entries: u64,
     /// The program that wrote it and its version, when the file says.
     pub written_by: Option<String>,
-    /// Where the change journal stood when the scan started (snapshots only).
-    pub journal: Option<dfdu_scan::journal::JournalPosition>,
+    /// What the scan was (snapshots only): its mount options, and where the change journal
+    /// stood when it started.
+    pub header: Option<snapshot::Header>,
 }
 
 /// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by
@@ -269,7 +294,7 @@ pub struct Opened {
 /// # Errors
 ///
 /// When `r` fails, the data is in neither format or malformed, or it exceeds `limits`.
-pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open(r: impl io::Read, limits: &Limits) -> Result<Opened, ImportError> {
     let mut r = io::BufReader::with_capacity(1 << 16, r);
     let head = io::BufRead::fill_buf(&mut r)?;
     if ncdu::binary::is_binary(head) {
@@ -287,7 +312,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
             root: l.root,
             entries: l.entries,
             written_by: Some(format!("dfdu {}", l.header.tool_version)),
-            journal: l.header.journal,
+            header: Some(l.header),
         });
     }
     let im = ncdu::import(r, limits)?;
@@ -300,7 +325,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
         root: im.root,
         entries: im.entries,
         written_by,
-        journal: None,
+        header: None,
     })
 }
 
@@ -309,7 +334,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
 /// # Errors
 ///
 /// As [`open`], and when the file cannot be read or rewound.
-pub fn open_file(mut f: std::fs::File, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open_file(mut f: std::fs::File, limits: &Limits) -> Result<Opened, ImportError> {
     let mut head = [0u8; 8];
     let n = io::Read::read(&mut f, &mut head)?;
     io::Seek::rewind(&mut f)?;
@@ -328,7 +353,7 @@ fn binary_opened(im: ncdu::Imported) -> Opened {
         root: im.root,
         entries: im.entries,
         written_by: Some("ncdu (binary export)".into()),
-        journal: None,
+        header: None,
     }
 }
 

@@ -12,7 +12,7 @@ use super::{
     Cache, FULL_RESCAN_AFTER, Key, MAX_AGE, Removed, SIZE_CAP, STEP_ENTRIES, open_own, owned, secs,
 };
 use crate::ImportError;
-use crate::ncdu::Limits;
+use crate::Limits;
 use crate::snapshot::{self, Header, Loaded, Writer};
 
 /// Where one scan is cached.
@@ -20,7 +20,8 @@ use crate::snapshot::{self, Header, Loaded, Writer};
 pub struct Slot {
     pub path: PathBuf,
     pub key: Key,
-    pub(super) dir: PathBuf,
+    /// The cache it is in.
+    pub(super) cache: Cache,
 }
 
 /// A cached scan loaded.
@@ -60,10 +61,7 @@ impl Slot {
     /// Sweeps the cache this slot is in ([`Cache::sweep`] under [`SIZE_CAP`]), keeping this
     /// slot's file.
     pub fn sweep(&self, now: u64) -> Removed {
-        Cache {
-            dir: self.dir.clone(),
-        }
-        .sweep(now, SIZE_CAP, Some(&self.path))
+        self.cache.sweep(now, SIZE_CAP, Some(&self.path))
     }
 
     /// Removes the cached scan.
@@ -134,10 +132,7 @@ impl Slot {
         mut locked: impl FnMut(&mut dyn FnMut(&Tree)),
         cancel: &AtomicBool,
     ) -> io::Result<Saved> {
-        Cache {
-            dir: self.dir.clone(),
-        }
-        .ensure_dir()?;
+        self.cache.ensure_dir()?;
         let mut ended = None;
         let written = crate::write_replacing(&self.path, |f| {
             #[cfg(unix)]
@@ -211,3 +206,6 @@ impl Step {
         if done { Step::Done } else { Step::More }
     }
 }
+
+#[cfg(test)]
+mod tests;

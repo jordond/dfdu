@@ -21,7 +21,7 @@ impl<B: Backend> Worker<B> {
     pub(super) fn verify_step(&mut self, sh: &Shared<B>, clock: &dyn Clock) -> StepResult {
         let r = self.running.as_mut().expect("running");
         let ended = r.job.ended.load(SeqCst);
-        let work = r.task.verify.as_mut().expect("batch task");
+        let work = r.task.kind.verify_mut().expect("batch task");
         let complete = work.at >= work.dirs.len();
         if ended || complete {
             self.finish_verify(complete, clock);
@@ -54,8 +54,8 @@ impl<B: Backend> Worker<B> {
     )]
     fn finish_verify(&mut self, complete: bool, clock: &dyn Clock) {
         let mut r = self.running.take().expect("running");
-        let work = r.task.verify.take().expect("batch task");
-        self.report_verify(&r.task, *work, complete, clock);
+        let work = r.task.kind.verify_mut().map(std::mem::take);
+        self.report_verify(&r.task, work.expect("batch task"), complete, clock);
     }
 
     /// Sends what batch `work` of `task` found and ends its part.

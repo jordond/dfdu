@@ -66,14 +66,13 @@ gix-hash = { version = "0.28.1", features = ["sha1"] }
 gix-path = "0.14.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 ruzstd = "0.9.1"
-humansize = "2.1.3"
 fixedbitset = "0.5.7"
 tempfile = "3.27.0"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
 libc = "0.2.191"
 sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 rand = { version = "0.10.3", default-features = false, features = ["chacha"] }
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache"] }
 unicode-width = "0.2.3"
 tachyonfx = { version = "0.25.2", default-features = false, features = ["std", "std-duration"] }
 nucleo-matcher = "0.3.1"

@@ -4,9 +4,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command, Engine, EngineOptions, WaitIdle};
+use dfdu_engine::{Command, Engine, EngineOptions, Model, WaitIdle};
 use dfdu_rules::RuleSet;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, JobOptions, NativeBackend, native_backend};
@@ -26,7 +26,7 @@ pub fn headless(journal: bool) -> EngineOptions {
         auto_abandon: Some(STALL_ABANDON),
         read_only: !journal,
         journal_dir: if journal {
-            dfdu_clean::default_journal_dir()
+            dfdu_sys::dirs::journal_dir()
         } else {
             None
         },
@@ -50,7 +50,8 @@ pub fn for_storage(
 }
 
 /// How a scan of this host's files is set up: the native backend for the storage the scanned
-/// directory is on, with as many workers as suit it, classifying with the rules.
+/// directory is on, with as many workers as suit it, classifying with the rules. Each command
+/// fills in the fields itself: they differ in when --mft applies and which mounts are entered.
 pub struct Local {
     /// List NTFS volumes from their master file tables ([`MountArgs::use_mft`]).
     pub mft: bool,
@@ -63,19 +64,10 @@ pub struct Local {
 }
 
 impl Local {
-    /// A scan of `path` with the mount options in `mounts`, saying why --mft cannot be used.
-    pub fn new(
-        path: &Path,
-        mounts: MountArgs,
-        threads: Option<usize>,
-        rules: Option<Arc<RuleSet>>,
-    ) -> Local {
-        Local {
-            mft: mounts.use_mft(path),
-            threads,
-            job: mounts.job(),
-            rules,
-        }
+    /// `opts` with this scan's workers for the storage `path` is on ([`for_storage`]), and
+    /// that storage.
+    pub fn engine_options(&self, path: &Path, opts: EngineOptions) -> (Storage, EngineOptions) {
+        for_storage(path, self.threads, opts)
     }
 
     /// The native backend for data on `storage`.
@@ -94,7 +86,7 @@ impl Local {
     /// An engine with `opts` for a scan of `path`, and the options of that scan. Nothing is
     /// sent to it yet.
     pub fn start(self, path: &Path, opts: EngineOptions) -> (Engine<NativeBackend>, JobOptions) {
-        let (storage, opts) = for_storage(path, self.threads, opts);
+        let (storage, opts) = self.engine_options(path, opts);
         let engine = Engine::start(self.backend(storage), opts);
         (engine, self.job(path))
     }
@@ -109,7 +101,13 @@ pub fn scan(
     rules: Option<Arc<RuleSet>>,
     journal: bool,
 ) -> Result<Engine<NativeBackend>, ExitCode> {
-    let (engine, job) = Local::new(path, mounts, threads, rules).start(path, headless(journal));
+    let local = Local {
+        mft: mounts.use_mft(path),
+        threads,
+        job: mounts.job(),
+        rules,
+    };
+    let (engine, job) = local.start(path, headless(journal));
     run_scan(
         engine,
         Command::Scan {
@@ -151,6 +149,33 @@ pub fn wait_scan<B: Backend>(engine: Engine<B>) -> Result<Engine<B>, ExitCode> {
     Ok(engine)
 }
 
+/// The longest [`wait_for`] waits on the engine's changes before reading the model again: the
+/// browser is not running to take them, but a change taken elsewhere is still seen.
+const RECHECK: Duration = Duration::from_millis(100);
+
+/// Reads the model with `f` each time it changes until it gives `Some`. `None` when the engine
+/// stopped on a fatal error first, or `limit` passed (without one it waits as long as that
+/// takes).
+pub fn wait_for<B: Backend, T>(
+    engine: &Engine<B>,
+    limit: Option<Duration>,
+    f: impl Fn(&Model) -> Option<T>,
+) -> Option<T> {
+    let deadline = limit.map(|l| Instant::now() + l);
+    loop {
+        let (v, fatal) = engine.read(|m| (f(m), m.status.fatal.is_some()));
+        if v.is_some() || fatal {
+            return v;
+        }
+        let wait = match deadline {
+            Some(d) if Instant::now() >= d => return None,
+            Some(d) => d.saturating_duration_since(Instant::now()).min(RECHECK),
+            None => RECHECK,
+        };
+        let _ = engine.changes().recv_timeout(wait);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -176,6 +201,14 @@ mod tests {
         assert_eq!(auto.workers, dfdu_engine::workers_for(storage));
         let (_, given) = for_storage(dir.path(), Some(3), EngineOptions::default());
         assert_eq!(given.workers, 3);
+        let local = Local {
+            mft: false,
+            threads: Some(2),
+            job: JobOptions::default(),
+            rules: None,
+        };
+        let (_, own) = local.engine_options(dir.path(), EngineOptions::default());
+        assert_eq!(own.workers, 2);
     }
 
     #[test]
@@ -220,5 +253,36 @@ mod tests {
         let items = engine.read(|m| m.tree.roots().next().map(|r| m.tree.total(r).items));
         engine.shutdown(SHUTDOWN);
         assert_eq!(items, Some(3));
+    }
+
+    #[test]
+    fn wait_for_returns_what_it_reads_or_none_once_its_limit_passed() {
+        let engine = Engine::start(PortableBackend::default(), headless(false));
+        let limit = Some(Duration::from_millis(30));
+        let t0 = Instant::now();
+        assert_eq!(wait_for(&engine, limit, |_| None::<()>), None);
+        assert!(t0.elapsed() >= Duration::from_millis(30));
+        assert_eq!(
+            wait_for(&engine, None, |m| Some(m.tree.roots().count())),
+            Some(0)
+        );
+        engine.shutdown(SHUTDOWN);
+    }
+
+    /// What a scan sent before the wait adds to the model is seen once the applier made it.
+    #[test]
+    fn wait_for_sees_the_changes_of_a_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a"), b"x").unwrap();
+        let engine = Engine::start(PortableBackend::default(), headless(false));
+        engine.send(Command::Scan {
+            path: dir.path().to_path_buf().into(),
+            opts: JobOptions::default(),
+        });
+        let roots = wait_for(&engine, Some(Duration::from_secs(20)), |m| {
+            m.tree.roots().next().map(|_| m.tree.roots().count())
+        });
+        assert_eq!(roots, Some(1));
+        engine.shutdown(SHUTDOWN);
     }
 }

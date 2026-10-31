@@ -6,10 +6,11 @@
 
 use std::collections::HashSet;
 
-use dfdu_rules::{Hit, RuleIx, Safety};
+use dfdu_rules::Hit;
+
 use dfdu_scan::Backend;
 use dfdu_scan::classify::ClassOpts;
-use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, Tree};
+use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, RuleIx, Safety, Tree};
 
 use super::Kept;
 use crate::applier::work::Work;
@@ -24,7 +25,7 @@ const RESCANS_PER_STEP: usize = 16;
 
 /// What decides whether two classes are the same match: the rule, and the safety and
 /// degradation its sibling conditions gave it (not the flags the classifier pool adds later).
-fn verdict(c: &Class) -> (RuleIx, Safety, Option<u16>) {
+fn verdict(c: Class) -> (RuleIx, Safety, Option<u16>) {
     (c.rule, c.safety, c.degraded)
 }
 
@@ -128,12 +129,15 @@ impl<B: Backend> Applier<B> {
         class: Option<&ClassOpts>,
     ) -> bool {
         let t = &m.tree;
-        let f = &mut kept.finding;
+        let finding = &mut kept.finding;
         let parent = |ix: Ix| t.parent(ix).map(|q| t.dev_ino(q));
-        let rule = |ix: Ix| t.class(ix).map(|c| verdict(&c));
+        let rule = |ix: Ix| t.class(ix).map(verdict);
         let marks = |ix: Ix| {
-            let f = t.flags(ix);
-            (f.has(NodeFlags::PROTECTED), f.has(NodeFlags::EXCEPTED))
+            let flags = t.flags(ix);
+            (
+                flags.has(NodeFlags::PROTECTED),
+                flags.has(NodeFlags::EXCEPTED),
+            )
         };
         // The rules decided above it, which its subtree was classified with: above the
         // placeholder, those in the shadow and then those above `target`, which the shadow
@@ -152,27 +156,27 @@ impl<B: Backend> Applier<B> {
         };
         // Whether the rules above differ, for the last two parents: siblings come together.
         let (mut last, mut differ) = (None, false);
-        let mut n = 0;
-        while n < PER_STEP
-            && let Some(&p) = kept.placeholders.get(f.next)
+        let mut looked = 0;
+        while looked < PER_STEP
+            && let Some(&p) = kept.placeholders.get(finding.next)
         {
-            f.next += 1;
+            finding.next += 1;
             let Some(px) = t.resolve(p) else {
                 continue;
             };
-            n += 1;
+            looked += 1;
             let found = kept
                 .nodes
                 .get(&t.dev_ino(px))
                 .and_then(|&(r, _)| t.resolve(r))
-                .filter(|&kx| !f.taken.contains(&t.node_ref(kx)))
+                .filter(|&kx| !finding.taken.contains(&t.node_ref(kx)))
                 .filter(|&kx| Self::is_ancestor(t, target, kx));
             let Some(kx) = found else {
-                f.found.push(Found::Lost(p));
+                finding.found.push(Found::Lost(p));
                 continue;
             };
             let r = t.node_ref(kx);
-            f.taken.insert(r);
+            finding.taken.insert(r);
             let parents = Some((t.parent(px), t.parent(kx)));
             if last != parents {
                 (last, differ) = (parents, above(px) != above(kx));
@@ -182,14 +186,14 @@ impl<B: Backend> Applier<B> {
                 || rule(px).is_some_and(|r| rule(kx) != Some(r))
                 || marks(px) != marks(kx)
                 || differ;
-            f.found.push(if moved {
+            finding.found.push(if moved {
                 Found::Moved(p, r)
             } else {
                 // Where it was loaded, before it moves.
                 Found::Same(p, r, class.map(|c| hits(t, kx, c)))
             });
         }
-        f.next >= kept.placeholders.len()
+        finding.next >= kept.placeholders.len()
     }
 
     /// Puts the loaded directories found for `kept`'s placeholders ([`Applier::find_kept`])
@@ -266,3 +270,6 @@ impl<B: Backend> Applier<B> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

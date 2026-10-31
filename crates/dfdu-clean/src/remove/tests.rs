@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(windows)]
+mod windows;
+
+#[cfg(unix)]
 #[test]
 fn removes_trees_without_following_symlinks() {
     let tmp = tempfile::tempdir().unwrap();
@@ -21,6 +25,7 @@ fn removes_trees_without_following_symlinks() {
 /// A directory above the item replaced by a symlink after the item was checked: the path
 /// now names another directory, which is not deleted. (A symlink as the parent itself is
 /// refused when the parent is opened.)
+#[cfg(unix)]
 #[test]
 fn a_swapped_path_deletes_nothing() {
     use std::os::unix::fs::MetadataExt;
@@ -50,6 +55,7 @@ fn a_swapped_path_deletes_nothing() {
     assert!(!moved.join("item").exists() && !moved.join("file").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn missing_item_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();

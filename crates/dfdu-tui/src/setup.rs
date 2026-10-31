@@ -3,7 +3,6 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
 
 use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::{cursor, execute};
@@ -60,18 +59,6 @@ impl Default for UiSettings {
             types: dfdu_tree::filetype::TypeFilter::default(),
         }
     }
-}
-
-/// Where theme files are looked up by name ([`dfdu_rules::dirs::theme_dir`]).
-#[must_use]
-pub fn theme_dir() -> Option<PathBuf> {
-    dfdu_rules::dirs::theme_dir()
-}
-
-/// The user's home directory with symbolic links resolved, as the scan's paths are.
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    let home = etcetera::home_dir().ok()?;
-    Some(dunce::canonicalize(&home).unwrap_or(home))
 }
 
 /// The theme `settings` ask for and the terminal it was resolved for.
@@ -131,6 +118,21 @@ pub(crate) fn restore_terminal(mouse: bool) {
     }
     ratatui::restore();
     let _ = execute!(io::stdout(), cursor::Show);
+}
+
+/// Restores the terminal ([`restore_terminal`]) when dropped, so that every way out of the
+/// browser leaves it as it was. On a panic the hook has restored it already.
+pub(crate) struct Restore {
+    /// Mouse capture was turned on, or tried.
+    pub(crate) mouse: bool,
+}
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            restore_terminal(self.mouse);
+        }
+    }
 }
 
 #[cfg(test)]

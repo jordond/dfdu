@@ -6,9 +6,42 @@ use std::time::Instant;
 
 use dfdu_tree::NodeRef;
 
-use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, delete_summary, shown};
+use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, shown};
 use crate::model::snapshot::{EntryData, Snapshot};
 use crate::state::order::{Order, Siblings};
+
+/// One line describing a finished delete plan. On btrfs the freed space shows up in the free
+/// space only after the transaction commits, and for snapshots after the cleaner ran.
+fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
+    let done = match d.mode {
+        Some(dfdu_engine::Mode::Trash) => "moved to the Trash",
+        Some(dfdu_engine::Mode::Stage) => "staged",
+        _ => "deleted",
+    };
+    let mut parts = vec![format!(
+        "{done} {} ({})",
+        d.deleted,
+        crate::format::human(d.bytes)
+    )];
+    for (n, what) in [
+        (d.stale, "changed since the scan"),
+        (d.refused, "refused"),
+        (d.failed, "failed"),
+        (d.aborted, "stopped"),
+    ] {
+        if n > 0 {
+            parts.push(format!("{n} {what}"));
+        }
+    }
+    let mut s = parts.join(", ");
+    if d.deleted > 0 && d.mode.is_some_and(dfdu_engine::Mode::undoable) {
+        s.push_str("; U puts it back");
+    }
+    if d.btrfs {
+        s.push_str("; btrfs frees the space when it commits (snapshots: in the background)");
+    }
+    s
+}
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +58,80 @@ struct Folded {
     finished: bool,
     /// Its version differs from the previous one's: sizes or entries may have changed.
     changed: bool,
+}
+
+/// When the rows are sorted again: before the next frame when asked, otherwise automatically
+/// once the user has been idle for [`IDLE_BEFORE_SORT`], at most every [`MIN_SORT_INTERVAL`].
+#[derive(Debug)]
+pub struct SortSchedule {
+    last_input: Instant,
+    last_sort: Instant,
+    /// An exact sort is asked for.
+    requested: bool,
+    /// The filter changed: its rows are needed before the next frame.
+    refilter: bool,
+    /// A snapshot that changed came in since the last sort.
+    changed: bool,
+}
+
+impl SortSchedule {
+    /// The schedule of a browser opened at `now`: idle, with an exact sort asked for.
+    pub fn new(now: Instant) -> Self {
+        SortSchedule {
+            // No key pressed yet counts as idle.
+            last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
+            last_sort: now,
+            requested: true,
+            refilter: false,
+            changed: false,
+        }
+    }
+
+    pub fn request_sort(&mut self) {
+        self.requested = true;
+    }
+
+    pub fn request_refilter(&mut self) {
+        self.refilter = true;
+    }
+
+    pub fn note_input(&mut self, now: Instant) {
+        self.last_input = now;
+    }
+
+    /// A snapshot that changed came in since the last sort.
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
+
+    /// When an automatic sort is due, if one is pending.
+    pub fn due_at(&self) -> Instant {
+        (self.last_input + IDLE_BEFORE_SORT).max(self.last_sort + MIN_SORT_INTERVAL)
+    }
+
+    fn idle(&self, now: Instant) -> bool {
+        now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
+    }
+
+    /// An automatic sort is due at `now`: one is `pending` and the user has been idle, long
+    /// enough after the last sort or right after the scan `finished`.
+    fn auto_due(&self, pending: bool, finished: bool, now: Instant) -> bool {
+        let interval = now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL;
+        self.idle(now) && ((pending && interval) || finished)
+    }
+
+    /// Takes the requests: an exact sort, and the rows of a changed filter.
+    fn take_requests(&mut self) -> (bool, bool) {
+        (
+            std::mem::take(&mut self.requested),
+            std::mem::take(&mut self.refilter),
+        )
+    }
+
+    fn sorted(&mut self, now: Instant) {
+        self.last_sort = now;
+        self.changed = false;
+    }
 }
 
 /// How [`App::update_order`] brings the rows up to date.
@@ -48,12 +155,6 @@ impl App {
     /// Deleted rows kept as placeholders hold still until the next re-sort.
     fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
         (!self.moved || index == Some(0)) && !self.motion.has_ghosts()
-    }
-
-    fn auto_sort_due(&self, now: Instant) -> bool {
-        self.sort_pending()
-            && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
-            && now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
@@ -88,7 +189,7 @@ impl App {
         };
         let changed = snap.version != self.snap.version;
         if changed {
-            self.changed_since_sort = true;
+            self.sort_schedule.changed = true;
         }
         // A scan that just finished gets one more automatic sort right away (if the user is
         // idle), so the final order does not wait for the minimum interval.
@@ -143,12 +244,12 @@ impl App {
             finished,
             changed,
         } = folded.unwrap_or_default();
-        let requested = std::mem::take(&mut self.sort_requested);
-        let refilter = std::mem::take(&mut self.refilter_requested);
+        let (requested, refilter) = self.sort_schedule.take_requests();
         let mode = if dir_changed || requested || refilter {
             Reorder::Exact
-        } else if self.auto_sort_due(now)
-            || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
+        } else if self
+            .sort_schedule
+            .auto_due(self.sort_pending(), finished, now)
         {
             Reorder::Auto
         } else if fresh && changed && self.keeps_top_sorted(old_index) {
@@ -165,7 +266,7 @@ impl App {
         let tree = self.tree_shown().is_some();
         // Rows below the top are left out of a list until the read without them comes in.
         let visible = |i: usize, e: &EntryData| {
-            shown(hide, e) && (tree || e.parent == u32::MAX) && filter.matches(i, e)
+            shown(hide, e) && (tree || e.parent == u32::MAX) && filter.matches(i)
         };
         // Only the filter changed: its rows are picked from the kept exact sort of every entry
         // it can show, in the order an exact sort of only those gives.
@@ -208,8 +309,7 @@ impl App {
         let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
         if resorted {
             self.sort_gen += 1;
-            self.last_sort = now;
-            self.changed_since_sort = false;
+            self.sort_schedule.sorted(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
@@ -222,8 +322,7 @@ impl App {
         self.rows.extend_from_slice(self.order.rows());
         if resorted && !dir_changed {
             let auto = mode == Reorder::Auto;
-            self.motion
-                .resorted(&old_rows, &self.rows, entries, auto, now);
+            self.motion.resorted(&old_rows, &self.rows, entries, auto);
         }
         self.new_count = self.order.new_entries().len();
         self.new_largest = self

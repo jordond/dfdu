@@ -5,7 +5,9 @@ use std::collections::HashSet;
 
 use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model, SizeMode, subvol_label};
 use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
-use dfdu_tree::{DirId, DirState, ErrKind, HostPath, Ix, JobId, Kind, NodeRef, Totals, Tree};
+use dfdu_tree::{
+    DirId, DirState, ErrKind, HostPath, Ix, JobId, Kind, NodeRef, Target, Totals, Tree, find_path,
+};
 
 mod tree;
 
@@ -112,7 +114,7 @@ impl Tag {
     /// A match offered for cleanup without review: safe or regenerable (a match version
     /// control tracks is protected).
     pub fn candidate(self) -> bool {
-        self.class.safety <= dfdu_rules::Safety::Regenerable
+        self.class.safety <= dfdu_tree::Safety::Regenerable
     }
 }
 
@@ -187,84 +189,6 @@ impl EntryData {
     pub fn hidden(&self) -> bool {
         self.name.first() == Some(&b'.')
     }
-}
-
-/// Identity of a node, compared when a reference is re-resolved by path after a rescan swap.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct Ident {
-    pub dev_ino: (u64, u64),
-    pub kind: Kind,
-}
-
-/// A node the UI refers to: the reference, plus the path and identity to find it again.
-#[derive(Clone, Debug)]
-pub struct Target {
-    pub node: Option<NodeRef>,
-    pub path: HostPath,
-    pub ident: Option<Ident>,
-}
-
-impl Target {
-    #[must_use]
-    pub fn root() -> Self {
-        Target {
-            node: None,
-            path: HostPath::default(),
-            ident: None,
-        }
-    }
-
-    #[must_use]
-    pub fn of(tree: &Tree, ix: Ix) -> Self {
-        Target {
-            node: Some(tree.node_ref(ix)),
-            path: tree.host_path(ix),
-            ident: Some(ident(tree, ix)),
-        }
-    }
-
-    /// By reference if it still resolves, otherwise by path with an identity check. `None` if
-    /// neither works.
-    #[must_use]
-    pub fn resolve(&self, tree: &Tree) -> Option<Ix> {
-        if let Some(ix) = self.node.and_then(|r| tree.resolve_visible(r)) {
-            return Some(ix);
-        }
-        let ix = find_path(tree, &self.path)?;
-        self.matches(tree, ix).then_some(ix)
-    }
-
-    /// The identity check for a node found by path: `ix` has the target's kind and device and
-    /// inode numbers, so a new file or directory under the old name is not taken for it. A
-    /// target without an identity, or without device and inode numbers, passes.
-    #[must_use]
-    pub fn matches(&self, tree: &Tree, ix: Ix) -> bool {
-        self.ident
-            .is_none_or(|id| id.dev_ino == (0, 0) || ident(tree, ix) == id)
-    }
-}
-
-fn ident(tree: &Tree, ix: Ix) -> Ident {
-    Ident {
-        dev_ino: tree.dev_ino(ix),
-        kind: tree.kind(ix),
-    }
-}
-
-/// Finds a visible node by path: the root whose path is a prefix of it, then one child per
-/// remaining component.
-pub fn find_path(tree: &Tree, path: &HostPath) -> Option<Ix> {
-    for root in tree.roots() {
-        let Some(rest) = path.rel(&tree.host_path(root)) else {
-            continue;
-        };
-        let mut cur = root;
-        for name in rest {
-            cur = tree.children(cur).find(|&c| tree.name(c) == name)?;
-        }
-        return Some(cur);
-    }
-    None
 }
 
 #[derive(Clone, Debug, Default)]
@@ -366,8 +290,8 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
 
 /// `build` counting only the files `types` matches (none left out when it is empty), and with
 /// the directory's [`Breakdown`] when `breakdown` is set. Both walk the directory's subtree.
-/// With `tree` set (tree mode), the rows of the expanded directories follow the directory's
-/// own entries ([`tree::expand`]).
+/// With `tree_state` set (tree mode), the rows of the expanded directories follow the
+/// directory's own entries ([`tree::expand`]).
 pub fn build_view(
     m: &Model,
     target: &mut Target,

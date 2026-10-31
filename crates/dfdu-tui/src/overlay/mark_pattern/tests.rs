@@ -4,7 +4,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::*;
 use crate::model::snapshot::{EntryData, test_entry};
-use crate::tests::{press, render, snap_with_totals, typed};
+use crate::tests::{marked_names, press, render, snap_with_totals, typed};
 use crate::theme::Theme;
 
 /// `/r` with two logs, a directory of logs and a text file.
@@ -31,16 +31,6 @@ fn open_from_palette(app: &mut App, t0: Instant) {
     app.key(press(KeyCode::Enter), t0);
 }
 
-fn marked(app: &App) -> Vec<String> {
-    let mut names: Vec<String> = (app.marks.items().iter())
-        .map(|it| {
-            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
-        })
-        .collect();
-    names.sort();
-    names
-}
-
 #[test]
 fn marks_the_names_the_glob_matches() {
     let (mut app, t0) = app();
@@ -52,7 +42,9 @@ fn marks_the_names_the_glob_matches() {
     insta::assert_snapshot!("mark_pattern_80x12", frame);
     app.key(press(KeyCode::Enter), t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(marked(&app), ["build.log", "old.log", "server.log"]);
+    let mut marked = marked_names(&app);
+    marked.sort();
+    assert_eq!(marked, ["build.log", "old.log", "server.log"]);
     let status = app.status.clone().unwrap_or_default();
     assert!(
         status.starts_with("marked 3 of 3 entries matching *.log"),
@@ -72,7 +64,7 @@ fn marks_the_names_the_glob_matches() {
     open_from_palette(&mut app, t0);
     typed(&mut app, "notes.tx?", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert_eq!(marked(&app), ["notes.txt"]);
+    assert_eq!(marked_names(&app), ["notes.txt"]);
 }
 
 #[test]
@@ -80,6 +72,10 @@ fn a_bad_or_empty_glob_marks_nothing() {
     let (mut app, t0) = app();
     open_from_palette(&mut app, t0);
     typed(&mut app, "[ab]*", t0);
+    let Overlay::MarkPattern(p) = &app.overlay else {
+        panic!("the prompt is open");
+    };
+    assert_eq!(p.matches, Some(Err(GlobError::Brackets)));
     let frame = render(&mut app, t0, 80, 12);
     assert!(frame.contains("`[...]` is not supported"), "{frame}");
     app.key(press(KeyCode::Enter), t0);

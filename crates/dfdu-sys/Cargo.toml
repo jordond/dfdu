@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-sys"
-description = "The OS calls no safe crate provides: btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration, behind safe wrappers"
+description = "The OS calls no safe crate provides (btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration) behind safe wrappers, the disk list, what storage a directory is on, the usage of mounts the scan did not enter, and where dfdu keeps its files (dirs)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,10 +17,15 @@ unsafe_op_in_unsafe_fn = "deny"
 dbg_macro = "warn"
 undocumented_unsafe_blocks = "deny"
 
+[dependencies]
+etcetera.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
 
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+# The disk list where no mount table is read directly: Linux reads `/proc/self/mountinfo` and
+# macOS `getfsstat`, each mount sized on its own thread.
+[target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
 sysinfo = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

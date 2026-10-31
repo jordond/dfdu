@@ -149,3 +149,6 @@ pub struct SimReport {
     pub lost_events: u64,
     pub full_resumes: u64,
 }
+
+#[cfg(test)]
+mod tests;

@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
-dfdu-rules.workspace = true
 dfdu-scan.workspace = true
+dfdu-sys.workspace = true
 ruzstd.workspace = true
 crc32c.workspace = true
 rusqlite.workspace = true
@@ -24,4 +24,5 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-dfdu-engine.workspace = true
+dfdu-rules.workspace = true
+dfdu-engine = { workspace = true, features = ["test-support"] }

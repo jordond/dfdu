@@ -15,10 +15,9 @@ use std::io::{Read, Seek, SeekFrom};
 use dfdu_tree::{Ix, Tree};
 
 use super::{
-    Imported, Limits, Metadata, add_entry, add_root, check_depth, check_entries, close_dir,
-    valid_name,
+    Imported, Metadata, add_entry, add_root, check_depth, check_entries, close_dir, valid_name,
 };
-use crate::ImportError;
+use crate::{ImportError, Limits};
 
 mod entry;
 
@@ -43,7 +42,7 @@ const INDEX: u32 = 1;
 
 fn bad(offset: u64, msg: impl Into<String>) -> ImportError {
     ImportError::Format {
-        offset,
+        offset: Some(offset),
         msg: msg.into(),
     }
 }

@@ -14,6 +14,10 @@ pub(crate) enum Website {
     /// Install the dependencies from the lockfile.
     Install,
     /// Serve the site with live reload on http://localhost:4321.
+    #[expect(
+        clippy::doc_markdown,
+        reason = "clap help text, printed as written: markup would show in the terminal"
+    )]
     Dev,
     /// Type-check the site.
     Check,

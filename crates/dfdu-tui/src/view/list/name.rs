@@ -3,13 +3,13 @@
 
 use ratatui::style::Style;
 use ratatui::text::Span;
-use unicode_width::UnicodeWidthChar;
 
 use crate::app::App;
+use crate::format::{count, cut_end, truncate_middle};
 use crate::model::outside;
 use crate::model::snapshot::Mark;
 use crate::state::{filter, motion};
-use crate::theme::{Theme, count, truncate_middle};
+use crate::theme::Theme;
 
 /// A note is cut only when at least this many cells of it can show, with the `…`.
 const NOTE_MIN: usize = 8;
@@ -21,7 +21,7 @@ pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<S
     let e = &app.snap.entries[index];
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let style = if e.is_dir { t.dir } else { Style::new() };
-    let mut spans = filter::name_spans(app, index, name, style);
+    let mut spans = filter::name_spans(app, name, style);
     if e.is_dir {
         spans.push(Span::styled("/", style));
     }
@@ -98,28 +98,6 @@ fn mark_note(app: &App, index: usize, t: &Theme) -> Option<(String, Style)> {
     }
 }
 
-/// `s` cut to at most `width` cells, ending in `…` when cut.
-pub fn cut_end(s: &str, width: usize) -> String {
-    let w = |c: char| c.width().unwrap_or(0);
-    if s.chars().map(w).sum::<usize>() <= width {
-        return s.to_owned();
-    }
-    let Some(room) = width.checked_sub(1) else {
-        return String::new();
-    };
-    let mut out = String::with_capacity(s.len());
-    let mut used = 0;
-    for c in s.chars() {
-        if used + w(c) > room {
-            break;
-        }
-        used += w(c);
-        out.push(c);
-    }
-    out.push('…');
-    out
-}
-
 /// `spans` shortened to at most `width` cells by cutting out their middle
 /// ([`truncate_middle`]), each kept character in its span's style and the `…` in `style`.
 fn cut_middle(spans: Vec<Span<'static>>, width: usize, style: Style) -> Vec<Span<'static>> {
@@ -169,14 +147,6 @@ mod tests {
     use ratatui::style::{Color, Style};
 
     use super::*;
-
-    #[test]
-    fn notes_are_cut_at_the_end() {
-        assert_eq!(cut_end("  not responding", 20), "  not responding");
-        assert_eq!(cut_end("  not responding", 8), "  not r…");
-        assert_eq!(cut_end("  日本語", 5), "  日…");
-        assert_eq!(cut_end("abc", 0), "");
-    }
 
     #[test]
     fn names_are_cut_in_the_middle_keeping_their_styles() {

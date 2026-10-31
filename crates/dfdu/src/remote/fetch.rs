@@ -7,16 +7,13 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+mod release;
+
 /// The directory of agents by target (`<dir>/<target>/dfdu`), looked in first.
 pub const AGENT_DIR_VAR: &str = "DFDU_AGENT_DIR";
 /// Replaces the release download base, `https://github.com/jordond/dfdu/releases/download`.
 pub const RELEASE_URL_VAR: &str = "DFDU_RELEASE_URL";
 const RELEASE_URL: &str = "https://github.com/jordond/dfdu/releases/download";
-/// Releases are below these sizes; larger downloads, or binaries in them, are refused.
-#[cfg(feature = "agent-download")]
-const MAX_ARCHIVE: u64 = 128 << 20;
-#[cfg(feature = "agent-download")]
-const MAX_BINARY: u64 = 256 << 20;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -105,10 +102,6 @@ pub struct Agents {
     /// The local agent cache (`<dir>/<version>-<target>/dfdu`).
     pub cache: Option<PathBuf>,
     /// The release download base.
-    #[cfg_attr(
-        not(feature = "agent-download"),
-        expect(dead_code, reason = "read only by the download")
-    )]
     pub release_url: String,
 }
 
@@ -118,7 +111,7 @@ impl Agents {
         Agents {
             agent_dir: std::env::var_os(AGENT_DIR_VAR).map(PathBuf::from),
             this: std::env::current_exe().ok().zip(own()),
-            cache: dfdu_rules::dirs::agent_cache_dir(),
+            cache: dfdu_sys::dirs::agent_cache_dir(),
             release_url: std::env::var(RELEASE_URL_VAR).unwrap_or_else(|_| RELEASE_URL.into()),
         }
     }
@@ -175,7 +168,7 @@ impl Agents {
             }
             Origin::Cached(path) => Ok((c.key.clone(), read(path)?)),
             Origin::Release => {
-                let bin = self.download(target)?;
+                let bin = release::download(&self.release_url, target)?;
                 if let Some(path) = self.cached(target) {
                     // A cache that cannot be written costs a download next time, nothing more.
                     let _ = store(&path, &bin);
@@ -183,43 +176,6 @@ impl Agents {
                 Ok((c.key.clone(), bin))
             }
         }
-    }
-
-    #[cfg(feature = "agent-download")]
-    fn download(&self, target: &str) -> io::Result<Vec<u8>> {
-        let name = format!("dfdu-{target}.tar.xz");
-        let url = format!(
-            "{}/v{VERSION}/{name}",
-            self.release_url.trim_end_matches('/')
-        );
-        let missing = || {
-            io::Error::other(format!(
-                "no dfdu {VERSION} release for {target} ({url}); install dfdu there, or set \
-                 {AGENT_DIR_VAR} to a directory of <target>/dfdu builds"
-            ))
-        };
-        let archive = get(&url, MAX_ARCHIVE).map_err(|e| match e {
-            ureq::Error::StatusCode(404) => missing(),
-            e => io::Error::other(format!("downloading {url}: {e}")),
-        })?;
-        let sums = get(&format!("{url}.sha256"), 4096)
-            .map_err(|e| io::Error::other(format!("downloading {url}.sha256: {e}")))?;
-        let want = String::from_utf8_lossy(&sums);
-        let want = want.split_whitespace().next().unwrap_or_default();
-        if !want.eq_ignore_ascii_case(&sha256_hex(&archive)) {
-            return Err(io::Error::other(format!(
-                "{name} does not match its published sha256"
-            )));
-        }
-        extract(&archive, target)
-    }
-
-    #[cfg(not(feature = "agent-download"))]
-    fn download(&self, target: &str) -> io::Result<Vec<u8>> {
-        Err(io::Error::other(format!(
-            "this dfdu was built without downloads, and has no agent for {target}; install \
-             dfdu there, or set {AGENT_DIR_VAR} to a directory of <target>/dfdu builds"
-        )))
     }
 }
 
@@ -242,59 +198,6 @@ fn store(path: &Path, bin: &[u8]) -> io::Result<()> {
         .inspect_err(|_| {
             let _ = std::fs::remove_file(&tmp);
         })
-}
-
-/// `url`'s body, up to `limit` bytes, through the system's trusted certificates and the
-/// proxy in the environment. Gives up on a connection that stalls.
-#[cfg(feature = "agent-download")]
-fn get(url: &str, limit: u64) -> Result<Vec<u8>, ureq::Error> {
-    use std::time::Duration;
-    use ureq::tls::{RootCerts, TlsConfig};
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(
-            TlsConfig::builder()
-                .root_certs(RootCerts::PlatformVerifier)
-                .build(),
-        )
-        .timeout_connect(Some(Duration::from_secs(30)))
-        .timeout_per_read(Some(Duration::from_secs(60)))
-        .build()
-        .into();
-    agent
-        .get(url)
-        .call()?
-        .body_mut()
-        .with_config()
-        .limit(limit)
-        .read_to_vec()
-}
-
-/// The `dfdu` binary in a release archive: a `.tar.xz` whose top directory is
-/// `dfdu-<target>`.
-#[cfg(feature = "agent-download")]
-pub fn extract(archive: &[u8], target: &str) -> io::Result<Vec<u8>> {
-    use std::io::Read;
-    let want = Path::new(&format!("dfdu-{target}")).join("dfdu");
-    let xz = lzma_rust2::XzReader::new(archive, false);
-    let mut tar = tar::Archive::new(xz);
-    for entry in tar.entries()? {
-        let entry = entry?;
-        if entry.header().entry_type().is_file() && *entry.path()? == *want {
-            if entry.size() > MAX_BINARY {
-                return Err(io::Error::other(format!(
-                    "{} in the release archive is too large",
-                    want.display()
-                )));
-            }
-            let mut bin = Vec::new();
-            entry.take(MAX_BINARY).read_to_end(&mut bin)?;
-            return Ok(bin);
-        }
-    }
-    Err(io::Error::other(format!(
-        "the release archive has no {}",
-        want.display()
-    )))
 }
 
 #[cfg(test)]

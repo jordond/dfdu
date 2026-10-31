@@ -60,9 +60,12 @@ impl Format {
     }
 }
 
-/// Names of the tapes in demo/tapes, sorted; `_`-prefixed ones are included by the others.
-fn tapes() -> anyhow::Result<Vec<String>> {
-    let mut names: Vec<String> = fs::read_dir("demo/tapes")?
+/// Where the tapes are.
+const TAPES: &str = "demo/tapes";
+
+/// Names of the tapes in `dir`, sorted; `_`-prefixed ones are included by the others.
+fn tapes(dir: &Path) -> anyhow::Result<Vec<String>> {
+    let mut names: Vec<String> = fs::read_dir(dir)?
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
             let stem = name.strip_suffix(".tape")?;
@@ -73,22 +76,35 @@ fn tapes() -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
+/// The tapes `asked` for, of `all`: every one when none is named.
+fn chosen(asked: &[String], all: &[String]) -> anyhow::Result<Vec<String>> {
+    if let Some(t) = asked.iter().find(|t| !all.contains(t)) {
+        bail!("no tape {t:?} in {TAPES} (--list names them)");
+    }
+    Ok(if asked.is_empty() {
+        all.to_vec()
+    } else {
+        asked.to_vec()
+    })
+}
+
+/// The extensions of `formats` for VHS, each once, comma-separated.
+fn extensions(formats: &[Format]) -> String {
+    let mut exts: Vec<&str> = formats.iter().map(|f| f.ext()).collect();
+    exts.sort_unstable();
+    exts.dedup();
+    exts.join(",")
+}
+
 pub(crate) fn demo(a: &DemoArgs) -> anyhow::Result<()> {
-    let all = tapes()?;
+    let all = tapes(Path::new(TAPES))?;
     if a.list {
         for t in &all {
             println!("{t}");
         }
         return Ok(());
     }
-    let chosen = if a.tapes.is_empty() {
-        all.clone()
-    } else {
-        a.tapes.clone()
-    };
-    if let Some(t) = chosen.iter().find(|t| !all.contains(t)) {
-        bail!("no tape {t:?} in demo/tapes (--list names them)");
-    }
+    let chosen = chosen(&a.tapes, &all)?;
     need("docker")?;
     let bins = match &a.bin_dir {
         Some(d) => d.clone(),
@@ -105,10 +121,7 @@ pub(crate) fn demo(a: &DemoArgs) -> anyhow::Result<()> {
     }
     run(Command::new("docker").args(["build", "-q", "-t", IMAGE, "demo"]))?;
     fs::create_dir_all(ASSETS)?;
-    let mut formats: Vec<&str> = a.formats.iter().map(|f| f.ext()).collect();
-    formats.sort_unstable();
-    formats.dedup();
-    let formats = formats.join(",");
+    let formats = extensions(&a.formats);
     for t in &chosen {
         record(t, &bins, &formats).with_context(|| format!("recording {t}"))?;
     }
@@ -165,4 +178,47 @@ fn record(name: &str, bins: &Path, formats: &str) -> anyhow::Result<()> {
         .args(["rm", "-f", &container])
         .output();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(n: &[&str]) -> Vec<String> {
+        n.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_tapes_are_listed_sorted_without_their_includes() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(TAPES);
+        let all = tapes(&dir).unwrap();
+        assert!(all.contains(&"browse".to_owned()), "{all:?}");
+        assert!(
+            all.iter()
+                .all(|t| !t.starts_with('_') && Path::new(t).extension().is_none())
+        );
+        assert!(all.is_sorted());
+        assert!(tapes(&dir.join("no-such-dir")).is_err());
+    }
+
+    #[test]
+    fn no_tape_named_is_every_tape() {
+        let all = names(&["a", "b", "c"]);
+        assert_eq!(chosen(&[], &all).unwrap(), all);
+        assert_eq!(chosen(&names(&["c", "a"]), &all).unwrap(), ["c", "a"]);
+        let e = chosen(&names(&["a", "z"]), &all).unwrap_err().to_string();
+        assert!(e.contains("no tape \"z\""), "{e}");
+    }
+
+    #[test]
+    fn formats_are_named_once_each() {
+        assert_eq!(extensions(&[Format::Gif]), "gif");
+        assert_eq!(
+            extensions(&[Format::Webm, Format::Gif, Format::Mp4, Format::Gif]),
+            "gif,mp4,webm"
+        );
+        assert_eq!(extensions(&[]), "");
+    }
 }

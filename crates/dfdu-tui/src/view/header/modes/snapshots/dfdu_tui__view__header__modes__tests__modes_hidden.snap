@@ -1,0 +1,8 @@
+---
+source: crates/dfdu-tui/src/view/header/modes/tests.rs
+expression: "modes(&hidden, \"\")"
+---
+120| /home/jo/dev                               4.5M items · 163.3 GiB   sort size ↓  ·  disk usage  ·  hiding hidden files
+ 80| /home/jo/dev                   4.5M items · 163.3 GiB   size ↓ · disk · hidden
+ 64| /home/jo/dev   4.5M items · 163.3 GiB   size ↓ · disk · hidden
+ 48| /home…dev 4.5M items · 163.3 GiB   size ↓ · +2

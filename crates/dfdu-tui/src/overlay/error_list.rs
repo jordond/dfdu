@@ -7,8 +7,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Overlay};
+use crate::format::count;
 use crate::model::outside::rel_text;
-use crate::theme::count;
 
 /// Cursor keys move, `Enter` (or `→`, `l`) goes to the entry, any other key closes the list.
 pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {

@@ -10,7 +10,6 @@
 mod blocked;
 #[cfg(target_os = "linux")]
 mod btrfs;
-pub(crate) mod caches;
 mod columns;
 mod frames;
 mod matrix;
@@ -24,7 +23,9 @@ mod tree_frames;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use dfdu_tree::{HostPath, Kind, Meta, Totals};
+use dfdu_engine::Model;
+pub(crate) use dfdu_engine::test_support::meta;
+use dfdu_tree::{HostPath, Ix, Kind, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -32,7 +33,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::app::App;
+use crate::app::{App, Overlay};
 use crate::model::snapshot::{EntryData, Mark, Snapshot, test_entry};
 use crate::theme::Theme;
 use crate::view;
@@ -232,9 +233,8 @@ pub(crate) fn mid_scan_app(theme: Theme) -> (App, Instant) {
 
 /// A finished scan of `/r`: files `a` and `b` of 1000 bytes each, which hold 400 bytes alone
 /// and share 600 more, counted at the directory.
-pub(crate) fn shared_model() -> dfdu_engine::Model {
-    let mut m = dfdu_engine::Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+pub(crate) fn shared_model() -> Model {
+    let (mut m, root) = root_model();
     for (i, name) in [b"a".as_slice(), b"b"].iter().enumerate() {
         let f = m.tree.add_file(
             root,
@@ -251,7 +251,6 @@ pub(crate) fn shared_model() -> dfdu_engine::Model {
     m
 }
 
-/// A press of `code` without modifiers.
 /// Types `s` into whatever has the keyboard (an overlay's search, the filter), checking that no
 /// key had an effect for the run loop.
 pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
@@ -268,6 +267,42 @@ pub(crate) fn row_names(app: &App) -> Vec<String> {
         .collect()
 }
 
+/// Selects the row named `name`, as a cursor move of the user's.
+#[track_caller]
+pub(crate) fn select(app: &mut App, name: &str) {
+    let row = row_names(app)
+        .iter()
+        .position(|n| n == name)
+        .unwrap_or_else(|| panic!("{name} is not a row: {:?}", row_names(app)));
+    app.move_to(row);
+}
+
+/// The paths of the marked entries, in the order they were marked.
+pub(crate) fn marked_paths(app: &App) -> Vec<HostPath> {
+    (app.marks.items().iter())
+        .map(|it| it.target.path.clone())
+        .collect()
+}
+
+/// The names of the marked entries, in the order they were marked.
+pub(crate) fn marked_names(app: &App) -> Vec<String> {
+    (app.marks.items().iter())
+        .map(|it| {
+            String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
+        })
+        .collect()
+}
+
+/// Presses `code` where it would delete, checking that no dialog opened and that the status
+/// line says why, with `says` in it.
+#[track_caller]
+pub(crate) fn refused(app: &mut App, code: KeyCode, says: &str, now: Instant) {
+    app.key(press(code), now);
+    assert!(matches!(app.overlay, Overlay::None), "a dialog opened");
+    let status = app.status.as_deref().unwrap_or_default();
+    assert!(status.contains(says), "{status:?} does not say {says:?}");
+}
+
 /// The path of `rel` (names separated by `/`) below the root `root`, as a tree of this
 /// machine builds it: with this machine's separator.
 pub(crate) fn below(root: &str, rel: &str) -> HostPath {
@@ -275,22 +310,16 @@ pub(crate) fn below(root: &str, rel: &str) -> HostPath {
         .fold(HostPath::from(root), |p, n| p.join(n.as_bytes()))
 }
 
+/// A press of `code` without modifiers.
 pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
-/// The metadata of a node of a test tree: `size` bytes, apparent and allocated, on device 1.
-pub(crate) fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-    Meta {
-        kind,
-        apparent: size,
-        alloc: size,
-        mtime: 0,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
-    }
+/// A model holding only the root `/r`, and the root.
+pub(crate) fn root_model() -> (Model, Ix) {
+    let mut m = Model::default();
+    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+    (m, root)
 }
 
 /// A snapshot of `/r` while it is scanned, holding `entries`, with its totals left at zero.

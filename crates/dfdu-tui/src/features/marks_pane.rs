@@ -15,13 +15,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
-use std::time::Instant;
 
 use crate::app::keys::{self, Action, first_key};
 use crate::app::{App, Effect};
+use crate::format::{human, truncate_middle};
 use crate::model::outside::rel_text;
 use crate::state::marks;
-use crate::theme::{human, truncate_middle};
 use crate::view::columns::cursor;
 
 /// Lines above the items: the count and size marked, what it would free, and a blank line.
@@ -42,7 +41,7 @@ pub struct MarksPane {
 }
 
 /// True while the pane is open. It is open only with the focus.
-pub fn shown(app: &App) -> bool {
+pub fn is_open(app: &App) -> bool {
     app.marks_pane.open
 }
 
@@ -106,8 +105,8 @@ fn page(app: &App) -> usize {
 
 /// Moves the cursor by `delta` items. False when the pane is not shown, so the caller can move
 /// the list instead.
-pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
-    if !shown(app) {
+pub fn scroll(app: &mut App, delta: i32) -> bool {
+    if !is_open(app) {
         return false;
     }
     move_by(app, delta as isize);
@@ -127,7 +126,7 @@ pub const INVERT_KEY: char = '*';
 /// Handles a key while the pane is open; `None` passes it on to the list. Keys are read
 /// through [`keys::ACTIONS`], so the list's bindings move the cursor here, except
 /// [`INVERT_KEY`], which only this pane has.
-pub fn key(app: &mut App, k: &KeyEvent, now: Instant) -> Option<Vec<Effect>> {
+pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let page = page(app) as isize;
     let mut fx = Vec::new();
     let action = if k.code == KeyCode::Char(INVERT_KEY) {
@@ -159,7 +158,7 @@ pub fn key(app: &mut App, k: &KeyEvent, now: Instant) -> Option<Vec<Effect>> {
                 let space = first_key(Action::ToggleMark);
                 app.status = Some(format!("nothing is marked: {space} in the list marks"));
             } else {
-                fx = keys::run(app, a, now);
+                fx = keys::run(app, a);
             }
         }
         _ => return None,
