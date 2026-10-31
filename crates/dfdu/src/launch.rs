@@ -26,7 +26,7 @@ pub fn headless(journal: bool) -> EngineOptions {
         auto_abandon: Some(STALL_ABANDON),
         read_only: !journal,
         journal_dir: if journal {
-            dfdu_clean::default_journal_dir()
+            dfdu_sys::dirs::journal_dir()
         } else {
             None
         },

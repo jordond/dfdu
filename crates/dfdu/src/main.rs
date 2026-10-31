@@ -379,7 +379,7 @@ fn install_crash_hook() {
         if dfdu_engine::panic_is_caught_by_engine(std::thread::current().name()) {
             return;
         }
-        if let Some(dir) = dfdu_engine::default_crash_dir() {
+        if let Some(dir) = dfdu_sys::dirs::crash_dir() {
             let thread = std::thread::current();
             let report = format!(
                 "dfdu {} crash report\n\nthread: {}\npanic: {info}\n\nbacktrace:\n{}\n\n{}",

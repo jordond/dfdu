@@ -14,7 +14,7 @@ use crate::{Cli, remote};
 /// `dfdu [PATH]` on a terminal: the browser, on PATH, a disk from the picker, a scan read from a
 /// file, or a directory on another host.
 pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
-    let theme = match theme_choice(&cli.theme, dfdu_tui::theme_dir().as_deref()) {
+    let theme = match theme_choice(&cli.theme, dfdu_sys::dirs::theme_dir().as_deref()) {
         Ok(theme) => theme,
         Err(e) => {
             eprintln!("dfdu: theme {}: {e}", cli.theme);

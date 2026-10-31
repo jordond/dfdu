@@ -3,7 +3,6 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
 
 use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::{cursor, execute};
@@ -60,12 +59,6 @@ impl Default for UiSettings {
             types: dfdu_tree::filetype::TypeFilter::default(),
         }
     }
-}
-
-/// Where theme files are looked up by name ([`dfdu_sys::dirs::theme_dir`]).
-#[must_use]
-pub fn theme_dir() -> Option<PathBuf> {
-    dfdu_sys::dirs::theme_dir()
 }
 
 /// The theme `settings` ask for and the terminal it was resolved for.

@@ -9,12 +9,6 @@ use parking_lot::RwLock;
 
 use crate::applier::Model;
 
-/// The state directory's `crash` folder ([`dfdu_sys::dirs::crash_dir`]).
-#[must_use]
-pub fn default_crash_dir() -> Option<PathBuf> {
-    dfdu_sys::dirs::crash_dir()
-}
-
 fn crash_report(msg: &str, m: &Model) -> String {
     format!(
         "dfdu {} crash report\n\nthread: dfdu-applier\npanic: {msg}\n\nbacktrace:\n{}\n\n{}",

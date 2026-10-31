@@ -28,7 +28,7 @@ pub struct RecoverArgs {
 /// `dfdu recover`: lists the unfinished items, numbered from 1, then does what was asked
 /// for each, highest number first so the numbers stay valid.
 pub fn run(args: RecoverArgs) -> ExitCode {
-    let Some(dir) = args.journals.or_else(dfdu_clean::default_journal_dir) else {
+    let Some(dir) = args.journals.or_else(dfdu_sys::dirs::journal_dir) else {
         eprintln!("dfdu: no state directory for the deletion journal");
         return ExitCode::from(1);
     };

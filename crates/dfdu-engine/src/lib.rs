@@ -33,7 +33,7 @@ pub use classifier::{
     CheckMsg, CheckReq, check_batch, git_tracked, parse_reclaimable, spawn_classifiers,
 };
 // Engine callers take these from here and use dfdu_clean only for what is not re-exported.
-pub use crash::{crash_state, default_crash_dir, panic_is_caught_by_engine, write_crash_report};
+pub use crash::{crash_state, panic_is_caught_by_engine, write_crash_report};
 pub use dfdu_clean::{DeleteResult, Mode, STAGE_UNDO_WINDOW, shown_argv};
 pub use dfdu_scan::journal::{
     JournalPosition, changed_since, changed_since_cancellable, journal_position,

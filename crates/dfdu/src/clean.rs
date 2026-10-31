@@ -166,7 +166,7 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
 /// `--restore-staged` (and `--yes`) finishes or restores their staged items. Returns whether
 /// something failed.
 fn earlier_sessions(args: &CleanArgs) -> bool {
-    let Some(dir) = dfdu_clean::default_journal_dir() else {
+    let Some(dir) = dfdu_sys::dirs::journal_dir() else {
         return false;
     };
     let mut r = match dfdu_clean::recover::scan(&dir) {

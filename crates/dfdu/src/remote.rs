@@ -64,7 +64,7 @@ pub fn agent(threads: Option<usize>, protocols: bool) -> ExitCode {
     let r = dfdu_engine::agent::run(
         native_backend(dfdu_sys::Storage::Unknown, false),
         workers,
-        dfdu_clean::default_journal_dir(),
+        dfdu_sys::dirs::journal_dir(),
         std::io::stdin(),
         std::io::stdout(),
     );
