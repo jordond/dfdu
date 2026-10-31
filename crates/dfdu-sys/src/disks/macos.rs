@@ -8,9 +8,9 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
-use super::{Disk, Role};
+use super::{Disk, Role, Space};
 #[cfg(target_os = "macos")]
-use super::{Space, gather, on_thread};
+use super::{gather, on_thread};
 use crate::FsClass;
 
 /// The mounted volumes the Finder shows, sorted by mount point, from the kernel's mount table
