@@ -27,7 +27,7 @@ mod test_util;
 pub use slot::{Outbox, WorkerSlot};
 pub use verify::VerifyDir;
 pub use watchdog::WatchdogReport;
-pub use worker::{StepResult, Worker};
+pub use worker::{RunningPart, StepResult, Worker};
 
 /// Monotonic time in nanoseconds; never returns 0 (0 means "not set" in the slot fields).
 pub trait Clock: Sync {
@@ -444,6 +444,8 @@ impl<B: Backend> Shared<B> {
         !self.priority.is_empty() || !self.injector.is_empty()
     }
 
+    /// Tasks not yet done (queued or running), and how many of those are parts the applier
+    /// abandoned: `(outstanding, abandoned)`.
     pub fn outstanding(&self) -> (u64, u64) {
         (
             self.outstanding.load(SeqCst),

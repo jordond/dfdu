@@ -61,6 +61,17 @@ struct Running<B: Backend> {
     class: Option<Arc<Listing>>,
 }
 
+/// The task a worker runs, as [`Worker::running_part`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningPart<L> {
+    /// Where the task reads.
+    pub loc: L,
+    /// Whether it is a job root.
+    pub is_root: bool,
+    /// Whether the worker holds a permit of the mount's limit for it.
+    pub has_permit: bool,
+}
+
 /// One worker's private state. `blocking` selects real-thread behaviour (flushes wait for
 /// budget) or simulation behaviour (flushes that cannot proceed are retried later).
 pub struct Worker<B: Backend> {
@@ -316,12 +327,15 @@ impl<B: Backend> Worker<B> {
             .map(|t| t.loc.clone())
     }
 
-    /// What the worker runs now, for tests: the task's location, whether it is a job root,
-    /// and whether it holds a permit of its mount's limit.
-    pub fn running_part(&self) -> Option<(B::Loc, bool, bool)> {
+    /// What the worker runs now, for tests.
+    pub fn running_part(&self) -> Option<RunningPart<B::Loc>> {
         let r = self.running.as_ref()?;
-        let permit = self.slot.outbox.lock().permit.is_some();
-        Some((r.task.loc.clone(), r.task.is_root, permit))
+        let has_permit = self.slot.outbox.lock().permit.is_some();
+        Some(RunningPart {
+            loc: r.task.loc.clone(),
+            is_root: r.task.is_root,
+            has_permit,
+        })
     }
 
     fn step_inner(&mut self, sh: &Shared<B>, sink: &dyn Sink, clock: &dyn Clock) -> StepResult {

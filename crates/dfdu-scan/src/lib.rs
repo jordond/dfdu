@@ -70,6 +70,6 @@ pub use proto::{
     NameSpan, Probe, ScanMsg, SkipReason, SubdirRec,
 };
 pub use shared::{
-    Clock, JobOptions, Limits, MAX_MOUNT_WORKERS, Outbox, Shared, Sink, StepResult, Task, TaskGate,
-    VerifyDir, WatchdogReport, Worker, WorkerSlot, panic_message,
+    Clock, JobOptions, Limits, MAX_MOUNT_WORKERS, Outbox, RunningPart, Shared, Sink, StepResult,
+    Task, TaskGate, VerifyDir, WatchdogReport, Worker, WorkerSlot, panic_message,
 };
