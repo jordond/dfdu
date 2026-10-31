@@ -3,6 +3,12 @@ use super::*;
 #[cfg(windows)]
 mod windows;
 
+/// The delete without the identity check, which only these tests use.
+#[cfg(unix)]
+fn remove(path: &Path, kind: Kind) -> io::Result<()> {
+    imp::remove(path, kind, None)
+}
+
 #[cfg(unix)]
 #[test]
 fn removes_trees_without_following_symlinks() {
