@@ -8,6 +8,10 @@
 //! - [`cache_dir`] (`scans`, the scan cache) and [`agent_cache_dir`] (`agents`, the agents
 //!   downloaded for `--remote` hosts), in the platform's own cache directory.
 //!
+//! It also answers the lookups other crates make of the user's own directories: [`home_dir`],
+//! and on Linux and the BSDs `xdg_data_dir` (the data directory, where the freedesktop trash
+//! is).
+//!
 //! The layout lives in dfdu-sys because every user of these paths (dfdu-store, dfdu-clean,
 //! dfdu-engine, dfdu-tui, dfdu) depends on it, and none of them should need the rules crate
 //! only to find a directory.
@@ -26,6 +30,19 @@ pub const STATE_DIR_VAR: &str = "DFDU_STATE_DIR";
 
 /// The environment variable that replaces the scan cache directory (used as given).
 pub const CACHE_DIR_VAR: &str = "DFDU_CACHE_DIR";
+
+/// The user's home directory.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    etcetera::home_dir().ok()
+}
+
+/// The XDG data directory: `$XDG_DATA_HOME`, else `~/.local/share`.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[must_use]
+pub fn xdg_data_dir() -> Option<PathBuf> {
+    Some(etcetera::base_strategy::Xdg::new().ok()?.data_dir())
+}
 
 /// `dfdu` in the configuration directory (the roaming `AppData` folder on Windows).
 #[must_use]
@@ -115,6 +132,19 @@ mod tests {
         let Some(cache) = cache_dir() else { return };
         assert!(cache.ends_with("dfdu/scans"), "{}", cache.display());
         assert_ne!(Some(cache.as_path()), state_dir().as_deref());
+    }
+
+    #[test]
+    fn the_home_directory_is_absolute() {
+        let Some(home) = home_dir() else { return };
+        assert!(home.is_absolute(), "{}", home.display());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn the_data_directory_is_absolute() {
+        let Some(data) = xdg_data_dir() else { return };
+        assert!(data.is_absolute(), "{}", data.display());
     }
 
     #[test]

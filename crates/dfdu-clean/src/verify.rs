@@ -91,11 +91,8 @@ fn protected_by(rules: &Protected, path: &Path) -> bool {
 /// does not exist yet is created by the trash crate, on the filesystem of its nearest ancestor.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn trash_refusal(path: &Path, item_dev: u64) -> Option<Refusal> {
-    use etcetera::BaseStrategy;
     use std::os::unix::fs::MetadataExt;
-    let data = etcetera::base_strategy::Xdg::new()
-        .ok()
-        .map(|x| x.data_dir());
+    let data = dfdu_sys::dirs::xdg_data_dir();
     let found = data.and_then(|d| {
         d.ancestors()
             .find_map(|a| fs::metadata(a).ok().map(|m| (a.to_path_buf(), m)))
