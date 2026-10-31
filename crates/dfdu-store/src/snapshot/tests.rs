@@ -67,7 +67,9 @@ fn a_resume_keeps_the_full_scan_only_from_a_journal_position() {
 /// A full scan that ends now took the time since it started.
 #[test]
 fn a_full_scan_ended_now_took_its_time() {
-    let started = Instant::now() - std::time::Duration::from_millis(1_500);
+    let started = Instant::now()
+        .checked_sub(std::time::Duration::from_millis(1_500))
+        .unwrap();
     let t = ScanTiming::ended_now(started, 1_000);
     assert_eq!(t.last_full_scan, 1_000);
     assert!((1_500..60_000).contains(&t.scan_ms), "{t:?}");
