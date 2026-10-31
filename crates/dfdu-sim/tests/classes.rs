@@ -10,7 +10,7 @@ mod common;
 
 use dfdu_scan::{DirId, JobId, ScanMsg};
 use dfdu_sim::{Sim, SimConfig, Spec, SpecBuilder};
-use dfdu_tree::{Class, Safety};
+use dfdu_tree::{Class, ClassFlags, Safety};
 
 use common::{
     cfg, find, finish_jobs, for_seeds, idle, ids, list_w, rescan, runs, scan_root, step_until,
@@ -255,7 +255,7 @@ fn classifier_answer_for_a_freed_and_reused_slot() {
             sim.model
                 .tree
                 .classes()
-                .all(|(_, c)| !c.has(Class::VCS_TRACKED)),
+                .all(|(_, c)| !c.has(ClassFlags::VCS_TRACKED)),
             "an answer for the freed slot was applied"
         );
         sim.applier.take_check_requests();

@@ -15,7 +15,7 @@ impl Sim {
     pub fn settled(&self) -> bool {
         let (out, ab) = self.shared.outstanding();
         out == ab
-            && self.model.status.running() == 0
+            && self.model.status.running_jobs() == 0
             && !self.applier.has_work()
             && !self.model.status.settling
             && self.cur.is_none()
@@ -49,7 +49,7 @@ impl Sim {
                 eprintln!("{}", self.shared.debug_parts());
                 return Err(self.fail(format!(
                     "did not finish: running jobs {}, outstanding {out}, abandoned {ab}, queued batches {}",
-                    self.model.status.running(),
+                    self.model.status.running_jobs(),
                     self.sink.q.lock().len()
                 )));
             }

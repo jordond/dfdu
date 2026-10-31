@@ -71,7 +71,7 @@ fn measurements_are_answered_until_none_is_left() {
         let mut sim = Sim::new(seed, &quiet());
         for _ in 0..10_000 {
             let (out, ab) = sim.shared.outstanding();
-            if sim.model.status.running() == 0 && out == ab && !sim.applier.has_work() {
+            if sim.model.status.running_jobs() == 0 && out == ab && !sim.applier.has_work() {
                 break;
             }
             for w in 0..sim.workers.len() {

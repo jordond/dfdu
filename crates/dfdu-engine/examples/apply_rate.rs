@@ -84,7 +84,7 @@ fn record<B: Backend>(backend: B, root: &Path) -> Vec<ScanMsg> {
             applier.work_step(&mut model);
         }
         applier.refresh_status(&mut model);
-        if model.status.running() == 0 {
+        if model.status.running_jobs() == 0 {
             return log;
         }
     }

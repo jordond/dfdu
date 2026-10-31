@@ -44,6 +44,10 @@ pub enum Command {
     /// ([`Engine::resume`](crate::Engine::resume)); `None` when it could not be taken (the
     /// root is listed again, and its rescan says why). A remote scan's root is not judged on
     /// it.
+    ///
+    /// An engine is resumed with [`Engine::resume`](crate::Engine::resume), which loads the
+    /// tree, asks the journal and stats the root before it sends this; only what drives an
+    /// applier without an engine (the simulation) builds it.
     Resume {
         node: NodeRef,
         opts: JobOptions,
@@ -127,7 +131,7 @@ impl<B: Backend> Applier<B> {
     pub fn apply_command(&mut self, m: &mut Model, cmd: Command) {
         m.recent.push(Event::of_command(&cmd));
         if let Some(why) = self.refusal(m, &cmd) {
-            m.status.notice(why.into());
+            m.status.push_notice(why.into());
             m.status.commands_applied += 1;
             return;
         }
@@ -158,12 +162,12 @@ impl<B: Backend> Applier<B> {
             }
             Command::Delete { items, mode } => self.submit_plan(m, items, mode),
             Command::Undo { plan } => {
-                if m.status.undoing.is_none() && self.undoable.remove(&plan).is_some() {
+                if m.status.undoing.is_none() && self.delete.undoable.remove(&plan).is_some() {
                     m.status.undoing = Some(plan);
-                    self.outgoing_controls.push(DeleterReq::Undo { plan });
+                    self.delete.controls.push(DeleterReq::Undo { plan });
                 }
             }
-            Command::CommitStaged => self.outgoing_controls.push(DeleterReq::Commit),
+            Command::CommitStaged => self.delete.controls.push(DeleterReq::Commit),
             Command::RunNative {
                 id,
                 node,
@@ -178,7 +182,7 @@ impl<B: Backend> Applier<B> {
             #[expect(clippy::panic, reason = "the command exists to test the crash path")]
             Command::InjectPanic => panic!("injected applier panic"),
             Command::AbortDelete => {
-                for p in std::mem::take(&mut self.queued_plans) {
+                for p in std::mem::take(&mut self.delete.queued) {
                     for it in &p.items {
                         if let Some(ix) = m.tree.resolve(it.node) {
                             m.tree.set_deleting(ix, false);

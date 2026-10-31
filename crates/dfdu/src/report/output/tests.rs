@@ -78,10 +78,10 @@ fn the_table_lists_each_match_with_its_flags_and_the_totals() {
     let rule = rule_with(&rules, "delete");
     let mut a = item(rule, Safety::Safe, 2048);
     a.recommended = true;
-    a.class.flags = Class::IN_USE | Class::VCS_TRACKED;
+    a.class.flags = ClassFlags::IN_USE | ClassFlags::VCS_TRACKED;
     a.matches_inside = 1;
     let mut b = item(rule, Safety::Review, 1024);
-    b.class.flags = Class::VCS_UNKNOWN;
+    b.class.flags = ClassFlags::VCS_UNKNOWN;
     b.matches_inside = 2;
     b.mtime = 3 * DAY;
     let out = printed(&rules, &[a, b], Some(1024), true);

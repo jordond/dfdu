@@ -11,7 +11,7 @@ use clap::Args;
 use dfdu_engine::{Engine, Model};
 use dfdu_rules::RuleSet;
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, HostPath, Kind, NodeRef, Safety};
+use dfdu_tree::{Class, ClassFlags, HostPath, Kind, NodeRef, Safety};
 use serde_json::{Map, Value};
 
 use crate::args::{age_arg, category_arg, size_arg};
@@ -161,7 +161,7 @@ fn guards_checked(m: &Model) -> bool {
     let Some(rules) = &m.rules else { return true };
     m.tree.classes().all(|(ix, c)| {
         let g = &rules.rule(c.rule).guard;
-        c.has(Class::CHECKED)
+        c.has(ClassFlags::CHECKED)
             || (!g.not_vcs_tracked && g.not_running.is_empty())
             || !m.tree.is_visible(ix)
     })
@@ -208,9 +208,9 @@ pub fn item_json(rules: &RuleSet, it: &Item, now: i64) -> Value {
     o.insert("mtime".into(), it.mtime.into());
     o.insert("age_days".into(), age_days(now, it.mtime).into());
     o.insert("recommended".into(), it.recommended.into());
-    o.insert("checked".into(), c.has(Class::CHECKED).into());
-    o.insert("in_use".into(), c.has(Class::IN_USE).into());
-    o.insert("vcs_tracked".into(), c.has(Class::VCS_TRACKED).into());
+    o.insert("checked".into(), c.has(ClassFlags::CHECKED).into());
+    o.insert("in_use".into(), c.has(ClassFlags::IN_USE).into());
+    o.insert("vcs_tracked".into(), c.has(ClassFlags::VCS_TRACKED).into());
     o.insert("scanning".into(), it.scanning.into());
     if it.matches_inside > 0 {
         o.insert("matches_inside".into(), it.matches_inside.into());

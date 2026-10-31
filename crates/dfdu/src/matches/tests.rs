@@ -1,5 +1,5 @@
 use dfdu_rules::{Action, Env, Platform};
-use dfdu_tree::RuleIx;
+use dfdu_tree::{ClassFlags, RuleIx};
 
 use super::*;
 
@@ -32,7 +32,7 @@ pub(crate) fn item(rule: RuleIx, safety: Safety, disk: u64) -> Item {
             rule,
             safety,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         },
         disk,
         apparent: disk / 2,
@@ -91,7 +91,7 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
             rule: rules.index(id).expect(id),
             safety: Safety::Safe,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         };
         t.set_class(ix, Some(class));
     }
@@ -162,12 +162,14 @@ fn guarded_matches_wait_for_their_checks() {
         degraded: None,
         flags,
     };
-    m.tree.set_class(a, Some(class(guarded(false), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(false), ClassFlags::NONE)));
     assert!(guards_checked(&m));
-    m.tree.set_class(a, Some(class(guarded(true), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(true), ClassFlags::NONE)));
     assert!(!guards_checked(&m));
     m.tree
-        .set_class(a, Some(class(guarded(true), Class::CHECKED)));
+        .set_class(a, Some(class(guarded(true), ClassFlags::CHECKED)));
     assert!(guards_checked(&m));
     let msg = checks_cut_short(CHECK_WAIT);
     assert!(msg.contains("did not finish in 60 s"), "{msg}");
@@ -180,7 +182,7 @@ fn an_item_in_json_names_its_rule_its_sizes_and_its_flags() {
     let rules = rules();
     let rule = rule_with(&rules, "delete");
     let mut it = item(rule, Safety::Regenerable, 4096);
-    it.class.flags = Class::CHECKED | Class::IN_USE;
+    it.class.flags = ClassFlags::CHECKED | ClassFlags::IN_USE;
     it.mtime = 3 * DAY;
     let j = item_json(&rules, &it, 10 * DAY);
     let r = rules.rule(rule);

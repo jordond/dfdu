@@ -30,7 +30,7 @@ const CLASS: Class = Class {
     rule: RuleIx(0),
     safety: Safety::Safe,
     degraded: None,
-    flags: 0,
+    flags: dfdu_tree::ClassFlags::NONE,
 };
 
 fn p(s: &str) -> Vec<u8> {

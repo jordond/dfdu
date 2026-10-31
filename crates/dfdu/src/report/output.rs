@@ -2,7 +2,7 @@
 //! each match and the summary in the JSON document (schema/report.v1.json).
 
 use dfdu_rules::{Action, RuleSet};
-use dfdu_tree::{Class, Safety};
+use dfdu_tree::{ClassFlags, Safety};
 use serde_json::{Map, Value, json};
 
 use crate::matches::{Item, age_days, reclaimable};
@@ -65,13 +65,13 @@ pub(super) fn table(
         if it.recommended {
             flags.push("recommended".to_string());
         }
-        if it.class.has(Class::IN_USE) {
+        if it.class.has(ClassFlags::IN_USE) {
             flags.push("in use".into());
         }
-        if it.class.has(Class::VCS_TRACKED) {
+        if it.class.has(ClassFlags::VCS_TRACKED) {
             flags.push("tracked by git".into());
         }
-        if it.class.has(Class::VCS_UNKNOWN) {
+        if it.class.has(ClassFlags::VCS_UNKNOWN) {
             flags.push("git tracking unknown".into());
         }
         if let Some(d) = it.class.degraded {

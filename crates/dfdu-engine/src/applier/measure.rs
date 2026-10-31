@@ -312,7 +312,7 @@ impl<B: Backend> Applier<B> {
             return;
         }
         m.status.unmeasured += self.measure.inflight as u64;
-        m.status.notice(
+        m.status.push_notice(
             "extent measurement stopped: a filesystem did not answer; shared data may be \
              counted more than once"
                 .into(),

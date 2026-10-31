@@ -121,7 +121,7 @@ pub fn list_w(sim: &mut Sim) -> (JobId, DirId) {
 pub fn finish_jobs(sim: &mut Sim) {
     for _ in 0..10_000 {
         let (out, ab) = sim.shared.outstanding();
-        if sim.model.status.running() == 0
+        if sim.model.status.running_jobs() == 0
             && out == ab
             && !sim.applier.has_work()
             && sim.queued().is_empty()

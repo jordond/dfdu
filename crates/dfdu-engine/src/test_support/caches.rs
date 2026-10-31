@@ -38,7 +38,7 @@ impl Caches {
             rule,
             safety,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         };
         self.tree.set_class(ix, Some(class));
     }

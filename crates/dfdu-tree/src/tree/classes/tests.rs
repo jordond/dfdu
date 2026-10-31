@@ -6,7 +6,7 @@ fn class(rule: u16) -> Class {
         rule: crate::RuleIx(rule),
         safety: crate::Safety::Safe,
         degraded: None,
-        flags: 0,
+        flags: crate::ClassFlags::NONE,
     }
 }
 
@@ -20,7 +20,7 @@ fn a_reused_slot_has_no_class_or_protection() {
         rule: crate::RuleIx(3),
         safety: crate::Safety::Regenerable,
         degraded: None,
-        flags: 0,
+        flags: crate::ClassFlags::NONE,
     };
     t.set_class(d, Some(class));
     t.set_protection(root, Protection::Protected);
