@@ -42,7 +42,7 @@ pub struct MarksPane {
 }
 
 /// True while the pane is open. It is open only with the focus.
-pub fn shown(app: &App) -> bool {
+pub fn is_open(app: &App) -> bool {
     app.marks_pane.open
 }
 
@@ -107,7 +107,7 @@ fn page(app: &App) -> usize {
 /// Moves the cursor by `delta` items. False when the pane is not shown, so the caller can move
 /// the list instead.
 pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
-    if !shown(app) {
+    if !is_open(app) {
         return false;
     }
     move_by(app, delta as isize);

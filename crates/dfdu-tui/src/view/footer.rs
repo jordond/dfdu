@@ -113,7 +113,7 @@ fn offered_now(app: &App) -> Vec<Hint> {
     if filter::editing(app) {
         return editing(&arrows, "move");
     }
-    if crate::features::marks_pane::shown(app) {
+    if crate::features::marks_pane::is_open(app) {
         return vec![
             hint(first_key(Action::Close), "back", 2),
             hint(arrows, "move", 2),

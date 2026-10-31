@@ -107,7 +107,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     footer::hints(f, app, footer);
 
     if let Some(pane) = pane {
-        if crate::features::marks_pane::shown(app) {
+        if crate::features::marks_pane::is_open(app) {
             crate::features::marks_pane::draw(f, app, pane);
         } else {
             details::draw(f, app, pane);

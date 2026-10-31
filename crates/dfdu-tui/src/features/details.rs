@@ -113,7 +113,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 /// Scrolls the pane by `delta` lines, focused or not (the mouse wheel over it). False when the
 /// pane is not shown, so the caller can move the list instead.
 pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
-    if marks_pane::shown(app) {
+    if marks_pane::is_open(app) {
         return marks_pane::scroll(app, delta);
     }
     let Some(r) = app.areas.details.filter(|_| app.details.open) else {
@@ -161,7 +161,7 @@ fn summary(app: &App) -> Option<String> {
 /// When it does not fit, the list view's selection line already sums up the selected row; the
 /// other views show a summary in the status line instead, unless it has another message to show.
 pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>) {
-    if !app.details.open && !marks_pane::shown(app) {
+    if !app.details.open && !marks_pane::is_open(app) {
         return (area, None);
     }
     let parts = if area.width >= RIGHT_FROM {

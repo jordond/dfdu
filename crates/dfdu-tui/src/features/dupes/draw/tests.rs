@@ -42,13 +42,19 @@ fn candidate(links: u32, private: Option<u64>) -> Candidate {
 #[test]
 fn paths_are_below_the_root_and_the_directory_they_share() {
     let root = Path::new("/r");
-    assert_eq!(shown(Path::new("/r/a/b"), root), PathBuf::from("a/b"));
     assert_eq!(
-        shown(root, root),
+        relative_to_root(Path::new("/r/a/b"), root),
+        PathBuf::from("a/b")
+    );
+    assert_eq!(
+        relative_to_root(root, root),
         PathBuf::from("/r"),
         "the root itself stays whole"
     );
-    assert_eq!(shown(Path::new("/x/y"), root), PathBuf::from("/x/y"));
+    assert_eq!(
+        relative_to_root(Path::new("/x/y"), root),
+        PathBuf::from("/x/y")
+    );
     let paths = |ps: &[&str]| ps.iter().map(PathBuf::from).collect::<Vec<_>>();
     assert_eq!(
         shared_dir(&paths(&["a/b/x", "a/b/y", "a/c"])),

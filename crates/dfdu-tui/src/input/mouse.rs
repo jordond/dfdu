@@ -75,7 +75,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     };
     if (app.areas.details.is_some_and(|r| r.contains(at))
         || details::focused(app)
-        || crate::features::marks_pane::shown(app))
+        || crate::features::marks_pane::is_open(app))
         && details::scroll(app, step)
     {
         return Some(Vec::new());

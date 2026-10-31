@@ -307,7 +307,7 @@ impl App {
         if filter::editing(self) {
             return filter::key(self, k, now);
         }
-        if crate::features::marks_pane::shown(self)
+        if crate::features::marks_pane::is_open(self)
             && let Some(fx) = crate::features::marks_pane::key(self, &k, now)
         {
             return fx;
