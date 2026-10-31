@@ -1,37 +1,8 @@
-use std::sync::Arc;
-
 use dfdu_rules::protected::State;
-use dfdu_tree::Kind;
 
 use super::*;
 use crate::applier::Command;
-use crate::applier::test_util::{Listing, Rig, chunk, close};
-use crate::test_util::meta;
-
-/// What job 1 classified against: the built-in rules for Linux, from `/home/u/r`.
-fn job_class() -> ClassOpts {
-    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
-    ClassOpts {
-        rules: Arc::new(dfdu_rules::builtin(&env).0),
-        path: b"/home/u/r".to_vec(),
-        inside: Vec::new(),
-        protection: State::Off,
-        chain: Vec::new(),
-    }
-}
-
-/// `/r/p/node_modules`, with `package.json` beside it when `project`; returns the tree and r,
-/// p, `node_modules`.
-fn project(project: bool) -> (Tree, [Ix; 3]) {
-    let mut t = Tree::new();
-    let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
-    let p = t.add_dir(r, b"p", &meta(Kind::Dir, 0, 2));
-    if project {
-        t.add_file(p, b"package.json", &meta(Kind::File, 10, 3), false, None);
-    }
-    let nm = t.add_dir(p, b"node_modules", &meta(Kind::Dir, 0, 4));
-    (t, [r, p, nm])
-}
+use crate::applier::test_util::{Listing, Rig, chunk, close, job_class, project};
 
 /// A rescan classifies against the job's rule path continued by the names below its root,
 /// with the hits its parent's listing gives it there, siblings included.

@@ -166,3 +166,6 @@ impl ClassifyLoaded {
         files.len() + subdirs.len() + others.len()
     }
 }
+
+#[cfg(test)]
+mod tests;
