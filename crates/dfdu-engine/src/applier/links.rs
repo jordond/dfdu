@@ -148,12 +148,12 @@ impl LinkTable {
         l.nlink = l.nlink.max(nlink);
         let e = self.entry(key, scope);
         let charged = e.charged.is_none();
-        let (node, made) = make(charged);
+        let (node, out) = make(charged);
         e.links.push(node);
         if charged {
             e.charged = Some(node);
         }
-        made
+        out
     }
 
     /// Records that a link was freed. Returns the scope to re-elect in if it was the charged
