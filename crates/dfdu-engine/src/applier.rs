@@ -154,7 +154,7 @@ pub struct Applier<B: Backend> {
     /// The local scanner. Its backend serves local reads; its jobs run only when
     /// `settings.remote` is unset, and are steered through the `scanner_*` methods, which pick
     /// one of the two.
-    pub scan: Arc<Shared<B>>,
+    scan: Arc<Shared<B>>,
     pub settings: ApplierSettings,
     jobs: BTreeMap<u32, Job>,
     /// Options of finished jobs dropped from `jobs`, for rescans of what they scanned.

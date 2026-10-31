@@ -109,7 +109,7 @@ impl<B: Backend> Applier<B> {
     pub(in crate::applier) fn resume_step(&mut self, m: &mut Model, mut walk: Box<ResumeWalk>) {
         let Some(root) = m.tree.resolve_visible(walk.root) else {
             if walk.verify.is_some() {
-                self.scan.end_job(JobId(walk.id));
+                self.scanner_end_job(JobId(walk.id));
             }
             return;
         };
@@ -126,7 +126,7 @@ impl<B: Backend> Applier<B> {
         }
         if walk.rescans.is_none() {
             if walk.verify.take().is_some() {
-                self.scan.end_job(JobId(walk.id));
+                self.scanner_end_job(JobId(walk.id));
             }
             walk.rescans = Some(self.resume_rescans(m, root, &walk));
         }
@@ -242,13 +242,17 @@ impl<B: Backend> Applier<B> {
             Work::Resume(walk) => Some(&mut **walk),
             _ => None,
         });
+        let mut checking = Vec::new();
         for walk in walking.chain(self.resume.waiting.as_deref_mut()) {
             if job.is_none_or(|j| j == walk.id) {
                 walk.cancelled = true;
                 if walk.verify.is_some() {
-                    self.scan.end_job(JobId(walk.id));
+                    checking.push(walk.id);
                 }
             }
+        }
+        for id in checking {
+            self.scanner_end_job(JobId(id));
         }
         if let Some(w) = self.resume.waiting.take_if(|w| w.cancelled) {
             self.work.push_front(Work::Resume(w));
