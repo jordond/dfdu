@@ -198,39 +198,48 @@ fn keep(rules: &RuleSet, f: &Filter, it: &Item, now: i64) -> bool {
 }
 
 /// Starts an engine that scans `path` with the rules, and waits for the scan and the guard
-/// checks of its matches; how long that took. With `journal` the engine can delete.
+/// checks of its matches, at most [`CHECK_WAIT`] for the checks: those not done by then are
+/// said on standard error and left unchecked. How long that took. With `journal` the engine
+/// can delete.
 pub fn scan(
     path: &Path,
     mounts: MountArgs,
-    rules: Arc<RuleSet>,
     threads: Option<usize>,
+    rules: Arc<RuleSet>,
     journal: bool,
 ) -> Result<(Engine<NativeBackend>, Duration), ExitCode> {
     let t0 = Instant::now();
     let engine = launch::scan(path, mounts, threads, Some(rules), journal)?;
-    wait_checks(&engine, CHECK_WAIT);
+    if !wait_checks(&engine, CHECK_WAIT) {
+        eprintln!("dfdu: {}", checks_cut_short(CHECK_WAIT));
+    }
     Ok((engine, t0.elapsed()))
 }
 
-/// Waits until every match whose rule has a guard was checked, or `timeout` passes.
+/// What [`scan`] says when the guard checks did not finish within `wait`.
+fn checks_cut_short(wait: Duration) -> String {
+    format!(
+        "the git and process checks of some matches did not finish in {} s; they count as \
+         not checked",
+        wait.as_secs()
+    )
+}
+
+/// Waits until every match whose rule has a guard was checked, or `timeout` passes; whether
+/// they were.
 fn wait_checks<B: Backend>(engine: &Engine<B>, timeout: Duration) -> bool {
-    let checked = |m: &Model| {
-        let Some(rules) = &m.rules else { return true };
-        m.tree.classes().all(|(ix, c)| {
-            let g = &rules.rule(c.rule).guard;
-            c.has(Class::CHECKED)
-                || (!g.not_vcs_tracked && g.not_running.is_empty())
-                || !m.tree.is_visible(ix)
-        })
-    };
-    let t0 = Instant::now();
-    while !engine.read(checked) {
-        if t0.elapsed() > timeout {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    true
+    launch::poll(engine, Some(timeout), |m| guards_checked(m).then_some(())).is_some()
+}
+
+/// Whether every visible match whose rule has a guard was checked.
+fn guards_checked(m: &Model) -> bool {
+    let Some(rules) = &m.rules else { return true };
+    m.tree.classes().all(|(ix, c)| {
+        let g = &rules.rule(c.rule).guard;
+        c.has(Class::CHECKED)
+            || (!g.not_vcs_tracked && g.not_running.is_empty())
+            || !m.tree.is_visible(ix)
+    })
 }
 
 fn age_days(now: i64, mtime: i64) -> i64 {
@@ -326,7 +335,7 @@ pub fn reclaimable(items: &[Item]) -> u64 {
 }
 
 pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
-    let (engine, elapsed) = scan(&args.path, args.mounts, rules.clone(), args.threads, false)?;
+    let (engine, elapsed) = scan(&args.path, args.mounts, args.threads, rules.clone(), false)?;
     let now = now_secs();
     let code = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {

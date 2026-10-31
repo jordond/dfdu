@@ -88,3 +88,52 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
     let json = item_json(&rules, &list[0], 0);
     assert_eq!(json["matches_inside"], 1);
 }
+
+/// A match whose rule has a guard counts as checked once its class says so; one whose rule has
+/// none counts at once.
+#[test]
+fn guarded_matches_wait_for_their_checks() {
+    use dfdu_tree::Meta;
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    let rules = Arc::new(dfdu_rules::builtin(&env).0);
+    let guarded = |want: bool| {
+        let i = rules.rules().iter().position(|r| {
+            let g = &r.guard;
+            (g.not_vcs_tracked || !g.not_running.is_empty()) == want
+        });
+        rules
+            .index(&rules.rules()[i.expect("a rule")].id)
+            .expect("its index")
+    };
+    let mut m = Model {
+        rules: Some(rules.clone()),
+        ..Model::default()
+    };
+    let meta = |ino| Meta {
+        kind: Kind::Dir,
+        apparent: 0,
+        alloc: 0,
+        mtime: 0,
+        dev: 1,
+        ino,
+        nlink: 1,
+        mount: 0,
+    };
+    let root = m.tree.new_root(b"/r", &meta(1), true);
+    let a = m.tree.add_dir(root, b"a", &meta(2));
+    let class = |rule, flags| Class {
+        rule,
+        safety: Safety::Safe,
+        degraded: None,
+        flags,
+    };
+    m.tree.set_class(a, Some(class(guarded(false), 0)));
+    assert!(guards_checked(&m));
+    m.tree.set_class(a, Some(class(guarded(true), 0)));
+    assert!(!guards_checked(&m));
+    m.tree
+        .set_class(a, Some(class(guarded(true), Class::CHECKED)));
+    assert!(guards_checked(&m));
+    let msg = checks_cut_short(CHECK_WAIT);
+    assert!(msg.contains("did not finish in 60 s"), "{msg}");
+}
