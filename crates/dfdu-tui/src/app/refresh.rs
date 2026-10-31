@@ -128,7 +128,8 @@ impl SortSchedule {
         )
     }
 
-    fn sorted(&mut self, now: Instant) {
+    /// Records a sort at `now`, which took in every snapshot that changed before it.
+    fn record_sort(&mut self, now: Instant) {
         self.last_sort = now;
         self.changed = false;
     }
@@ -309,7 +310,7 @@ impl App {
         let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
         if resorted {
             self.sort_gen += 1;
-            self.sort_schedule.sorted(now);
+            self.sort_schedule.record_sort(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.

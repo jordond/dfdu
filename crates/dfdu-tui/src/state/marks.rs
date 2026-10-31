@@ -76,7 +76,7 @@ impl Marks {
     }
 
     /// Records a change by the user: the sizes need a read.
-    fn changed(&mut self) {
+    fn record_change(&mut self) {
         self.version += 1;
         self.index();
     }
@@ -164,7 +164,7 @@ pub fn toggle(app: &mut App) {
             marks.items.push(item);
         }
     }
-    marks.changed();
+    marks.record_change();
     app.move_by(1);
 }
 
@@ -218,7 +218,7 @@ pub fn set(app: &mut App, item: Item, on: bool) {
         }
         _ => return,
     }
-    marks.changed();
+    marks.record_change();
 }
 
 /// Marks every one of `items` not marked yet, with one look-up each, and returns how many it
@@ -260,7 +260,7 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
         marks.items.retain(|_| keep.next().unwrap_or(true));
     }
     if added > 0 || dropped > 0 {
-        marks.changed();
+        marks.record_change();
     }
     added
 }
@@ -268,7 +268,7 @@ pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
 pub fn clear(app: &mut App) {
     if !app.marks.is_empty() {
         app.marks.items.clear();
-        app.marks.changed();
+        app.marks.record_change();
     }
 }
 
@@ -443,7 +443,7 @@ pub fn invert(app: &mut App) {
     });
     let (marked, unmarked) = (on.len(), off.len());
     marks.items.extend(on);
-    marks.changed();
+    marks.record_change();
     app.status = Some(format!(
         "marks inverted: {marked} marked, {unmarked} unmarked"
     ));
