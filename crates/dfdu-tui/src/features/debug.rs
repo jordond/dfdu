@@ -143,7 +143,7 @@ pub fn read(m: &Model, budget: &Budget, counters: Counters) -> Info {
         timing: s.timing.clone(),
         counters,
         budget: BudgetUse::of(budget),
-        running: s.running(),
+        running: s.running_jobs(),
         stalled: s.stalled.len(),
         stalled_paths: s
             .stalled

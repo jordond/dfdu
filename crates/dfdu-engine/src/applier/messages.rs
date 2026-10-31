@@ -116,7 +116,7 @@ impl<B: Backend> Applier<B> {
                 st.corrupt += 1;
                 m.status.incomplete = true;
                 m.status
-                    .anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
+                    .push_anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
                 return None;
             }
         };
@@ -270,7 +270,7 @@ impl<B: Backend> Applier<B> {
             Ordering::Greater => {
                 m.status.stats.corrupt += 1;
                 m.status.incomplete = true;
-                m.status.anomaly(format!(
+                m.status.push_anomaly(format!(
                     "close with {chunks} chunks after {seen}: job {} dir {}",
                     job.0, dir.0
                 ));

@@ -19,7 +19,7 @@ impl<B: Backend> Applier<B> {
             } => self.item_result(m, plan, node, bytes, &result),
             DeleterMsg::Done { plan, btrfs } => {
                 if btrfs {
-                    m.status.notice(
+                    m.status.push_notice(
                         "btrfs frees the space when the transaction commits; space of deleted \
                          snapshots is freed in the background, so free space can lag"
                             .into(),
@@ -44,7 +44,7 @@ impl<B: Backend> Applier<B> {
                 m.status.staged.remove(bytes);
                 self.forget_undoable(plan, bytes);
                 if let Err(e) = result {
-                    m.status.notice(format!("delete staged: {e}"));
+                    m.status.push_notice(format!("delete staged: {e}"));
                 }
             }
             DeleterMsg::Restored {
@@ -60,7 +60,7 @@ impl<B: Backend> Applier<B> {
                 match result {
                     Ok(to) => {
                         if to != original {
-                            m.status.notice(format!(
+                            m.status.push_notice(format!(
                                 "undo: {} exists again; restored as {}",
                                 original.display(),
                                 to.display()
@@ -68,7 +68,9 @@ impl<B: Backend> Applier<B> {
                         }
                         self.rescan_paths.push(to);
                     }
-                    Err(e) => m.status.notice(format!("undo {}: {e}", original.display())),
+                    Err(e) => m
+                        .status
+                        .push_notice(format!("undo {}: {e}", original.display())),
                 }
             }
             DeleterMsg::NativeOutput { id, line } => {
@@ -111,7 +113,7 @@ fn notice_unfinished(status: &mut Status, items: &[String], notes: Vec<String>) 
             1 => String::new(),
             n => format!("; and {} more", n - 1),
         };
-        status.notice(format!(
+        status.push_notice(format!(
             "an earlier session left {} delete{} unfinished, kept as they are \
              (dfdu recover lists them): {first}{more}",
             items.len(),
@@ -119,7 +121,7 @@ fn notice_unfinished(status: &mut Status, items: &[String], notes: Vec<String>) 
         ));
     }
     for n in notes {
-        status.notice(format!("deletion journal: {n}"));
+        status.push_notice(format!("deletion journal: {n}"));
     }
 }
 

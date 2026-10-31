@@ -445,7 +445,7 @@ fn dense_links_swapped_in() {
         finish_jobs(&mut sim);
         rescan(&mut sim, "profiles");
         // Until the job finishes, then count the steps of the merge.
-        while sim.model.status.running() > 0 {
+        while sim.model.status.running_jobs() > 0 {
             for w in 0..sim.workers.len() {
                 sim.step_worker(w);
             }

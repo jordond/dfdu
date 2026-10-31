@@ -127,7 +127,7 @@ impl<B: Backend> Applier<B> {
     pub fn apply_command(&mut self, m: &mut Model, cmd: Command) {
         m.recent.push(Event::of_command(&cmd));
         if let Some(why) = self.refusal(m, &cmd) {
-            m.status.notice(why.into());
+            m.status.push_notice(why.into());
             m.status.commands_applied += 1;
             return;
         }

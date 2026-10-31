@@ -67,7 +67,7 @@ fn a_closed_directory_is_measured_while_its_job_runs() {
 
         sim.applier_work().unwrap();
         assert_eq!(sim.answer_measurements().unwrap(), 2);
-        assert_eq!(sim.model.status.running(), 1, "s holds the job open");
+        assert_eq!(sim.model.status.running_jobs(), 1, "s holds the job open");
         for f in ["a/x", "a/y"] {
             assert!(sim.model.tree.flags(find(sim, f)).has(NodeFlags::MEASURED));
         }

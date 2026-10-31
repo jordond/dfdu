@@ -98,7 +98,7 @@ impl<B: Backend> Applier<B> {
                 continue;
             }
             if let Some(why) = self.item_refusal(&m.tree, ix) {
-                m.status.notice(format!(
+                m.status.push_notice(format!(
                     "delete: {} {why}",
                     String::from_utf8_lossy(m.tree.name(ix))
                 ));
@@ -219,7 +219,7 @@ impl<B: Backend> Applier<B> {
             let name = ix
                 .map(|ix| String::from_utf8_lossy(m.tree.name(ix)).into_owned())
                 .unwrap_or_default();
-            m.status.notice(format!("delete {name}: {result}"));
+            m.status.push_notice(format!("delete {name}: {result}"));
             if ix.is_some_and(|ix| unmark_kept(&mut m.tree, ix, result)) {
                 self.delete.deferred_rescans.push(node);
             }

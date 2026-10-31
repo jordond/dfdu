@@ -126,7 +126,7 @@ impl<B: Backend> Applier<B> {
         for id in running {
             self.cancel(id);
         }
-        m.status.notice(format!("remote scan: {why}"));
+        m.status.push_notice(format!("remote scan: {why}"));
         m.status.disconnected = Some(why);
     }
 
