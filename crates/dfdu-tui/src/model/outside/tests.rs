@@ -121,6 +121,6 @@ fn a_links_lookup_without_a_thread_is_not_pending() {
     assert!(o.pending());
     o.look_up_linked(Arc::default(), false);
     assert!(!o.pending());
-    assert!(o.linked().is_empty());
+    assert_eq!(o.linked().len(), 0);
     assert!(o.poll());
 }
