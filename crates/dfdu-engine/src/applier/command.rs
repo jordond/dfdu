@@ -44,6 +44,10 @@ pub enum Command {
     /// ([`Engine::resume`](crate::Engine::resume)); `None` when it could not be taken (the
     /// root is listed again, and its rescan says why). A remote scan's root is not judged on
     /// it.
+    ///
+    /// An engine is resumed with [`Engine::resume`](crate::Engine::resume), which loads the
+    /// tree, asks the journal and stats the root before it sends this; only what drives an
+    /// applier without an engine (the simulation) builds it.
     Resume {
         node: NodeRef,
         opts: JobOptions,
