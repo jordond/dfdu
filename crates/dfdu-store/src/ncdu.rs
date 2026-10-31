@@ -259,7 +259,7 @@ fn add_entry(
     let dev = info.dev.unwrap_or(pdev);
     if listed {
         let flags = if dev == pdev {
-            0
+            NodeFlags::default()
         } else {
             NodeFlags::MOUNT_ROOT
         };
@@ -276,12 +276,12 @@ fn add_entry(
         let (kind, flags) = match why.as_slice() {
             b"otherfs" | b"othfs" => (Kind::Dir, NodeFlags::MOUNT_ROOT),
             b"kernfs" => (Kind::Dir, NodeFlags::KERNEL),
-            b"frmlink" => (Kind::Symlink, 0),
+            b"frmlink" => (Kind::Symlink, NodeFlags::default()),
             // Not stat'ed: a directory as far as anyone knows, unless `mode` says
             // otherwise.
             _ => match info.mode {
-                Some(_) => (kind_of(info), 0),
-                None => (Kind::Dir, 0),
+                Some(_) => (kind_of(info), NodeFlags::default()),
+                None => (Kind::Dir, NodeFlags::default()),
             },
         };
         let m = meta_of(info, kind, dev);

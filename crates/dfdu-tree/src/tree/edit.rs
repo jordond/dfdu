@@ -25,13 +25,12 @@ pub(super) enum FreeWork {
 }
 
 impl Tree {
-    fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: u16) -> u32 {
+    fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: NodeFlags) -> u32 {
         // Names are never truncated: a cut name would not convert back (`name_os`). Entry names
         // are at most a few hundred bytes; root paths can be longer, up to 16 MiB.
         let name = self.names.push(name);
         let dev = self.dev_index(meta.dev);
-        let mut f = NodeFlags::default();
-        f.set(flags, true);
+        let mut f = flags;
         if meta.is_hardlink() {
             f.set(NodeFlags::HARDLINK, true);
         }
@@ -95,7 +94,11 @@ impl Tree {
     /// Creates a root directory. Visible roots are what the UI shows; non-visible roots hold
     /// rescan shadows until they are swapped in.
     pub fn new_root(&mut self, name: &[u8], meta: &Meta, visible: bool) -> Ix {
-        let flags = if visible { NodeFlags::VISIBLE_ROOT } else { 0 };
+        let flags = if visible {
+            NodeFlags::VISIBLE_ROOT
+        } else {
+            NodeFlags::default()
+        };
         let i = self.alloc_node(NONE, name, meta, flags);
         self.alloc_dir(i);
         if visible {
@@ -107,12 +110,18 @@ impl Tree {
     /// Adds a directory placeholder under `parent`. The caller propagates the new child's
     /// totals with [`Tree::propagate_add`] before releasing the write lock.
     pub fn add_dir(&mut self, parent: Ix, name: &[u8], meta: &Meta) -> Ix {
-        self.add_dir_flagged(parent, name, meta, 0)
+        self.add_dir_flagged(parent, name, meta, NodeFlags::default())
     }
 
     /// [`Tree::add_dir`] with flags set from the start (`MOUNT_ROOT`, `DUP_MOUNT`), so they
     /// are part of the directory's own totals.
-    pub fn add_dir_flagged(&mut self, parent: Ix, name: &[u8], meta: &Meta, flags: u16) -> Ix {
+    pub fn add_dir_flagged(
+        &mut self,
+        parent: Ix,
+        name: &[u8],
+        meta: &Meta,
+        flags: NodeFlags,
+    ) -> Ix {
         let i = self.alloc_node(parent.0, name, meta, flags);
         self.alloc_dir(i);
         self.push_child(parent, i);
@@ -132,7 +141,7 @@ impl Tree {
         let extra = if charged && meta.is_hardlink() {
             NodeFlags::CHARGED
         } else {
-            0
+            NodeFlags::default()
         };
         let i = self.alloc_node(parent.0, name, meta, extra);
         if error.is_some() {
@@ -223,7 +232,7 @@ impl Tree {
 
     /// Sets or clears a flag. For flags counted in [`Totals`] (`MOUNT_ROOT`, `RO_SUBVOL`) the
     /// node's and its ancestors' totals follow.
-    pub fn set_flag(&mut self, ix: Ix, flag: u16, on: bool) {
+    pub fn set_flag(&mut self, ix: Ix, flag: NodeFlags, on: bool) {
         self.restate(ix, |t| t.nodes[ix.0 as usize].flags.set(flag, on));
     }
 
@@ -483,7 +492,7 @@ impl Tree {
         let n = &mut self.nodes[i as usize];
         self.names_garbage += NameArena::len_of(n.name);
         n.generation = n.generation.wrapping_add(1);
-        n.flags = NodeFlags(NodeFlags::FREE);
+        n.flags = NodeFlags::FREE;
         n.parent = NONE;
         if n.dir != NONE {
             let d = n.dir;

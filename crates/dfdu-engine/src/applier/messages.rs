@@ -410,7 +410,7 @@ fn add_subdirs(
         .iter()
         .zip(subdir_ids(c.first_subdir, c.subdirs.len()))
     {
-        let mut flags = 0;
+        let mut flags = NodeFlags::default();
         if s.mount_root {
             flags |= NodeFlags::MOUNT_ROOT;
         }

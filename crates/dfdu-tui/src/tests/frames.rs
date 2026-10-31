@@ -288,9 +288,9 @@ fn errors_are_listed_and_lead_to_the_entry() {
     let meta = |kind, ino| meta(kind, 100, ino);
     let mut m = dfdu_engine::Model::default();
     let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 1), true);
-    let a = m.tree.add_dir_flagged(root, b"a", &meta(Kind::Dir, 2), 0);
-    let b = m.tree.add_dir_flagged(a, b"b", &meta(Kind::Dir, 3), 0);
-    let locked = m.tree.add_dir_flagged(b, b"locked", &meta(Kind::Dir, 4), 0);
+    let a = m.tree.add_dir(root, b"a", &meta(Kind::Dir, 2));
+    let b = m.tree.add_dir(a, b"b", &meta(Kind::Dir, 3));
+    let locked = m.tree.add_dir(b, b"locked", &meta(Kind::Dir, 4));
     let gone = m
         .tree
         .add_file(root, b"gone", &meta(Kind::File, 5), false, None);

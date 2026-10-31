@@ -44,7 +44,7 @@ pub(super) fn model() -> Model {
         tree.propagate_add(parent, &own);
     };
     tree.dir_mut(root).expect("root").state = DirState::Complete;
-    let proj = dir(tree, root, b"proj", 2, 0);
+    let proj = dir(tree, root, b"proj", 2, NodeFlags::default());
     for (i, (name, size)) in [
         ("big.iso", 50_000),
         ("a.o", 12_000),
@@ -58,7 +58,7 @@ pub(super) fn model() -> Model {
     {
         file(tree, proj, name.as_bytes(), size, 10 + i as u64);
     }
-    let locked = dir(tree, proj, b"locked", 3, 0);
+    let locked = dir(tree, proj, b"locked", 3, NodeFlags::default());
     tree.dir_mut(locked).expect("dir").state = DirState::Failed;
     tree.set_error(locked, ErrKind::PermissionDenied);
     dir(tree, proj, b"mnt", 4, NodeFlags::MOUNT_ROOT);
@@ -165,7 +165,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     let mut m = model();
     let tree = &mut m.tree;
     let root = tree.roots().next().expect("root");
-    let logs = tree.add_dir_flagged(root, b"logs", &meta(Kind::Dir, 0, 30), 0);
+    let logs = tree.add_dir(root, b"logs", &meta(Kind::Dir, 0, 30));
     let own = tree.own(logs);
     tree.propagate_add(logs, &own);
     tree.dir_mut(logs).expect("dir").state = DirState::Complete;
@@ -173,7 +173,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     let f = tree.add_file(logs, b"big.log", &big, false, None);
     let own = tree.own(f);
     tree.propagate_add(logs, &own);
-    let locked = tree.add_dir_flagged(logs, b"locked", &meta(Kind::Dir, 0, 32), 0);
+    let locked = tree.add_dir(logs, b"locked", &meta(Kind::Dir, 0, 32));
     let own = tree.own(locked);
     tree.propagate_add(locked, &own);
     tree.dir_mut(locked).expect("dir").state = DirState::Failed;

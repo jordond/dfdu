@@ -230,8 +230,8 @@ impl Writer {
             let kept = DIR_FLAGS
                 .iter()
                 .filter(|&&f| flags.has(f))
-                .fold(0, |a, &f| a | f);
-            put_u(r, u64::from(kept));
+                .fold(NodeFlags::default(), |a, &f| a | f);
+            put_u(r, u64::from(kept.bits()));
             r.push(state_code(d.state));
             self.stack.push((tree.children(ix).collect(), 0));
         }
