@@ -284,48 +284,49 @@ fn scan_with<B: Backend>(
 /// Prints the scan of `root` as `o` says: the root total, the table with its footer, JSON,
 /// NDJSON or an ncdu export, and after those the entries that could not be read when asked.
 fn print_scan(m: &Model, root: Ix, o: &Output, elapsed: Duration) -> Result<(), ExitCode> {
-    match (o.bytes, o.format) {
-        (true, _) => outln!("{}", o.mode.of(&shown_total(&m.tree, root, o.types))),
-        (false, Format::Table) => {
-            let (depth, top) = (o.depth.unwrap_or(1), o.top.unwrap_or(10));
-            print_tree(m, root, depth, top, o.mode, o.types);
-            if o.by_type {
-                print_by_type(&m.tree, root, o.mode, o.types);
+    let table = !o.bytes && o.format == Format::Table;
+    print_out(|w| {
+        match (o.bytes, o.format) {
+            (true, _) => {
+                let total = o.mode.of(&shown_total(&m.tree, root, o.types));
+                return writeln!(w, "{total}");
             }
-            if o.errors {
-                print_errors(m, root);
-            }
-            print_footer(m, root, elapsed, o.errors);
-            outside::footer(m, root, o.local);
-        }
-        (false, Format::Json | Format::Ndjson) => {
-            let left_out = outside::gather(m, root, o.local);
-            let out = json::ScanOut {
-                mode: o.mode,
-                depth: o.depth,
-                top: o.top,
-                elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                note: &|ix| notes(m, ix),
-                outside: Some(&left_out),
-            };
-            print_out(|w| {
-                if o.format == Format::Ndjson {
-                    json::scan_ndjson(w, m, root, &out)
-                } else {
-                    json::scan(w, m, root, &out)
+            (false, Format::Table) => {
+                let (depth, top) = (o.depth.unwrap_or(1), o.top.unwrap_or(10));
+                print_tree(w, m, root, depth, top, o.mode, o.types)?;
+                if o.by_type {
+                    print_by_type(w, &m.tree, root, o.mode, o.types)?;
                 }
-            })?;
-            if o.errors {
-                print_errors(m, root);
+            }
+            (false, Format::Json | Format::Ndjson) => {
+                let left_out = outside::gather(m, root, o.local);
+                let out = json::ScanOut {
+                    mode: o.mode,
+                    depth: o.depth,
+                    top: o.top,
+                    elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                    note: &|ix| notes(m, ix),
+                    outside: Some(&left_out),
+                };
+                if o.format == Format::Ndjson {
+                    json::scan_ndjson(w, m, root, &out)?;
+                } else {
+                    json::scan(w, m, root, &out)?;
+                }
+            }
+            (false, Format::Ncdu) => {
+                let meta = transfer::ncdu_meta();
+                dfdu_store::ncdu::export(&m.tree, root, &mut *w, &meta)?;
             }
         }
-        (false, Format::Ncdu) => {
-            let meta = transfer::ncdu_meta();
-            print_out(|w| dfdu_store::ncdu::export(&m.tree, root, w, &meta).map(|_| ()))?;
-            if o.errors {
-                print_errors(m, root);
-            }
+        if o.errors {
+            print_errors(w, m, root)?;
         }
+        Ok(())
+    })?;
+    if table {
+        print_footer(m, root, elapsed, o.errors);
+        outside::footer(m, root, o.local);
     }
     Ok(())
 }

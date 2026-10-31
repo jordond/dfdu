@@ -16,10 +16,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Args;
-use dfdu_engine::{Command, Engine, Mode, WaitIdle};
+use dfdu_engine::{Command, Engine, Mode};
 use dfdu_rules::{Action, RuleSet, Safety};
 use dfdu_scan::Backend;
 use dfdu_tree::{Class, NodeRef};
@@ -27,6 +27,9 @@ use dfdu_tree::{Class, NodeRef};
 use crate::report::{self, Filter, Item};
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
 use output::{Results, print_json, print_table};
+
+/// How long one tool's cleanup command may run before it counts as not finished.
+const NATIVE_WAIT: Duration = Duration::from_secs(3600);
 
 #[derive(Args)]
 #[expect(
@@ -166,7 +169,7 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
 /// `--restore-staged` (and `--yes`) finishes or restores their staged items. Returns whether
 /// something failed.
 fn earlier_sessions(args: &CleanArgs) -> bool {
-    let Some(dir) = dfdu_clean::default_journal_dir() else {
+    let Some(dir) = dfdu_sys::dirs::journal_dir() else {
         return false;
     };
     let mut r = match dfdu_clean::recover::scan(&dir) {
@@ -224,7 +227,7 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
 
 pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
     let earlier_failed = earlier_sessions(args);
-    let (engine, _) = report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)?;
+    let (engine, _) = report::scan(&args.path, args.mounts, args.threads, rules.clone(), true)?;
     let now = dfdu_tree::now_secs();
     let (root, complete, items) = engine.read(|m| {
         let root = m.tree.roots().next().map(|r| m.tree.path_buf(r));
@@ -244,35 +247,31 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode>
     if args.yes {
         execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
-    let code = engine.read(|m| {
-        if args.format == report::ReportFormat::Json {
-            written(print_json(
-                m,
-                rules,
-                args,
-                &Results {
-                    root: &root,
-                    items: &items,
-                    outcomes: &outcomes,
-                    complete,
-                    now,
-                },
-            ))?;
-        } else {
-            print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
-        }
-        Ok(
-            if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
-                ExitCode::from(EXIT_DELETE_FAILED)
-            } else if !complete {
-                ExitCode::from(EXIT_PARTIAL)
-            } else {
-                ExitCode::SUCCESS
-            },
-        )
-    });
     engine.shutdown(launch::SHUTDOWN);
-    code
+    if args.format == report::ReportFormat::Json {
+        written(print_json(
+            rules,
+            args,
+            &Results {
+                root: &root,
+                items: &items,
+                outcomes: &outcomes,
+                complete,
+                now,
+            },
+        ))?;
+    } else {
+        print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
+    }
+    Ok(
+        if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
+            ExitCode::from(EXIT_DELETE_FAILED)
+        } else if !complete {
+            ExitCode::from(EXIT_PARTIAL)
+        } else {
+            ExitCode::SUCCESS
+        },
+    )
 }
 
 /// Deletes the planned items in one plan, then runs the native commands one at a time.
@@ -297,14 +296,11 @@ fn execute<B: Backend>(
             items: deletes.iter().flat_map(|&i| items[i].targets()).collect(),
             mode,
         });
-        let summary = loop {
-            let stopped = matches!(engine.wait_idle(None), WaitIdle::Fatal(_));
-            let s = engine.read(|m| m.status.last_delete.clone());
-            if s.as_ref().map(|d| d.plan) != before || stopped {
-                break s;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let summary = launch::poll(engine, None, |m| {
+            (m.status.last_delete.as_ref())
+                .filter(|d| Some(d.plan) != before)
+                .cloned()
+        });
         let problems: HashMap<NodeRef, String> = summary
             .map(|s| s.problems.into_iter().collect())
             .unwrap_or_default();
@@ -322,9 +318,7 @@ fn execute<B: Backend>(
         });
         if mode == Mode::Stage {
             engine.send(Command::CommitStaged);
-            while engine.read(|m| m.status.staged.items > 0 && m.status.fatal.is_none()) {
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            launch::poll(engine, None, |m| (m.status.staged.items == 0).then_some(()));
         }
     }
     for (n, &i) in commands.iter().enumerate() {
@@ -335,24 +329,12 @@ fn execute<B: Backend>(
             variant: None,
             dry_run: false,
         });
-        let t0 = Instant::now();
-        let done = loop {
-            let d = engine.read(|m| {
-                m.status
-                    .native
-                    .as_ref()
-                    .filter(|r| r.id == id)
-                    .and_then(|r| r.done.clone())
-            });
-            if let Some(d) = d {
-                break d;
-            }
-            if engine.read(|m| m.status.fatal.is_some()) || t0.elapsed() > Duration::from_secs(3600)
-            {
-                break Err("did not finish".into());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        let done = launch::poll(engine, Some(NATIVE_WAIT), |m| {
+            (m.status.native.as_ref())
+                .filter(|r| r.id == id)
+                .and_then(|r| r.done.clone())
+        })
+        .unwrap_or_else(|| Err("did not finish".into()));
         outcomes[i] = match done {
             Ok(()) => Outcome::Deleted,
             Err(e) => Outcome::Failed(e),

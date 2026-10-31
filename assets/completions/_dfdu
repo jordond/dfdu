@@ -15,7 +15,7 @@ _dfdu() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'(--disks -f --file)--resume-from=[Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done]:FILE:_files' \
+'(--disks -f --file)--resume-from=[Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done. A snapshot is rescanned with the mount options it was taken with]:FILE:_files' \
 '(--disks)-f+[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
 '(--disks)--file=[Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from \`ncdu -O\`; \`-\` for stdin), read-only]:FILE:_files' \
 '(--disks -f --file --resume-from)--remote=[Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history]:HOST:_default' \

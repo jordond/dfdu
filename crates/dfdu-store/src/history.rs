@@ -230,12 +230,6 @@ impl Growth {
     }
 }
 
-/// `history.sqlite3` in the state directory ([`dfdu_sys::dirs`]).
-#[must_use]
-pub fn default_path() -> Option<PathBuf> {
-    dfdu_sys::dirs::history_path()
-}
-
 impl History {
     /// Opens or creates the database at `path` (and its directory).
     ///

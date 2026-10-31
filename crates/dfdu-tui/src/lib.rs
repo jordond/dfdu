@@ -50,7 +50,7 @@ pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
 pub use model::snapshot::Snapshot;
 pub use run_loop::{event_loop, event_loop_with};
-pub use setup::{ThemeChoice, UiSettings, theme_dir};
+pub use setup::{ThemeChoice, UiSettings};
 pub use state::motion::MAX_STEP as MAX_EASING_STEP;
 pub use theme::{Bars, BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
 
@@ -210,7 +210,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     };
     // Only scans that count the same data are compared.
     let link = |root: &Path, job: &JobOptions, engine: &EngineOptions| {
-        let db = history::default_path().filter(|_| opts.history)?;
+        let db = dfdu_sys::dirs::history_path().filter(|_| opts.history)?;
         let key = history::options_key(job, engine.measure_workers > 0);
         Some(HistoryLink::start(db, root.to_path_buf(), key))
     };

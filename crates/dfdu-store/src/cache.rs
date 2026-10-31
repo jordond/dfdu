@@ -297,8 +297,8 @@ impl Cache {
     pub fn slot(&self, key: Key) -> Slot {
         Slot {
             path: self.dir.join(key.file_name()),
-            dir: self.dir.clone(),
             key,
+            cache: self.clone(),
         }
     }
 

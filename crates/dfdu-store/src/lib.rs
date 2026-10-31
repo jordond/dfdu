@@ -283,8 +283,9 @@ pub struct Opened {
     pub entries: u64,
     /// The program that wrote it and its version, when the file says.
     pub written_by: Option<String>,
-    /// Where the change journal stood when the scan started (snapshots only).
-    pub journal: Option<dfdu_scan::journal::JournalPosition>,
+    /// What the scan was (snapshots only): its mount options, and where the change journal
+    /// stood when it started.
+    pub header: Option<snapshot::Header>,
 }
 
 /// Reads a dfdu snapshot or an ncdu export (JSON, plain or zstd, or binary), told apart by
@@ -312,7 +313,7 @@ pub fn open(r: impl io::Read, limits: &Limits) -> Result<Opened, ImportError> {
             root: l.root,
             entries: l.entries,
             written_by: Some(format!("dfdu {}", l.header.tool_version)),
-            journal: l.header.journal,
+            header: Some(l.header),
         });
     }
     let im = ncdu::import(r, limits)?;
@@ -325,7 +326,7 @@ pub fn open(r: impl io::Read, limits: &Limits) -> Result<Opened, ImportError> {
         root: im.root,
         entries: im.entries,
         written_by,
-        journal: None,
+        header: None,
     })
 }
 
@@ -353,7 +354,7 @@ fn binary_opened(im: ncdu::Imported) -> Opened {
         root: im.root,
         entries: im.entries,
         written_by: Some("ncdu (binary export)".into()),
-        journal: None,
+        header: None,
     }
 }
 

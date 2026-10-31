@@ -4,9 +4,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command, Engine, EngineOptions, WaitIdle};
+use dfdu_engine::{Command, Engine, EngineOptions, Model, WaitIdle};
 use dfdu_rules::RuleSet;
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, JobOptions, NativeBackend, native_backend};
@@ -26,7 +26,7 @@ pub fn headless(journal: bool) -> EngineOptions {
         auto_abandon: Some(STALL_ABANDON),
         read_only: !journal,
         journal_dir: if journal {
-            dfdu_clean::default_journal_dir()
+            dfdu_sys::dirs::journal_dir()
         } else {
             None
         },
@@ -149,6 +149,26 @@ pub fn wait_scan<B: Backend>(engine: Engine<B>) -> Result<Engine<B>, ExitCode> {
     Ok(engine)
 }
 
+/// Reads the model with `f` every 10 ms until it gives `Some`. `None` when the engine stopped on
+/// a fatal error first, or `limit` passed (without one it waits as long as that takes).
+pub fn poll<B: Backend, T>(
+    engine: &Engine<B>,
+    limit: Option<Duration>,
+    f: impl Fn(&Model) -> Option<T>,
+) -> Option<T> {
+    let t0 = Instant::now();
+    loop {
+        let (v, fatal) = engine.read(|m| (f(m), m.status.fatal.is_some()));
+        if v.is_some() || fatal {
+            return v;
+        }
+        if limit.is_some_and(|l| t0.elapsed() > l) {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -226,5 +246,19 @@ mod tests {
         let items = engine.read(|m| m.tree.roots().next().map(|r| m.tree.total(r).items));
         engine.shutdown(SHUTDOWN);
         assert_eq!(items, Some(3));
+    }
+
+    #[test]
+    fn poll_returns_what_it_reads_or_none_once_its_limit_passed() {
+        let engine = Engine::start(PortableBackend::default(), headless(false));
+        let limit = Some(Duration::from_millis(30));
+        let t0 = Instant::now();
+        assert_eq!(poll(&engine, limit, |_| None::<()>), None);
+        assert!(t0.elapsed() >= Duration::from_millis(30));
+        assert_eq!(
+            poll(&engine, None, |m| Some(m.tree.roots().count())),
+            Some(0)
+        );
+        engine.shutdown(SHUTDOWN);
     }
 }

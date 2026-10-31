@@ -2,6 +2,7 @@
 //! not read, and the summary on stderr.
 
 use std::fmt::Write as _;
+use std::io::{self, Write};
 use std::time::Duration;
 
 use dfdu_engine::{Model, SizeMode, Timing};
@@ -20,51 +21,55 @@ pub fn shown_total(tree: &Tree, ix: Ix, filter: Option<&TypeFilter>) -> dfdu_tre
     }
 }
 
-/// The tree `depth` levels deep, `top` entries per directory. With a type filter, sizes count
-/// the matching files only and entries without any are left out.
+/// Writes the tree `depth` levels deep to `w`, `top` entries per directory. With a type
+/// filter, sizes count the matching files only and entries without any are left out.
 pub fn print_tree(
+    w: &mut dyn Write,
     m: &Model,
     root: Ix,
     depth: usize,
     top: usize,
     mode: SizeMode,
     filter: Option<&TypeFilter>,
-) {
+) -> io::Result<()> {
     let tree = &m.tree;
     let root_total = shown_total(tree, root, filter);
     if let Some(f) = filter {
-        outln!("only {f}: {} files", root_total.items);
+        writeln!(w, "only {f}: {} files", root_total.items)?;
     }
-    outln!(
+    writeln!(
+        w,
         "{:>10}  {}{}",
         dfdu_engine::human(mode.of(&root_total)),
         String::from_utf8_lossy(tree.name(root)),
         note(m, root)
-    );
+    )?;
     // Depth first, largest first, `top` entries per directory.
     let mut stack = vec![(root, 0usize, 0u64)];
     while let Some((ix, d, bytes)) = stack.pop() {
         if ix != root {
             let slash = if tree.dir(ix).is_some() { "/" } else { "" };
-            outln!(
+            writeln!(
+                w,
                 "{:>10}  {}{}{}{}",
                 dfdu_engine::human(bytes),
                 "  ".repeat(d),
                 String::from_utf8_lossy(tree.name(ix)),
                 slash,
                 note(m, ix)
-            );
+            )?;
         }
         if d >= depth {
             continue;
         }
         // Data the entries share is counted at the directory.
         if mode == SizeMode::Disk && filter.is_none() && tree.shared_here(ix) > 0 {
-            outln!(
+            writeln!(
+                w,
                 "{:>10}  {}(shared between entries)",
                 dfdu_engine::human(tree.shared_here(ix)),
                 "  ".repeat(d + 1)
-            );
+            )?;
         }
         let mut kids: Vec<(Ix, u64)> = tree
             .children(ix)
@@ -81,11 +86,18 @@ pub fn print_tree(
             stack.push((c, d + 1, b));
         }
     }
+    Ok(())
 }
 
-/// Disk usage by file type, then the largest extensions, of the files below `root` (those
-/// `filter` matches, with one).
-pub fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&TypeFilter>) {
+/// Writes disk usage by file type to `w`, then the largest extensions, of the files below
+/// `root` (those `filter` matches, with one).
+pub fn print_by_type(
+    w: &mut dyn Write,
+    tree: &Tree,
+    root: Ix,
+    mode: SizeMode,
+    filter: Option<&TypeFilter>,
+) -> io::Result<()> {
     let mut b = filetype::Breakdown::default();
     let all = TypeFilter::default();
     filetype::sum(tree, root, filter.unwrap_or(&all), Some(&mut b));
@@ -96,8 +108,8 @@ pub fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&Type
             format!("{n} files")
         }
     };
-    outln!();
-    outln!("By type:");
+    writeln!(w)?;
+    writeln!(w, "By type:")?;
     let mut types: Vec<_> = filetype::FileType::ALL
         .iter()
         .map(|&t| (t, b.by_type[t as usize]))
@@ -105,27 +117,30 @@ pub fn print_by_type(tree: &Tree, root: Ix, mode: SizeMode, filter: Option<&Type
         .collect();
     types.sort_by_key(|(_, t)| std::cmp::Reverse(mode.of(t)));
     for (ty, t) in types {
-        outln!(
+        writeln!(
+            w,
             "{:>10}  {:<12}{:>14}",
             dfdu_engine::human(mode.of(&t)),
             ty.name(),
             files(t.items)
-        );
+        )?;
     }
     let exts = b.exts_by(|t| mode.of(t));
     if !exts.is_empty() {
-        outln!();
-        outln!("Largest extensions:");
+        writeln!(w)?;
+        writeln!(w, "Largest extensions:")?;
         for (e, t) in exts.iter().take(15) {
-            outln!(
+            writeln!(
+                w,
                 "{:>10}  {:<12}{:>14}  {}",
                 dfdu_engine::human(mode.of(t)),
                 format!(".{e}"),
                 files(t.items),
                 e.file_type()
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 /// [`notes`] in brackets after a name, or nothing.
@@ -171,22 +186,24 @@ pub fn notes(m: &Model, ix: Ix) -> String {
     parts.join("; ")
 }
 
-/// Every entry that could not be read, in path order.
-pub fn print_errors(m: &Model, root: Ix) {
+/// Writes every entry that could not be read to `w`, in path order.
+pub fn print_errors(w: &mut dyn Write, m: &Model, root: Ix) -> io::Result<()> {
     let list = dfdu_engine::errors(&m.tree, root, usize::MAX);
     if list.items.is_empty() {
-        return;
+        return Ok(());
     }
-    outln!();
-    outln!("Not read:");
+    writeln!(w)?;
+    writeln!(w, "Not read:")?;
     for e in &list.items {
-        outln!(
+        writeln!(
+            w,
             "  {}{}: {}",
             e.path.display(),
             if e.is_dir { "/" } else { "" },
             e.problem
-        );
+        )?;
     }
+    Ok(())
 }
 
 pub fn print_footer(m: &Model, root: Ix, elapsed: Duration, listed: bool) {
@@ -346,6 +363,47 @@ mod tests {
         );
         assert_eq!(note(&m, net), format!("  [{network}]"));
         assert_eq!(note(&m, plain), "");
+    }
+
+    /// A writer every write to which fails, as on a full disk.
+    struct Full;
+
+    impl Write for Full {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::StorageFull.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tables_go_to_the_writer_and_fail_with_it() {
+        let mut m = Model::default();
+        let t = &mut m.tree;
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 1), true);
+        let f = t.add_file(r, b"a.mp4", &meta(Kind::File, 2), false, None);
+        t.set_error(f, ErrKind::PermissionDenied);
+        let mut out = Vec::new();
+        print_tree(&mut out, &m, r, 1, 10, SizeMode::Disk, None).unwrap();
+        print_by_type(&mut out, &m.tree, r, SizeMode::Disk, None).unwrap();
+        print_errors(&mut out, &m, r).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("a.mp4"), "{text}");
+        assert!(text.contains("\nBy type:\n"), "{text}");
+        assert!(text.contains("\nNot read:\n"), "{text}");
+
+        let full = |r: io::Result<()>| r.map_err(|e| e.kind());
+        let kind = Err(io::ErrorKind::StorageFull);
+        assert_eq!(
+            full(print_tree(&mut Full, &m, r, 1, 10, SizeMode::Disk, None)),
+            kind
+        );
+        assert_eq!(
+            full(print_by_type(&mut Full, &m.tree, r, SizeMode::Disk, None)),
+            kind
+        );
+        assert_eq!(full(print_errors(&mut Full, &m, r)), kind);
     }
 
     #[test]

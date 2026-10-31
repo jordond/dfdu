@@ -16,7 +16,7 @@ use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.
 pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
-    let Some(path) = history::default_path() else {
+    let Some(path) = dfdu_sys::dirs::history_path() else {
         return;
     };
     let scan = Scanned::read(&m.tree, root, m.complete(root));
@@ -28,7 +28,7 @@ pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
 }
 
 fn open() -> Result<History, ExitCode> {
-    let Some(path) = history::default_path() else {
+    let Some(path) = dfdu_sys::dirs::history_path() else {
         eprintln!("dfdu: no state directory for the history");
         return Err(ExitCode::from(1));
     };

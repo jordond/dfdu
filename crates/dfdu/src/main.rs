@@ -9,22 +9,9 @@ use dfdu_scan::JobOptions;
 use dfdu_tree::filetype::TypeFilter;
 use dfdu_tui::{Bars, ColorLevel};
 
-/// `println!` that ends the process quietly when stdout is closed (`dfdu scan | head`), instead
-/// of panicking.
-macro_rules! outln {
-    ($($t:tt)*) => {{
-        use std::io::Write as _;
-        if let Err(e) = writeln!(std::io::stdout(), $($t)*)
-            && e.kind() == std::io::ErrorKind::BrokenPipe
-        {
-            std::process::exit(0);
-        }
-    }};
-}
-
 /// What writing the output on stdout ends the command with: nothing when it was written, a
-/// quiet success when stdout was closed (`dfdu ... | head`, as [`outln!`] does), and exit code
-/// 1 with the error otherwise.
+/// quiet success when stdout was closed (`dfdu ... | head`), and exit code 1 with the error
+/// otherwise.
 fn written<T>(r: std::io::Result<T>) -> Result<T, ExitCode> {
     written_to(&"writing the output", r)
 }
@@ -50,7 +37,6 @@ fn written_to<T>(what: &dyn std::fmt::Display, r: std::io::Result<T>) -> Result<
     }
 }
 
-// After `outln!`, which they use.
 mod browse;
 mod cache;
 mod clean;
@@ -102,7 +88,8 @@ struct Cli {
     #[arg(long, conflicts_with = "path")]
     disks: bool,
     /// Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its
-    /// directory in the background, replacing it when done.
+    /// directory in the background, replacing it when done. A snapshot is rescanned with the
+    /// mount options it was taken with.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["path", "disks", "import"])]
     resume_from: Option<PathBuf>,
     /// Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu
@@ -307,6 +294,17 @@ impl MountArgs {
             ..Default::default()
         }
     }
+
+    /// The options of a scan: [`MountArgs::job`], or for the rescan of a snapshot those it was
+    /// taken with.
+    fn job_resuming(self, snapshot: Option<&dfdu_store::snapshot::Header>) -> JobOptions {
+        let mut job = self.job();
+        if let Some(h) = snapshot {
+            job.cross_mounts = h.cross_mounts;
+            job.network = h.network;
+        }
+        job
+    }
 }
 
 /// Classification of what the scan finds (categories and cleanup rules).
@@ -379,7 +377,7 @@ fn install_crash_hook() {
         if dfdu_engine::panic_is_caught_by_engine(std::thread::current().name()) {
             return;
         }
-        if let Some(dir) = dfdu_engine::default_crash_dir() {
+        if let Some(dir) = dfdu_sys::dirs::crash_dir() {
             let thread = std::thread::current();
             let report = format!(
                 "dfdu {} crash report\n\nthread: {}\npanic: {info}\n\nbacktrace:\n{}\n\n{}",
@@ -407,7 +405,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     let rules = || RuleArgs::default().load().ok_or(ExitCode::from(1));
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan::run(args),
-        Some(Cmd::Disks) => Ok(disks::run()),
+        Some(Cmd::Disks) => disks::run(),
         Some(Cmd::Report(args)) => report::run(&args, &rules()?),
         Some(Cmd::Clean(args)) => clean::run(&args, &rules()?),
         Some(Cmd::Diff(args)) => history::diff(&args),
@@ -415,7 +413,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         Some(Cmd::Dupes(args)) => dupes::run(&args),
         Some(Cmd::Export(args)) => transfer::export(&args),
         Some(Cmd::Import(args)) => transfer::import(&args),
-        Some(Cmd::Recover(args)) => Ok(recover::run(args)),
+        Some(Cmd::Recover(args)) => recover::run(args),
         Some(Cmd::Cache(cmd)) => cache::run(&cmd),
         Some(Cmd::Man { dir }) => Ok(man(&dir)),
         Some(Cmd::Agent { threads, protocols }) => Ok(remote::agent(threads, protocols)),
@@ -427,7 +425,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         // Piped: what `dfdu disks` or `dfdu scan PATH` prints.
         None if !std::io::stdout().is_terminal() => {
             if cli.disks {
-                return Ok(disks::run());
+                return disks::run();
             }
             scan::run(scan::ScanArgs {
                 path: cli.path.unwrap_or_else(|| PathBuf::from(".")),
@@ -447,6 +445,17 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_write_exits_1_and_a_closed_pipe_quietly() {
+        let fail = |kind: std::io::ErrorKind| written::<()>(Err(kind.into()));
+        assert_eq!(
+            fail(std::io::ErrorKind::StorageFull),
+            Err(ExitCode::from(1))
+        );
+        assert_eq!(fail(std::io::ErrorKind::BrokenPipe), Err(ExitCode::SUCCESS));
+        assert_eq!(written(Ok(7)), Ok(7));
+    }
 
     #[test]
     fn theme_and_color_flags_parse() {
