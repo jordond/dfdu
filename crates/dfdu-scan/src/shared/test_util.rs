@@ -15,19 +15,28 @@ use crate::backend::{Backend, PortableBackend};
 use crate::proto::{Batch, ScanMsg};
 use crate::sync::{AtomicU64, Injector, Mutex, Steal};
 
-/// The portable backend, with mount classes from `classes` (by mount id) instead of the
-/// system's mount table.
+/// The portable backend, with mount classes from `classes` (by mount id) and storage from
+/// `storage` (by mount id, or by device for a mount without one) instead of the system's mount
+/// table.
 #[derive(Default)]
 pub(crate) struct Local {
     inner: PortableBackend,
     classes: HashMap<u64, FsClass>,
+    storage: HashMap<u64, Storage>,
 }
 
 impl Local {
     pub(crate) fn with_classes(classes: HashMap<u64, FsClass>) -> Self {
         Local {
-            inner: PortableBackend::default(),
             classes,
+            ..Local::default()
+        }
+    }
+
+    pub(crate) fn with_storage(storage: HashMap<u64, Storage>) -> Self {
+        Local {
+            storage,
+            ..Local::default()
         }
     }
 }
@@ -47,6 +56,10 @@ impl Backend for Local {
     }
     fn mount_class(&self, mount: u64, _dev: u64) -> Option<FsClass> {
         self.classes.get(&mount).copied()
+    }
+    fn mount_storage(&self, mount: u64, dev: u64) -> Storage {
+        let key = if mount != 0 { mount } else { dev };
+        self.storage.get(&key).copied().unwrap_or(Storage::Unknown)
     }
 }
 

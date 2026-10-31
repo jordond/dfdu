@@ -79,3 +79,6 @@ impl<B: Backend> Shared<B> {
         gates.iter().map(|g| g.stats()).collect()
     }
 }
+
+#[cfg(test)]
+mod tests;
