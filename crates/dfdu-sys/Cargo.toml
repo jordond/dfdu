@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-sys"
-description = "The OS calls no safe crate provides: btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration, behind safe wrappers"
+description = "The OS calls no safe crate provides: btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration, behind safe wrappers, and where dfdu keeps its files (dirs)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,9 @@ unsafe_op_in_unsafe_fn = "deny"
 [lints.clippy]
 dbg_macro = "warn"
 undocumented_unsafe_blocks = "deny"
+
+[dependencies]
+etcetera.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }

@@ -13,10 +13,10 @@ use serde_json::value::RawValue;
 
 use crate::{DeleteResult, Mode, PlanItem};
 
-/// Where deletion journals are kept: `ops` in the state directory ([`dfdu_rules::dirs`]).
+/// Where deletion journals are kept: `ops` in the state directory ([`dfdu_sys::dirs`]).
 #[must_use]
 pub fn default_journal_dir() -> Option<PathBuf> {
-    dfdu_rules::dirs::journal_dir()
+    dfdu_sys::dirs::journal_dir()
 }
 
 pub struct Journal {

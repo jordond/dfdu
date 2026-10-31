@@ -223,7 +223,7 @@ fn all_dirs(tree: &Tree) -> Vec<NodeRef> {
 /// being read as partial); no classes, no jobs, no measured extents, and a hard link charged
 /// where it is first met.
 fn loaded_copy(from: &Tree) -> Tree {
-    const KEPT: [u16; 4] = [
+    const KEPT: [NodeFlags; 4] = [
         NodeFlags::MOUNT_ROOT,
         NodeFlags::KERNEL,
         NodeFlags::NETWORK,
@@ -265,7 +265,7 @@ fn loaded_copy(from: &Tree) -> Tree {
                 let flags = KEPT
                     .iter()
                     .filter(|&&k| from.flags(c).has(k))
-                    .fold(0, |a, &k| a | k);
+                    .fold(NodeFlags::default(), |a, &k| a | k);
                 let ix = t.add_dir_flagged(to, from.name(c), &m, flags);
                 let own = t.own(ix);
                 t.propagate_add(to, &own);

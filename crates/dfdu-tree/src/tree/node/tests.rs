@@ -143,3 +143,20 @@ fn errors_and_shared_bytes_survive_packing_and_slot_reuse() {
     );
     t.check(&[]).unwrap();
 }
+
+#[test]
+fn flags_combine_and_clear_one_at_a_time() {
+    let mut f = NodeFlags::MOUNT_ROOT | NodeFlags::NETWORK;
+    assert!(f.has(NodeFlags::MOUNT_ROOT) && f.has(NodeFlags::NETWORK));
+    assert!(!f.has(NodeFlags::KERNEL));
+    assert_eq!(f.bits(), 64 | 4096);
+    f.set(NodeFlags::MOUNT_ROOT, false);
+    assert_eq!(f, NodeFlags::NETWORK);
+    f |= NodeFlags::KERNEL;
+    assert!(
+        f.has(NodeFlags::KERNEL | NodeFlags::EXCEPTED),
+        "any of them"
+    );
+    f.set(NodeFlags::NETWORK | NodeFlags::KERNEL, false);
+    assert_eq!(f, NodeFlags::default());
+}

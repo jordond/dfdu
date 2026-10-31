@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::HostPath;
+use dfdu_tree::{HostPath, Target};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -19,7 +19,7 @@ use super::{
     styled, text,
 };
 use crate::app::App;
-use crate::model::snapshot::{self, Mark, Target, test_entry};
+use crate::model::snapshot::{self, Mark, test_entry};
 use crate::theme::Theme;
 
 /// A scan of a home directory 14 s in, with entries that are scanning, stalled and unreadable,
@@ -184,7 +184,7 @@ fn target_survives_rescan_swap() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let sub_path = dir.join("sub");
     let mut target = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &HostPath::local(&sub_path)).expect("sub");
+        let sub = dfdu_tree::find_path(&m.tree, &HostPath::local(&sub_path)).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = target.node.expect("node");
@@ -288,9 +288,9 @@ fn errors_are_listed_and_lead_to_the_entry() {
     let meta = |kind, ino| meta(kind, 100, ino);
     let mut m = dfdu_engine::Model::default();
     let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 1), true);
-    let a = m.tree.add_dir_flagged(root, b"a", &meta(Kind::Dir, 2), 0);
-    let b = m.tree.add_dir_flagged(a, b"b", &meta(Kind::Dir, 3), 0);
-    let locked = m.tree.add_dir_flagged(b, b"locked", &meta(Kind::Dir, 4), 0);
+    let a = m.tree.add_dir(root, b"a", &meta(Kind::Dir, 2));
+    let b = m.tree.add_dir(a, b"b", &meta(Kind::Dir, 3));
+    let locked = m.tree.add_dir(b, b"locked", &meta(Kind::Dir, 4));
     let gone = m
         .tree
         .add_file(root, b"gone", &meta(Kind::File, 5), false, None);

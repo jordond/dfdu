@@ -62,10 +62,10 @@ impl Default for UiSettings {
     }
 }
 
-/// Where theme files are looked up by name ([`dfdu_rules::dirs::theme_dir`]).
+/// Where theme files are looked up by name ([`dfdu_sys::dirs::theme_dir`]).
 #[must_use]
 pub fn theme_dir() -> Option<PathBuf> {
-    dfdu_rules::dirs::theme_dir()
+    dfdu_sys::dirs::theme_dir()
 }
 
 /// The theme `settings` ask for and the terminal it was resolved for.

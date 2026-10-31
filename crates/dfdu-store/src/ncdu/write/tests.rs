@@ -33,14 +33,14 @@ fn info_blocks_carry_what_ncdu_reads() {
     let mut t = Tree::new();
     let root = t.new_root(b"/r", &meta(Kind::Dir, 0, 7, 1, 1), true);
     set_state(&mut t, root, DirState::Complete);
-    let dir = |t: &mut Tree, name: &[u8], dev: u64, flag: u16, state: DirState| {
+    let dir = |t: &mut Tree, name: &[u8], dev: u64, flag: NodeFlags, state: DirState| {
         let ix = t.add_dir_flagged(root, name, &meta(Kind::Dir, 0, dev, 2, 1), flag);
         set_state(t, ix, state);
     };
     dir(&mut t, b"proc", 7, NodeFlags::KERNEL, DirState::Skipped);
     dir(&mut t, b"mnt", 9, NodeFlags::MOUNT_ROOT, DirState::Skipped);
-    dir(&mut t, b"skip", 7, 0, DirState::Skipped);
-    dir(&mut t, b"bad", 7, 0, DirState::Failed);
+    dir(&mut t, b"skip", 7, NodeFlags::default(), DirState::Skipped);
+    dir(&mut t, b"bad", 7, NodeFlags::default(), DirState::Failed);
     t.add_file(root, b"h1", &meta(Kind::File, 3, 7, 5, 9), true, None);
     t.add_file(root, b"h2", &meta(Kind::File, 3, 7, 5, 9), false, None);
     t.add_file(root, b"h3", &meta(Kind::File, 3, 7, 5, 9), false, None);

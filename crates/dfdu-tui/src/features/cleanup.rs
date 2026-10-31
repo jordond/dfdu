@@ -17,14 +17,13 @@ use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
+use dfdu_tree::{Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Target, Totals, now_secs};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::format::human;
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 mod draw;
@@ -278,9 +277,8 @@ fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
         rules.rule(it.class.rule),
         it.class,
         it.size,
-        it.mtime,
+        now.saturating_sub(it.mtime),
         it.scanning,
-        now,
     ))
 }
 

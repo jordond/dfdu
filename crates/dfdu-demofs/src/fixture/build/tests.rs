@@ -1,6 +1,6 @@
 use super::*;
 use crate::FsError;
-use crate::test_support::{SMALL, names, read_all, small};
+use crate::test_util::{SMALL, names, read_all, small};
 
 #[test]
 fn builds_entries_with_their_sizes_and_ages() {

@@ -17,7 +17,7 @@ fn link(tmp: &Path) -> CacheLink {
     fs::write(dir.join("sub/b"), vec![0u8; 5000]).unwrap();
     let cache = Cache::at(tmp.join("cache")).unwrap();
     CacheLink {
-        slot: cache.slot(Key::new(&dir, false, false, false).unwrap()),
+        slot: cache.slot(Key::new(&dir, &JobOptions::default(), false).unwrap()),
         path: dir,
         job: JobOptions::default(),
         save: true,

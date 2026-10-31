@@ -12,6 +12,7 @@
 //! again stays refused to deletes ([`Applier::unverified`]).
 
 mod graft;
+mod reclassify;
 mod rescans;
 mod verify;
 mod walk;
@@ -23,11 +24,11 @@ use dfdu_scan::journal::Keep;
 use dfdu_scan::{Backend, JobId, JobOptions};
 use dfdu_tree::{Ix, Meta, NodeRef, Pages, Tree};
 
+use super::links::VISIBLE;
 use super::work::Work;
 use super::{Applier, Command, Job, JobKind, JobPhase, Model};
-use crate::links::VISIBLE;
-use crate::reclassify::ClassifyLoaded;
 pub(in crate::applier) use graft::Grafted;
+use reclassify::ClassifyLoaded;
 use verify::Verify;
 pub(in crate::applier) use walk::ResumeWalk;
 
@@ -173,7 +174,7 @@ impl<B: Backend> Applier<B> {
             return self.rescan(m, node, Some(opts), false);
         };
         let mut wanted = changed_dirs(&m.tree, root, changed);
-        if self.remote.is_none() {
+        if self.settings.remote.is_none() {
             let before = i64::try_from(since).unwrap_or(i64::MAX);
             match now {
                 Some(now) if (now.dev, now.ino) != m.tree.dev_ino(root) => {
@@ -216,6 +217,7 @@ impl<B: Backend> Applier<B> {
             },
         );
         let verify = self
+            .settings
             .remote
             .is_none()
             .then(|| Verify::new(&m.tree, root, &wanted, since));

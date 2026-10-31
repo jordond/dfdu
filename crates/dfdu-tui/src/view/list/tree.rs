@@ -127,7 +127,7 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t0);
         let entries = sample_with_files();
         let mut tree = TreeState::default();
-        tree.expand(crate::model::snapshot::Target {
+        tree.expand(dfdu_tree::Target {
             node: Some(entries[2].node),
             path: "/r/a/y".into(),
             ident: None,

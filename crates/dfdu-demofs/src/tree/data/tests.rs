@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{read_all, small};
+use crate::test_util::{read_all, small};
 
 #[test]
 fn seeded_bytes_agree_at_any_offset() {

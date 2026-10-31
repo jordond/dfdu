@@ -12,7 +12,7 @@ use super::{
     Cache, FULL_RESCAN_AFTER, Key, MAX_AGE, Removed, SIZE_CAP, STEP_ENTRIES, open_own, owned, secs,
 };
 use crate::ImportError;
-use crate::ncdu::Limits;
+use crate::Limits;
 use crate::snapshot::{self, Header, Loaded, Writer};
 
 /// Where one scan is cached.

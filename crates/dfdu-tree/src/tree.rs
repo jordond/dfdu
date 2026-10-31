@@ -8,6 +8,7 @@ mod extents;
 mod node;
 mod paths;
 mod refs;
+mod target;
 
 pub use dir::{Children, DirRec, DirState};
 use edit::FreeWork;
@@ -15,6 +16,7 @@ pub use edit::FreedLink;
 use node::Node;
 pub use node::NodeFlags;
 pub use refs::NodeRef;
+pub use target::{Ident, Target, find_path};
 
 const NONE: u32 = u32::MAX;
 
@@ -86,10 +88,10 @@ impl Tree {
         self.live
     }
 
-    /// Bytes in the name arena, freed names included, and how many of them are freed names:
-    /// `(stored, garbage)`.
+    /// Bytes in the name arena, freed names included, and how many of them freed names left
+    /// unused: `(stored, garbage)`.
     #[must_use]
-    pub fn name_bytes(&self) -> (u64, u64) {
+    pub fn name_storage(&self) -> (u64, u64) {
         (self.names.bytes(), self.names_garbage)
     }
 

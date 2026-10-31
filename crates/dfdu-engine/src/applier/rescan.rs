@@ -248,7 +248,7 @@ impl<B: Backend> Applier<B> {
             top = p;
         }
         // Not sent to an agent, which judges against its job's root.
-        opts.scope = self.remote.is_none().then(|| m.tree.path_buf(top));
+        opts.scope = self.settings.remote.is_none().then(|| m.tree.path_buf(top));
         opts.keep = kept.as_ref().map(|k| Arc::new(k.keep()));
         self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {

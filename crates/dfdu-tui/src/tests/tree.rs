@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, SizeMode};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tree::{DirState, ErrKind, HostPath, Ix, Kind};
+use dfdu_tree::{DirState, ErrKind, HostPath, Ix, Kind, Target};
 
 use super::meta;
 use crate::app::App;
-use crate::model::snapshot::{self, EntryData, Mark, Snapshot, Target};
+use crate::model::snapshot::{self, EntryData, Mark, Snapshot};
 use crate::state::order::{SortSpec, tree_order};
 use crate::state::tree::{MAX_CHAIN, MAX_TREE_ROWS, TreeState};
 use crate::theme::Theme;
@@ -329,7 +329,7 @@ fn expanded_directories_survive_a_rescan_swap() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let mut t = TreeState::default();
     let sub = engine.read(|m| {
-        let sub = snapshot::find_path(&m.tree, &HostPath::local(&dir.join("sub"))).expect("sub");
+        let sub = dfdu_tree::find_path(&m.tree, &HostPath::local(&dir.join("sub"))).expect("sub");
         Target::of(&m.tree, sub)
     });
     let old = sub.node.expect("node");

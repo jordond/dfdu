@@ -8,9 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use dfdu_tree::{HostPath, NodeRef};
+use dfdu_tree::{HostPath, Ident, NodeRef, Target};
 
-use crate::model::snapshot::{EntryData, Ident, Snapshot, Target};
+use crate::model::snapshot::{EntryData, Snapshot};
 
 /// The most rows a read adds below the top level. A directory with more children than fit
 /// shows the largest ones, and the rest in its fold row.

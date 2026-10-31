@@ -27,4 +27,4 @@ pub use fs::{mount, mount_tree};
 pub use tree::{Data, DirEntry, Fault, FsError, Inode, Kind, Tree};
 
 #[cfg(test)]
-mod test_support;
+mod test_util;

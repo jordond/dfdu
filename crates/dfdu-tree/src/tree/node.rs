@@ -8,45 +8,66 @@ use crate::{ErrKind, Kind};
 pub struct NodeFlags(pub(super) u16);
 
 impl NodeFlags {
-    pub const HARDLINK: u16 = 1;
+    pub const HARDLINK: NodeFlags = NodeFlags(1);
     /// Hard link whose bytes are counted (exactly one per inode and scope).
-    pub const CHARGED: u16 = 2;
+    pub const CHARGED: NodeFlags = NodeFlags(2);
     /// Root of a detached subtree.
-    pub const DETACHED: u16 = 4;
-    pub const FREE: u16 = 8;
+    pub const DETACHED: NodeFlags = NodeFlags(4);
+    pub const FREE: NodeFlags = NodeFlags(8);
     /// Root of the visible tree.
-    pub const VISIBLE_ROOT: u16 = 16;
+    pub const VISIBLE_ROOT: NodeFlags = NodeFlags(16);
     /// In a delete plan that has not finished.
-    pub const DELETING: u16 = 32;
+    pub const DELETING: NodeFlags = NodeFlags(32);
     /// Directory whose mount differs from its parent's (counted in `Totals::mounts`).
-    pub const MOUNT_ROOT: u16 = 64;
+    pub const MOUNT_ROOT: NodeFlags = NodeFlags(64);
     /// btrfs subvolume root; its record is in the model's subvolume table.
-    pub const SUBVOL: u16 = 128;
+    pub const SUBVOL: NodeFlags = NodeFlags(128);
     /// Read-only btrfs subvolume root (counted in `Totals::ro_subvols`).
-    pub const RO_SUBVOL: u16 = 256;
+    pub const RO_SUBVOL: NodeFlags = NodeFlags(256);
     /// Mount of something already scanned elsewhere in the job; not descended into.
-    pub const DUP_MOUNT: u16 = 512;
+    pub const DUP_MOUNT: NodeFlags = NodeFlags(512);
     /// File whose extents were measured: its own disk usage is its unshared bytes instead of its
     /// allocation.
-    pub const MEASURED: u16 = 1024;
+    pub const MEASURED: NodeFlags = NodeFlags(1024);
     /// Measured file with compressed extents whose on-disk size is not known (an upper bound).
-    pub const COMPRESSED: u16 = 2048;
+    pub const COMPRESSED: NodeFlags = NodeFlags(2048);
     /// Mount of a network filesystem, not descended into (scanned only when asked for).
-    pub const NETWORK: u16 = 4096;
+    pub const NETWORK: NodeFlags = NodeFlags(4096);
     /// Mount of a kernel filesystem (`/proc`, `/sys`), never descended into.
-    pub const KERNEL: u16 = 8192;
+    pub const KERNEL: NodeFlags = NodeFlags(8192);
     /// Top of a protected subtree (`dfdu-rules` protected paths): nothing in it is offered for
     /// deletion, except below an [`NodeFlags::EXCEPTED`] node.
-    pub const PROTECTED: u16 = 16384;
+    pub const PROTECTED: NodeFlags = NodeFlags(16384);
     /// Top of a subtree an exception lifts out of the protected subtree around it.
-    pub const EXCEPTED: u16 = 32768;
+    pub const EXCEPTED: NodeFlags = NodeFlags(32768);
 
+    /// The flags as bits, for formats that store them.
     #[must_use]
-    pub fn has(self, f: u16) -> bool {
-        self.0 & f != 0
+    pub fn bits(self) -> u16 {
+        self.0
     }
-    pub(super) fn set(&mut self, f: u16, on: bool) {
-        if on { self.0 |= f } else { self.0 &= !f }
+
+    /// Whether any of the flags in `f` is set.
+    #[must_use]
+    pub fn has(self, f: NodeFlags) -> bool {
+        self.0 & f.0 != 0
+    }
+    pub(super) fn set(&mut self, f: NodeFlags, on: bool) {
+        if on { self.0 |= f.0 } else { self.0 &= !f.0 }
+    }
+}
+
+impl std::ops::BitOr for NodeFlags {
+    type Output = NodeFlags;
+
+    fn bitor(self, rhs: NodeFlags) -> NodeFlags {
+        NodeFlags(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for NodeFlags {
+    fn bitor_assign(&mut self, rhs: NodeFlags) {
+        self.0 |= rhs.0;
     }
 }
 

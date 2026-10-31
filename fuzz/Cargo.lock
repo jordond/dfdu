@@ -565,7 +565,6 @@ name = "dfdu-rules"
 version = "0.1.0"
 dependencies = [
  "dfdu-tree",
- "etcetera",
  "serde",
  "toml",
 ]
@@ -590,8 +589,8 @@ name = "dfdu-store"
 version = "0.1.0"
 dependencies = [
  "crc32c",
- "dfdu-rules",
  "dfdu-scan",
+ "dfdu-sys",
  "dfdu-tree",
  "dunce",
  "rusqlite",
@@ -604,6 +603,7 @@ name = "dfdu-sys"
 version = "0.1.0"
 dependencies = [
  "dfdu-tree",
+ "etcetera",
  "libc",
  "rustix",
  "sysinfo",

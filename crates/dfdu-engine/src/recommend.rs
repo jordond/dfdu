@@ -42,32 +42,18 @@ impl Verdict {
 /// Whether a match of `rule` is recommended for deletion: `safe` above the rule's minimum
 /// size, `regenerable` only when also unchanged for the rule's minimum age, never `review` or
 /// worse, nothing changed in the last 7 days, in use, tracked by version control
-/// or still being scanned. `size` is its disk usage, `mtime` and `now` in seconds since the
-/// epoch.
+/// or still being scanned. `size` is its disk usage, `age` the seconds since it last changed
+/// (now less its mtime).
 #[must_use]
-pub fn recommends(
-    rule: &Rule,
-    class: Class,
-    size: u64,
-    mtime: i64,
-    scanning: bool,
-    now: i64,
-) -> bool {
-    verdict(rule, class, size, mtime, scanning, now).recommended()
+pub fn recommends(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -> bool {
+    verdict(rule, class, size, age, scanning).recommended()
 }
 
 /// What [`recommends`] decides, with the reason: the safety level first, then what is in use or
 /// tracked, the scan, the age and the size.
 #[must_use]
-pub fn verdict(
-    rule: &Rule,
-    class: Class,
-    size: u64,
-    mtime: i64,
-    scanning: bool,
-    now: i64,
-) -> Verdict {
-    let days = |d: i64| now - mtime >= d * 86_400;
+pub fn verdict(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -> Verdict {
+    let days = |d: i64| age >= d * 86_400;
     let c = &class;
     let min_age = match c.safety {
         Safety::Safe => QUIET_DAYS,

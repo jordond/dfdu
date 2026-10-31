@@ -5,12 +5,12 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, DirId, JobId};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::reclassify::ClassifyLoaded;
 use super::rescans::Rescans;
 use super::verify::Verify;
+use crate::applier::links::{LinkTable, VISIBLE};
 use crate::applier::work::{STEP_UNITS, Work};
 use crate::applier::{Applier, Model};
-use crate::links::{LinkTable, VISIBLE};
-use crate::reclassify::ClassifyLoaded;
 
 /// A resume's walk over the loaded tree, a step at a time: the directories still to take over,
 /// and what the rescans that follow it need.

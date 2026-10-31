@@ -14,13 +14,12 @@ use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
-use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
+use dfdu_tree::{HostPath, Ident, Ix, Kind, NodeRef, Target, Tree};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 mod draw;

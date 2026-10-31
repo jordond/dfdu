@@ -49,7 +49,8 @@ impl<B: Backend> Applier<B> {
             e.bytes += tot.alloc;
             e.shared_out += tot.shared_out;
             e.nodes += tot.items;
-            e.may_free_less |= self.extent_devs.contains(&tree.dev_ino(t).0) && !self.measure;
+            e.may_free_less |=
+                self.extent_devs.contains(&tree.dev_ino(t).0) && !self.settings.measure;
             let mut stack = vec![t];
             while let Some(ix) = stack.pop() {
                 if let Some(d) = tree.dir(ix) {

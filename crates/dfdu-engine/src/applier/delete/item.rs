@@ -38,7 +38,7 @@ impl<B: Backend> Applier<B> {
                     .into(),
             );
         }
-        refusal(tree, ix, self.privileged)
+        refusal(tree, ix, self.settings.privileged)
     }
 }
 

@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::{Condvar, Mutex, PoisonError};
 
-use dfdu_tree::{DirState, Kind, Meta, Tree};
+use dfdu_tree::{DirState, Kind, Meta, NodeFlags, Tree};
 
 /// A gate threads wait at until it is opened: a change journal or a filesystem call that
 /// answers late. `const` so that a test can hold one in a static, for a plain `fn` to wait at.
@@ -62,7 +62,12 @@ pub fn wide_tree(root: &Path, meta: &Meta, dirs: u64, files: u64) -> Tree {
     for d in 0..dirs {
         ino += 1;
         let dm = Meta { ino, ..*meta };
-        let dir = t.add_dir_flagged(r, format!("dir-{d:05}").as_bytes(), &dm, 0);
+        let dir = t.add_dir_flagged(
+            r,
+            format!("dir-{d:05}").as_bytes(),
+            &dm,
+            NodeFlags::default(),
+        );
         complete(&mut t, dir);
         let own = t.own(dir);
         t.propagate_add(r, &own);

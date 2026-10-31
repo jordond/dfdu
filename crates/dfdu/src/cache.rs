@@ -26,7 +26,7 @@ fn open() -> Option<Cache> {
         );
         return None;
     }
-    let Some(dir) = dfdu_rules::dirs::cache_dir() else {
+    let Some(dir) = dfdu_sys::dirs::cache_dir() else {
         eprintln!("dfdu: no cache directory");
         return None;
     };

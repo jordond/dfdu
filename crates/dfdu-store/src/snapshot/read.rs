@@ -11,7 +11,7 @@ use super::{
     VERSION_1, VERSION_2, VERSION_3,
 };
 use crate::ImportError;
-use crate::ncdu::Limits;
+use crate::Limits;
 
 /// The little-endian `u32` at byte `i` of `b`.
 fn le_u32(b: &[u8], i: usize) -> u32 {
@@ -274,9 +274,9 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
                     ix
                 }
             };
-            if parent.is_none() && flags != 0 {
+            if parent.is_none() && flags != NodeFlags::default() {
                 for f in [NodeFlags::KERNEL, NodeFlags::NETWORK, NodeFlags::DUP_MOUNT] {
-                    if flags & f != 0 {
+                    if flags.has(f) {
                         tree.set_flag(ix, f, true);
                     }
                 }
@@ -468,13 +468,13 @@ fn read_entry(
 }
 
 /// The fields only a directory record has: its kept flags and its state.
-fn read_dir_fields(rec: &mut Rec<impl BufRead>) -> Result<(u16, DirState), ImportError> {
-    let all = DIR_FLAGS.iter().fold(0, |a, &f| a | f);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "only the bits of DIR_FLAGS, all within u16, are kept"
-    )]
-    let flags = rec.u()? as u16 & all;
+fn read_dir_fields(rec: &mut Rec<impl BufRead>) -> Result<(NodeFlags, DirState), ImportError> {
+    // Only the bits of DIR_FLAGS are kept.
+    let bits = rec.u()?;
+    let flags = DIR_FLAGS
+        .iter()
+        .filter(|f| bits & u64::from(f.bits()) != 0)
+        .fold(NodeFlags::default(), |a, &f| a | f);
     let state = match rec.byte()? {
         0 => DirState::Pending,
         1 => DirState::Complete,

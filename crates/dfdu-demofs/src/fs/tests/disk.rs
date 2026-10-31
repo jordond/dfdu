@@ -1,7 +1,7 @@
 //! The disk and the clock a mount serves from its fixture.
 
 use super::super::*;
-use crate::test_support::SMALL;
+use crate::test_util::SMALL;
 
 #[test]
 fn free_space_grows_as_files_go_and_stays_within_the_disk() {

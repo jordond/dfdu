@@ -9,7 +9,7 @@ use dfdu_scan::{
 };
 use dfdu_tree::{DirState, Ix, Kind, Meta};
 
-use super::{Applier, Command, JobPhase, Model};
+use super::{Applier, ApplierSettings, Command, JobPhase, Model};
 use crate::test_util::meta;
 
 /// The `submitted_seq` the scanner gave job 1.
@@ -24,7 +24,7 @@ impl Rig {
     /// Job 1 started on `/r`, nothing applied yet.
     pub fn scan() -> Rig {
         let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-        let mut a = Applier::new(shared);
+        let mut a = Applier::new(shared, ApplierSettings::default());
         let mut m = Model::default();
         let scan = Command::Scan {
             path: "/r".into(),

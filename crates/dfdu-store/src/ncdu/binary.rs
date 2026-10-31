@@ -15,10 +15,9 @@ use std::io::{Read, Seek, SeekFrom};
 use dfdu_tree::{Ix, Tree};
 
 use super::{
-    Imported, Limits, Metadata, add_entry, add_root, check_depth, check_entries, close_dir,
-    valid_name,
+    Imported, Metadata, add_entry, add_root, check_depth, check_entries, close_dir, valid_name,
 };
-use crate::ImportError;
+use crate::{ImportError, Limits};
 
 mod entry;
 
