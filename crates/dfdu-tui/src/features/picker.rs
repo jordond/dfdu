@@ -12,7 +12,8 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::theme::{Theme, bar, human, ratio};
+use crate::format::{bar, human, ratio};
+use crate::theme::Theme;
 
 pub struct Picker {
     pub disks: Vec<Disk>,

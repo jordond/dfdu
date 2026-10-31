@@ -17,10 +17,11 @@ use super::{
 use crate::app::{App, Effect, Overlay};
 use crate::features::debug::Counters;
 use crate::features::details;
+use crate::format::spinner;
 use crate::model::extras;
 use crate::model::snapshot::{self, EntryData, Mark, Target, test_entry};
 use crate::state::filter;
-use crate::theme::{BuiltinTheme, ColorLevel, Theme, choose_theme, detect_color_level, spinner};
+use crate::theme::{BuiltinTheme, ColorLevel, Theme, choose_theme, detect_color_level};
 
 /// The built-in themes `auto` picks for a dark or light truecolor terminal, a 16-colour one
 /// and `NO_COLOR`, each at that colour level.

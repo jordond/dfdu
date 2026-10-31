@@ -22,9 +22,9 @@ use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
+use crate::format::human;
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
-use crate::theme::human;
 
 mod draw;
 mod pane;

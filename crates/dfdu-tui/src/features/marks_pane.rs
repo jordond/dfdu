@@ -19,9 +19,9 @@ use std::time::Instant;
 
 use crate::app::keys::{self, Action, first_key};
 use crate::app::{App, Effect};
+use crate::format::{human, truncate_middle};
 use crate::model::outside::rel_text;
 use crate::state::marks;
-use crate::theme::{human, truncate_middle};
 use crate::view::columns::cursor;
 
 /// Lines above the items: the count and size marked, what it would free, and a blank line.

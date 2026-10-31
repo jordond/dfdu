@@ -13,8 +13,8 @@ use dfdu_tree::{DirState, HostPath, Ix, NodeRef};
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::format::human;
 use crate::model::snapshot::{EntryData, Ident, Mark, Target, find_path};
-use crate::theme::human;
 
 pub mod range;
 

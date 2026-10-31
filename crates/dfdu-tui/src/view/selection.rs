@@ -9,10 +9,10 @@ use ratatui::text::{Line, Span};
 
 use super::spread;
 use crate::app::App;
+use crate::format::{count, cut_end, human, percent, truncate_middle};
 use crate::model::growth;
 use crate::model::outside::{rel_text, tilde};
 use crate::state::{marks, tree};
-use crate::theme::{count, cut_end, human, percent, truncate_middle};
 
 /// `▸ name/  size · items · ↔ … · +Δ since … · category` on the left of `width` cells, the
 /// position and the marked badge on the right; `None` when nothing is selected.

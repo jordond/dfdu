@@ -9,8 +9,8 @@
 use super::keys::Action;
 use super::{App, Effect};
 use crate::features::{cleanup, dupes, largest, treemap};
+use crate::format::human;
 use crate::state::tree;
-use crate::theme::human;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum View {
@@ -141,7 +141,7 @@ pub fn badge(app: &App, view: View) -> Option<String> {
     match view {
         View::Cleanup => cleanup::reclaimable(app).filter(|&b| b > 0).map(short_size),
         View::Duplicates => dupes::groups(app).map(|n| match n {
-            dupes::Groups::Found(n) => crate::theme::count(n as u64),
+            dupes::Groups::Found(n) => crate::format::count(n as u64),
             dupes::Groups::Running => "…".into(),
         }),
         View::Files | View::Map | View::Largest => None,

@@ -87,7 +87,7 @@ pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
                     "putting back {} item{} ({})…",
                     u.items,
                     if u.items == 1 { "" } else { "s" },
-                    crate::theme::human(u.bytes)
+                    crate::format::human(u.bytes)
                 ));
             }
             _ => app.status = Some("nothing to undo".into()),

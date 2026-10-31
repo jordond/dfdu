@@ -15,10 +15,11 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Overlay};
+use crate::format::{count, human};
 use crate::input::line::{Edit, LineInput};
 use crate::model::outside::rel_text;
 use crate::model::snapshot::{EntryData, Mark};
-use crate::theme::{Theme, count, human};
+use crate::theme::Theme;
 use crate::view::cells;
 
 /// The word a typed confirmation asks for.

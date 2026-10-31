@@ -13,9 +13,10 @@ use dfdu_scan::{JobOptions, NativeBackend};
 use ratatui::crossterm::event::KeyCode;
 
 use crate::app::{App, Effect, Overlay};
+use crate::format::human;
 use crate::model::snapshot::{self, Target};
 use crate::tests::{press, render, select};
-use crate::theme::{Theme, human};
+use crate::theme::Theme;
 
 /// Tests run one at a time: one adds and removes a directory in the shared fixture.
 fn fixture() -> Option<(PathBuf, MutexGuard<'static, ()>)> {

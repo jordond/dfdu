@@ -41,7 +41,7 @@ pub fn describe(delta: i128, at: i64) -> String {
 fn short(delta: i128) -> String {
     let sign = if delta < 0 { "-" } else { "+" };
     let abs = u64::try_from(delta.unsigned_abs()).unwrap_or(u64::MAX);
-    format!("{sign}{}", crate::theme::human(abs))
+    format!("{sign}{}", crate::format::human(abs))
 }
 
 /// A noticeable change of a list row's size since the last recorded scan.

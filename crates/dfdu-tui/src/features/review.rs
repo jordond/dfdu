@@ -23,8 +23,9 @@ use crate::app::keys::{Action, first_key};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::features::{cleanup, dupes, largest};
+use crate::format::{human, truncate_middle};
 use crate::overlay::confirm;
-use crate::theme::{Theme, human, truncate_middle};
+use crate::theme::Theme;
 
 mod detail;
 mod text;

@@ -7,8 +7,9 @@ use std::path::Path;
 use dfdu_tree::{Host, HostPath};
 use ratatui::text::Span;
 
+use crate::format::truncate_middle;
 use crate::model::outside::rel_text;
-use crate::theme::{Theme, truncate_middle};
+use crate::theme::Theme;
 
 /// Between two breadcrumbs.
 const SEPARATOR: &str = " › ";

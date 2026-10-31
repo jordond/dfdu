@@ -13,8 +13,8 @@ use super::File;
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, CHECK_WIDTH, Tally, Tick};
+use crate::format::{bar, count, percent, ratio, truncate_middle};
 use crate::model::outside::tilde;
-use crate::theme::{bar, count, percent, ratio, truncate_middle};
 use crate::view::cells;
 use crate::view::columns::{self, Col, ColSet, blank, cursor, gaps, left, right};
 use crate::view::empty::{self, Empty};
@@ -132,7 +132,7 @@ fn row(
     for (gap, c, w) in gaps(cols) {
         spans.push(blank(gap));
         match c {
-            Col::Size => spans.push(right(crate::theme::human(file.size), w, Style::new())),
+            Col::Size => spans.push(right(crate::format::human(file.size), w, Style::new())),
             Col::Bar => {
                 let frac = ratio(file.size, largest);
                 spans.push(Span::styled(bar(frac, w.into(), t.bars), t.bar_fill));
@@ -209,7 +209,7 @@ mod tests {
         let line = row_of(&app);
         let shown = joined(&line.spans);
         assert!(shown.starts_with(" [ ] "), "{shown}");
-        assert!(shown.contains(&crate::theme::human(4000)), "{shown}");
+        assert!(shown.contains(&crate::format::human(4000)), "{shown}");
         assert!(shown.contains("25.0%"), "{shown}");
         // The part every path shares is dimmed, the rest is not.
         let t = &app.theme;

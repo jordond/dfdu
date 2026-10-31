@@ -20,8 +20,9 @@ use super::{Keep, Row, kept, live, min_size, open, rows};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, Tally, Tick};
+use crate::format::{count, human, truncate_middle};
 use crate::model::outside::tilde;
-use crate::theme::{Theme, count, human, truncate_middle};
+use crate::theme::Theme;
 use crate::view::columns::cursor;
 use crate::view::empty::{self, Empty};
 

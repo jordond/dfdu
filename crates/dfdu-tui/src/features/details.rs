@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::{App, Effect};
 use crate::features::marks_pane;
-use crate::theme::{count, human};
+use crate::format::{count, human};
 use crate::view::cells;
 
 use read::subject;

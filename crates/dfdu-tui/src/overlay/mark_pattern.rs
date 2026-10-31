@@ -12,9 +12,9 @@ use ratatui::text::{Line, Span};
 
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect, Overlay};
+use crate::format::human;
 use crate::input::line::{Edit, LineInput};
 use crate::state::marks;
-use crate::theme::human;
 
 /// State of the open prompt, held in `Overlay::MarkPattern`.
 #[derive(Clone, Debug, Default)]

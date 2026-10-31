@@ -7,10 +7,10 @@ use dfdu_store::history;
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::format::truncate_middle;
 use crate::model::growth;
 use crate::state::filter;
 use crate::state::order::SortKey;
-use crate::theme::truncate_middle;
 
 /// Between two modes on the right of the second line, on wide terminals and on narrow ones.
 const WIDE_SEPARATOR: &str = "  ·  ";

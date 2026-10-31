@@ -290,7 +290,7 @@ fn check(dirs: usize, files: usize, block: Duration) {
             o.took,
             o.held,
             o.frames,
-            crate::theme::ratio(o.peak as u64, 1 << 20),
+            crate::format::ratio(o.peak as u64, 1 << 20),
             o.capacity >> 20
         );
         assert_eq!(o.totals.items, entries as u64, "{name}");

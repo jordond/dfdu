@@ -3,13 +3,13 @@
 //! copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
-//! `view`. Each feature has its own module with its state, keys and drawing: the views and
-//! panels in `features` (`treemap`, `cleanup`, `dupes`, `details`, `debug` and the disk
-//! `picker`); the overlays in `overlay` (`help`, `error_list`, `confirm`, `palette` and
-//! `type_filter`); and the rows' `marks`, `filter`, `order` and `motion` in `state`. `input`
-//! holds the text input, the mouse and fuzzy matching; `model` what is read from outside the
-//! UI: the engine model, the scan history (`history_link`, `growth`) and this machine
-//! (`outside`).
+//! `view`, with the styles in `theme` and the text for sizes, counts and bars in `format`. Each
+//! feature has its own module with its state, keys and drawing: the views and panels in
+//! `features` (`treemap`, `cleanup`, `dupes`, `details`, `debug` and the disk `picker`); the
+//! overlays in `overlay` (`help`, `error_list`, `confirm`, `palette` and `type_filter`); and the
+//! rows' `marks`, `filter`, `order` and `motion` in `state`. `input` holds the text input, the
+//! mouse and fuzzy matching; `model` what is read from outside the UI: the engine model, the
+//! scan history (`history_link`, `growth`) and this machine (`outside`).
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -21,6 +21,7 @@
 
 mod app;
 mod features;
+mod format;
 mod input;
 mod model;
 mod overlay;

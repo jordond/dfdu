@@ -185,13 +185,13 @@ fn soak_busy_reader_and_blocked_terminal() {
         "applier: {} slices, {:.2}M entries/s of lock time; wait p99 < {wait99:?}, max < {:?}; \
          hold p99 < {hold99:?}, {long} slices over 2 ms",
         timing.slices,
-        crate::theme::ratio(stats.entries, timing.locked_ns.max(1)) * 1e3,
+        crate::format::ratio(stats.entries, timing.locked_ns.max(1)) * 1e3,
         Timing::max(&timing.wait),
     );
     eprintln!(
         "in transit at most {:.1} MiB of {} MiB; {nodes} nodes; memory: RSS {rss:.0} MiB at the \
          end, process peak {peak_mem:.0} MiB",
-        crate::theme::ratio(peak as u64, 1 << 20),
+        crate::format::ratio(peak as u64, 1 << 20),
         capacity >> 20,
     );
     match Arc::try_unwrap(engine) {
