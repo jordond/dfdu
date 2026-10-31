@@ -247,7 +247,7 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
         CategoryIx::of(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
     let name = need(def.name, "name")?;
     let safety = safety(&need(def.safety, "safety")?)?;
-    let action = action(def.action, def.native)?;
+    let action = action(def.action.as_deref(), def.native)?;
     let min_size = match def.min_size {
         Some(s) => parse_size(&s).ok_or_else(|| format!("min_size: cannot read `{s}`"))?,
         None => 0,
@@ -329,8 +329,8 @@ fn safety(s: &str) -> Result<Safety, String> {
 
 /// The `action` of a rule, `delete` when not set. `native` needs a `native.command`, and
 /// `[rule.native]` is only for `native`.
-fn action(s: Option<String>, native: Option<NativeDef>) -> Result<Action, String> {
-    let name = match s.as_deref() {
+fn action(s: Option<&str>, native: Option<NativeDef>) -> Result<Action, String> {
+    let name = match s {
         None => ActionName::Delete,
         Some(s) => ActionName::parse(s)
             .ok_or_else(|| format!("unknown action `{s}` (delete, trash, native or report)"))?,
