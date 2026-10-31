@@ -8,9 +8,9 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
-use super::{Disk, Role};
+use super::{Disk, Role, Space};
 #[cfg(target_os = "macos")]
-use super::{Space, gather, on_thread};
+use super::{gather, on_thread};
 use crate::FsClass;
 
 /// The mounted volumes the Finder shows, sorted by mount point, from the kernel's mount table
@@ -27,7 +27,11 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
     let pending = listed(&volumes)
         .map(|v| {
             let at = v.mount_point.clone();
-            let rx = on_thread(move || crate::macos::statfs_space(&at).map(container_space));
+            let rx = on_thread(move || {
+                let space = crate::macos::statfs_space(&at)?;
+                let important = crate::macos::important_available(&at);
+                Ok(with_purgeable(container_space(space), important))
+            });
             let disk = Disk {
                 mount_point: v.mount_point.clone(),
                 also_at: vec![],
@@ -51,13 +55,23 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
 /// same on each of its volumes ([`Disk::shares_space_with`]); `statfs` counts only the
 /// volume's own blocks as used.
 ///
-/// The free space is `f_bavail`, as `df` shows it. The Finder shows more: it counts purgeable
-/// data (caches, local snapshots, iCloud files it can evict) as available, which the system
-/// frees only when it needs the room.
+/// The free space is `f_bavail`, as `df` shows it: what can be written now. The Finder shows
+/// more, counting purgeable data as available ([`with_purgeable`]).
 #[cfg(target_os = "macos")]
 fn container_space(s: Space) -> Space {
     Space {
         used: s.total.saturating_sub(s.available),
+        ..s
+    }
+}
+
+/// `s` with its purgeable space: what the system says is available for important use (the
+/// Finder's free space, `important`) beyond `f_bavail`. The system frees it (caches, local
+/// snapshots, iCloud files it can evict) only when it needs the room.
+#[cfg(any(target_os = "macos", test))]
+fn with_purgeable(s: Space, important: Option<u64>) -> Space {
+    Space {
+        purgeable: important.map(|i| i.saturating_sub(s.available)),
         ..s
     }
 }
@@ -198,6 +212,28 @@ mod tests {
                 ("/Volumes/USB", "/dev/disk7s1"),
             ]
         );
+    }
+
+    /// Purgeable is what the Finder counts as available beyond `f_bavail`, never below zero.
+    #[test]
+    fn purgeable_is_the_finders_free_space_beyond_f_bavail() {
+        let s = Space {
+            total: 1000,
+            used: 700,
+            available: 300,
+            purgeable: None,
+        };
+        assert_eq!(with_purgeable(s, Some(450)).purgeable, Some(150));
+        assert_eq!(with_purgeable(s, Some(200)).purgeable, Some(0));
+        assert_eq!(with_purgeable(s, None).purgeable, None);
+        assert_eq!(with_purgeable(s, Some(450)).available, 300);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_root_volume_reports_its_important_capacity() {
+        let important = crate::macos::important_available(std::path::Path::new("/"));
+        assert!(important.is_some_and(|i| i > 0), "{important:?}");
     }
 
     #[test]

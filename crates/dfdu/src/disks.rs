@@ -27,11 +27,18 @@ fn table(w: &mut dyn io::Write, list: &[dfdu_sys::Disk]) -> io::Result<()> {
         .max()
         .unwrap_or(0)
         .clamp(10, 40);
-    writeln!(
-        w,
-        "{:<width$}  {:<8} {:>10} {:>10} {:>10}  {:>4}",
-        "MOUNTED ON", "TYPE", "SIZE", "USED", "FREE", "USE%"
-    )?;
+    // macOS: what the system can free on top of the free space, when some disk says.
+    let purgeable = list
+        .iter()
+        .any(|d| d.space.is_some_and(|s| s.purgeable.is_some()));
+    let mut header = format!(
+        "{:<width$}  {:<8} {:>10} {:>10} {:>10}",
+        "MOUNTED ON", "TYPE", "SIZE", "USED", "FREE"
+    );
+    if purgeable {
+        let _ = write!(header, " {:>10}", "PURGEABLE");
+    }
+    writeln!(w, "{header}  USE%")?;
     for d in list {
         let mut line = format!("{:<width$}  {:<8}", d.mount_point.display(), d.fstype);
         match d.space {
@@ -43,11 +50,16 @@ fn table(w: &mut dyn io::Write, list: &[dfdu_sys::Disk]) -> io::Result<()> {
                 let pct = s.used as f64 * 100.0 / s.total.max(1) as f64;
                 let _ = write!(
                     line,
-                    " {:>10} {:>10} {:>10}  {pct:>3.0}%",
+                    " {:>10} {:>10} {:>10}",
                     dfdu_engine::human(s.total),
                     dfdu_engine::human(s.used),
                     dfdu_engine::human(s.available),
                 );
+                if purgeable {
+                    let p = s.purgeable.map_or_else(|| "-".into(), dfdu_engine::human);
+                    let _ = write!(line, " {p:>10}");
+                }
+                let _ = write!(line, "  {pct:>3.0}%");
             }
             None => line += "  not responding",
         }
@@ -73,3 +85,6 @@ fn table(w: &mut dyn io::Write, list: &[dfdu_sys::Disk]) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -79,8 +79,12 @@ pub struct Space {
     pub total: u64,
     pub used: u64,
     /// Free space available to this user (less than total minus used where blocks are
-    /// reserved for root).
+    /// reserved for root): `f_bavail`, as `df` shows it.
     pub available: u64,
+    /// macOS: what the system can free on top of `available` when it needs the room (caches,
+    /// local snapshots, iCloud files it can evict), which the Finder counts as available.
+    /// `None` on other systems, or when the system did not say.
+    pub purgeable: Option<u64>,
 }
 
 /// Runs `f` on its own thread; its result arrives on the returned channel. The caller waits

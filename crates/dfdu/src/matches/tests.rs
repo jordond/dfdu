@@ -116,7 +116,7 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
     assert_eq!(pip_item.targets(), [pip_ref]);
     // Left out by a filter, pip's cache still is not counted with the user caches.
     let sys = Filter {
-        category: vec!["sys".into()],
+        category: vec![category_arg("sys").unwrap()],
         ..all
     };
     let list = items(&m, &rules, &sys, 0);

@@ -20,6 +20,14 @@ use dfdu_tree::{DirState, NodeFlags, NodeRef};
 mod common;
 use common::{child, node};
 
+/// Deletes a test's work directory, subvolumes in it included, without crossing into another
+/// mount.
+fn remove_tree(dir: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let m = fs::symlink_metadata(dir).unwrap();
+    dfdu_clean::remove_verified(dir, dfdu_tree::Kind::Dir, m.dev(), m.ino()).unwrap();
+}
+
 /// Tests run one at a time: they add and remove `work-*` directories in the shared fixture,
 /// which other tests' totals would see.
 fn fixture() -> Option<(PathBuf, std::sync::MutexGuard<'static, ()>)> {
@@ -382,9 +390,9 @@ fn read_only_snapshots() {
             "ro",
             "false",
         ]);
-        dfdu_clean::remove(&w.join("ro"), dfdu_tree::Kind::Dir).unwrap();
+        remove_tree(&w.join("ro"));
     }
-    dfdu_clean::remove(&w, dfdu_tree::Kind::Dir).unwrap();
+    remove_tree(&w);
 }
 
 #[test]
@@ -693,7 +701,7 @@ fn trash_refuses_items_in_another_subvolume() {
         .output()
         .unwrap();
     let ok = out.status.success();
-    dfdu_clean::remove(&w, dfdu_tree::Kind::Dir).unwrap();
+    remove_tree(&w);
     assert!(
         ok,
         "{}\n{}",

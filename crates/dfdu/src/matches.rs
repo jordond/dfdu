@@ -14,7 +14,7 @@ use dfdu_scan::{Backend, NativeBackend};
 use dfdu_tree::{Class, ClassFlags, HostPath, Kind, NodeRef, Safety};
 use serde_json::{Map, Value};
 
-use crate::args::{age_arg, category_arg, size_arg};
+use crate::args::{Categories, age_arg, category_arg, size_arg};
 use crate::output::put_host_path;
 use crate::{MountArgs, launch};
 
@@ -29,7 +29,7 @@ pub struct Filter {
     /// Only these categories (comma separated): an id such as `dev.build`, or its first part
     /// (`dev`) for all of them.
     #[arg(long, value_name = "CATEGORY", value_delimiter = ',', value_parser = category_arg)]
-    pub category: Vec<String>,
+    pub category: Vec<Categories>,
     /// Only matches unchanged for this long (`30d`, `2w`, `12h`; a bare number is days).
     #[arg(long, value_name = "AGE", value_parser = age_arg)]
     pub older_than: Option<u64>,
@@ -111,15 +111,12 @@ fn item(m: &Model, rules: &RuleSet, l: dfdu_engine::Listed, now: i64) -> Item {
 }
 
 fn keep(rules: &RuleSet, f: &Filter, it: &Item, now: i64) -> bool {
-    let cat = rules.rule(it.class.rule).category().id;
+    let cat = rules.rule(it.class.rule).category;
     f.min_size.is_none_or(|min| it.disk >= min)
         && f.older_than.is_none_or(|age| {
             now.saturating_sub(it.mtime) >= i64::try_from(age).unwrap_or(i64::MAX)
         })
-        && (f.category.is_empty()
-            || f.category
-                .iter()
-                .any(|c| cat == c || cat.split('.').next() == Some(c.as_str())))
+        && (f.category.is_empty() || f.category.iter().any(|c| c.has(cat)))
 }
 
 /// Starts an engine that scans `path` with the rules, and waits for the scan and the guard

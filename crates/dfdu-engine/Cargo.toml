@@ -18,7 +18,6 @@ dfdu-clean.workspace = true
 crossbeam-channel.workspace = true
 parking_lot.workspace = true
 dunce.workspace = true
-etcetera.workspace = true
 gix-index.workspace = true
 gix-discover.workspace = true
 gix-hash.workspace = true
