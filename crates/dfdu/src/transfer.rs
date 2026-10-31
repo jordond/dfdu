@@ -148,13 +148,11 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
 /// `dfdu export`: scans `path` and writes it in ncdu's format.
 pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
     let resumed = args.resume_from.as_deref().map(read_snapshot).transpose()?;
-    let mut job = args.mounts.job();
+    let job = args
+        .mounts
+        .job_resuming(resumed.as_ref().map(|l| &l.header));
     let path = match &resumed {
-        Some(l) => {
-            job.cross_mounts = l.header.cross_mounts;
-            job.network = l.header.network;
-            l.tree.path_buf(l.root)
-        }
+        Some(l) => l.tree.path_buf(l.root),
         None => args.path.clone(),
     };
     let opts = launch::headless(false);
@@ -316,5 +314,38 @@ mod tests {
         assert!(write(Some(&header), true).starts_with(b"DFDUSNAP"));
         assert!(write(None, true).starts_with(&[0x28, 0xb5, 0x2f, 0xfd]));
         assert!(write(None, false).starts_with(b"[1,2,{\"progname\":\"dfdu\""));
+    }
+
+    /// A snapshot read back for `--resume-from` is rescanned with its own mount options, an
+    /// ncdu export with those given.
+    #[test]
+    fn a_resumed_snapshot_keeps_its_mount_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = dfdu_tree::Meta::from_metadata(&std::fs::metadata(tmp.path()).unwrap());
+        let mut tree = dfdu_tree::Tree::new();
+        let root = tree.new_root(tmp.path().as_os_str().as_encoded_bytes(), &meta, true);
+        let header = dfdu_store::snapshot::Header {
+            cross_mounts: true,
+            network: true,
+            ..Default::default()
+        };
+        let reread = |header: Option<&dfdu_store::snapshot::Header>, name: &str| {
+            let file = tmp.path().join(name);
+            let mut out = Vec::new();
+            write_export(&mut out, &tree, root, header, false, &ncdu_meta()).unwrap();
+            std::fs::write(&file, out).unwrap();
+            read_export(&file).unwrap_or_else(|_| panic!("{name} reads back"))
+        };
+        let given = MountArgs {
+            one_file_system: true,
+            ..MountArgs::default()
+        };
+        let snap = reread(Some(&header), "scan.dfdu");
+        let job = given.job_resuming(snap.header.as_ref());
+        assert!(job.cross_mounts && job.network);
+        let ncdu = reread(None, "scan.json");
+        assert!(ncdu.header.is_none());
+        let job = given.job_resuming(ncdu.header.as_ref());
+        assert!(!job.cross_mounts && !job.network);
     }
 }

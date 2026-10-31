@@ -88,7 +88,8 @@ struct Cli {
     #[arg(long, conflicts_with = "path")]
     disks: bool,
     /// Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its
-    /// directory in the background, replacing it when done.
+    /// directory in the background, replacing it when done. A snapshot is rescanned with the
+    /// mount options it was taken with.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["path", "disks", "import"])]
     resume_from: Option<PathBuf>,
     /// Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu
@@ -292,6 +293,17 @@ impl MountArgs {
             network: self.network && !self.one_file_system,
             ..Default::default()
         }
+    }
+
+    /// The options of a scan: [`MountArgs::job`], or for the rescan of a snapshot those it was
+    /// taken with.
+    fn job_resuming(self, snapshot: Option<&dfdu_store::snapshot::Header>) -> JobOptions {
+        let mut job = self.job();
+        if let Some(h) = snapshot {
+            job.cross_mounts = h.cross_mounts;
+            job.network = h.network;
+        }
+        job
     }
 }
 

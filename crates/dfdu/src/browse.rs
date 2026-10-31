@@ -43,16 +43,17 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     } else {
         let resumed = (cli.resume_from.as_deref().map(read_export))
             .transpose()?
-            .map(|im| (im.tree, im.journal));
+            .map(|im| (im.tree, im.header));
         let root = resumed
             .as_ref()
             .and_then(|(t, _)| t.roots().next().map(|r| t.path_buf(r)));
+        let header = resumed.as_ref().and_then(|(_, h)| h.as_ref());
         // Checked before the browser takes the terminal. With --disks the directory is not
         // known yet, and --mft is not used.
         let local = Local {
             mft: !cli.disks && cli.mounts.use_mft(root.as_deref().unwrap_or(&path)),
             threads: None,
-            job: cli.mounts.job(),
+            job: cli.mounts.job_resuming(header),
             rules: cli.rules.load(),
         };
         // The cache is for a directory named on the command line, not one read from a file or
@@ -62,9 +63,9 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             .flatten();
         let start: StartLocal = Box::new(move |path, opts| local.start(path, opts));
         match (resumed, slot) {
-            (Some((tree, journal)), _) => Source::Resumed {
+            (Some((tree, header)), _) => Source::Resumed {
                 tree,
-                journal,
+                journal: header.and_then(|h| h.journal),
                 start,
             },
             (None, Some(slot)) => Source::Cached { path, slot, start },
