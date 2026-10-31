@@ -156,3 +156,22 @@ fn an_imported_trees_host_follows_its_root() {
         e.shutdown(Duration::from_secs(1));
     }
 }
+
+#[test]
+#[should_panic(expected = "Engine::load after something was scanned")]
+fn a_tree_is_not_loaded_over_a_scan() {
+    let dir = tempdir();
+    let root = dir.path();
+    fs::write(root.join("f.bin"), b"data").unwrap();
+    let e = Engine::start(
+        dfdu_scan::PortableBackend::default(),
+        EngineOptions::default(),
+    );
+    e.send(Command::Scan {
+        path: root.to_path_buf().into(),
+        opts: dfdu_scan::JobOptions::default(),
+    });
+    assert!(e.wait_idle(Some(Duration::from_secs(30))).is_idle());
+    let (tree, _) = loaded_tree(root, "f.bin");
+    e.load(tree);
+}

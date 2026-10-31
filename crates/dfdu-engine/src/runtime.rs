@@ -322,8 +322,17 @@ impl<B: Backend> Engine<B> {
     /// Replaces the tree with one read from a file, before anything is scanned, to bring it up
     /// to date with [`Command::Resume`]. A tree that is only browsed is started with
     /// [`Engine::start_imported`] instead.
+    ///
+    /// # Panics
+    ///
+    /// When the tree already holds nodes (something was scanned, or the engine was started on
+    /// a tree): the applier's jobs and the model's state would point into the tree replaced.
     pub fn load(&self, tree: Tree) {
         let mut m = self.model.write();
+        assert!(
+            m.tree.live_nodes() == 0,
+            "Engine::load after something was scanned"
+        );
         m.tree = tree;
         m.tree.bump_version();
     }
