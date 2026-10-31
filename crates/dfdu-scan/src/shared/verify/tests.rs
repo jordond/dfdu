@@ -44,8 +44,10 @@ fn a_batch_is_one_task_at_the_root_with_its_dirs() {
     assert_eq!((t.job, t.dir), (JobId(2), DirId(7)));
     assert_eq!(t.loc, PathBuf::from("/r"));
     assert!(!t.is_root && !t.probe_subvol);
-    assert!(t.chunk.is_none() && t.gate.is_none() && t.class.is_none());
-    let v = t.verify.as_ref().expect("a verify task");
+    assert!(t.gate.is_none() && t.class.is_none());
+    let TaskKind::Verify(v) = &t.kind else {
+        panic!("not a verify task")
+    };
     assert_eq!((v.batch, v.at), (7, 0));
     let paths: Vec<_> = v.dirs.iter().map(|d| d.path.clone()).collect();
     assert_eq!(paths, [PathBuf::from("/r/d1"), PathBuf::from("/r/d2")]);

@@ -10,7 +10,7 @@ use dfdu_tree::ErrKind;
 use super::{InlineBlock, StepResult, Worker, empty_chunk};
 use crate::backend::{Backend, DirStream, Raw};
 use crate::proto::{ChunkStatus, ListingStatus, Probe, ScanMsg};
-use crate::shared::{ChunkWork, Clock, DirParts, Shared, Task};
+use crate::shared::{ChunkWork, Clock, DirParts, Shared, Task, TaskKind};
 
 #[cfg(test)]
 mod tests;
@@ -161,13 +161,12 @@ impl<B: Backend> Worker<B> {
             dev: r.task.dev,
             mount: r.task.mount,
             probe_subvol: false,
-            chunk: Some(Box::new(ChunkWork {
+            kind: TaskKind::Chunk(Box::new(ChunkWork {
                 raw,
                 seq,
                 parts,
                 class: r.class.clone(),
             })),
-            verify: None,
             gate: r.task.gate.clone(),
             storage: r.task.storage,
             class: None,
@@ -222,7 +221,7 @@ impl<B: Backend> Worker<B> {
         let r = self.running.as_mut().expect("running");
         // Stopped chunk tasks were turned away when taken; once stat'ing has begun it runs to
         // the end, like a blocking call.
-        let work = r.task.chunk.as_mut().expect("chunk task");
+        let work = r.task.kind.chunk_mut().expect("chunk task");
         let out = &mut self.block;
         let res = self.slot.watch_io(clock.now(), || work.raw.stat(out));
         if matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
@@ -233,8 +232,8 @@ impl<B: Backend> Worker<B> {
             Ok(()) => self.emit_block(sh, seq, false, clock),
             Err(e) => {
                 self.block.clear();
-                let r = self.running.as_mut().expect("running");
-                let work = r.task.chunk.as_ref().expect("chunk task");
+                let r = self.running.as_ref().expect("running");
+                let work = r.task.kind.chunk().expect("chunk task");
                 work.parts.panicked.fetch_add(1, SeqCst);
                 let chunk = empty_chunk(&r.task, seq, ChunkStatus::Panicked(e.to_string()));
                 self.slot
@@ -243,8 +242,8 @@ impl<B: Backend> Worker<B> {
                     .push(ScanMsg::Chunk(chunk), clock.now());
             }
         }
-        let mut r = self.running.take().expect("running");
-        let work = r.task.chunk.take().expect("chunk task");
+        let r = self.running.take().expect("running");
+        let work = r.task.kind.chunk().expect("chunk task");
         let mut ob = self.slot.outbox.lock();
         let class = work.class.as_deref();
         self.finish_part(&mut ob, &r.task, &work.parts, class, seq + 1, clock.now());
