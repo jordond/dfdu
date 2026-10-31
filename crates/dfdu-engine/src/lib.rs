@@ -7,16 +7,12 @@ mod applier;
 mod classifier;
 mod crash;
 mod extents;
-mod listed;
 mod measure;
 mod nanos;
-mod notes;
-mod outside;
 mod recent;
-mod recommend;
 mod remote;
 mod runtime;
-mod sizes;
+mod shown;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support;
@@ -39,17 +35,14 @@ pub use dfdu_scan::journal::{
     JournalPosition, changed_since, changed_since_cancellable, journal_position,
 };
 pub use extents::{Inode, Measurement};
-pub use listed::{Listed, listed};
 pub use measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 #[cfg(target_os = "linux")]
 pub use measure::{from_extents as measure_from_extents, from_items as measure_from_items};
-pub use notes::{ErrorItem, ErrorList, errors, errors_below, problem, subvol_label};
-pub use outside::{
-    LIST_MAX, NotEntered, describe, home_dir, linked_note, more_links, not_entered,
-    not_entered_lines, rel_text, tilde,
-};
 pub use recent::{Event, RECENT, Recent};
-pub use recommend::{Verdict, verdict};
 pub use remote::{Connected, DEAD, RemoteIo, RemoteRules, agent, wire};
 pub use runtime::{Engine, EngineOptions, JournalQuery, WaitIdle, workers_for};
-pub use sizes::{SizeMode, human};
+pub use shown::{
+    ErrorItem, ErrorList, LIST_MAX, Listed, NotEntered, SizeMode, Verdict, describe, errors,
+    errors_below, home_dir, human, linked_note, listed, more_links, not_entered, not_entered_lines,
+    problem, rel_text, subvol_label, tilde, verdict,
+};

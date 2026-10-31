@@ -11,7 +11,7 @@ use dfdu_rules::{Linked, RuleSet};
 use dfdu_sys::MountInfo;
 use dfdu_tree::{DirState, Host, HostPath, Ix, NodeFlags, Tree};
 
-use crate::sizes::human;
+use super::sizes::human;
 
 /// Most mounts a footer line names, and most links out of the scan the command line names;
 /// the rest are counted.
