@@ -14,7 +14,7 @@ use dfdu_scan::{Backend, NativeBackend};
 use dfdu_tree::{Class, HostPath, Kind, NodeRef, now_secs};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, written};
+use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
 
 /// Exit code when `--fail-above` is exceeded.
 pub const EXIT_THRESHOLD: u8 = 4;
@@ -341,7 +341,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
         let total = reclaimable(&list);
         let exceeded = args.fail_above.is_some_and(|t| total > t);
         let left_out = crate::outside::gather(m, root, true);
-        let r = if args.format == ReportFormat::Json {
+        if args.format == ReportFormat::Json {
             let mut doc = js::document(&m.tree.host_path(root));
             doc.insert("generated_at".into(), now.into());
             doc.insert("complete".into(), m.complete(root).into());
@@ -366,13 +366,14 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
                     json!({ "fail_above": t, "exceeded": exceeded }),
                 );
             }
-            js::print(doc)
+            written(js::print(doc))?;
         } else {
             let lines = crate::outside::lines(&left_out, Some(rules), "dfdu report");
-            table(rules, &list, now, args.fail_above, exceeded)
-                .and_then(|()| crate::outside::print(&mut std::io::stdout().lock(), &lines))
-        };
-        written(r)?;
+            print_out(|w| {
+                table(w, rules, &list, now, args.fail_above, exceeded)?;
+                crate::outside::print(w, &lines)
+            })?;
+        }
         Ok(if exceeded {
             ExitCode::from(EXIT_THRESHOLD)
         } else if !m.complete(root) {
@@ -385,18 +386,17 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
     code
 }
 
+/// Writes the table of `list` to `w`.
 fn table(
+    w: &mut dyn std::io::Write,
     rules: &RuleSet,
     list: &[Item],
     now: i64,
     fail_above: Option<u64>,
     exceeded: bool,
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
     if list.is_empty() {
-        writeln!(w, "nothing found")?;
-        return w.flush();
+        return writeln!(w, "nothing found");
     }
     writeln!(
         w,
@@ -476,7 +476,7 @@ fn table(
             dfdu_engine::human(t)
         )?;
     }
-    w.flush()
+    Ok(())
 }
 
 fn truncate(s: &str, n: usize) -> String {

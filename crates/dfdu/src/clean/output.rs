@@ -1,6 +1,8 @@
 //! What `dfdu clean` prints: a line per item and a summary, or the JSON document
 //! (schema/clean.v1.json).
 
+use std::io::Write;
+
 use dfdu_engine::Model;
 use dfdu_rules::{Action, RuleSet};
 use dfdu_tree::HostPath;
@@ -17,17 +19,16 @@ fn verb(mode: ModeArg) -> &'static str {
     }
 }
 
+/// Writes a line per item and the summary to `w`.
 pub(super) fn print_table(
+    w: &mut dyn Write,
     rules: &RuleSet,
     args: &CleanArgs,
     items: &[Item],
     outcomes: &[Outcome],
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
     if items.is_empty() {
-        writeln!(w, "nothing found")?;
-        return w.flush();
+        return writeln!(w, "nothing found");
     }
     for (it, o) in items.iter().zip(outcomes) {
         let what = match o {
@@ -55,40 +56,43 @@ pub(super) fn print_table(
             it.path.display()
         )?;
     }
-    let sum = |f: &dyn Fn(&Outcome) -> bool| {
-        items
-            .iter()
-            .zip(outcomes)
-            .filter(|(_, o)| f(o))
-            .fold((0usize, 0u64), |(n, b), (it, _)| (n + 1, b + it.disk))
-    };
     writeln!(w)?;
-    if args.yes {
+    let rows: Vec<(u64, &Outcome)> = items.iter().map(|it| it.disk).zip(outcomes).collect();
+    writeln!(w, "{}", summary(args.yes, args.mode, &rows))
+}
+
+/// The last line of the table, from each item's disk usage and outcome: what was done, or
+/// for a dry run what would be.
+fn summary(yes: bool, mode: ModeArg, rows: &[(u64, &Outcome)]) -> String {
+    let sum = |f: &dyn Fn(&Outcome) -> bool| {
+        rows.iter()
+            .filter(|(_, o)| f(o))
+            .fold((0usize, 0u64), |(n, b), (disk, _)| (n + 1, b + disk))
+    };
+    let plural = |n| if n == 1 { "" } else { "s" };
+    if yes {
         let (n, b) = sum(&|o| *o == Outcome::Deleted);
         let (f, _) = sum(&|o| matches!(o, Outcome::Failed(_)));
-        writeln!(
-            w,
-            "{n} item{} ({}) {}{}",
-            if n == 1 { "" } else { "s" },
+        let failed = if f > 0 {
+            format!(", {f} failed")
+        } else {
+            String::new()
+        };
+        format!(
+            "{n} item{} ({}) {}{failed}",
+            plural(n),
             dfdu_engine::human(b),
-            verb(args.mode),
-            if f > 0 {
-                format!(", {f} failed")
-            } else {
-                String::new()
-            }
-        )?;
+            verb(mode)
+        )
     } else {
         let (n, b) = sum(&|o| *o == Outcome::Planned);
-        writeln!(
-            w,
+        format!(
             "dry run: {n} item{} ({}) would be {}; nothing was changed (--yes does it)",
-            if n == 1 { "" } else { "s" },
+            plural(n),
             dfdu_engine::human(b),
-            verb(args.mode)
-        )?;
+            verb(mode)
+        )
     }
-    w.flush()
 }
 
 /// What `run` scanned and did, for its output.
@@ -155,3 +159,6 @@ pub(super) fn print_json(
     );
     js::print(doc)
 }
+
+#[cfg(test)]
+mod tests;

@@ -25,7 +25,7 @@ use dfdu_scan::Backend;
 use dfdu_tree::{Class, NodeRef};
 
 use crate::report::{self, Filter, Item};
-use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, written};
+use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
 use output::{Results, print_json, print_table};
 
 #[derive(Args)]
@@ -245,8 +245,8 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode>
         execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
     let code = engine.read(|m| {
-        let r = if args.format == report::ReportFormat::Json {
-            print_json(
+        if args.format == report::ReportFormat::Json {
+            written(print_json(
                 m,
                 rules,
                 args,
@@ -257,11 +257,10 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode>
                     complete,
                     now,
                 },
-            )
+            ))?;
         } else {
-            print_table(rules, args, &items, &outcomes)
-        };
-        written(r)?;
+            print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
+        }
         Ok(
             if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
                 ExitCode::from(EXIT_DELETE_FAILED)
