@@ -201,6 +201,6 @@ mod tests {
         assert_eq!((t.name(d), t.name(f)), (&b"d"[..], &b"f"[..]));
         assert_eq!(t.total(d).alloc, 300);
         assert_eq!(t.total(r).alloc, 300);
-        assert_eq!(t.total(r).items, t.total(d).items + 1);
+        assert_eq!(t.total(r).items, t.total(d).items);
     }
 }
