@@ -177,12 +177,7 @@ impl Cacher {
             return true;
         }
         let mut changed = false;
-        if self
-            .loader
-            .as_ref()
-            .is_some_and(thread::JoinHandle::is_finished)
-            && let Some(l) = self.loader.take()
-        {
+        if let Some(l) = self.loader.take_if(|l| l.is_finished()) {
             let loaded = l.join().unwrap_or(Err(LoadError::Panicked));
             self.loaded(&link, loaded, app, engine);
             changed = true;
@@ -383,10 +378,7 @@ impl Cacher {
     /// Takes in the end of a save: a problem goes in the status line, and a tree that changed
     /// while it was written is saved again once it stays the same.
     fn save_ended(&mut self, link: &CacheLink, app: &mut App) -> bool {
-        if !self.writer.as_ref().is_some_and(|w| w.thread.is_finished()) {
-            return false;
-        }
-        let Some(w) = self.writer.take() else {
+        let Some(w) = self.writer.take_if(|w| w.thread.is_finished()) else {
             return false;
         };
         match w.thread.join() {

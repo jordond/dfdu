@@ -141,9 +141,7 @@ impl Recorder {
                 }
             }
         }
-        if self.writer.as_ref().is_some_and(|w| w.thread.is_finished())
-            && let Some(w) = self.writer.take()
-        {
+        if let Some(w) = self.writer.take_if(|w| w.thread.is_finished()) {
             let result = w
                 .thread
                 .join()
