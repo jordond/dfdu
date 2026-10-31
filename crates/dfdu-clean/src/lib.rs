@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 pub use deleter::{DeleterHandle, STAGE_UNDO_WINDOW, spawn_deleter};
 pub use journal::{Journal, check_line};
-pub use native::{NativeReq, NativeRule, shown_argv};
-pub use remove::{remove, remove_verified};
+pub use native::{NativeReq, NativeRule, check_tool, run_command, shown_argv};
+pub use remove::remove_verified;
 pub use stage::rename_noreplace;
 pub use verify::{Rejection, is_protected, verify};
 

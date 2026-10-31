@@ -61,7 +61,7 @@ fn dev(t0: Instant) -> App {
             rule,
             safety: dfdu_tree::Safety::Regenerable,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         }),
     );
     for (name, size) in [

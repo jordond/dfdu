@@ -45,6 +45,31 @@ fn hardlink_charging() {
     t.check(&[]).unwrap();
 }
 
+/// `set_flag` changes the flags that say what a node is, totals included.
+#[test]
+fn set_flag_restates_counted_flags() {
+    let mut t = Tree::new();
+    let root = t.new_root(b"/r", &dir_meta(), true);
+    let a = add_dir(&mut t, root, "a");
+    t.set_flag(a, NodeFlags::MOUNT_ROOT, true);
+    t.set_flag(a, NodeFlags::RO_SUBVOL, true);
+    assert_eq!((t.total(root).mounts, t.total(root).ro_subvols), (1, 1));
+    t.set_flag(a, NodeFlags::MOUNT_ROOT, false);
+    assert_eq!(t.total(root).mounts, 0);
+    t.check(&[]).unwrap();
+}
+
+/// A flag with its own setter, such as `CHARGED` (which only a hard link may have), is refused.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "only by its own setter")]
+fn set_flag_refuses_flags_with_their_own_setter() {
+    let mut t = Tree::new();
+    let root = t.new_root(b"/r", &dir_meta(), true);
+    let f = add_file(&mut t, root, "f", 100);
+    t.set_flag(f, NodeFlags::CHARGED, false);
+}
+
 /// An error is counted once per node: in a directory's own total, or a file's parent's.
 #[test]
 fn set_error_counts_each_node_once() {

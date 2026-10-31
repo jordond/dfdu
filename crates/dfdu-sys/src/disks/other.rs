@@ -58,6 +58,7 @@ fn disk(mount_point: PathBuf, fstype: String, source: String, total: u64, availa
             total,
             used: total.saturating_sub(available),
             available,
+            purgeable: None,
         }),
         role: None,
         shares_space_with: vec![],
@@ -101,6 +102,7 @@ mod tests {
             total: 1000,
             used: 700,
             available: 300,
+            purgeable: None,
         };
         assert_eq!(d.space, Some(space));
         assert_eq!((d.class, d.fstype.as_str()), (FsClass::Local, "NTFS"));

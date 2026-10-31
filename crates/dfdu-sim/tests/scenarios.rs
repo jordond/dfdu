@@ -511,7 +511,7 @@ fn quiescence_with_published_and_new_tasks() {
             }
             // Finish the scan; the watchdog then reports quiescence, and it is not applied yet.
             for _ in 0..200 {
-                if sim.model.status.running() == 0 && sim.shared.outstanding().0 == 0 {
+                if sim.model.status.running_jobs() == 0 && sim.shared.outstanding().0 == 0 {
                     break;
                 }
                 for w in 0..3 {
@@ -520,7 +520,7 @@ fn quiescence_with_published_and_new_tasks() {
                 sim.apply_all().unwrap();
                 sim.applier_work().unwrap();
             }
-            assert_eq!(sim.model.status.running(), 0);
+            assert_eq!(sim.model.status.running_jobs(), 0);
             sim.watchdog();
             assert!(quiescent(sim));
             // A rescan job starts before that Quiescent is applied.
@@ -528,7 +528,11 @@ fn quiescence_with_published_and_new_tasks() {
             sim.command(dfdu_engine::Command::Rescan { node }).unwrap();
             sim.apply_all().unwrap();
             assert_eq!(sim.model.status.stats.lost, 0);
-            assert_eq!(sim.model.status.running(), 1, "the rescan is still running");
+            assert_eq!(
+                sim.model.status.running_jobs(),
+                1,
+                "the rescan is still running"
+            );
         },
     );
 }

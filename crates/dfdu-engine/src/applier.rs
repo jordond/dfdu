@@ -25,7 +25,6 @@ mod work;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use dfdu_clean::{DeleterReq, Plan};
 use dfdu_scan::{Backend, DirId, JobId, JobOptions, ListingStatus, Shared};
 use dfdu_tree::{Class, Ix, Kind, Meta, NodeRef, Pages, Tree};
 
@@ -40,11 +39,9 @@ pub(crate) use native::native_req;
 
 use crate::classifier::CheckReq;
 use crate::extents::ExtentTable;
-use delete::ActivePlan;
 use links::{LinkTable, Scope};
 use resume::Kept;
 pub use resume::unrefreshed;
-use undo::Undoable;
 use work::Work;
 
 /// A `Close` that arrived before some of its directory's chunks: their number, the status, and
@@ -164,19 +161,11 @@ pub struct Applier<B: Backend> {
     links: LinkTable,
     work: VecDeque<Work>,
     retry_abandon: Vec<(JobId, DirId)>,
-    queued_plans: VecDeque<Plan>,
-    active_plan: Option<ActivePlan>,
-    outgoing_plans: Vec<Plan>,
-    /// Undo and commit requests for the deleter.
-    outgoing_controls: Vec<DeleterReq>,
-    /// Plans with items that can still be put back, by plan.
-    undoable: BTreeMap<u64, Undoable>,
+    /// Delete plans queued and running, and what of them can still be put back.
+    delete: delete::Deleting,
     /// Paths whose directories are rescanned when the running undo or native command ends:
     /// what it put back or what it cleaned.
     rescan_paths: Vec<dfdu_tree::HostPath>,
-    next_plan: u64,
-    /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
-    deferred_rescans: Vec<NodeRef>,
     /// What is kept of resumes beside their walks.
     resume: resume::Resumes,
     /// Rescans waiting for their parent's listing to close, and whether each enters a mount:
@@ -233,14 +222,8 @@ impl<B: Backend> Applier<B> {
             links: LinkTable::default(),
             work: VecDeque::new(),
             retry_abandon: Vec::new(),
-            queued_plans: VecDeque::new(),
-            active_plan: None,
-            outgoing_plans: Vec::new(),
-            outgoing_controls: Vec::new(),
-            undoable: BTreeMap::new(),
+            delete: delete::Deleting::default(),
             rescan_paths: Vec::new(),
-            next_plan: 1,
-            deferred_rescans: Vec::new(),
             rescans_after_listing: Vec::new(),
             resume: resume::Resumes::default(),
             extents: ExtentTable::default(),

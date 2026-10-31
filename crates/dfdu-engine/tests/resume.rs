@@ -17,9 +17,11 @@ use dfdu_tree::NodeRef;
 
 mod common;
 #[cfg(unix)]
-use common::loaded::{OLD, age, set_mtime, stat};
+use common::loaded::{OLD, age, answer, resume_held, set_mtime};
 use common::loaded::{find, loaded, resume, resume_since, scanned, totals, write};
 use common::tempdir;
+#[cfg(unix)]
+use common::wait_for;
 
 /// A change in the root lists the root again: what was removed goes, what is new is scanned,
 /// the subdirectories still there keep their loaded subtrees (the very nodes), and the totals
@@ -188,7 +190,6 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     write(&root.join("junk/big"), 2_000);
     write(&root.join("file"), 1_000);
     let tree = loaded(&root);
-    let node = tree.node_ref(tree.roots().next().unwrap());
     let junk = tree.node_ref(find(&tree, "junk").unwrap());
     let file = tree.node_ref(find(&tree, "file").unwrap());
     let journal = tempdir();
@@ -201,7 +202,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
             ..Default::default()
         },
     );
-    e.load(tree);
+    resume_held(&e, tree, JobOptions::default(), 0);
     e.send(Command::Delete {
         items: vec![junk, file],
         mode: Mode::Permanent,
@@ -213,7 +214,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
         dry_run: false,
     });
     e.send(Command::Rescan { node: junk });
-    assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
+    wait_for(&e, |m| m.status.commands_applied == 3);
     e.read(|m| {
         let refused: Vec<_> = m
             .status
@@ -228,13 +229,7 @@ fn a_loaded_tree_is_not_deleted_from_until_resumed() {
     });
     assert!(root.join("junk/big").exists() && root.join("file").exists());
 
-    e.send(Command::Resume {
-        node,
-        opts: JobOptions::default(),
-        changed: Some(vec![]),
-        since: 0,
-        root: stat(&root),
-    });
+    answer(&root, vec![]);
     assert!(e.wait_idle(Some(Duration::from_secs(5))).is_idle());
     e.send(Command::Delete {
         items: vec![junk],

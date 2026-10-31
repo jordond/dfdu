@@ -13,7 +13,7 @@ use dfdu_engine::{Command, Engine, EngineOptions, Model};
 use dfdu_rules::{Env, RuleSet, builtin};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{JobOptions, Limits, PortableBackend};
-use dfdu_tree::{Class, Ix, NodeFlags};
+use dfdu_tree::{ClassFlags, Ix, NodeFlags};
 
 const TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n# a cache\n";
 
@@ -329,7 +329,7 @@ fn a_git_tracked_target_is_protected() {
                 let g = &m.rules.as_ref().unwrap().rule(c.rule).guard;
                 g.not_vcs_tracked || !g.not_running.is_empty()
             })
-            .all(|(_, c)| c.has(Class::CHECKED))
+            .all(|(_, c)| c.has(ClassFlags::CHECKED))
     };
     let t0 = std::time::Instant::now();
     while !engine.read(checked) {
@@ -341,10 +341,10 @@ fn a_git_tracked_target_is_protected() {
     }
     engine.read(|m| {
         let vendored = m.tree.class(find(m, "vendored/target")).unwrap();
-        assert!(vendored.has(Class::VCS_TRACKED));
+        assert!(vendored.has(ClassFlags::VCS_TRACKED));
         assert_eq!(vendored.safety, dfdu_tree::Safety::Protected);
         let own = m.tree.class(find(m, "rust/target")).unwrap();
-        assert!(own.has(Class::CHECKED) && !own.has(Class::VCS_TRACKED));
+        assert!(own.has(ClassFlags::CHECKED) && !own.has(ClassFlags::VCS_TRACKED));
         assert_eq!(own.safety, dfdu_tree::Safety::Regenerable);
     });
     engine.shutdown(Duration::from_millis(200));
@@ -384,7 +384,7 @@ fn a_target_git_cannot_answer_for_is_flagged() {
         m.tree
             .class(find(m, "rust/target"))
             .unwrap()
-            .has(Class::CHECKED)
+            .has(ClassFlags::CHECKED)
     }) {
         assert!(
             t0.elapsed() < Duration::from_secs(20),
@@ -394,7 +394,7 @@ fn a_target_git_cannot_answer_for_is_flagged() {
     }
     engine.read(|m| {
         let c = m.tree.class(find(m, "rust/target")).unwrap();
-        assert!(c.has(Class::VCS_UNKNOWN) && !c.has(Class::VCS_TRACKED));
+        assert!(c.has(ClassFlags::VCS_UNKNOWN) && !c.has(ClassFlags::VCS_TRACKED));
     });
     engine.shutdown(Duration::from_millis(200));
 }

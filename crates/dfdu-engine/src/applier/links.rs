@@ -135,23 +135,25 @@ impl LinkTable {
     }
 
     /// Adds a link a scan found. It is charged if no other link of the inode in `scope` is;
-    /// `make` creates its node, told whether it is charged. One lookup of the inode.
-    pub fn add_scanned(
+    /// `make` creates its node, told whether it is charged, and returns it with what this
+    /// returns. One lookup of the inode.
+    pub fn add_scanned<T>(
         &mut self,
         key: (u64, u64),
         nlink: u32,
         scope: Scope,
-        make: impl FnOnce(bool) -> NodeRef,
-    ) {
+        make: impl FnOnce(bool) -> (NodeRef, T),
+    ) -> T {
         let l = self.map.entry(key).or_default();
         l.nlink = l.nlink.max(nlink);
         let e = self.entry(key, scope);
         let charged = e.charged.is_none();
-        let node = make(charged);
+        let (node, out) = make(charged);
         e.links.push(node);
         if charged {
             e.charged = Some(node);
         }
+        out
     }
 
     /// Records that a link was freed. Returns the scope to re-elect in if it was the charged

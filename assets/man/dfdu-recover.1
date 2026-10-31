@@ -4,7 +4,7 @@
 .SH NAME
 dfdu\-recover \- List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them
 .SH SYNOPSIS
-\fBdfdu recover\fR [\fB\-\-finish\fR] [\fB\-\-restore\fR] [\fB\-\-dismiss\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBdfdu recover\fR [\fB\-\-finish\fR] [\fB\-\-restore\fR] [\fB\-\-dismiss\fR] [\fB\-\-yes\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them
 .SH OPTIONS
@@ -17,6 +17,9 @@ Put these staged items back at their paths (next to them as NAME.restored\-N if 
 .TP
 \fB\-\-dismiss\fR \fI<N>\fR
 Close these interrupted items: nothing is done on disk
+.TP
+\fB\-\-yes\fR
+Finish and restore. Without it nothing is changed: what would be done is printed
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

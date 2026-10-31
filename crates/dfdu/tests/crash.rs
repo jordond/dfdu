@@ -287,7 +287,7 @@ fn check_and_recover(state: &Path, root: &Path, case: &str) -> usize {
     let mut args = vec!["recover"];
     let (f, d) = (finish.join(","), dismiss.join(","));
     if !finish.is_empty() {
-        args.extend(["--finish", &f]);
+        args.extend(["--finish", &f, "--yes"]);
     }
     if !dismiss.is_empty() {
         args.extend(["--dismiss", &d]);

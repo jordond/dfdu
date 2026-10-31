@@ -7,7 +7,7 @@ use dfdu_clean::inside::{Listing, Listings};
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal};
 use dfdu_rules::protected::State;
 use dfdu_rules::{Hit, Inside, RuleSet};
-use dfdu_tree::{Class, ErrKind, Kind, Meta, NodeRef, RuleIx, Safety, Subvol};
+use dfdu_tree::{Class, ClassFlags, ErrKind, Kind, Meta, NodeRef, RuleIx, Safety, Subvol};
 
 use dfdu_scan::{
     Chunk, ChunkStatus, DirId, Entry, EntryError, FileRec, JobId, ListingStatus, Mark, NameSpan,
@@ -107,7 +107,7 @@ fn sample() -> Vec<FromAgent> {
                     rule,
                     safety: Safety::Review,
                     degraded: Some(0),
-                    flags: 0,
+                    flags: dfdu_tree::ClassFlags::NONE,
                 }),
             ),
             (Entry::File(1), Mark::Excepted),
@@ -137,7 +137,7 @@ fn sample() -> Vec<FromAgent> {
                         rule: RuleIx(0),
                         safety: Safety::Regenerable,
                         degraded: None,
-                        flags: 0,
+                        flags: dfdu_tree::ClassFlags::NONE,
                     },
                 )],
             },
@@ -456,7 +456,7 @@ fn class_layout() {
         rule: RuleIx(300),
         safety: Safety::Review,
         degraded: Some(1),
-        flags: Class::CHECKED,
+        flags: ClassFlags::CHECKED,
     };
     let mut e = Enc::default();
     enc_class(&mut e, c);

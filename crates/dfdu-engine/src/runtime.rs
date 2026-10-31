@@ -166,7 +166,8 @@ impl<B: Backend> Engine<B> {
         let privileged = remote
             .as_ref()
             .map_or_else(dfdu_sys::is_privileged, |r| r.privileged);
-        let (link, reader) = remote.map(|r| (r.link, r.reader)).unzip();
+        let remote = remote.map(|r| (r.link, r.reader));
+        let link = remote.as_ref().map(|(l, _)| l.clone());
         if let Some(l) = &link {
             model.tree.set_host(l.host);
         }
@@ -180,51 +181,46 @@ impl<B: Backend> Engine<B> {
             .is_none()
             .then(|| Pool::start(&shared, &inbox, opts.workers));
         let (del_tx, del_rx) = unbounded::<DeleterMsg>();
-        // A remote engine's plans run on the agent; their results come in through the link.
-        let deleter = match &link {
-            Some(l) => crate::remote::spawn_deleter(l.clone(), del_tx.clone()),
-            None => spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx.clone()),
-        };
         let (meas_tx, meas_rx) = unbounded::<Vec<MeasureMsg>>();
-        // A remote engine's measurements run on the agent, when it can measure; their answers
-        // come in through the link.
-        let measurers = match &link {
-            Some(l) => (opts.measure_workers > 0 && measure_min > 0)
-                .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone())),
-            None => {
-                (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, &meas_tx))
+        let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
+        let (deleter, measurers, classifiers) = match remote {
+            // A remote engine's plans, guard checks and measurements (when the agent can
+            // measure) run on the agent; their answers come in through the link, which its
+            // reader thread reads.
+            Some((l, r)) => {
+                let deleter = crate::remote::spawn_deleter(l.clone(), del_tx.clone());
+                let measurers = (opts.measure_workers > 0 && measure_min > 0)
+                    .then(|| crate::remote::spawn_measurer(l.clone(), meas_tx.clone()));
+                let classifiers = Some(crate::remote::spawn_checker(l.clone()));
+                let wake = wake_tx.clone();
+                let answers = crate::remote::Answers {
+                    deleted: del_tx,
+                    checked: chk_tx,
+                    measured: meas_tx,
+                };
+                crate::remote::spawn_reader(
+                    l,
+                    r,
+                    inbox.clone(),
+                    answers,
+                    stop.clone(),
+                    move || {
+                        let _ = wake.try_send(());
+                    },
+                );
+                (deleter, measurers, classifiers)
             }
+            None => (
+                spawn_deleter(opts.journal_dir.clone(), opts.stage_window, del_tx),
+                (opts.measure_workers > 0).then(|| spawn_measurers(opts.measure_workers, &meas_tx)),
+                (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, &chk_tx)),
+            ),
         };
         // Without measurers the sender is dropped (measurement is off on macOS and Windows).
         let meas_rx = or_never(meas_rx, measurers.is_some());
-        let (chk_tx, chk_rx) = unbounded::<Vec<CheckMsg>>();
-        // A remote engine's guard checks run on the agent; their answers come in through the
-        // link.
-        let classifiers = match &link {
-            Some(l) => Some(crate::remote::spawn_checker(l.clone())),
-            None => (opts.classifiers > 0).then(|| spawn_classifiers(opts.classifiers, &chk_tx)),
-        };
         let chk_rx = or_never(chk_rx, classifiers.is_some());
         let delete_abort = deleter.abort.clone();
         let deleter_thread = deleter.thread;
-        if let (Some(l), Some(r)) = (&link, reader) {
-            let wake = wake_tx.clone();
-            let answers = crate::remote::Answers {
-                deleted: del_tx.clone(),
-                checked: chk_tx,
-                measured: meas_tx,
-            };
-            crate::remote::spawn_reader(
-                l.clone(),
-                r,
-                inbox.clone(),
-                answers,
-                stop.clone(),
-                move || {
-                    let _ = wake.try_send(());
-                },
-            );
-        }
         let settings = ApplierSettings {
             remote: link.clone(),
             read_only: opts.read_only,

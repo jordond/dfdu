@@ -85,7 +85,7 @@ fn own(
     for c in linked {
         links.add_scanned(tree.dev_ino(c), 0, VISIBLE, |charged| {
             tree.set_charged(c, charged);
-            tree.node_ref(c)
+            (tree.node_ref(c), ())
         });
     }
     // Mounts below keep journals of their own, or none, and so do btrfs subvolumes below
@@ -188,7 +188,7 @@ impl<B: Backend> Applier<B> {
     /// by its rescans. The last answer lets a walk that waits for it go on.
     pub(in crate::applier) fn resume_verified(
         &mut self,
-        m: &mut Model,
+        m: &Model,
         job: u32,
         batch: u32,
         (changed, gone): (&[u32], &[u32]),

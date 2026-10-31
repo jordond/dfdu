@@ -53,7 +53,7 @@ pub fn rel_text(path: &HostPath, base: &HostPath) -> Option<String> {
 /// The user's home directory with symbolic links resolved, as the scan's paths are.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
-    let home = etcetera::home_dir().ok()?;
+    let home = dfdu_sys::dirs::home_dir()?;
     Some(dunce::canonicalize(&home).unwrap_or(home))
 }
 

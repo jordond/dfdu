@@ -66,7 +66,7 @@ fn identical_files_are_grouped_and_near_misses_are_not() {
     assert_eq!(names(&found.groups[1]), ["x", "y"]);
     assert_eq!(found.groups[0].wasted(), 2 * all[0].alloc);
     let sha = Sha256::digest(&big);
-    assert_eq!(hex(&found.groups[0].hash), hex(&sha.into()));
+    assert_eq!(found.groups[0].hash, <[u8; 32]>::from(sha));
 }
 
 /// The full hash is SHA-256 (the FIPS 180-2 test vector), as `dfdu dupes` reports it.
@@ -77,7 +77,7 @@ fn full_hash_is_sha256() {
     fs::write(&f, b"abc").unwrap();
     let (hash, _) = full_hash(&cand(&f), &Progress::default(), &AtomicBool::new(false)).unwrap();
     assert_eq!(
-        hex(&hash),
+        hex::encode(hash),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 }

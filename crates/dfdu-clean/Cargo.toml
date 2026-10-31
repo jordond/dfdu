@@ -21,7 +21,6 @@ dfdu-sys.workspace = true
 dunce.workspace = true
 trash.workspace = true
 crossbeam-channel.workspace = true
-etcetera.workspace = true
 crc32c.workspace = true
 serde.workspace = true
 serde_json.workspace = true

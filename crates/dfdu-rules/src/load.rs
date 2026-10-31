@@ -10,8 +10,8 @@ use dfdu_tree::Safety;
 use crate::schema::{DegradeWhen, File, MatchDef, NativeDef, PerOs, RuleDef};
 use crate::vars::Env;
 use crate::{
-    Action, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet, Source,
-    category_index, glob, parse_size,
+    Action, ActionName, CategoryIx, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule,
+    RuleSet, Source, glob, parse_size,
 };
 
 /// The built-in pack.
@@ -244,10 +244,10 @@ fn compile(env: &Env, source: &Source, def: RuleDef) -> Result<Option<Entry>, St
     let need = |v: Option<String>, field: &str| v.ok_or_else(|| format!("`{field}` is missing"));
     let category_id = need(def.category, "category")?;
     let category =
-        category_index(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
+        CategoryIx::of(&category_id).ok_or_else(|| format!("unknown category `{category_id}`"))?;
     let name = need(def.name, "name")?;
     let safety = safety(&need(def.safety, "safety")?)?;
-    let action = action(def.action, def.native)?;
+    let action = action(def.action.as_deref(), def.native)?;
     let min_size = match def.min_size {
         Some(s) => parse_size(&s).ok_or_else(|| format!("min_size: cannot read `{s}`"))?,
         None => 0,
@@ -329,40 +329,29 @@ fn safety(s: &str) -> Result<Safety, String> {
 
 /// The `action` of a rule, `delete` when not set. `native` needs a `native.command`, and
 /// `[rule.native]` is only for `native`.
-fn action(s: Option<String>, native: Option<NativeDef>) -> Result<Action, String> {
-    let s = s.unwrap_or_else(|| "delete".into());
-    let action = match s.as_str() {
-        "delete" => Action::Delete,
-        "trash" => Action::Trash,
-        "report" => Action::Report,
-        "native" => {
-            return match native {
-                Some(n) if !n.command.is_empty() => Ok(Action::Native(Box::new(n))),
-                _ => Err("`action = \"native\"` needs `native.command`".into()),
-            };
-        }
-        _ => {
-            return Err(format!(
-                "unknown action `{s}` (delete, trash, native or report)"
-            ));
-        }
+fn action(s: Option<&str>, native: Option<NativeDef>) -> Result<Action, String> {
+    let name = match s {
+        None => ActionName::Delete,
+        Some(s) => ActionName::parse(s)
+            .ok_or_else(|| format!("unknown action `{s}` (delete, trash, native or report)"))?,
     };
-    if native.is_some() {
-        return Err(format!(
-            "`[rule.native]` is for `action = \"native\"`, not `{s}`"
-        ));
+    match (name, native) {
+        (ActionName::Native, Some(n)) if !n.command.is_empty() => Ok(Action::Native(Box::new(n))),
+        (ActionName::Native, _) => Err("`action = \"native\"` needs `native.command`".into()),
+        (name, Some(_)) => Err(format!(
+            "`[rule.native]` is for `action = \"native\"`, not `{}`",
+            name.as_str()
+        )),
+        (ActionName::Delete, None) => Ok(Action::Delete),
+        (ActionName::Trash, None) => Ok(Action::Trash),
+        (ActionName::Report, None) => Ok(Action::Report),
     }
-    Ok(action)
 }
 
 /// `match.kind`, `any` when not set.
 fn kind(k: Option<&str>) -> Result<Kind, String> {
-    match k.unwrap_or("any") {
-        "dir" => Ok(Kind::Dir),
-        "file" => Ok(Kind::File),
-        "any" => Ok(Kind::Any),
-        k => Err(format!("match.kind: unknown kind `{k}` (dir, file or any)")),
-    }
+    let k = k.unwrap_or("any");
+    Kind::parse(k).ok_or_else(|| format!("match.kind: unknown kind `{k}` (dir, file or any)"))
 }
 
 /// `match.names` and `match.paths` for this platform. A rule for it (`for_here`) needs one of

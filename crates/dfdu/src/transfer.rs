@@ -11,7 +11,7 @@ use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
-use crate::table::{print_by_type, print_tree, shown_total};
+use crate::output::table::{print_by_type, print_tree, shown_total};
 use crate::{EXIT_PARTIAL, MountArgs, print_out, remote, written_to};
 
 #[derive(Args)]
@@ -69,7 +69,7 @@ pub struct ImportArgs {
     /// Count only files of these types or extensions, comma-separated: `video,audio,.iso`.
     /// Types: video, audio, image, document, archive, disk-image, code, executable, font, data,
     /// other. Folders show the size of the matching files inside them.
-    #[arg(long = "type", value_name = "TYPES", value_parser = crate::type_filter)]
+    #[arg(long = "type", value_name = "TYPES", value_parser = crate::args::type_filter)]
     pub types: Option<TypeFilter>,
     /// After the tree, print disk usage by file type and the largest extensions.
     #[arg(long)]

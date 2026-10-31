@@ -16,6 +16,7 @@
 use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
+use dfdu_rules::CategoryIx;
 use dfdu_tree::{
     Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Safety, Target, Totals, now_secs,
 };
@@ -47,7 +48,7 @@ pub struct Cleanup {
     cursor: usize,
     scroll: usize,
     /// Categories shown with their items, by (category, safety); closed by default.
-    open: HashSet<(u16, Safety)>,
+    open: HashSet<(CategoryIx, Safety)>,
     /// Safety sections closed by the user; open by default.
     closed: HashSet<Safety>,
     /// Only items this safe or safer; `None` shows all.

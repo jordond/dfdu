@@ -412,7 +412,6 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "dunce",
- "etcetera",
  "hex",
  "rustix",
  "serde",
@@ -426,7 +425,6 @@ version = "0.1.0"
 dependencies = [
  "dfdu-sys",
  "dfdu-tree",
- "hex",
  "rustix",
  "sha2",
  "twox-hash",
@@ -444,7 +442,6 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "dunce",
- "etcetera",
  "gix-discover",
  "gix-hash",
  "gix-index",

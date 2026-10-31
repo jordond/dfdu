@@ -3,14 +3,14 @@
 //! The tool is checked first (`native.check`); a dry run or inspect step runs on its own
 //! request, before the user confirms the real one. Output is sent line by line.
 
-use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::Sender;
 
 use crate::DeleterMsg;
 
@@ -64,21 +64,11 @@ pub(crate) fn run(
     abort: &AtomicBool,
     out: &Sender<DeleterMsg>,
 ) -> Result<(), String> {
-    let line = |l: String| {
-        let _ = out.send(DeleterMsg::NativeOutput {
-            id: req.id,
-            line: l,
-        });
+    let (id, out) = (req.id, out.clone());
+    let line = move |line| {
+        let _ = out.send(DeleterMsg::NativeOutput { id, line });
     };
-    if !req.check.is_empty() {
-        let (tx, _rx) = unbounded();
-        run_one(&req.check, None, CHECK_TIMEOUT, abort, &tx).map_err(|e| {
-            format!(
-                "{} is not available: {e}",
-                req.check.first().map_or("", |s| s.as_str())
-            )
-        })?;
-    }
+    check_tool(&req.check, abort)?;
     let mut steps: Vec<&Vec<String>> = vec![];
     if !req.dry_run {
         steps.extend(req.pre.iter());
@@ -86,41 +76,83 @@ pub(crate) fn run(
     steps.push(&req.command);
     for argv in steps {
         line(format!("$ {}", shown_argv(argv)));
-        let (tx, rx) = unbounded();
-        let id = req.id;
-        let out2 = out.clone();
-        let fwd = thread::spawn(move || {
-            for l in rx {
-                let _ = out2.send(DeleterMsg::NativeOutput { id, line: l });
-            }
-        });
-        let r = run_one(argv, req.cwd.as_deref(), req.timeout, abort, &tx);
-        drop(tx);
-        let _ = fwd.join();
-        r?;
+        let line = line.clone();
+        run_command(
+            argv,
+            req.cwd.as_deref(),
+            req.timeout,
+            abort,
+            true,
+            move |r| read_lines(r, &line),
+        )?;
     }
     Ok(())
 }
 
-/// Runs one command; its output lines go to `lines`. `Err` says why it failed.
-fn run_one(
+/// Runs `check` (empty checks nothing), which says the tool is there and working; `Err` says
+/// why it is not, naming it.
+///
+/// # Errors
+///
+/// When `check` fails as [`run_command`] does.
+pub fn check_tool(check: &[String], abort: &AtomicBool) -> Result<(), String> {
+    let Some(tool) = check.first() else {
+        return Ok(());
+    };
+    run_command(check, None, CHECK_TIMEOUT, abort, false, |mut r| {
+        io::copy(&mut r, &mut io::sink()).map(drop)
+    })
+    .map(drop)
+    .map_err(|e| format!("{tool} is not available: {e}"))
+}
+
+/// Sends each line `r` gives to `send`, lossily decoded, until it ends.
+fn read_lines(r: Box<dyn Read + Send>, send: &impl Fn(String)) -> io::Result<()> {
+    let mut r = BufReader::new(r);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if r.read_until(b'\n', &mut buf)? == 0 {
+            return Ok(());
+        }
+        let l = buf.strip_suffix(b"\n").unwrap_or(&buf);
+        let l = l.strip_suffix(b"\r").unwrap_or(l);
+        send(String::from_utf8_lossy(l).into_owned());
+    }
+}
+
+/// Runs `argv` with no shell, stdin closed, in `cwd` when given, for at most `timeout`; `abort`
+/// stops it. Its stdout, and its stderr when `stderr` is set (otherwise discarded), are each
+/// read by `read` on a thread of their own; what they read is returned, stdout's first. `Err`
+/// says why it failed, naming the program.
+///
+/// # Errors
+///
+/// When the program cannot be started, takes too long, is stopped, exits unsuccessfully, or
+/// its output cannot be read.
+pub fn run_command<T: Send + 'static>(
     argv: &[String],
-    cwd: Option<&std::path::Path>,
+    cwd: Option<&Path>,
     timeout: Duration,
     abort: &AtomicBool,
-    lines: &Sender<String>,
-) -> Result<(), String> {
+    stderr: bool,
+    read: impl Fn(Box<dyn Read + Send>) -> io::Result<T> + Clone + Send + 'static,
+) -> Result<Vec<T>, String> {
     let (prog, rest) = argv.split_first().ok_or("empty command")?;
     let mut cmd = Command::new(prog);
     cmd.args(rest)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(if stderr {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
     let mut child = cmd.spawn().map_err(|e| format!("{prog}: {e}"))?;
-    let readers: Vec<_> = [
+    let pipes = [
         child
             .stdout
             .take()
@@ -129,59 +161,68 @@ fn run_one(
             .stderr
             .take()
             .map(|s| Box::new(s) as Box<dyn Read + Send>),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|r| {
-        let tx = lines.clone();
-        thread::spawn(move || {
-            for l in BufReader::new(r).lines() {
-                match l {
-                    Ok(l) => {
-                        let _ = tx.send(l);
-                    }
-                    Err(_) => break,
-                }
+    ];
+    let mut readers = Vec::new();
+    let mut started = Ok(());
+    for pipe in pipes.into_iter().flatten() {
+        let read = read.clone();
+        match thread::Builder::new()
+            .name("dfdu-native-out".into())
+            .spawn(move || read(pipe))
+        {
+            Ok(t) => readers.push(t),
+            Err(e) => {
+                started = Err(format!("cannot start a thread: {e}"));
+                break;
             }
-        })
-    })
-    .collect();
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
-            Ok(None) if abort.load(SeqCst) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err("stopped".to_string());
-            }
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err(format!("took longer than {} s; stopped", timeout.as_secs()));
-            }
-            // Polled: std cannot wait for a child with a time limit.
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(e) => break Err(e.to_string()),
         }
-    };
-    for r in readers {
-        let _ = r.join();
     }
-    let status = status?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(match status.code() {
-            Some(c) => format!("exited with status {c}"),
-            None => "killed by a signal".into(),
+    let deadline = Instant::now() + timeout;
+    let status = started.and_then(|()| {
+        loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Ok(s),
+                Ok(None) if abort.load(SeqCst) => break Err("stopped".to_string()),
+                Ok(None) if Instant::now() >= deadline => {
+                    break Err(format!(
+                        "{prog}: took longer than {} s; stopped",
+                        timeout.as_secs()
+                    ));
+                }
+                // Polled: std cannot wait for a child with a time limit.
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(e) => break Err(format!("{prog}: {e}")),
+            }
+        }
+    });
+    if status.is_err() {
+        // The readers end when the pipes close.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let read: Result<Vec<T>, String> = readers
+        .into_iter()
+        .map(|r| match r.join() {
+            Ok(Ok(t)) => Ok(t),
+            Ok(Err(e)) => Err(format!("{prog}: reading output: {e}")),
+            Err(_) => Err(format!("{prog}: reading output: its thread panicked")),
         })
+        .collect();
+    let status = status?;
+    if !status.success() {
+        return Err(match status.code() {
+            Some(c) => format!("{prog}: exited with status {c}"),
+            None => format!("{prog}: killed by a signal"),
+        });
     }
+    read
 }
 
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use crossbeam_channel::unbounded;
+
     use super::*;
 
     fn req(command: &[&str], timeout: Duration) -> NativeReq {
@@ -248,18 +289,55 @@ mod tests {
             &stop,
             &tx,
         );
-        assert_eq!(e.unwrap_err(), "exited with status 3");
+        assert_eq!(e.unwrap_err(), "sh: exited with status 3");
         let e = run(
             &req(&["sleep", "10"], Duration::from_millis(100)),
             &stop,
             &tx,
         );
-        assert!(e.unwrap_err().contains("took longer"));
+        assert!(e.unwrap_err().starts_with("sleep: took longer than "));
         let missing = NativeReq {
             check: vec!["dfdu-no-such-tool".into()],
             ..req(&["true"], Duration::from_secs(1))
         };
         let e = run(&missing, &stop, &tx).unwrap_err();
         assert!(e.contains("dfdu-no-such-tool is not available"), "{e}");
+    }
+
+    #[test]
+    fn a_read_error_or_a_panicking_reader_fails_the_command() {
+        let stop = AtomicBool::new(false);
+        let argv = ["true".to_string()];
+        let e = run_command(&argv, None, Duration::from_secs(10), &stop, false, |_| {
+            Err::<(), _>(io::Error::other("broken pipe"))
+        });
+        assert_eq!(e.unwrap_err(), "true: reading output: broken pipe");
+        let e = run_command(
+            &argv,
+            None,
+            Duration::from_secs(10),
+            &stop,
+            false,
+            |_| -> io::Result<()> { panic!("reader") },
+        );
+        assert_eq!(e.unwrap_err(), "true: reading output: its thread panicked");
+    }
+
+    #[test]
+    fn output_is_read_whole() {
+        let stop = AtomicBool::new(false);
+        let argv = ["sh", "-c", "printf 'a\\nb'; echo err >&2"].map(String::from);
+        let out = run_command(
+            &argv,
+            None,
+            Duration::from_secs(10),
+            &stop,
+            false,
+            |mut r| {
+                let mut buf = Vec::new();
+                r.read_to_end(&mut buf).map(|_| buf)
+            },
+        );
+        assert_eq!(out.unwrap(), [b"a\nb".to_vec()]);
     }
 }
