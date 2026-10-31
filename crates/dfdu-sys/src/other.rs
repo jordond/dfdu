@@ -1,3 +1,6 @@
+//! The Linux-only calls on every other system: there are no mount ids, subvolumes or btrfs
+//! there, so each answers "none" without asking the OS.
+
 use std::io;
 use std::path::Path;
 

@@ -1,3 +1,7 @@
+//! The node store: nodes, directory records, child lists and names in paged arenas, with the
+//! rarely set fields (classes, shared extents, large values) in side tables by slot. Reads,
+//! edits, paths and lookups are in the submodules.
+
 use crate::pages::{KidArena, NameArena, Pages};
 use crate::{Class, Host, Kind, Totals};
 

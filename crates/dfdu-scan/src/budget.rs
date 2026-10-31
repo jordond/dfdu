@@ -1,3 +1,7 @@
+//! The cap on bytes of scan messages in transit to the applier: workers acquire before they
+//! send and the applier releases once it has applied them, so a slow applier holds the
+//! scanners back instead of letting memory grow.
+
 use std::sync::atomic::Ordering::Relaxed;
 
 use crate::sync::{AtomicUsize, Condvar, Mutex};

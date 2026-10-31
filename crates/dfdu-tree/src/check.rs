@@ -1,3 +1,6 @@
+//! The tree's structural invariants (totals, parent links, live children and roots), checked
+//! after every applier slice in debug builds and simulation tests.
+
 use crate::{Ix, NodeFlags, Totals, Tree};
 
 /// A structural invariant violation.
