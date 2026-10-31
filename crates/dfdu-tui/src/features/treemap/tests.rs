@@ -1,77 +1,17 @@
 use std::time::Instant;
 
 use dfdu_engine::Model;
-use dfdu_engine::test_support::{add_dir, add_file};
-use dfdu_tree::{DirState, HostPath, Ix, Kind};
+use dfdu_tree::{DirState, HostPath, Ix};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 
 use super::place::{Tile, build};
 use super::*;
-use crate::model::extras;
-use crate::model::snapshot::{self, EntryData, test_entry};
-use crate::tests::{meta, press, render, render_buffer, snap_without_totals, styled};
+use crate::model::snapshot::{EntryData, test_entry};
+use crate::tests::{
+    Fixture, classified, press, render, render_buffer, snap_without_totals, styled, sync, tree,
+};
 use crate::theme::Theme;
-
-pub(crate) struct Fixture {
-    pub(crate) m: Model,
-    ino: u64,
-}
-
-impl Fixture {
-    pub(crate) fn new() -> (Self, Ix) {
-        let mut m = Model::default();
-        let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
-        (Fixture { m, ino: 1 }, root)
-    }
-
-    pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
-        self.ino += 1;
-        add_dir(&mut self.m.tree, parent, name, self.ino)
-    }
-
-    pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) -> Ix {
-        self.ino += 1;
-        add_file(&mut self.m.tree, parent, name, size, self.ino)
-    }
-}
-
-/// `/r` with `big/` (`a/` with two files, and `b`), `mid/` (three files), `small` and dotfile
-/// `.hid`.
-pub(crate) fn tree() -> Fixture {
-    let (mut fx, root) = Fixture::new();
-    fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
-    let big = fx.dir(root, "big");
-    let a = fx.dir(big, "a");
-    fx.file(a, "a1", 30_000);
-    fx.file(a, "a2", 10_000);
-    fx.file(big, "b", 20_000);
-    let mid = fx.dir(root, "mid");
-    for (i, size) in [12_000, 8_000, 5_000].into_iter().enumerate() {
-        fx.file(mid, &format!("m{i}"), size);
-    }
-    fx.file(root, "small", 9_000);
-    fx.file(root, ".hid", 4_000);
-    fx
-}
-
-/// Reads the model as the run loop does for a frame with a new snapshot: the snapshot, then
-/// the extras until none is stale.
-pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
-    let mut target = app.target.clone();
-    let snap = snapshot::build(m, &mut target, app.size_mode);
-    app.target = target;
-    app.refresh(snap, now);
-    for _ in 0..3 {
-        let budget = dfdu_scan::Budget::new(1 << 20);
-        let x = extras::read(m, app, &budget, crate::features::debug::Counters::default());
-        extras::apply(app, x);
-        if !app.extras_stale() {
-            return;
-        }
-    }
-    panic!("the extras stay stale");
-}
 
 pub(crate) fn treemap_app(m: &Model, now: Instant) -> App {
     let mut app = App::new(Theme::no_color(), now);
@@ -537,54 +477,6 @@ fn ten_thousand_rows_lay_out_quickly() {
     }
     let bound = if cfg!(debug_assertions) { 40 } else { 2 };
     assert!(best.as_millis() < bound, "{best:?}");
-}
-
-/// [`tree`] with the built-in rules, `big` matched as a Rust `target/`.
-pub(crate) fn classified() -> Fixture {
-    let mut fx = tree();
-    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
-    let rules = dfdu_rules::builtin(&env).0;
-    let rule = rules.index("rust.target").unwrap();
-    fx.m.rules = Some(Arc::new(rules));
-    let root = fx.m.tree.roots().next().unwrap();
-    let big =
-        fx.m.tree
-            .children(root)
-            .find(|&c| fx.m.tree.name(c) == b"big")
-            .unwrap();
-    let class = dfdu_tree::Class {
-        rule,
-        safety: dfdu_tree::Safety::Regenerable,
-        degraded: None,
-        flags: 0,
-    };
-    fx.m.tree.set_class(big, Some(class));
-    let mid =
-        fx.m.tree
-            .children(root)
-            .find(|&c| fx.m.tree.name(c) == b"mid")
-            .unwrap();
-    let m0 =
-        fx.m.tree
-            .children(mid)
-            .find(|&c| fx.m.tree.name(c) == b"m0")
-            .unwrap();
-    let rules = fx.m.rules.as_ref().unwrap();
-    let class = dfdu_tree::Class {
-        rule: rules.index("generic.cachedir-tag").unwrap(),
-        safety: dfdu_tree::Safety::Safe,
-        ..class
-    };
-    fx.m.tree.set_class(m0, Some(class));
-    fx
-}
-
-/// A browser of [`classified`] read once at `t0`, and the fixture it reads.
-pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
-    let fx = classified();
-    let mut app = App::new(Theme::no_color(), t0);
-    sync(&mut app, &fx.m, t0);
-    (fx, app)
 }
 
 #[test]

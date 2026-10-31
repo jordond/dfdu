@@ -7,7 +7,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::super::*;
 use super::opened;
-use crate::features::treemap::tests::{classified, sync};
+use crate::tests::{classified, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 

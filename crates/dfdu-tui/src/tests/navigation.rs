@@ -12,8 +12,8 @@ use super::{
 };
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect};
-use crate::features::treemap::tests::sync;
 use crate::model::snapshot::test_entry;
+use crate::tests::sync;
 use crate::theme::Theme;
 
 fn ctrl(c: char) -> KeyEvent {

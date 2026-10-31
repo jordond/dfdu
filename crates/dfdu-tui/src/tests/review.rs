@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::keys::{self, ACTIONS, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect, Overlay};
-use crate::features::treemap::tests::{Fixture, sync};
+use crate::tests::{Fixture, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 

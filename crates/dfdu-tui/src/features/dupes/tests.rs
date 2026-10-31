@@ -278,7 +278,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
 /// compares on `Enter`; `Esc` goes back to Files instead.
 #[test]
 fn nothing_is_compared_until_asked() {
-    use crate::features::treemap::tests::{Fixture, sync};
+    use crate::tests::{Fixture, sync};
     let (mut fx, root) = Fixture::new();
     let big = 2 * min_size();
     for name in ["a.iso", "b.iso", "c.iso"] {

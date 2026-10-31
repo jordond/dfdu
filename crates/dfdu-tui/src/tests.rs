@@ -21,11 +21,13 @@ mod tree;
 mod tree_frames;
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::Model;
 pub(crate) use dfdu_engine::test_support::meta;
-use dfdu_tree::{HostPath, Ix, Kind, Totals};
+use dfdu_engine::test_support::{add_dir, add_file, node_at};
+use dfdu_tree::{DirState, HostPath, Ix, Kind, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -34,7 +36,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::{App, Overlay};
-use crate::model::snapshot::{EntryData, Mark, Snapshot, test_entry};
+use crate::model::extras;
+use crate::model::snapshot::{self, EntryData, Mark, Snapshot, test_entry};
 use crate::theme::Theme;
 use crate::view;
 
@@ -321,6 +324,98 @@ pub(crate) fn root_model() -> (Model, Ix) {
     let mut m = Model::default();
     let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     (m, root)
+}
+
+/// A model of `/r` built up one directory or file at a time, each with an inode of its own.
+pub(crate) struct Fixture {
+    pub(crate) m: Model,
+    ino: u64,
+}
+
+impl Fixture {
+    pub(crate) fn new() -> (Self, Ix) {
+        let (m, root) = root_model();
+        (Fixture { m, ino: 1 }, root)
+    }
+
+    pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
+        self.ino += 1;
+        add_dir(&mut self.m.tree, parent, name, self.ino)
+    }
+
+    pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) -> Ix {
+        self.ino += 1;
+        add_file(&mut self.m.tree, parent, name, size, self.ino)
+    }
+}
+
+/// `/r` with `big/` (`a/` with two files, and `b`), `mid/` (three files), `small` and dotfile
+/// `.hid`.
+pub(crate) fn tree() -> Fixture {
+    let (mut fx, root) = Fixture::new();
+    fx.m.tree.dir_mut(root).expect("root").state = DirState::Complete;
+    let big = fx.dir(root, "big");
+    let a = fx.dir(big, "a");
+    fx.file(a, "a1", 30_000);
+    fx.file(a, "a2", 10_000);
+    fx.file(big, "b", 20_000);
+    let mid = fx.dir(root, "mid");
+    for (i, size) in [12_000, 8_000, 5_000].into_iter().enumerate() {
+        fx.file(mid, &format!("m{i}"), size);
+    }
+    fx.file(root, "small", 9_000);
+    fx.file(root, ".hid", 4_000);
+    fx
+}
+
+/// [`tree`] with the built-in rules, `big` matched as a Rust `target/` and `mid/m0` as a
+/// directory with a `CACHEDIR.TAG`.
+pub(crate) fn classified() -> Fixture {
+    let mut fx = tree();
+    let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
+    let rules = dfdu_rules::builtin(&env).0;
+    let class = dfdu_tree::Class {
+        rule: rules.index("rust.target").unwrap(),
+        safety: dfdu_tree::Safety::Regenerable,
+        degraded: None,
+        flags: 0,
+    };
+    let cachedir = dfdu_tree::Class {
+        rule: rules.index("generic.cachedir-tag").unwrap(),
+        safety: dfdu_tree::Safety::Safe,
+        ..class
+    };
+    fx.m.rules = Some(Arc::new(rules));
+    let (big, m0) = (node_at(&fx.m.tree, "big"), node_at(&fx.m.tree, "mid/m0"));
+    fx.m.tree.set_class(big, Some(class));
+    fx.m.tree.set_class(m0, Some(cachedir));
+    fx
+}
+
+/// A browser of [`classified`] read once at `t0`, and the fixture it reads.
+pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
+    let fx = classified();
+    let mut app = App::new(Theme::no_color(), t0);
+    sync(&mut app, &fx.m, t0);
+    (fx, app)
+}
+
+/// Reads the model as the run loop does for a frame with a new snapshot: the snapshot, then
+/// the extras until none is stale.
+pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
+    let mut target = app.target.clone();
+    let snap = snapshot::build(m, &mut target, app.size_mode);
+    app.target = target;
+    app.refresh(snap, now);
+    for _ in 0..3 {
+        let budget = dfdu_scan::Budget::new(1 << 20);
+        let x = extras::read(m, app, &budget, crate::features::debug::Counters::default());
+        extras::apply(app, x);
+        if !app.extras_stale() {
+            return;
+        }
+    }
+    panic!("the extras stay stale");
 }
 
 /// A snapshot of `/r` while it is scanned, holding `entries`, with its totals left at zero.

@@ -109,8 +109,8 @@ fn view_may_take(a: Action) -> bool {
 #[test]
 fn no_view_rebinds_a_global_key() {
     use crate::app::views::{self, View};
-    use crate::features::treemap::tests::{classified, sync};
     use crate::features::{cleanup, dupes, largest, treemap};
+    use crate::tests::{classified, sync};
     let fx = classified();
     let t0 = Instant::now();
     let opened = |view: View| {

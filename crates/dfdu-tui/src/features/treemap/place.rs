@@ -325,8 +325,9 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::features::treemap::tests::{map_of, nested_app, tree, treemap_app};
+    use crate::features::treemap::tests::{map_of, nested_app, treemap_app};
     use crate::model::snapshot::test_entry;
+    use crate::tests::tree;
 
     const AREA: Rect = Rect::new(0, 2, 80, 20);
 
