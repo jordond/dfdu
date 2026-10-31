@@ -59,7 +59,7 @@ fn only_the_caches_own_names_are_its_files() {
     ] {
         assert!(!is_scan_name(n), "{n}");
     }
-    assert!(is_temp_name(".0123456789abcdef.snap.42.tmp"));
+    assert!(is_temp_name(b".0123456789abcdef.snap.42.tmp"));
     for n in [
         ".0123456789abcdef.snap..tmp",
         ".0123456789abcdef.snap.4x.tmp",
@@ -67,7 +67,7 @@ fn only_the_caches_own_names_are_its_files() {
         "0123456789abcdef.snap.1.tmp",
         ".0123456789abcdef.snap.1",
     ] {
-        assert!(!is_temp_name(n), "{n}");
+        assert!(!is_temp_name(n.as_bytes()), "{n}");
     }
 }
 

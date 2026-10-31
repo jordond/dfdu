@@ -105,15 +105,12 @@ fn is_scan_name(name: &str) -> bool {
         .is_some_and(|h| h.len() == 16 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
-/// Whether `name` is of the temporary file of a save ([`crate::write_replacing`]): `.`, the
-/// name of a cached scan, `.`, the writer's process id, `.tmp`.
-fn is_temp_name(name: &str) -> bool {
-    name.strip_prefix('.')
-        .and_then(|n| n.strip_suffix(".tmp"))
-        .and_then(|n| n.rsplit_once('.'))
-        .is_some_and(|(scan, pid)| {
-            is_scan_name(scan) && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
-        })
+/// Whether `name` is of the temporary file of a save ([`crate::write_replacing`]) of a cached
+/// scan.
+fn is_temp_name(name: &[u8]) -> bool {
+    crate::temp_target(name)
+        .and_then(|t| std::str::from_utf8(t).ok())
+        .is_some_and(is_scan_name)
 }
 
 /// `PermissionDenied`, saying why `dir` is not used.
@@ -342,30 +339,11 @@ impl Cache {
         out
     }
 
-    /// Removes the temporary files of saves that died: those no writer holds locked.
-    fn remove_dead_temps(&self) {
-        let Ok(rd) = fs::read_dir(&self.dir) else {
-            return;
-        };
-        for e in rd.flatten() {
-            if !is_temp_name(&e.file_name().to_string_lossy()) {
-                continue;
-            }
-            let Ok(f) = fs::OpenOptions::new().write(true).open(e.path()) else {
-                continue;
-            };
-            if f.try_lock().is_ok() {
-                drop(f);
-                let _ = fs::remove_file(e.path());
-            }
-        }
-    }
-
     /// Removes the cached scans written more than [`MAX_AGE`] before `now`, then the least
     /// recently written until the rest take at most `cap` bytes, and what dead saves left.
     /// `keep`, the scan just written or in use, stays and counts first.
     pub fn sweep(&self, now: u64, cap: u64, keep: Option<&Path>) -> Removed {
-        self.remove_dead_temps();
+        crate::remove_stale_temps(&self.dir, is_temp_name);
         let mut removed = Removed::default();
         let files = self.files();
         let is_kept = |f: &File| keep == Some(f.path.as_path());
@@ -391,7 +369,7 @@ impl Cache {
     ///
     /// The first file that could not be removed.
     pub fn clear(&self) -> io::Result<Removed> {
-        self.remove_dead_temps();
+        crate::remove_stale_temps(&self.dir, is_temp_name);
         let mut removed = Removed::default();
         for f in self.files() {
             match fs::remove_file(&f.path) {
