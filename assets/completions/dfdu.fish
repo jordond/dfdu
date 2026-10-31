@@ -24,7 +24,7 @@ function __fish_dfdu_using_subcommand
     contains -- $cmd[1] $argv
 end
 
-complete -c dfdu -n "__fish_dfdu_needs_command" -l resume-from -d 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done' -r -F
+complete -c dfdu -n "__fish_dfdu_needs_command" -l resume-from -d 'Open the scan saved in FILE (a snapshot or an ncdu export) at once, and rescan its directory in the background, replacing it when done. A snapshot is rescanned with the mount options it was taken with' -r -F
 complete -c dfdu -n "__fish_dfdu_needs_command" -s f -l file -d 'Browse a scan saved in FILE (a snapshot, an ncdu JSON export, plain or zstd, or an ncdu binary export from `ncdu -O`; `-` for stdin), read-only' -r -F
 complete -c dfdu -n "__fish_dfdu_needs_command" -l remote -d 'Browse PATH on HOST, scanned there by the dfdu agent through ssh (sent there if HOST has none, see --remote-agent) and classified with the rules of this host. The delete keys delete on HOST, unless --read-only; nothing is recorded in the history' -r
 complete -c dfdu -n "__fish_dfdu_needs_command" -l remote-agent -d 'How to start the agent on HOST: auto (an installed dfdu that speaks this one\'s protocol, else one sent earlier, else send this version\'s, asking first), installed, or upload (send one without asking) [default: auto, or DFDU_REMOTE_AGENT]' -r -f -a "auto\t'The installed dfdu if it speaks this one\'s protocol, else one sent earlier, else send one (asking first)'
