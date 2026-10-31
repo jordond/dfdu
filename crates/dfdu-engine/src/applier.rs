@@ -39,11 +39,9 @@ pub use native::native_argv;
 pub(crate) use native::native_req;
 
 use crate::classifier::CheckReq;
-use crate::extents::{ExtentTable, Inode};
-use crate::measure::MeasureReq;
+use crate::extents::ExtentTable;
 use delete::ActivePlan;
 use links::{LinkTable, Scope};
-use measure::MeasureAt;
 use resume::Kept;
 pub use resume::unrefreshed;
 use undo::Undoable;
@@ -188,17 +186,11 @@ pub struct Applier<B: Backend> {
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
     extent_devs: HashSet<u64>,
-    measure_stack: Vec<MeasureAt>,
-    /// The node each inode with a measurement in flight was requested for.
-    measure_awaited: HashMap<Inode, NodeRef>,
-    outgoing_measure: Vec<MeasureReq>,
+    /// Where the extent measurement walk is and what it has in flight.
+    measure: measure::Measuring,
     /// Requests for the classifier pool, taken by the runtime after each slice
     /// (`settings.checks`).
     outgoing_checks: Vec<CheckReq>,
-    measure_inflight: usize,
-    /// Results of earlier rounds (abandoned after a timeout) are ignored.
-    measure_round: u64,
-    measure_last: u64,
 }
 
 pub(crate) fn meta_of(tree: &Tree, ix: Ix) -> Meta {
@@ -253,13 +245,8 @@ impl<B: Backend> Applier<B> {
             resume: resume::Resumes::default(),
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
-            measure_stack: Vec::new(),
-            measure_awaited: HashMap::new(),
-            outgoing_measure: Vec::new(),
+            measure: measure::Measuring::default(),
             outgoing_checks: Vec::new(),
-            measure_inflight: 0,
-            measure_round: 0,
-            measure_last: 0,
         }
     }
 
