@@ -21,7 +21,7 @@ use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use dfdu_scan::Backend;
+use dfdu_scan::{Backend, JobOptions};
 
 use crate::Limits;
 use crate::snapshot::{self, Header};
@@ -168,12 +168,12 @@ pub struct Key {
 }
 
 impl Key {
-    /// The key of a scan of the directory `path` with these options.
+    /// The key of a scan of the directory `path` made with `job`, read from the MFT when `mft`.
     ///
     /// # Errors
     ///
     /// When `path` cannot be made canonical or read, or is not a directory.
-    pub fn new(path: &Path, cross_mounts: bool, network: bool, mft: bool) -> io::Result<Key> {
+    pub fn new(path: &Path, job: &JobOptions, mft: bool) -> io::Result<Key> {
         let root = dunce::canonicalize(path)?;
         let m = fs::metadata(&root)?;
         if !m.is_dir() {
@@ -188,8 +188,8 @@ impl Key {
         let meta = dfdu_scan::PortableBackend::default().stat_dir(&root)?;
         Ok(Key {
             root,
-            cross_mounts,
-            network,
+            cross_mounts: job.cross_mounts,
+            network: job.network,
             mft,
             euid: euid(),
             dev: meta.dev,

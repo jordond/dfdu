@@ -116,9 +116,7 @@ fn cache_slot(path: &Path, local: &Local) -> Option<dfdu_store::cache::Slot> {
             return None;
         }
     };
-    let key =
-        dfdu_store::cache::Key::new(path, local.job.cross_mounts, local.job.network, local.mft)
-            .ok()?;
+    let key = dfdu_store::cache::Key::new(path, &local.job, local.mft).ok()?;
     Some(cache.slot(key))
 }
 

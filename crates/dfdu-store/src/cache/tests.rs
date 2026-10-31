@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use dfdu_scan::JobOptions;
 use dfdu_tree::{Ix, Kind, Meta, Tree};
 
 use super::*;
@@ -50,7 +51,7 @@ pub(super) fn setup() -> (tempfile::TempDir, Cache, Slot) {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("scanned")).unwrap();
     let cache = Cache::at(tmp.path().join("cache/scans")).unwrap();
-    let key = Key::new(&tmp.path().join("scanned"), false, false, false).unwrap();
+    let key = Key::new(&tmp.path().join("scanned"), &JobOptions::default(), false).unwrap();
     let slot = cache.slot(key);
     (tmp, cache, slot)
 }
@@ -70,9 +71,12 @@ fn keys_follow_the_directory_and_the_options() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("d");
     fs::create_dir(&dir).unwrap();
-    let k = Key::new(&dir, false, false, false).unwrap();
+    let k = Key::new(&dir, &JobOptions::default(), false).unwrap();
     // The same directory by another name is the same key.
-    assert_eq!(Key::new(&dir.join("."), false, false, false).unwrap(), k);
+    assert_eq!(
+        Key::new(&dir.join("."), &JobOptions::default(), false).unwrap(),
+        k
+    );
     assert_eq!(k.root(), dunce::canonicalize(&dir).unwrap());
     let name = k.file_name();
     assert_eq!(name.len(), 16 + ".snap".len(), "{name}");
@@ -84,19 +88,26 @@ fn keys_follow_the_directory_and_the_options() {
         (false, false, true),
     ]
     .iter()
-    .map(|&(c, n, m)| Key::new(&dir, c, n, m).unwrap().file_name())
+    .map(|&(c, n, m)| {
+        let job = JobOptions {
+            cross_mounts: c,
+            network: n,
+            ..JobOptions::default()
+        };
+        Key::new(&dir, &job, m).unwrap().file_name()
+    })
     .collect();
     assert_eq!(names.len(), 4);
     // A directory replaced by another of the same name is another key.
     fs::remove_dir(&dir).unwrap();
     fs::create_dir(tmp.path().join("other")).unwrap();
     fs::create_dir(&dir).unwrap();
-    let again = Key::new(&dir, false, false, false).unwrap();
+    let again = Key::new(&dir, &JobOptions::default(), false).unwrap();
     assert_eq!(again.root(), k.root());
     assert_ne!(again.file_name(), name);
     fs::write(tmp.path().join("f"), b"").unwrap();
-    assert!(Key::new(&tmp.path().join("f"), false, false, false).is_err());
-    assert!(Key::new(&tmp.path().join("missing"), false, false, false).is_err());
+    assert!(Key::new(&tmp.path().join("f"), &JobOptions::default(), false).is_err());
+    assert!(Key::new(&tmp.path().join("missing"), &JobOptions::default(), false).is_err());
 }
 
 #[test]

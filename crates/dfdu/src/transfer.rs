@@ -140,10 +140,7 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
     std::fs::File::open(f)
         .map_err(dfdu_store::ImportError::from)
         .and_then(|r| {
-            dfdu_store::snapshot::read(
-                std::io::BufReader::new(r),
-                &dfdu_store::Limits::default(),
-            )
+            dfdu_store::snapshot::read(std::io::BufReader::new(r), &dfdu_store::Limits::default())
         })
         .map_err(|e| {
             eprintln!("dfdu: {}: {e}", f.display());
