@@ -42,7 +42,7 @@ fn mounts_on_other_storage_have_no_limit() {
     let (storage, gate) = sh.gate_for(99, 1, false);
     assert!(storage == Storage::Unknown && gate.is_none());
     assert_eq!(sh.mount_workers(), 0);
-    assert!(sh.gate_stats().is_empty());
+    assert_eq!(sh.gate_stats(), Vec::<GateStats>::new());
 }
 
 /// A spinning disk gets `rotational_parts`, a network mount `network_parts`, and each adds its
