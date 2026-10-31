@@ -322,21 +322,6 @@ pub(crate) fn root_model() -> (Model, Ix) {
     (m, root)
 }
 
-/// Adds the directory `name` (inode `ino`) to `parent`, empty and still being scanned.
-pub(crate) fn add_dir(m: &mut Model, parent: Ix, name: &str, ino: u64) -> Ix {
-    let d = m
-        .tree
-        .add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
-    let own = m.tree.own(d);
-    m.tree.propagate_add(d, &own);
-    d
-}
-
-/// Adds the file `name` of `size` bytes (inode `ino`) to `parent`, counted in its totals.
-pub(crate) fn add_file(m: &mut Model, parent: Ix, name: &str, size: u64, ino: u64) -> Ix {
-    dfdu_engine::test_support::add_file(&mut m.tree, parent, name, size, ino)
-}
-
 /// A snapshot of `/r` while it is scanned, holding `entries`, with its totals left at zero.
 pub(crate) fn snap_without_totals(entries: Vec<EntryData>, version: u64) -> Snapshot {
     let root = test_entry(99, "/r", 0);

@@ -279,25 +279,26 @@ pub(super) fn chain(r: &Read<'_>, start: Ix, ratio: f64) -> Vec<Ix> {
 
 #[cfg(test)]
 mod tests {
+    use dfdu_engine::test_support::{add_dir, add_file};
     use dfdu_tree::DirState;
 
     use super::*;
     use crate::model::snapshot::build_view;
-    use crate::tests::{add_dir, add_file, root_model};
+    use crate::tests::root_model;
 
     /// `/r` with `a/` (`big` 600, `mid` 300, `t1` 5 and `t2` 4 bytes) and `b/` (`x` 50 bytes),
     /// and `a`.
     fn model() -> (Model, Ix) {
         let (mut m, root) = root_model();
-        let a = add_dir(&mut m, root, "a", 2);
+        let a = add_dir(&mut m.tree, root, "a", 2);
         for (i, (name, size)) in [("big", 600), ("mid", 300), ("t1", 5), ("t2", 4)]
             .into_iter()
             .enumerate()
         {
-            add_file(&mut m, a, name, size, 10 + i as u64);
+            add_file(&mut m.tree, a, name, size, 10 + i as u64);
         }
-        let b = add_dir(&mut m, root, "b", 3);
-        add_file(&mut m, b, "x", 50, 20);
+        let b = add_dir(&mut m.tree, root, "b", 3);
+        add_file(&mut m.tree, b, "x", 50, 20);
         for d in [root, a, b] {
             m.tree.dir_mut(d).expect("directory").state = DirState::Complete;
         }

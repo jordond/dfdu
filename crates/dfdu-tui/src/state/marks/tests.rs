@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use dfdu_engine::test_support::{add_dir, add_file};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::{Kind, Totals};
+use dfdu_tree::{DirState, Kind, Totals};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Color;
 
@@ -12,8 +13,7 @@ use super::*;
 use crate::app::Effect;
 use crate::model::snapshot::{self, Snapshot, test_entry};
 use crate::tests::{
-    add_dir, add_file, press, render, render_buffer, root_model, select, snap_without_totals,
-    style_at, styled, text,
+    press, render, render_buffer, root_model, select, snap_without_totals, style_at, styled, text,
 };
 use crate::theme::Theme;
 
@@ -220,10 +220,10 @@ fn marks_survive_navigation_and_rescan_swap() {
 #[test]
 fn nested_marks_count_once() {
     let (mut m, root) = root_model();
-    let a = add_dir(&mut m, root, "a", 2);
-    add_file(&mut m, a, "b", 6000, 3);
-    add_file(&mut m, a, "c", 2000, 4);
-    add_file(&mut m, root, "d", 1000, 5);
+    let a = add_dir(&mut m.tree, root, "a", 2);
+    add_file(&mut m.tree, a, "b", 6000, 3);
+    add_file(&mut m.tree, a, "c", 2000, 4);
+    add_file(&mut m.tree, root, "d", 1000, 5);
     for d in [a, root] {
         complete(&mut m, d);
     }
@@ -278,8 +278,10 @@ fn nested_marks_count_once() {
 #[test]
 fn totals_follow_live_sizes() {
     let (mut m, root) = root_model();
-    let big = add_dir(&mut m, root, "big", 2);
-    add_file(&mut m, big, "f1", 100_000, 3);
+    let big = add_dir(&mut m.tree, root, "big", 2);
+    // Still being scanned.
+    m.tree.dir_mut(big).expect("big").state = DirState::Pending;
+    add_file(&mut m.tree, big, "f1", 100_000, 3);
     let t = Instant::now();
     let mut app = App::new(Theme::no_color(), t);
     sync(&mut app, &m, t);
@@ -291,7 +293,7 @@ fn totals_follow_live_sizes() {
     let size = |m: &Model| human(m.tree.total(big).alloc);
     let first = summary_text(&app);
     assert_eq!(first, Some(format!("● 1 marked (at least {})", size(&m))));
-    add_file(&mut m, big, "f2", 2_000_000, 4);
+    add_file(&mut m.tree, big, "f2", 2_000_000, 4);
     sync(&mut app, &m, t);
     assert_eq!(
         summary_text(&app),
@@ -410,12 +412,12 @@ fn many_marks_index_quickly() {
 #[test]
 fn lost_references_are_found_by_path() {
     let (mut m, root) = root_model();
-    let big = add_dir(&mut m, root, "big", 2);
+    let big = add_dir(&mut m.tree, root, "big", 2);
     let files: Vec<Ix> = (0..1000)
-        .map(|i| add_file(&mut m, big, &format!("f{i}"), 10, 100 + i))
+        .map(|i| add_file(&mut m.tree, big, &format!("f{i}"), 10, 100 + i))
         .collect();
-    let other = add_dir(&mut m, root, "other", 3);
-    let g = add_file(&mut m, other, "g", 10, 4);
+    let other = add_dir(&mut m.tree, root, "other", 3);
+    let g = add_file(&mut m.tree, other, "g", 10, 4);
     let file = |ino| {
         Some(Ident {
             dev_ino: (1, ino),
