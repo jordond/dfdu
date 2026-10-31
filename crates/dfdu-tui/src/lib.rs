@@ -1,14 +1,15 @@
 //! The interactive browser. The run loop (`run_loop`) reads the engine model under the read lock
-//! only to copy a [`Snapshot`] and the features' `model::extras::Extras`, then draws from the
-//! copy.
+//! only to copy a `model::snapshot::Snapshot` and the features' `model::extras::Extras`, then
+//! draws from the copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
 //! `view`, with the styles in `theme` and the text for sizes, counts and bars in `format`. Each
 //! feature has its own module with its state, keys and drawing: the views and panels beside the
 //! list in `features`, and the overlays drawn over it in `overlay`. The state of the list's rows
 //! is in `state`, the text input, the mouse and fuzzy matching in `input`, and what is read from
-//! outside the UI (the engine model, the scan history and cache, this machine) in `model`. Each
-//! of these lists its modules.
+//! outside the UI (the engine model, the scan history and cache, the mounts outside the scan) in
+//! `model`; only the duplicates comparison and the disk picker read files and disks themselves.
+//! Each of these lists its modules.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -42,12 +43,12 @@ use dfdu_store::history;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-pub use app::{App, Effect, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Overlay};
+use features::picker::Picked;
+
+pub use app::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
 pub use features::debug::summary as debug_summary;
-pub use features::picker::{Picked, Picker};
 pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
-pub use model::snapshot::Snapshot;
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings};
 pub use state::motion::MAX_STEP as MAX_EASING_STEP;
@@ -268,10 +269,9 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     };
     let path = match path {
         Some(p) => p,
-        None => match features::picker::pick(&mut terminal, &theme) {
-            Ok(Picked::Scan(p)) => p,
-            Ok(Picked::Quit) => return Ok(()),
-            Err(e) => return Err(e),
+        None => match features::picker::pick(&mut terminal, &theme)? {
+            Picked::Scan(p) => p,
+            Picked::Quit => return Ok(()),
         },
     };
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());

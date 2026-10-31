@@ -4,6 +4,9 @@
 //! hands the selected path to the clipboard and the file manager. `review` holds what the review
 //! views (Largest, Duplicates, Cleanup) share: the summary bar, checkboxes, ages, paths and the
 //! detail pane.
+//!
+//! Each reads through `crate::model` but two: `dupes` compares the files' contents on its own
+//! thread, and `picker` lists the disks before there is a scan.
 
 pub(crate) mod cleanup;
 pub(crate) mod debug;
