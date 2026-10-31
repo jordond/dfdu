@@ -9,6 +9,17 @@ pub use detach::FreedLink;
 use super::{Ix, NONE, Node, NodeFlags, Tree};
 use crate::{DirRec, ErrKind, Meta, Totals};
 
+/// The flags [`Tree::set_flag`] leaves to their own setters.
+const OWN_SETTER: NodeFlags = NodeFlags(
+    NodeFlags::HARDLINK.0
+        | NodeFlags::CHARGED.0
+        | NodeFlags::DETACHED.0
+        | NodeFlags::FREE.0
+        | NodeFlags::VISIBLE_ROOT.0
+        | NodeFlags::DELETING.0
+        | NodeFlags::MEASURED.0,
+);
+
 impl Tree {
     fn alloc_node(&mut self, parent: u32, name: &[u8], meta: &Meta, flags: NodeFlags) -> u32 {
         // Names are never truncated: a cut name would not convert back (`name_os`). Entry names
@@ -215,9 +226,21 @@ impl Tree {
         });
     }
 
-    /// Sets or clears a flag. For flags counted in [`Totals`] (`MOUNT_ROOT`, `RO_SUBVOL`) the
-    /// node's and its ancestors' totals follow.
+    /// Sets or clears a flag that says what a node is: `MOUNT_ROOT`, `SUBVOL`, `RO_SUBVOL`,
+    /// `DUP_MOUNT`, `NETWORK`, `KERNEL`, `COMPRESSED`, `PROTECTED`, `EXCEPTED`. For flags
+    /// counted in [`Totals`] (`MOUNT_ROOT`, `RO_SUBVOL`) the node's and its ancestors' totals
+    /// follow.
+    ///
+    /// `HARDLINK`, `CHARGED`, `MEASURED`, `DELETING`, `DETACHED`, `FREE` and `VISIBLE_ROOT`
+    /// are not for this: their own setters keep what goes with them ([`Tree::set_charged`]
+    /// charges only hard links, [`Tree::set_measured`] records the unshared bytes,
+    /// [`Tree::set_deleting`], adding a node sets `HARDLINK`, detaching and freeing it the
+    /// rest). Debug builds panic on them.
     pub fn set_flag(&mut self, ix: Ix, flag: NodeFlags, on: bool) {
+        debug_assert!(
+            !flag.has(OWN_SETTER),
+            "{flag:?} is changed only by its own setter"
+        );
         self.restate(ix, |t| t.nodes[ix.0 as usize].flags.set(flag, on));
     }
 
