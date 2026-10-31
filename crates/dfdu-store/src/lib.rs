@@ -1,5 +1,5 @@
-//! Persistence: ncdu JSON import and export, native
-//! snapshots, scan history, zstd streams and atomic file writes.
+//! Persistence: ncdu JSON import and export, native snapshots, the scan cache, scan history,
+//! zstd streams and atomic file writes.
 
 pub mod cache;
 pub mod history;
