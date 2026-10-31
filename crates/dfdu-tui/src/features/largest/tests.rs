@@ -1,26 +1,27 @@
 use std::time::Instant;
 
 use dfdu_engine::Model;
+use dfdu_engine::test_support::{add_dir, add_file};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::*;
 use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
 use crate::features::treemap::tests::sync;
-use crate::tests::{add_dir, add_file, press, refused, render, root_model};
+use crate::tests::{press, refused, render, root_model};
 use crate::theme::Theme;
 
 /// `/r` with files at three depths, the largest in a hidden directory:
 /// `.cache/huge` 9000, `a/big.iso` 5000, `top.txt` 4000, `a/deep/x.bin` 3000.
 fn model() -> Model {
     let (mut m, root) = root_model();
-    let a = add_dir(&mut m, root, "a", 2);
-    let deep = add_dir(&mut m, a, "deep", 3);
-    let cache = add_dir(&mut m, root, ".cache", 4);
-    add_file(&mut m, deep, "x.bin", 3000, 10);
-    add_file(&mut m, a, "big.iso", 5000, 11);
-    add_file(&mut m, root, "top.txt", 4000, 12);
-    add_file(&mut m, cache, "huge", 9000, 13);
+    let a = add_dir(&mut m.tree, root, "a", 2);
+    let deep = add_dir(&mut m.tree, a, "deep", 3);
+    let cache = add_dir(&mut m.tree, root, ".cache", 4);
+    add_file(&mut m.tree, deep, "x.bin", 3000, 10);
+    add_file(&mut m.tree, a, "big.iso", 5000, 11);
+    add_file(&mut m.tree, root, "top.txt", 4000, 12);
+    add_file(&mut m.tree, cache, "huge", 9000, 13);
     m
 }
 
@@ -85,7 +86,7 @@ fn lists_the_largest_files_below_with_their_paths_relative() {
 #[test]
 fn a_directory_without_files_has_an_empty_state() {
     let (mut m, root) = root_model();
-    add_dir(&mut m, root, "empty", 2);
+    add_dir(&mut m.tree, root, "empty", 2);
     let (mut app, t0) = opened(&m);
     let frame = render(&mut app, t0, 100, 20);
     assert!(frame.contains("╭ Largest ─"), "{frame}");
@@ -121,7 +122,7 @@ fn the_heap_keeps_only_the_largest() {
     let (mut m, root) = root_model();
     let n = TOP as u64 + 5;
     for i in 1..=n {
-        add_file(&mut m, root, &format!("f{i}"), i, 10 + i);
+        add_file(&mut m.tree, root, &format!("f{i}"), i, 10 + i);
     }
     let (files, count) = walk(&m.tree, root, SizeMode::Disk, false);
     assert_eq!(count, n);
@@ -144,7 +145,7 @@ fn walks_only_while_open_and_when_something_changed() {
     sync(&mut app, &m, t0);
     assert!(read(&m, &app).is_none(), "nothing changed");
     let root = m.tree.roots().next().expect("root");
-    add_file(&mut m, root, "new.bin", 20_000, 99);
+    add_file(&mut m.tree, root, "new.bin", 20_000, 99);
     sync(&mut app, &m, t0);
     assert_eq!(paths(&app)[0], "new.bin", "no scan runs: walked at once");
 }

@@ -162,3 +162,6 @@ impl DirParts {
 
 /// Part number of a directory's listing task; chunk task `seq` is part `seq + 1`.
 pub(super) const LISTING_PART: u32 = 0;
+
+#[cfg(test)]
+mod tests;

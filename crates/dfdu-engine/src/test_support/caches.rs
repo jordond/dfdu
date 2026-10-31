@@ -5,7 +5,7 @@
 use dfdu_rules::{Env, Platform, RuleSet};
 use dfdu_tree::{Class, DirState, Ix, Kind, Safety, Tree};
 
-use super::{add_dir, add_file, meta};
+use super::{add_dir, add_file, meta, node_at};
 
 /// A tree under construction, with the built-in rules of a Mac.
 pub struct Caches {
@@ -50,13 +50,7 @@ impl Caches {
     /// When there is no such node.
     #[must_use]
     pub fn find(&self, path: &str) -> Ix {
-        let mut ix = self.tree.roots().next().expect("root");
-        for name in path.split('/').filter(|n| !n.is_empty()) {
-            ix = (self.tree.children(ix))
-                .find(|&c| self.tree.name(c) == name.as_bytes())
-                .unwrap_or_else(|| panic!("{path}"));
-        }
-        ix
+        node_at(&self.tree, path)
     }
 }
 
