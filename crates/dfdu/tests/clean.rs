@@ -229,6 +229,49 @@ fn walk_files(dir: &Path) -> Vec<std::path::PathBuf> {
     out
 }
 
+/// Stages directory `item` of `scan_root` with a deleter journaling into `ops`, which then
+/// ends before the commit: what a session killed inside its undo window leaves.
+fn stage_without_commit(ops: &Path, scan_root: &Path, item: &Path) {
+    #[cfg(not(windows))]
+    let m = dfdu_tree::Meta::from_metadata(&fs::symlink_metadata(item).unwrap());
+    #[cfg(windows)]
+    let m = dfdu_tree::Meta::from_windows(&dfdu_sys::stat_path(item, false).unwrap());
+    let mut tree = dfdu_tree::Tree::new();
+    let node = tree.new_root(b"/", &m, false);
+    let plan = dfdu_clean::Plan {
+        id: 1,
+        mode: dfdu_clean::Mode::Stage,
+        scan_root: scan_root.into(),
+        items: vec![dfdu_clean::PlanItem {
+            node: tree.node_ref(node),
+            path: item.into(),
+            identity: dfdu_clean::Identity {
+                dev: m.dev,
+                ino: m.ino,
+                kind: m.kind,
+                apparent: m.apparent,
+                mtime: m.mtime,
+            },
+            bytes: 0,
+            inside: std::sync::Arc::default(),
+        }],
+        protected: None,
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let d = dfdu_clean::spawn_deleter(Some(ops.into()), Duration::from_secs(3600), tx);
+    d.reqs.send(dfdu_clean::DeleterReq::Plan(plan)).unwrap();
+    for m in &rx {
+        if let dfdu_clean::DeleterMsg::Item { result, .. } = &m {
+            assert_eq!(*result, dfdu_clean::DeleteResult::Deleted);
+        }
+        if matches!(m, dfdu_clean::DeleterMsg::Done { .. }) {
+            break;
+        }
+    }
+    drop(d.reqs);
+    d.thread.join().unwrap();
+}
+
 /// What an earlier session left staged is reported by `clean`, and finished with
 /// `--finish-staged --yes`; without `--yes` nothing is done.
 #[test]
@@ -239,31 +282,13 @@ fn clean_reports_and_finishes_what_earlier_sessions_staged() {
     fs::create_dir(&root).unwrap();
     fixture(&root);
     let r = root.to_str().unwrap();
-    // Stage the old project's dependencies, then lose the commit: as if the session had been
-    // killed inside its undo window.
-    let o = dfdu_in(&state, &["clean", r, "--yes", "--mode", "stage"]);
-    assert!(o.status.success());
-    let journal = fs::read_dir(state.join("ops"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let text = fs::read_to_string(&journal).unwrap();
-    let cut: String = text
-        .lines()
-        .filter(|l| !l.contains("\"commit-"))
-        .flat_map(|l| [l, "\n"])
-        .collect();
-    fs::write(&journal, cut).unwrap();
-    // The staged copy is gone already (the commit ran); put a stand-in there.
+    stage_without_commit(&state.join("ops"), &root, &root.join("old/node_modules"));
     let list = String::from_utf8(dfdu_in(&state, &["recover"]).stdout).unwrap();
-    let stand_in = list
+    let staged = list
         .split(": staged at ")
         .nth(1)
         .map_or_else(|| panic!("{list}"), |s| std::path::PathBuf::from(s.trim()));
-    fs::create_dir_all(stand_in.join("pkg")).unwrap();
-    fs::write(stand_in.join("pkg/index.js"), b"x").unwrap();
+    assert!(staged.join("pkg/index.js").exists(), "{list}");
 
     let o = dfdu_in(&state, &["clean", r, "--finish-staged"]);
     let err = String::from_utf8_lossy(&o.stderr);
@@ -271,11 +296,11 @@ fn clean_reports_and_finishes_what_earlier_sessions_staged() {
         err.contains("1 item earlier sessions left unfinished"),
         "{err}"
     );
-    assert!(stand_in.exists(), "without --yes nothing is done");
+    assert!(staged.exists(), "without --yes nothing is done");
     let o = dfdu_in(&state, &["clean", r, "--finish-staged", "--yes"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("staged earlier, deleted"), "{err}");
-    assert!(!stand_in.exists());
+    assert!(!staged.exists());
     assert_eq!(
         String::from_utf8_lossy(&dfdu_in(&state, &["recover"]).stdout).trim(),
         "nothing unfinished"
