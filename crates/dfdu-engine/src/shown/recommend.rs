@@ -10,7 +10,8 @@ const QUIET_DAYS: i64 = 7;
 /// Why a match is or is not recommended for deletion ([`verdict`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
-    /// Recommended: `safe` and at least the rule's minimum size.
+    /// Recommended: `safe`, at least the rule's minimum size, and unchanged for at least
+    /// `QUIET_DAYS` (7) days.
     Safe,
     /// Recommended: `regenerable`, at least the rule's minimum size, and unchanged for at least
     /// this many days.
