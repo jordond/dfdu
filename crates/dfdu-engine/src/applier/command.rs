@@ -104,7 +104,7 @@ impl<B: Backend> Applier<B> {
         let root = m.tree.new_root(path.as_bytes(), &empty_dir_meta(), true);
         if let Some(c) = &opts.class {
             m.rules = Some(c.rules.clone());
-            m.tree.set_protection(root, c.protection.protected(), false);
+            m.tree.set_protection(root, c.protection.root_mark());
         }
         let start = JobStart {
             kind: JobKind::Initial,

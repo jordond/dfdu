@@ -253,16 +253,10 @@ impl<B: Backend> Applier<B> {
         self.enter_again(&mut opts, enter.then(|| m.tree.dev_ino(ix)));
         if let Some(c) = opts.class.as_ref().filter(|_| resumed) {
             m.rules = Some(c.rules.clone());
-            m.tree
-                .set_protection(shadow, c.protection.protected(), false);
+            m.tree.set_protection(shadow, c.protection.root_mark());
         } else if let Some(c) = &mut opts.class {
             *c = rescan_class(&m.tree, ix, owner_root, c);
-            let f = m.tree.flags(ix);
-            m.tree.set_protection(
-                shadow,
-                f.has(NodeFlags::PROTECTED),
-                f.has(NodeFlags::EXCEPTED),
-            );
+            m.tree.set_protection(shadow, m.tree.protection(ix));
         }
         let start = JobStart {
             kind: JobKind::Rescan,

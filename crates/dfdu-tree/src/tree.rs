@@ -14,6 +14,7 @@ mod paths;
 mod refs;
 mod target;
 
+pub use classes::Protection;
 pub use dir::{Children, DirRec, DirState};
 use edit::FreeWork;
 pub use edit::FreedLink;

@@ -88,7 +88,9 @@ fn classes_are_checked_against_the_reference() {
     let mut sim = project(true);
     assert_eq!(check_classes(&sim.spec, &sim.model, &rules), Ok(2));
     let p = find(&sim, "p");
-    sim.model.tree.set_protection(p, true, false);
+    sim.model
+        .tree
+        .set_protection(p, dfdu_tree::Protection::Protected);
     assert_eq!(
         check_classes(&sim.spec, &sim.model, &rules),
         Err("/sim/p: protected true".into())

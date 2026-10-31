@@ -9,7 +9,7 @@ use std::cell::OnceCell;
 
 use dfdu_scan::classify::{BlockParts, ClassOpts, Listing, TaskClass};
 use dfdu_scan::{Backend, DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
-use dfdu_tree::{Ix, Kind, NodeRef, Tree};
+use dfdu_tree::{Ix, Kind, NodeRef, Protection, Tree};
 
 use crate::applier::meta_of;
 
@@ -147,8 +147,8 @@ impl ClassifyLoaded {
             };
             match mark {
                 Mark::Class(class) => tree.set_class(node, Some(class)),
-                Mark::Protected => tree.set_protection(node, true, false),
-                Mark::Excepted => tree.set_protection(node, false, true),
+                Mark::Protected => tree.set_protection(node, Protection::Protected),
+                Mark::Excepted => tree.set_protection(node, Protection::Excepted),
             }
         }
         for (d, class) in closes {

@@ -1,5 +1,5 @@
 use dfdu_clean::Mode;
-use dfdu_tree::{Host, HostPath};
+use dfdu_tree::{Host, HostPath, Protection};
 
 use super::*;
 use crate::applier::Command;
@@ -27,9 +27,9 @@ fn the_tree_refuses_mounts_protected_nodes_and_snapshots() {
         Some("contains 1 mount point; unmount it first")
     );
     t.set_flag(d, NodeFlags::MOUNT_ROOT, false);
-    t.set_protection(f, true, false);
+    t.set_protection(f, Protection::Protected);
     assert!(refusal(&t, f, false).is_some_and(|w| w.starts_with("is protected")));
-    t.set_protection(f, false, false);
+    t.set_protection(f, Protection::None);
     t.set_flag(d, NodeFlags::RO_SUBVOL, true);
     let g = t.children(d).next().unwrap();
     assert_eq!(

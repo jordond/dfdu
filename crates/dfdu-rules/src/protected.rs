@@ -5,8 +5,9 @@
 //! Conditions that need more than the path (files tracked by version control, database data
 //! directories found by their marker files) are checked by the classifier, not here.
 
-use crate::hash::FastSet as HashSet;
+use dfdu_tree::Protection;
 
+use crate::hash::FastSet as HashSet;
 use crate::vars::Env;
 use crate::{Glob, Platform, glob};
 
@@ -179,6 +180,16 @@ impl State {
     #[must_use]
     pub fn protected(self) -> bool {
         self != State::Off
+    }
+
+    /// How a job's root is marked in the tree when its job runs in this state.
+    #[must_use]
+    pub fn root_mark(self) -> Protection {
+        if self.protected() {
+            Protection::Protected
+        } else {
+            Protection::None
+        }
     }
 }
 

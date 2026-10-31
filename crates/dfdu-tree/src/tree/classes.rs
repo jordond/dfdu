@@ -3,6 +3,17 @@
 use super::{Ix, NodeFlags, Tree};
 use crate::Class;
 
+/// How a node bounds a protected subtree.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Protection {
+    /// Neither: it is protected as the node above it is.
+    None,
+    /// The top of a protected subtree.
+    Protected,
+    /// The top of an exception in a protected subtree.
+    Excepted,
+}
+
 impl Tree {
     /// Sets or clears the rule node `ix` matched.
     pub fn set_class(&mut self, ix: Ix, class: Option<Class>) {
@@ -27,10 +38,23 @@ impl Tree {
 
     /// Marks node `ix` as the top of a protected subtree, of an exception in one, or neither.
     /// These flags are not counted in totals, so no ancestor changes.
-    pub fn set_protection(&mut self, ix: Ix, protected: bool, excepted: bool) {
+    pub fn set_protection(&mut self, ix: Ix, p: Protection) {
         let f = &mut self.nodes[ix.0 as usize].flags;
-        f.set(NodeFlags::PROTECTED, protected);
-        f.set(NodeFlags::EXCEPTED, excepted);
+        f.set(NodeFlags::PROTECTED, p == Protection::Protected);
+        f.set(NodeFlags::EXCEPTED, p == Protection::Excepted);
+    }
+
+    /// How node `ix` is marked by [`Tree::set_protection`].
+    #[must_use]
+    pub fn protection(&self, ix: Ix) -> Protection {
+        let f = self.flags(ix);
+        if f.has(NodeFlags::PROTECTED) {
+            Protection::Protected
+        } else if f.has(NodeFlags::EXCEPTED) {
+            Protection::Excepted
+        } else {
+            Protection::None
+        }
     }
 
     /// Whether node `ix` is in a protected subtree: the nearest node at or above it marked
