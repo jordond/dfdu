@@ -78,15 +78,21 @@ pub enum Action {
 }
 
 impl Action {
+    /// Which action it is, without the native commands.
+    #[must_use]
+    pub fn name(&self) -> ActionName {
+        match self {
+            Action::Delete => ActionName::Delete,
+            Action::Trash => ActionName::Trash,
+            Action::Native(_) => ActionName::Native,
+            Action::Report => ActionName::Report,
+        }
+    }
+
     /// Its name in rule files.
     #[must_use]
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Action::Delete => "delete",
-            Action::Trash => "trash",
-            Action::Native(_) => "native",
-            Action::Report => "report",
-        }
+        self.name().as_str()
     }
 
     /// The native commands of a `native` action.
@@ -99,12 +105,68 @@ impl Action {
     }
 }
 
+/// An [`Action`] as rule files name it (`action = "trash"`); loading pairs `native` with the
+/// rule's native commands.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ActionName {
+    Delete,
+    Trash,
+    Native,
+    Report,
+}
+
+impl ActionName {
+    #[must_use]
+    pub fn parse(s: &str) -> Option<ActionName> {
+        Some(match s {
+            "delete" => ActionName::Delete,
+            "trash" => ActionName::Trash,
+            "native" => ActionName::Native,
+            "report" => ActionName::Report,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActionName::Delete => "delete",
+            ActionName::Trash => "trash",
+            ActionName::Native => "native",
+            ActionName::Report => "report",
+        }
+    }
+}
+
 /// What kind of entry a rule matches.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
     Dir,
     File,
     Any,
+}
+
+impl Kind {
+    /// From its name in rule files (`match.kind`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Kind> {
+        Some(match s {
+            "dir" => Kind::Dir,
+            "file" => Kind::File,
+            "any" => Kind::Any,
+            _ => return None,
+        })
+    }
+
+    /// Its name in rule files.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Dir => "dir",
+            Kind::File => "file",
+            Kind::Any => "any",
+        }
+    }
 }
 
 /// The theme's colour slots for categories (`cat.*` tokens), in their order.
@@ -397,6 +459,24 @@ mod tests {
         assert_eq!(parse_size("12MB"), Some(12_000_000));
         assert_eq!(parse_size("1 mb"), None);
         assert_eq!(parse_size("lots"), None);
+    }
+
+    #[test]
+    fn names_parse_back() {
+        for a in [
+            ActionName::Delete,
+            ActionName::Trash,
+            ActionName::Native,
+            ActionName::Report,
+        ] {
+            assert_eq!(ActionName::parse(a.as_str()), Some(a));
+        }
+        for k in [Kind::Dir, Kind::File, Kind::Any] {
+            assert_eq!(Kind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(Action::Trash.as_str(), "trash");
+        assert_eq!(ActionName::parse("Delete"), None);
+        assert_eq!(Kind::parse("pipe"), None);
     }
 
     #[test]
