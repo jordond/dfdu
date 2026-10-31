@@ -158,12 +158,12 @@ impl<B: Backend> Applier<B> {
             }
             Command::Delete { items, mode } => self.submit_plan(m, items, mode),
             Command::Undo { plan } => {
-                if m.status.undoing.is_none() && self.undoable.remove(&plan).is_some() {
+                if m.status.undoing.is_none() && self.delete.undoable.remove(&plan).is_some() {
                     m.status.undoing = Some(plan);
-                    self.outgoing_controls.push(DeleterReq::Undo { plan });
+                    self.delete.controls.push(DeleterReq::Undo { plan });
                 }
             }
-            Command::CommitStaged => self.outgoing_controls.push(DeleterReq::Commit),
+            Command::CommitStaged => self.delete.controls.push(DeleterReq::Commit),
             Command::RunNative {
                 id,
                 node,
@@ -178,7 +178,7 @@ impl<B: Backend> Applier<B> {
             #[expect(clippy::panic, reason = "the command exists to test the crash path")]
             Command::InjectPanic => panic!("injected applier panic"),
             Command::AbortDelete => {
-                for p in std::mem::take(&mut self.queued_plans) {
+                for p in std::mem::take(&mut self.delete.queued) {
                     for it in &p.items {
                         if let Some(ix) = m.tree.resolve(it.node) {
                             m.tree.set_deleting(ix, false);

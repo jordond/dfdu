@@ -19,7 +19,8 @@ pub(super) struct Undoable {
 impl<B: Backend> Applier<B> {
     /// An item of `plan`, deleted with `mode`, can be put back.
     pub(super) fn add_undoable(&mut self, plan: u64, mode: Mode, bytes: u64) {
-        self.undoable
+        self.delete
+            .undoable
             .entry(plan)
             .or_insert(Undoable {
                 mode,
@@ -31,21 +32,26 @@ impl<B: Backend> Applier<B> {
 
     /// A staged item of `plan` was deleted: it can no longer be put back.
     pub(super) fn forget_undoable(&mut self, plan: u64, bytes: u64) {
-        if let Some(u) = self.undoable.get_mut(&plan) {
+        if let Some(u) = self.delete.undoable.get_mut(&plan) {
             u.count.remove(bytes);
             if u.count.items == 0 {
-                self.undoable.remove(&plan);
+                self.delete.undoable.remove(&plan);
             }
         }
     }
 
     pub(super) fn refresh_undo(&mut self, m: &mut Model) {
-        m.status.undo = self.undoable.iter().next_back().map(|(&plan, u)| UndoInfo {
-            plan,
-            mode: u.mode,
-            items: u.count.items,
-            bytes: u.count.bytes,
-        });
+        m.status.undo = self
+            .delete
+            .undoable
+            .iter()
+            .next_back()
+            .map(|(&plan, u)| UndoInfo {
+                plan,
+                mode: u.mode,
+                items: u.count.items,
+                bytes: u.count.bytes,
+            });
     }
 
     /// Rescans the nearest directory in the tree above each item an undo put back: the
@@ -67,7 +73,7 @@ impl<B: Backend> Applier<B> {
             })
             .collect();
         for d in tops {
-            self.deferred_rescans.push(m.tree.node_ref(d));
+            self.delete.deferred_rescans.push(m.tree.node_ref(d));
         }
         self.retry_deferred_rescans(m);
     }

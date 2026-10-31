@@ -5,14 +5,45 @@
 mod deleter;
 mod item;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use dfdu_clean::{DeleteResult, DeleterReq, Mode, Plan};
 use dfdu_scan::Backend;
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::undo::Undoable;
 use super::work::Work;
 use super::{Applier, DeleteProgress, DeleteSummary, Model, PROBLEMS_KEPT};
+
+/// What the applier keeps of deletes: the plans queued and running, requests for the deleter,
+/// and what can still be put back.
+pub(super) struct Deleting {
+    pub(super) queued: VecDeque<Plan>,
+    active: Option<ActivePlan>,
+    /// Plans for the deleter, taken by the runtime after each slice.
+    outgoing: Vec<Plan>,
+    /// Undo, commit and native command requests for the deleter.
+    pub(super) controls: Vec<DeleterReq>,
+    /// Plans with items that can still be put back, by plan.
+    pub(super) undoable: BTreeMap<u64, Undoable>,
+    next_plan: u64,
+    /// Rescans needed after a delete that are blocked by the running plan; retried as it runs.
+    pub(super) deferred_rescans: Vec<NodeRef>,
+}
+
+impl Default for Deleting {
+    fn default() -> Self {
+        Deleting {
+            queued: VecDeque::new(),
+            active: None,
+            outgoing: Vec::new(),
+            controls: Vec::new(),
+            undoable: BTreeMap::new(),
+            next_plan: 1,
+            deferred_rescans: Vec::new(),
+        }
+    }
+}
 
 pub(super) struct ActivePlan {
     id: u64,
@@ -25,21 +56,23 @@ pub(super) struct ActivePlan {
 impl<B: Backend> Applier<B> {
     /// Plans for the deleter thread, taken by the runtime after each slice.
     pub fn take_plans(&mut self) -> Vec<Plan> {
-        std::mem::take(&mut self.outgoing_plans)
+        std::mem::take(&mut self.delete.outgoing)
     }
 
     /// Undo and commit requests for the deleter thread, sent after the plans.
     pub fn take_deleter_controls(&mut self) -> Vec<DeleterReq> {
-        std::mem::take(&mut self.outgoing_controls)
+        std::mem::take(&mut self.delete.controls)
     }
 
     fn plan_nodes(&self) -> impl Iterator<Item = NodeRef> + '_ {
         let active = self
-            .active_plan
+            .delete
+            .active
             .iter()
             .flat_map(|p| p.remaining.iter().copied());
         let queued = self
-            .queued_plans
+            .delete
+            .queued
             .iter()
             .flat_map(|p| p.items.iter().map(|i| i.node));
         active.chain(queued)
@@ -91,9 +124,9 @@ impl<B: Backend> Applier<B> {
                     m.tree.host_path(ix)
                 },
             );
-        let id = self.next_plan;
-        self.next_plan += 1;
-        self.queued_plans.push_back(Plan {
+        let id = self.delete.next_plan;
+        self.delete.next_plan += 1;
+        self.delete.queued.push_back(Plan {
             id,
             mode,
             scan_root: root,
@@ -104,13 +137,13 @@ impl<B: Backend> Applier<B> {
     }
 
     fn start_next_plan(&mut self, m: &mut Model) {
-        if self.active_plan.is_some() {
+        if self.delete.active.is_some() {
             if let Some(d) = m.status.deleting.as_mut() {
-                d.queued_plans = self.queued_plans.len();
+                d.queued_plans = self.delete.queued.len();
             }
             return;
         }
-        while let Some(mut plan) = self.queued_plans.pop_front() {
+        while let Some(mut plan) = self.delete.queued.pop_front() {
             // Re-check items queued behind another plan: they may have gone meanwhile.
             plan.items
                 .retain(|i| m.tree.resolve_visible(i.node).is_some());
@@ -122,9 +155,9 @@ impl<B: Backend> Applier<B> {
                 plan: plan.id,
                 total: remaining.len(),
                 done: 0,
-                queued_plans: self.queued_plans.len(),
+                queued_plans: self.delete.queued.len(),
             });
-            self.active_plan = Some(ActivePlan {
+            self.delete.active = Some(ActivePlan {
                 id: plan.id,
                 mode: plan.mode,
                 total: remaining.len(),
@@ -135,17 +168,17 @@ impl<B: Backend> Applier<B> {
                     ..Default::default()
                 },
             });
-            self.outgoing_plans.push(plan);
+            self.delete.outgoing.push(plan);
             return;
         }
         m.status.deleting = None;
     }
 
     pub(super) fn retry_deferred_rescans(&mut self, m: &mut Model) {
-        for r in std::mem::take(&mut self.deferred_rescans) {
+        for r in std::mem::take(&mut self.delete.deferred_rescans) {
             match m.tree.resolve_visible(r) {
                 None => {}
-                Some(ix) if self.plan_overlaps(&m.tree, ix) => self.deferred_rescans.push(r),
+                Some(ix) if self.plan_overlaps(&m.tree, ix) => self.delete.deferred_rescans.push(r),
                 Some(_) => self.rescan(m, r, None, false),
             }
         }
@@ -160,7 +193,7 @@ impl<B: Backend> Applier<B> {
         bytes: u64,
         result: &DeleteResult,
     ) {
-        let Some(active) = self.active_plan.as_mut().filter(|a| a.id == plan) else {
+        let Some(active) = self.delete.active.as_mut().filter(|a| a.id == plan) else {
             return;
         };
         active.remaining.remove(&node);
@@ -188,7 +221,7 @@ impl<B: Backend> Applier<B> {
                 .unwrap_or_default();
             m.status.notice(format!("delete {name}: {result}"));
             if ix.is_some_and(|ix| unmark_kept(&mut m.tree, ix, result)) {
-                self.deferred_rescans.push(node);
+                self.delete.deferred_rescans.push(node);
             }
         }
         self.retry_deferred_rescans(m);

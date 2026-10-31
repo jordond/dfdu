@@ -25,7 +25,7 @@ impl<B: Backend> Applier<B> {
                             .into(),
                     );
                 }
-                if let Some(a) = self.active_plan.take_if(|a| a.id == plan) {
+                if let Some(a) = self.delete.active.take_if(|a| a.id == plan) {
                     for r in a.remaining {
                         if let Some(ix) = m.tree.resolve(r) {
                             m.tree.set_deleting(ix, false);
