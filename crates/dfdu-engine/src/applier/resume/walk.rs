@@ -188,7 +188,7 @@ impl<B: Backend> Applier<B> {
     /// by its rescans. The last answer lets a walk that waits for it go on.
     pub(in crate::applier) fn resume_verified(
         &mut self,
-        m: &mut Model,
+        m: &Model,
         job: u32,
         batch: u32,
         (changed, gone): (&[u32], &[u32]),

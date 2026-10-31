@@ -40,8 +40,8 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    pub(super) fn native_sizes(&mut self, m: &mut Model) {
-        let Some(rules) = m.rules.clone().filter(|_| self.settings.checks) else {
+    pub(super) fn native_sizes(&mut self, m: &Model) {
+        let Some(rules) = m.rules.as_ref().filter(|_| self.settings.checks) else {
             return;
         };
         let mut matched: Vec<RuleIx> = m.tree.classes().map(|(_, c)| c.rule).collect();

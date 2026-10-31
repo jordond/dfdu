@@ -40,7 +40,7 @@ impl<B: Backend> Applier<B> {
         }
     }
 
-    pub(super) fn refresh_undo(&mut self, m: &mut Model) {
+    pub(super) fn refresh_undo(&self, m: &mut Model) {
         m.status.undo = self
             .delete
             .undoable
