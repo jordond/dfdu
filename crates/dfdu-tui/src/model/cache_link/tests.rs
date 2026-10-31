@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use dfdu_engine::test_support::{Gate, wide_tree};
 use dfdu_scan::PortableBackend;
 use dfdu_store::cache::{Cache, Key};
+use dfdu_store::snapshot::Header;
 
 use super::*;
 use crate::theme::Theme;
