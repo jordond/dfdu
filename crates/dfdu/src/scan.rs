@@ -131,10 +131,10 @@ impl ScanArgs {
     }
 }
 
-pub fn run(args: ScanArgs) -> ExitCode {
+pub fn run(args: ScanArgs) -> Result<ExitCode, ExitCode> {
     if (args.types.is_some() || args.by_type) && args.format != Format::Table && !args.bytes {
         eprintln!("dfdu: --type and --by-type work with the table output and --bytes only");
-        return ExitCode::from(2);
+        return Err(ExitCode::from(2));
     }
     let mut opts = EngineOptions {
         auto_abandon: Some(Duration::from_secs_f64(args.stall_abandon)),
@@ -150,10 +150,9 @@ pub fn run(args: ScanArgs) -> ExitCode {
     // The agent scans with its own workers; the path is on its host, not this one.
     if let Some(host) = args.remote.as_deref() {
         let rules = args.rules.remote();
-        return match remote::engine(host, opts, base, &args.path, rules, args.remote_agent) {
-            Ok((e, job, root)) => scan_with(e, job, root, &key, args),
-            Err(code) => code,
-        };
+        let (e, job, root) =
+            remote::engine(host, opts, base, &args.path, rules, args.remote_agent)?;
+        return scan_with(e, job, root, &key, args);
     }
     let local = Local::new(&args.path, args.mounts, args.threads, args.rules.load());
     let (storage, opts) = launch::for_storage(&args.path, args.threads, opts);
@@ -215,7 +214,7 @@ fn scan_with<B: Backend>(
     root: HostPath,
     key: &str,
     args: ScanArgs,
-) -> ExitCode {
+) -> Result<ExitCode, ExitCode> {
     let mode = if args.apparent {
         SizeMode::Apparent
     } else if args.like_du {
@@ -238,35 +237,30 @@ fn scan_with<B: Backend>(
     let record = !args.no_history && out.local;
     let t0 = Instant::now();
     let started = dfdu_tree::now_secs();
-    let engine = match launch::run_scan(
+    let engine = launch::run_scan(
         engine,
         Command::Scan {
             path: root,
             opts: job,
         },
-    ) {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    )?;
     let elapsed = t0.elapsed();
     let code = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         };
-        if let Err(code) = print_scan(m, root, &out, elapsed) {
-            return code;
-        }
+        print_scan(m, root, &out, elapsed)?;
         if args.debug_stats {
             print_debug_stats(m);
         }
         if record {
             history::record(m, root, key, started);
         }
-        if m.tree.total(root).errors > 0 || m.status.incomplete {
+        Ok(if m.tree.total(root).errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
-        }
+        })
     });
     if args.debug_stats {
         let gates = engine.local_scanner().map(|s| s.gate_stats());

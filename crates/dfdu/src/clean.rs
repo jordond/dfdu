@@ -219,13 +219,9 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     failed
 }
 
-pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
+pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
     let earlier_failed = earlier_sessions(args);
-    let (engine, _) = match report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)
-    {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let (engine, _) = report::scan(&args.path, args.mounts, rules.clone(), args.threads, true)?;
     let now = dfdu_tree::now_secs();
     let (root, complete, items) = engine.read(|m| {
         let root = m.tree.roots().next().map(|r| m.tree.path_buf(r));
@@ -233,7 +229,7 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
         (root, complete, report::items(m, rules, &args.filter, now))
     });
     let Some(root) = root else {
-        return ExitCode::from(1);
+        return Err(ExitCode::from(1));
     };
     let mut outcomes: Vec<Outcome> = items
         .iter()
@@ -262,16 +258,16 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> ExitCode {
         } else {
             print_table(rules, args, &items, &outcomes)
         };
-        if let Err(code) = written(r) {
-            return code;
-        }
-        if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
-            ExitCode::from(EXIT_DELETE_FAILED)
-        } else if !complete {
-            ExitCode::from(EXIT_PARTIAL)
-        } else {
-            ExitCode::SUCCESS
-        }
+        written(r)?;
+        Ok(
+            if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
+                ExitCode::from(EXIT_DELETE_FAILED)
+            } else if !complete {
+                ExitCode::from(EXIT_PARTIAL)
+            } else {
+                ExitCode::SUCCESS
+            },
+        )
     });
     engine.shutdown(launch::SHUTDOWN);
     code

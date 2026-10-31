@@ -398,36 +398,36 @@ fn install_crash_hook() {
 
 fn main() -> ExitCode {
     install_crash_hook();
-    let cli = Cli::parse();
+    run(Cli::parse()).unwrap_or_else(|code| code)
+}
+
+/// Runs the subcommand. Those that can stop early return the exit code they stop with as
+/// `Err`, so their steps chain with `?`.
+fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
+    let rules = || RuleArgs::default().load().ok_or(ExitCode::from(1));
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan::run(args),
-        Some(Cmd::Disks) => disks::run(),
-        Some(Cmd::Report(args)) => match (RuleArgs::default()).load() {
-            Some(rules) => report::run(&args, &rules),
-            None => ExitCode::from(1),
-        },
-        Some(Cmd::Clean(args)) => match (RuleArgs::default()).load() {
-            Some(rules) => clean::run(&args, &rules),
-            None => ExitCode::from(1),
-        },
+        Some(Cmd::Disks) => Ok(disks::run()),
+        Some(Cmd::Report(args)) => report::run(&args, &rules()?),
+        Some(Cmd::Clean(args)) => clean::run(&args, &rules()?),
         Some(Cmd::Diff(args)) => history::diff(&args),
         Some(Cmd::History(args)) => history::list(args),
         Some(Cmd::Dupes(args)) => dupes::run(&args),
         Some(Cmd::Export(args)) => transfer::export(&args),
         Some(Cmd::Import(args)) => transfer::import(&args),
-        Some(Cmd::Recover(args)) => recover::run(args),
+        Some(Cmd::Recover(args)) => Ok(recover::run(args)),
         Some(Cmd::Cache(cmd)) => cache::run(&cmd),
-        Some(Cmd::Man { dir }) => man(&dir),
-        Some(Cmd::Agent { threads, protocols }) => remote::agent(threads, protocols),
+        Some(Cmd::Man { dir }) => Ok(man(&dir)),
+        Some(Cmd::Agent { threads, protocols }) => Ok(remote::agent(threads, protocols)),
         Some(Cmd::Completions { shell }) => {
             use clap::CommandFactory;
             clap_complete::generate(shell, &mut Cli::command(), "dfdu", &mut std::io::stdout());
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
         // Piped: what `dfdu disks` or `dfdu scan PATH` prints.
         None if !std::io::stdout().is_terminal() => {
             if cli.disks {
-                return disks::run();
+                return Ok(disks::run());
             }
             scan::run(scan::ScanArgs {
                 path: cli.path.unwrap_or_else(|| PathBuf::from(".")),

@@ -327,16 +327,12 @@ pub fn reclaimable(items: &[Item]) -> u64 {
         .sum()
 }
 
-pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
-    let (engine, elapsed) = match scan(&args.path, args.mounts, rules.clone(), args.threads, false)
-    {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
+    let (engine, elapsed) = scan(&args.path, args.mounts, rules.clone(), args.threads, false)?;
     let now = now_secs();
     let code = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         };
         let max = args.safety.unwrap_or(Safety::Protected);
         let list: Vec<Item> = items(m, rules, &args.filter, now)
@@ -377,16 +373,14 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> ExitCode {
             table(rules, &list, now, args.fail_above, exceeded)
                 .and_then(|()| crate::outside::print(&mut std::io::stdout().lock(), &lines))
         };
-        if let Err(code) = written(r) {
-            return code;
-        }
-        if exceeded {
+        written(r)?;
+        Ok(if exceeded {
             ExitCode::from(EXIT_THRESHOLD)
         } else if !m.complete(root) {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
-        }
+        })
     });
     engine.shutdown(launch::SHUTDOWN);
     code

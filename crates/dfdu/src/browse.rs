@@ -13,12 +13,12 @@ use crate::{Cli, remote};
 
 /// `dfdu [PATH]` on a terminal: the browser, on PATH, a disk from the picker, a scan read from a
 /// file, or a directory on another host.
-pub fn run(cli: Cli) -> ExitCode {
+pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     let theme = match theme_choice(&cli.theme, dfdu_tui::theme_dir().as_deref()) {
         Ok(theme) => theme,
         Err(e) => {
             eprintln!("dfdu: theme {}: {e}", cli.theme);
-            return ExitCode::from(2);
+            return Err(ExitCode::from(2));
         }
     };
     let engine = EngineOptions {
@@ -27,31 +27,23 @@ pub fn run(cli: Cli) -> ExitCode {
     };
     let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
     let source = if let Some(f) = &cli.import {
-        match read_export(f) {
-            Ok(im) => Source::Imported(im.tree),
-            Err(code) => return code,
-        }
+        Source::Imported(read_export(f)?.tree)
     } else if let Some(host) = &cli.remote {
         // Connected before the browser takes the terminal, so ssh can ask for a password.
         // Deletion runs on the agent, journalled on its host.
         let rules = cli.rules.remote();
         let job = cli.mounts.job();
-        match remote::engine(host, engine.clone(), job, &path, rules, cli.remote_agent) {
-            Ok((engine, job, root)) => Source::Remote {
-                engine,
-                path: root,
-                job,
-            },
-            Err(code) => return code,
+        let (engine, job, root) =
+            remote::engine(host, engine.clone(), job, &path, rules, cli.remote_agent)?;
+        Source::Remote {
+            engine,
+            path: root,
+            job,
         }
     } else {
-        let resumed = match &cli.resume_from {
-            Some(f) => match read_export(f) {
-                Ok(im) => Some((im.tree, im.journal)),
-                Err(code) => return code,
-            },
-            None => None,
-        };
+        let resumed = (cli.resume_from.as_deref().map(read_export))
+            .transpose()?
+            .map(|im| (im.tree, im.journal));
         let root = resumed
             .as_ref()
             .and_then(|(t, _)| t.roots().next().map(|r| t.path_buf(r)));
@@ -96,10 +88,10 @@ pub fn run(cli: Cli) -> ExitCode {
         },
     };
     match dfdu_tui::run(opts) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => Ok(ExitCode::SUCCESS),
         Err(e) => {
             eprintln!("dfdu: {e}");
-            ExitCode::from(1)
+            Err(ExitCode::from(1))
         }
     }
 }
