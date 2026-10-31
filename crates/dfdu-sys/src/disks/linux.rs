@@ -92,6 +92,7 @@ pub(crate) fn statvfs_space(path: &Path) -> io::Result<Space> {
         total: s.f_blocks.saturating_mul(unit),
         used: s.f_blocks.saturating_sub(s.f_bfree).saturating_mul(unit),
         available: s.f_bavail.saturating_mul(unit),
+        purgeable: None,
     })
 }
 

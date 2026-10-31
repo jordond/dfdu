@@ -374,6 +374,7 @@ fn disk_picker() {
                     total: 500 * gib,
                     used: 400 * gib,
                     available: 90 * gib,
+                    purgeable: None,
                 }),
             )
         },
@@ -386,6 +387,7 @@ fn disk_picker() {
                 total: 64 * gib,
                 used: 0,
                 available: 64 * gib,
+                purgeable: None,
             }),
         ),
     ]);

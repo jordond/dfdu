@@ -1,7 +1,11 @@
 //! macOS calls without a safe binding: `getattrlistbulk(2)`, and `fgetattrlist(2)` for APFS
-//! clone information. The `FSEvents` history is in [`fsevents`].
+//! clone information. The `FSEvents` history is in [`fsevents`], and the free space the Finder
+//! shows (purgeable data included) in `capacity`.
 
+mod capacity;
 pub mod fsevents;
+
+pub(crate) use capacity::important_available;
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -349,6 +353,7 @@ pub(crate) fn statfs_space(path: &std::path::Path) -> io::Result<crate::Space> {
         total: st.f_blocks.saturating_mul(unit),
         used: st.f_blocks.saturating_sub(st.f_bfree).saturating_mul(unit),
         available: st.f_bavail.saturating_mul(unit),
+        purgeable: None,
     })
 }
 
