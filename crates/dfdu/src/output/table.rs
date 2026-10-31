@@ -9,6 +9,8 @@ use dfdu_engine::{Model, SizeMode, Timing};
 use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{DirState, Ix, NodeFlags, Tree};
 
+use super::plural;
+
 fn size(tree: &Tree, ix: Ix, mode: SizeMode) -> u64 {
     mode.of(&tree.total(ix))
 }
@@ -101,13 +103,7 @@ pub fn print_by_type(
     let mut b = filetype::Breakdown::default();
     let all = TypeFilter::default();
     filetype::sum(tree, root, filter.unwrap_or(&all), Some(&mut b));
-    let files = |n: u64| {
-        if n == 1 {
-            "1 file".into()
-        } else {
-            format!("{n} files")
-        }
-    };
+    let files = |n: u64| plural(n, "file", "files");
     writeln!(w)?;
     writeln!(w, "By type:")?;
     let mut types: Vec<_> = filetype::FileType::ALL

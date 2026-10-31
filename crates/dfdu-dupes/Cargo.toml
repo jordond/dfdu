@@ -15,10 +15,10 @@ dfdu-tree.workspace = true
 dfdu-sys.workspace = true
 twox-hash.workspace = true
 sha2.workspace = true
-hex.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 tempfile.workspace = true

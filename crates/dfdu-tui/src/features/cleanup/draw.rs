@@ -4,7 +4,7 @@
 //! them.
 
 use dfdu_engine::Verdict;
-use dfdu_tree::{Class, Safety, now_secs};
+use dfdu_tree::{ClassFlags, Safety, now_secs};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -344,9 +344,12 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
         return d;
     }
     let warnings: Vec<&str> = [
-        (Class::IN_USE, "in use"),
-        (Class::VCS_TRACKED, "tracked by git"),
-        (Class::VCS_UNKNOWN, "git could not tell if it is tracked"),
+        (ClassFlags::IN_USE, "in use"),
+        (ClassFlags::VCS_TRACKED, "tracked by git"),
+        (
+            ClassFlags::VCS_UNKNOWN,
+            "git could not tell if it is tracked",
+        ),
     ]
     .into_iter()
     .filter(|&(flag, _)| it.class.has(flag))

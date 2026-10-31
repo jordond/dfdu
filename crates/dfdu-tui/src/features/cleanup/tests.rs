@@ -106,7 +106,7 @@ fn with_recommended() -> crate::features::treemap::tests::Fixture {
         rule: rules.index("generic.cachedir-tag").unwrap(),
         safety: Safety::Safe,
         degraded: None,
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     };
     fx.m.tree.set_class(f, Some(class));
     fx
@@ -284,7 +284,7 @@ fn recommended_items() {
         class: Class {
             rule: rule(id),
             safety,
-            flags,
+            flags: dfdu_tree::ClassFlags::from_bits(flags),
             ..base.class
         },
         size,
@@ -320,7 +320,7 @@ fn recommended_items() {
         v(it("rust.target", Safety::Review, gib, 99, 0)),
         Verdict::Level(Safety::Review)
     );
-    let in_use = Class::IN_USE;
+    let in_use = dfdu_tree::ClassFlags::IN_USE.bits();
     assert_eq!(
         v(it("rust.target", Safety::Regenerable, gib, 99, in_use)),
         Verdict::InUse

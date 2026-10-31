@@ -116,7 +116,7 @@ impl<B: Backend> Applier<B> {
                 st.corrupt += 1;
                 m.status.incomplete = true;
                 m.status
-                    .anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
+                    .push_anomaly(format!("unknown dir: job {} dir {}", job.0, dir.0));
                 return None;
             }
         };
@@ -176,13 +176,11 @@ impl<B: Backend> Applier<B> {
         for f in &c.files {
             let name = c.name(f.name);
             let fx = if f.meta.is_hardlink() {
-                let mut fx = Ix(0);
                 self.links
                     .add_scanned((f.meta.dev, f.meta.ino), f.meta.nlink, scope, |charged| {
-                        fx = m.tree.add_file(ix, name, &f.meta, charged, None);
-                        m.tree.node_ref(fx)
-                    });
-                fx
+                        let fx = m.tree.add_file(ix, name, &f.meta, charged, None);
+                        (m.tree.node_ref(fx), fx)
+                    })
             } else {
                 m.tree.add_file(ix, name, &f.meta, false, None)
             };
@@ -270,7 +268,7 @@ impl<B: Backend> Applier<B> {
             Ordering::Greater => {
                 m.status.stats.corrupt += 1;
                 m.status.incomplete = true;
-                m.status.anomaly(format!(
+                m.status.push_anomaly(format!(
                     "close with {chunks} chunks after {seen}: job {} dir {}",
                     job.0, dir.0
                 ));

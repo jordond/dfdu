@@ -2,7 +2,7 @@
 //! and what `dfdu report` and `dfdu clean` call recommended.
 
 use dfdu_rules::Rule;
-use dfdu_tree::{Class, Safety};
+use dfdu_tree::{Class, ClassFlags, Safety};
 
 /// Nothing changed this recently is recommended.
 const QUIET_DAYS: i64 = 7;
@@ -10,7 +10,8 @@ const QUIET_DAYS: i64 = 7;
 /// Why a match is or is not recommended for deletion ([`verdict`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
-    /// Recommended: `safe` and at least the rule's minimum size.
+    /// Recommended: `safe`, at least the rule's minimum size, and unchanged for at least
+    /// `QUIET_DAYS` (7) days.
     Safe,
     /// Recommended: `regenerable`, at least the rule's minimum size, and unchanged for at least
     /// this many days.
@@ -53,11 +54,11 @@ pub fn verdict(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -
         Safety::Regenerable => i64::from(rule.min_age_days).max(QUIET_DAYS),
         s => return Verdict::Level(s),
     };
-    if class.has(Class::IN_USE) {
+    if class.has(ClassFlags::IN_USE) {
         Verdict::InUse
-    } else if class.has(Class::VCS_TRACKED) {
+    } else if class.has(ClassFlags::VCS_TRACKED) {
         Verdict::Tracked
-    } else if class.has(Class::VCS_UNKNOWN) {
+    } else if class.has(ClassFlags::VCS_UNKNOWN) {
         Verdict::VcsUnknown
     } else if scanning {
         Verdict::Scanning

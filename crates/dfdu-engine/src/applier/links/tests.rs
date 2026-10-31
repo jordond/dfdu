@@ -32,15 +32,13 @@ fn link(
         nlink: 2,
         ..meta(Kind::File, 100, key.1)
     };
-    let mut node = None;
     links.add_scanned(key, 2, scope, |charged| {
         let ix = t.add_file(parent, name.as_bytes(), &m, charged, None);
         let own = t.own(ix);
         t.propagate_add(parent, &own);
-        node = Some(ix);
-        t.node_ref(ix)
-    });
-    node.map(|ix| t.node_ref(ix)).expect("made")
+        let node = t.node_ref(ix);
+        (node, node)
+    })
 }
 
 fn is_charged(t: &Tree, n: NodeRef) -> bool {

@@ -133,7 +133,7 @@ fn check(inodes: usize, profiles: usize) {
     e.send(Command::Rescan { node: profiles_ref });
     // The job finishes (its own links settled), then the swap frees the old subtree and merges
     // the links into the visible ones, in steps.
-    while e.read(|m| m.status.commands_applied) < 2 || e.read(|m| m.status.running()) > 0 {
+    while e.read(|m| m.status.commands_applied) < 2 || e.read(|m| m.status.running_jobs()) > 0 {
         assert!(t.elapsed() < Duration::from_secs(600), "rescan did not end");
         std::thread::sleep(Duration::from_millis(1));
     }

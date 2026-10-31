@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command, Engine, EngineOptions, Timing};
+use dfdu_engine::{Engine, EngineOptions, Timing};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::{DirState, Ix, Kind, Meta, Tree};
 
 mod common;
-use common::loaded::{find, loaded, stat};
+use common::loaded::{find, loaded, resume_changed};
 use common::tempdir;
 
 /// Files of a loaded tree that are not on disk, on device `dev`, each an inode of its own.
@@ -62,7 +62,6 @@ struct Run {
 /// Loads `tree`, the tree of `root`, and resumes it classifying with the built-in rules, the
 /// journal naming `changed`; waits until it is done.
 fn timed_resume(tree: Tree, root: &Path, changed: Vec<PathBuf>) -> (Engine<PortableBackend>, Run) {
-    let node = tree.node_ref(tree.roots().next().unwrap());
     let e = Engine::start(
         PortableBackend::default(),
         EngineOptions {
@@ -71,21 +70,15 @@ fn timed_resume(tree: Tree, root: &Path, changed: Vec<PathBuf>) -> (Engine<Porta
             ..Default::default()
         },
     );
-    e.load(tree);
     let (rules, _) = dfdu_rules::builtin(&dfdu_rules::Env::current());
     let class = ClassOpts::for_root(Arc::new(rules), root);
     let before = e.read(|m| m.status.timing.clone());
     let started = Instant::now();
-    e.send(Command::Resume {
-        node,
-        opts: JobOptions {
-            class: Some(class),
-            ..JobOptions::default()
-        },
-        changed: Some(changed),
-        since: 0,
-        root: stat(root),
-    });
+    let opts = JobOptions {
+        class: Some(class),
+        ..JobOptions::default()
+    };
+    resume_changed(&e, tree, opts, changed, 0);
     assert!(e.wait_idle(Some(Duration::from_secs(600))).is_idle());
     let took = started.elapsed();
     let timing = e.read(|m| m.status.timing.clone());

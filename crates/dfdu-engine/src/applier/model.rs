@@ -402,7 +402,7 @@ pub const PROBLEMS_KEPT: usize = 1000;
 
 impl Status {
     #[must_use]
-    pub fn running(&self) -> usize {
+    pub fn running_jobs(&self) -> usize {
         self.jobs
             .iter()
             .filter(|j| matches!(j.phase, JobPhase::Running | JobPhase::Finishing))
@@ -411,16 +411,19 @@ impl Status {
 
     #[must_use]
     pub fn busy(&self) -> bool {
-        self.running() > 0 || self.settling || self.deleting.is_some() || self.measuring.is_some()
+        self.running_jobs() > 0
+            || self.settling
+            || self.deleting.is_some()
+            || self.measuring.is_some()
     }
 
-    pub(super) fn anomaly(&mut self, s: String) {
+    pub(super) fn push_anomaly(&mut self, s: String) {
         if self.anomalies.len() < 50 {
             self.anomalies.push(s);
         }
     }
 
-    pub(super) fn notice(&mut self, s: String) {
+    pub(super) fn push_notice(&mut self, s: String) {
         if self.notices.len() >= 100 {
             self.notices.remove(0);
         }

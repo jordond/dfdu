@@ -11,8 +11,9 @@ use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
 use dfdu_tree::{HostPath, Ix, now_secs};
 use serde_json::{Map, Value, json};
 
-use crate::report::{ReportFormat, age_arg, size_arg};
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
+use crate::args::{ReportFormat, age_arg, size_arg};
+use crate::output::{json as js, put_path};
+use crate::{EXIT_PARTIAL, MountArgs, launch, print_out, written};
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.
 pub fn record(m: &Model, root: Ix, options: &str, started_at: i64) {
@@ -317,7 +318,7 @@ fn saturated(d: i128) -> i64 {
 
 fn change_json(root: &Path, c: &Change) -> Value {
     let mut o = Map::new();
-    js::put_path(&mut o, "path", Path::new(&shown_path(root, &c.path)));
+    put_path(&mut o, "path", Path::new(&shown_path(root, &c.path)));
     o.insert(
         "status".into(),
         match (c.old, c.new) {
