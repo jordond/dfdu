@@ -150,12 +150,14 @@ pub fn stale(app: &App) -> bool {
 /// The listed matches ([`dfdu_engine::listed`]), under the read lock. Matches are few: one per
 /// matched directory, and below it only those a rule that does not stop the descent lets in.
 pub fn read(m: &Model, app: &App) -> Info {
+    // Without the rules there is nothing to list or count, and the view is not shown
+    // ([`views::current`]).
+    let Some(rules) = &m.rules else {
+        return Info::default();
+    };
     if !active(app) {
         // Closed, only the total for the tab, when the tree changed since it was counted.
         let at = count_key(m);
-        let Some(rules) = &m.rules else {
-            return Info::default();
-        };
         if app.snap.busy || app.cleanup.counted_at == Some(at) {
             return Info::default();
         }
@@ -182,11 +184,7 @@ pub fn read(m: &Model, app: &App) -> Info {
         scanning,
         rest: Vec::new(),
     };
-    let listed = match &m.rules {
-        Some(rules) => dfdu_engine::listed(t, rules),
-        None => Vec::new(),
-    };
-    let items: Vec<Item> = listed
+    let items: Vec<Item> = dfdu_engine::listed(t, rules)
         .into_iter()
         .map(|l| {
             let rest = (l.rest.iter())
@@ -211,14 +209,9 @@ pub fn read(m: &Model, app: &App) -> Info {
             .collect(),
         done: n.done.clone(),
     });
-    let mut native_sizes: Vec<(String, Result<u64, String>)> = match &m.rules {
-        Some(rules) => m
-            .native_sizes
-            .iter()
-            .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
-            .collect(),
-        None => vec![],
-    };
+    let mut native_sizes: Vec<(String, Result<u64, String>)> = (m.native_sizes.iter())
+        .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
+        .collect();
     native_sizes.sort_by(|a, b| a.0.cmp(&b.0));
     let total = items
         .iter()
