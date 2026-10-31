@@ -79,7 +79,7 @@ fn the_list_says_what_each_file_holds() {
     let (t, _) = tree_of(slot.key.root(), 4);
     save(&slot, &t, &header(now, now));
     fs::write(cache.dir().join("0123456789abcdef.snap"), b"DFDUSNAP").unwrap();
-    let list = cache.list();
+    let list = cache.list().unwrap();
     assert_eq!(list.len(), 2);
     let ok = list.iter().find(|l| l.path == slot.path).unwrap();
     let (root, h) = ok.scan.as_ref().unwrap();

@@ -315,10 +315,17 @@ impl Cache {
         usable(&self.dir, &fs::symlink_metadata(&self.dir)?)
     }
 
-    /// The cached scans of the effective user, newest first.
-    fn files(&self) -> Vec<File> {
-        let Ok(rd) = fs::read_dir(&self.dir) else {
-            return vec![];
+    /// The cached scans of the effective user, newest first; none when there is no directory.
+    fn files(&self) -> io::Result<Vec<File>> {
+        let rd = match fs::read_dir(&self.dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", self.dir.display()),
+                ));
+            }
         };
         let mut out: Vec<File> = rd
             .flatten()
@@ -336,7 +343,7 @@ impl Cache {
             })
             .collect();
         out.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.path.cmp(&b.path)));
-        out
+        Ok(out)
     }
 
     /// Removes the cached scans written more than [`MAX_AGE`] before `now`, then the least
@@ -345,7 +352,8 @@ impl Cache {
     pub fn sweep(&self, now: u64, cap: u64, keep: Option<&Path>) -> Removed {
         crate::remove_stale_temps(&self.dir, is_temp_name);
         let mut removed = Removed::default();
-        let files = self.files();
+        // Best effort: a directory that cannot be read has nothing to sweep.
+        let files = self.files().unwrap_or_default();
         let is_kept = |f: &File| keep == Some(f.path.as_path());
         // The file kept counts first, then the others newest first.
         let mut total: u64 = files.iter().filter(|f| is_kept(f)).map(|f| f.bytes).sum();
@@ -367,11 +375,11 @@ impl Cache {
     ///
     /// # Errors
     ///
-    /// The first file that could not be removed.
+    /// The directory could not be read, or the first file that could not be removed.
     pub fn clear(&self) -> io::Result<Removed> {
         crate::remove_stale_temps(&self.dir, is_temp_name);
         let mut removed = Removed::default();
-        for f in self.files() {
+        for f in self.files()? {
             match fs::remove_file(&f.path) {
                 Ok(()) => {
                     removed.files += 1;
@@ -390,9 +398,13 @@ impl Cache {
     }
 
     /// The cached scans of the effective user, newest first, with what their headers say.
-    #[must_use]
-    pub fn list(&self) -> Vec<Listed> {
-        self.files()
+    ///
+    /// # Errors
+    ///
+    /// The directory could not be read.
+    pub fn list(&self) -> io::Result<Vec<Listed>> {
+        Ok(self
+            .files()?
             .into_iter()
             .map(|f| {
                 let file = open_own(&f.path).ok();
@@ -410,7 +422,7 @@ impl Cache {
                     entries,
                 }
             })
-            .collect()
+            .collect())
     }
 }
 

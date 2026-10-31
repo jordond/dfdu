@@ -84,7 +84,10 @@ fn line(l: &Listed) -> String {
 }
 
 fn list(cache: &Cache) -> Result<ExitCode, ExitCode> {
-    let scans = cache.list();
+    let scans = cache.list().map_err(|e| {
+        eprintln!("dfdu: cache: {e}");
+        ExitCode::from(1)
+    })?;
     print_out(|w| {
         if scans.is_empty() {
             return writeln!(w, "no cached scans in {}", cache.dir().display());
