@@ -268,10 +268,9 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     };
     let path = match path {
         Some(p) => p,
-        None => match features::picker::pick(&mut terminal, &theme) {
-            Ok(Picked::Scan(p)) => p,
-            Ok(Picked::Quit) => return Ok(()),
-            Err(e) => return Err(e),
+        None => match features::picker::pick(&mut terminal, &theme)? {
+            Picked::Scan(p) => p,
+            Picked::Quit => return Ok(()),
         },
     };
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
