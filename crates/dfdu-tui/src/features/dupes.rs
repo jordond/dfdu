@@ -243,28 +243,27 @@ pub fn apply(app: &mut App) {
         });
 }
 
-/// Whether a comparison can start now; when not, the status line says why.
-fn can_start(app: &mut App) -> bool {
+/// Why a comparison cannot start now, as the status line says it; `None` when it can.
+fn cannot_start(app: &App) -> Option<String> {
     // The comparison reads the files here: for another machine's tree it would read this
     // one's files at the same paths, and a delete would then remove the other's.
     if !app.outside.local {
-        app.status = Some(
+        return Some(
             "duplicates reads this machine's files; this scan is remote or from a file".into(),
         );
-        return false;
     }
     if app.snap.busy {
         let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
-        app.status = Some(format!(
+        return Some(format!(
             "duplicates: wait until the scan is done, then press {again}"
         ));
-        return false;
     }
-    true
+    None
 }
 
 fn start(app: &mut App) -> Vec<Effect> {
-    if !can_start(app) {
+    if let Some(why) = cannot_start(app) {
+        app.status = Some(why);
         return Vec::new();
     }
     app.dupes.cursor = 0;
@@ -417,7 +416,8 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 /// if one does, and starts another.
 pub fn compare_again(app: &mut App) -> Vec<Effect> {
     // What there is stays shown when a new comparison cannot start.
-    if !can_start(app) {
+    if let Some(why) = cannot_start(app) {
+        app.status = Some(why);
         return Vec::new();
     }
     if let Some(r) = app.dupes.run.take() {
