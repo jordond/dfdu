@@ -1,6 +1,6 @@
 //! Helpers for the tests of this crate and of the crates above it (the `test-support` feature):
 //! a gate that holds threads until it is opened, a local mount as the mount table describes it,
-//! the nodes of a test tree built by hand, the user caches with caches of their own inside
+//! the nodes of a test tree built by hand and found by their path, the user caches with caches of their own inside
 //! (`caches`), and a wide tree of about a million entries for the measurements of saving and
 //! opening scans.
 
@@ -104,6 +104,24 @@ pub fn add_file(t: &mut Tree, parent: Ix, name: &str, size: u64, ino: u64) -> Ix
     f
 }
 
+/// The node at `path` below the root of `t` (`""` for the root), by name, the names separated
+/// by `/`.
+///
+/// # Panics
+///
+/// When `t` has no root or no such node.
+#[must_use]
+pub fn node_at(t: &Tree, path: &str) -> Ix {
+    let mut ix = t.roots().next().unwrap_or_else(|| panic!("no root"));
+    for name in path.split('/').filter(|n| !n.is_empty()) {
+        ix = t
+            .children(ix)
+            .find(|&c| t.name(c) == name.as_bytes())
+            .unwrap_or_else(|| panic!("no {name} in {path}"));
+    }
+    ix
+}
+
 /// The tree of the directory `root`, its stat `meta`: `dirs` directories `dir-00000` and on,
 /// each with `files` files `file-000.dat` and on of 0, 1000, 2000... bytes, 4 KiB on disk, every
 /// directory read to the end. 10 000 directories of 100 files are the million entries the
@@ -202,5 +220,25 @@ mod tests {
         assert_eq!(t.total(d).alloc, 300);
         assert_eq!(t.total(r).alloc, 300);
         assert_eq!(t.total(r).items, t.total(d).items);
+    }
+
+    #[test]
+    fn nodes_are_found_by_their_path_below_the_root() {
+        let mut t = Tree::new();
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+        let d = add_dir(&mut t, r, "d", 2);
+        let f = add_file(&mut t, d, "f", 1, 3);
+        assert_eq!(node_at(&t, ""), r);
+        assert_eq!(node_at(&t, "d"), d);
+        assert_eq!((node_at(&t, "d/f"), node_at(&t, "/d//f")), (f, f));
+    }
+
+    #[test]
+    #[should_panic(expected = "no g in d/g")]
+    fn a_path_to_no_node_panics_with_the_name_missing() {
+        let mut t = Tree::new();
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+        add_dir(&mut t, r, "d", 2);
+        let _ = node_at(&t, "d/g");
     }
 }

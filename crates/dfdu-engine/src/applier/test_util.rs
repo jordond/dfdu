@@ -13,7 +13,7 @@ use dfdu_scan::{
 use dfdu_tree::{DirState, Ix, Kind, Meta, Tree};
 
 use super::{Applier, ApplierSettings, Command, JobPhase, Model};
-use crate::test_support::meta;
+use crate::test_support::{meta, node_at};
 
 /// The `submitted_seq` the scanner gave job 1.
 pub(super) const SEQ: u64 = 1;
@@ -70,15 +70,7 @@ impl Rig {
     ///
     /// If there is none.
     pub fn at(&self, path: &str) -> Ix {
-        let t = &self.m.tree;
-        let mut ix = t.roots().next().unwrap_or_else(|| panic!("no root"));
-        for name in path.split('/').filter(|n| !n.is_empty()) {
-            ix = t
-                .children(ix)
-                .find(|&c| t.name(c) == name.as_bytes())
-                .unwrap_or_else(|| panic!("no {name} in {path}"));
-        }
-        ix
+        node_at(&self.m.tree, path)
     }
 
     /// The state of the directory at `path`.

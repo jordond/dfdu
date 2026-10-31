@@ -44,13 +44,5 @@ pub(crate) fn settled(cfg: &SimConfig) -> Sim {
 ///
 /// If there is none.
 pub(crate) fn find(sim: &Sim, path: &str) -> Ix {
-    let t = &sim.model.tree;
-    let mut ix = t.roots().next().unwrap_or_else(|| panic!("no root"));
-    for name in path.split('/').filter(|n| !n.is_empty()) {
-        ix = t
-            .children(ix)
-            .find(|&c| t.name(c) == name.as_bytes())
-            .unwrap_or_else(|| panic!("no {name} in {path}"));
-    }
-    ix
+    dfdu_engine::test_support::node_at(&sim.model.tree, path)
 }
