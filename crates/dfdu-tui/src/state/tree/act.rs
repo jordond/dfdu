@@ -29,7 +29,7 @@ pub fn fold_label(ratio: f64) -> Option<&'static str> {
 fn selected(app: &App) -> Option<(usize, usize)> {
     app.tree_shown()?;
     let row = app.selected_index()?;
-    Some((row, app.rows[row]))
+    Some((row, app.list.rows[row]))
 }
 
 /// `→` in tree mode: on a fold row shows the entries folded in it, on a collapsed directory
@@ -54,7 +54,7 @@ pub fn right(app: &mut App) -> bool {
         return true;
     }
     if app.tree.as_ref().is_some_and(|t| t.is_expanded(e.node)) {
-        let first = app.rows.get(row + 1).copied();
+        let first = app.list.rows.get(row + 1).copied();
         if first.is_some_and(|c| parent(&app.snap.entries, c) == Some(i)) {
             app.move_to(row + 1);
         }
@@ -86,7 +86,7 @@ pub fn left(app: &mut App) -> bool {
         return false;
     };
     // The parent row is above.
-    if let Some(r) = app.rows[..row].iter().rposition(|&x| x == p) {
+    if let Some(r) = app.list.rows[..row].iter().rposition(|&x| x == p) {
         app.move_to(r);
     }
     true
@@ -97,7 +97,7 @@ pub fn left(app: &mut App) -> bool {
 pub fn chain(app: &mut App) {
     let i = app
         .selected_index()
-        .map(|row| app.rows[row])
+        .map(|row| app.list.rows[row])
         .filter(|&i| app.snap.entries[i].is_dir && !app.snap.entries[i].pseudo);
     let Some(i) = i else {
         app.status = Some("* expands a directory's largest entries: select a directory".into());
@@ -124,7 +124,7 @@ pub fn cycle_fold(app: &mut App) {
 
 /// A click on the `▸` or `▾` of row `row`: expands or collapses its directory, and selects it.
 pub fn toggle_row(app: &mut App, row: usize) {
-    let Some(&i) = app.rows.get(row) else {
+    let Some(&i) = app.list.rows.get(row) else {
         return;
     };
     app.move_to(row);

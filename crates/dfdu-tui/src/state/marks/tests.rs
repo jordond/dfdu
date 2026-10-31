@@ -151,7 +151,7 @@ fn space_on_shared_row_is_refused() {
         ..gone
     };
     app.refresh(snap_without_totals(vec![shared.clone(), ghost, a], 2), t0);
-    assert!(app.snap.entries[app.rows[1]].ghost);
+    assert!(app.snap.entries[app.list.rows[1]].ghost);
     for row in 0..2 {
         app.move_to(row);
         app.key(press(KeyCode::Char(' ')), t0);

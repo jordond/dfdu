@@ -184,14 +184,14 @@ proptest! {
         let snap = snapshot_of(&fx, &t);
         app.tree = Some(t);
         app.refresh(snap, t0);
-        prop_assert_eq!(&app.rows, &tree_order(&app.snap.entries, from));
-        prop_assume!(!app.rows.is_empty());
-        app.move_to(pick.index(app.rows.len()));
+        prop_assert_eq!(&app.list.rows, &tree_order(&app.snap.entries, from));
+        prop_assume!(!app.list.rows.is_empty());
+        app.move_to(pick.index(app.list.rows.len()));
         let node = app.selected_entry().map(|e| e.node);
         app.sort = to;
         app.request_sort();
         app.reorder(t0);
-        prop_assert_eq!(&app.rows, &tree_order(&app.snap.entries, to));
+        prop_assert_eq!(&app.list.rows, &tree_order(&app.snap.entries, to));
         prop_assert_eq!(app.selected_entry().map(|e| e.node), node);
     }
 }

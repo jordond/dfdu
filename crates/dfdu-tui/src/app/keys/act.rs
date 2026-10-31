@@ -31,10 +31,10 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::HalfPageUp => app.move_by(-(page / 2).max(1)),
         Action::HalfPageDown => app.move_by((page / 2).max(1)),
         Action::First => app.move_to(0),
-        Action::Last => app.move_to(app.rows.len().saturating_sub(1)),
+        Action::Last => app.move_to(app.list.rows.len().saturating_sub(1)),
         Action::Open if tree::act::right(app) => {}
         Action::Open | Action::Enter => {
-            let dir = app.selected_index().map(|row| app.rows[row]);
+            let dir = app.selected_index().map(|row| app.list.rows[row]);
             if let Some(i) = dir.filter(|&i| app.snap.entries[i].is_dir) {
                 app.enter(i);
             }

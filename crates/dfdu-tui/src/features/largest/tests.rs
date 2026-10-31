@@ -7,7 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use super::*;
 use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
-use crate::features::treemap::tests::sync;
+use crate::tests::sync;
 use crate::tests::{press, refused, render, root_model};
 use crate::theme::Theme;
 

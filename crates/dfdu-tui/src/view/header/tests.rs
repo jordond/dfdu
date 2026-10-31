@@ -168,10 +168,11 @@ pub(super) const WIDTHS: [u16; 4] = [120, 80, 64, 48];
 #[test]
 fn every_view_has_its_tab_and_scope_at_each_width() {
     use crate::app::views::{self, View};
-    use crate::features::treemap::tests::{classified_app, sync};
+    use crate::tests::{classified_app, sync};
     let t0 = Instant::now();
     let (fx, mut app) = classified_app(t0);
     let mid = app
+        .list
         .rows
         .iter()
         .position(|&i| &*app.snap.entries[i].name == b"mid");
@@ -217,7 +218,7 @@ fn the_active_tab_is_reversed_and_bold_in_every_theme() {
 #[test]
 fn cleanup_shows_what_it_would_free_once_read() {
     use crate::app::views::{View, badge};
-    use crate::features::treemap::tests::{classified_app, sync};
+    use crate::tests::{classified_app, sync};
     let t0 = Instant::now();
     let (mut fx, mut app) = classified_app(t0);
     // Counted with the scan done, before the view was ever opened.

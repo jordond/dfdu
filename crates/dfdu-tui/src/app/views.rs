@@ -162,7 +162,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::features::treemap::tests::classified_app;
+    use crate::tests::classified_app;
     use crate::tests::{library_snap, press};
     use crate::theme::Theme;
 

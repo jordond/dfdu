@@ -3,8 +3,8 @@
 //! focused details pane, and otherwise looks it up in the action registry ([`keys`]).
 //! [`App::refresh`] folds a new [`Snapshot`] into the state and applies the row-stability rules.
 //! [`views`] switches between the five views.
-//! Each feature keeps its state in its own field and module (`marks`, `filter`, `details`,
-//! `debug`, `motion`, `mouse`); what they read from the engine model arrives in
+//! Each feature keeps its state in its own field and module (`list`, `marks`, `filter`,
+//! `details`, `debug`, `motion`, `mouse`); what they read from the engine model arrives in
 //! [`App::extras`].
 
 mod cursor;
@@ -12,13 +12,11 @@ pub(crate) mod keys;
 mod refresh;
 pub(crate) mod views;
 
-use std::cell::Cell;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, ErrorList, SizeMode};
-use dfdu_tree::{HostPath, Target};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
@@ -27,12 +25,12 @@ use crate::model::extras::Extras;
 use crate::model::snapshot::{EntryData, Snapshot};
 
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
+use crate::state::list::List;
 use crate::state::motion::Motion;
-use crate::state::order::{Order, SortSpec};
+use crate::state::order::SortSpec;
 use crate::state::{filter, marks};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
-use cursor::Cursor;
 pub use cursor::Selection;
 use refresh::SortSchedule;
 
@@ -74,10 +72,6 @@ pub enum Overlay {
     MarkPattern(mark_pattern::Prompt),
 }
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent flags of the browser state, not one state spread over several bools"
-)]
 pub struct App {
     pub theme: Theme,
     /// The terminal's colour level, which a theme chosen in the palette is resolved for. It
@@ -87,7 +81,8 @@ pub struct App {
     pub background: Option<Rgb>,
     pub target: Target,
     pub snap: Snapshot,
-    pub order: Order,
+    /// The Files list's order, rows and scroll.
+    pub list: List,
     pub sort: SortSpec,
     pub size_mode: SizeMode,
     /// The optional columns of the list (`c`).
@@ -96,16 +91,8 @@ pub struct App {
     pub tree: Option<crate::state::tree::TreeState>,
     pub hide_hidden: bool,
     pub selected: Option<Selection>,
-    /// Indices into `snap.entries`, in display order.
-    pub rows: Vec<usize>,
-    /// Entries that arrived since the last sort, shown as one summary row.
-    pub new_count: usize,
-    pub new_largest: u64,
-    /// Largest size among `rows`, for the bars.
-    pub rows_largest: u64,
-    pub scroll: usize,
-    /// Rows the last frame had room for; zero before the first frame, when no rows are on screen
-    /// to keep sorted ([`App::refresh`]).
+    /// Rows the last frame had room for in the view shown; zero before the first frame, when no
+    /// rows are on screen to keep sorted ([`App::refresh`]).
     pub list_height: usize,
     pub overlay: Overlay,
     pub status: Option<String>,
@@ -143,18 +130,10 @@ pub struct App {
     pub cached: Option<crate::model::cache_link::Cached>,
     /// Mounts the scan did not enter and links out of it, as looked up (`outside`).
     pub outside: crate::model::outside::Outside,
-    /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
-    pub sort_gen: u64,
     /// Nothing is deleted: the actions that delete are left out (`keys::Action::deletes`) and
     /// cleanup commands run only as dry runs.
     pub read_only: bool,
     sort_schedule: SortSchedule,
-    /// The user moved the cursor in the current directory; re-sorts then follow the selected
-    /// row instead of returning to the top.
-    moved: bool,
-    cursors: HashMap<HostPath, Cursor>,
-    /// Row where [`App::selected_index`] last found the selection.
-    sel_hint: Cell<usize>,
 }
 
 /// Whether `e` gets a row when no filter hides it.
@@ -173,18 +152,13 @@ impl App {
             theme,
             target: Target::root(),
             snap: Snapshot::default(),
-            order: Order::default(),
+            list: List::default(),
             sort: SortSpec::default(),
             size_mode: SizeMode::Disk,
             columns: crate::view::columns::Columns::default(),
             tree: None,
             hide_hidden: false,
             selected: None,
-            rows: Vec::new(),
-            new_count: 0,
-            new_largest: 0,
-            rows_largest: 0,
-            scroll: 0,
             list_height: 0,
             overlay: Overlay::None,
             status: None,
@@ -211,12 +185,8 @@ impl App {
             growth: None,
             cached: None,
             outside: crate::model::outside::Outside::default(),
-            sort_gen: 0,
             read_only: false,
             sort_schedule: SortSchedule::new(now),
-            moved: false,
-            cursors: HashMap::new(),
-            sel_hint: Cell::new(0),
         }
     }
 
@@ -239,7 +209,7 @@ impl App {
 
     /// True when an automatic re-sort is waiting for the user to be idle.
     pub fn sort_pending(&self) -> bool {
-        self.new_count > 0 || self.sort_schedule.changed()
+        self.list.new_count > 0 || self.sort_schedule.changed()
     }
 
     /// When the run loop should wake for an automatic re-sort, if one is pending.
@@ -279,7 +249,8 @@ impl App {
     /// one, so the keystrokes that change the filter only pick their rows from it.
     pub(crate) fn keep_exact_order(&mut self) {
         let hide = self.hide_hidden;
-        self.order
+        self.list
+            .order
             .keep_exact(&self.snap.entries, |_, e| shown(hide, e), self.sort);
     }
 

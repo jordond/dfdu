@@ -36,7 +36,7 @@ fn glob(pattern: &str) -> Result<Glob, GlobError> {
 /// filter shows only some of their files.
 fn matched(app: &App, g: &Glob) -> Vec<usize> {
     let folders = !crate::overlay::type_filter::active(app);
-    (app.rows.iter().copied())
+    (app.list.rows.iter().copied())
         .filter(|&i| {
             let e = &app.snap.entries[i];
             !e.pseudo && (folders || !e.is_dir) && g.matches(&e.name)
@@ -119,7 +119,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         Some(Ok(n)) => Line::styled(
             format!(
                 " {n} of {} names here match · Enter marks them",
-                app.rows.len()
+                app.list.rows.len()
             ),
             t.fg_dim,
         ),

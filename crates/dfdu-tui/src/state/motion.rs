@@ -323,7 +323,7 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     }
 
     let entries = &app.snap.entries;
-    let largest = app.rows_largest.max(1);
+    let largest = app.list.rows_largest.max(1);
     let step = 1.0 - (-dt.as_secs_f64() / TAU).exp();
     let mut easing = false;
     let mut bars = std::mem::take(&mut m.spare);

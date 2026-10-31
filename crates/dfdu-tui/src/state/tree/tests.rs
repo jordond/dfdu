@@ -109,12 +109,13 @@ fn guides_follow_the_display_order() {
 }
 
 #[test]
-fn inside_follows_the_parents() {
+fn parent_follows_the_rows_up() {
     let es = sample();
-    assert!(inside(&es, 3, 2));
-    assert!(inside(&es, 3, 0));
-    assert!(!inside(&es, 3, 6));
-    assert!(!inside(&es, 0, 0), "a row is not inside itself");
+    assert_eq!(parent(&es, 3), Some(2));
+    assert_eq!(parent(&es, 2), Some(0));
+    assert_eq!(parent(&es, 8), Some(7));
+    assert_eq!(parent(&es, 0), None, "a top row has no parent");
+    assert_eq!(parent(&es, 6), None);
 }
 
 #[test]

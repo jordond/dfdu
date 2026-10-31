@@ -6,6 +6,7 @@ use dfdu_tree::{HostPath, NodeRef, Target};
 
 use super::App;
 use crate::model::snapshot::EntryData;
+use crate::state::list::Cursor;
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
 #[derive(Clone, Debug)]
@@ -36,61 +37,56 @@ impl Selection {
     }
 }
 
-/// Remembered position in a directory, restored when the user comes back to it.
-#[derive(Clone, Debug)]
-pub(super) struct Cursor {
-    selected: Option<Selection>,
-    scroll: usize,
-}
-
 impl App {
     pub fn selected_index(&self) -> Option<usize> {
         let node = self.selected.as_ref()?.node?;
         let is_sel = |&i: &usize| self.snap.entries[i].node == node;
         // Usually the row found last time; a directory can have a million rows.
-        let hint = self.sel_hint.get();
-        if self.rows.get(hint).is_some_and(is_sel) {
+        let hint = self.list.sel_hint.get();
+        if self.list.rows.get(hint).is_some_and(is_sel) {
             return Some(hint);
         }
-        let found = self.rows.iter().position(is_sel)?;
-        self.sel_hint.set(found);
+        let found = self.list.rows.iter().position(is_sel)?;
+        self.list.sel_hint.set(found);
         Some(found)
     }
 
     pub fn selected_entry(&self) -> Option<&EntryData> {
         self.selected_index()
-            .map(|i| &self.snap.entries[self.rows[i]])
+            .map(|i| &self.snap.entries[self.list.rows[i]])
     }
 
     pub(crate) fn select(&mut self, index: usize) {
-        if let Some(&i) = self.rows.get(index) {
+        if let Some(&i) = self.list.rows.get(index) {
             self.selected = Some(Selection::of(&self.snap.entries[i]));
-            self.sel_hint.set(index);
+            self.list.sel_hint.set(index);
         }
     }
 
     /// Selects row `index` as a cursor move of the user's, so re-sorts follow the selected row.
     pub(crate) fn move_to(&mut self, index: usize) {
-        self.moved = true;
+        self.list.moved = true;
         self.select(index);
     }
 
     pub(crate) fn move_by(&mut self, delta: isize) {
-        if self.rows.is_empty() {
+        if self.list.rows.is_empty() {
             return;
         }
-        self.moved = true;
+        self.list.moved = true;
         let cur = self.selected_index().unwrap_or(0);
-        let next = cur.saturating_add_signed(delta).min(self.rows.len() - 1);
+        let next = cur
+            .saturating_add_signed(delta)
+            .min(self.list.rows.len() - 1);
         self.select(next);
     }
 
     fn save_cursor(&mut self) {
         let c = Cursor {
             selected: self.selected.clone(),
-            scroll: self.scroll,
+            scroll: self.list.scroll,
         };
-        self.cursors.insert(self.snap.dir_path.clone(), c);
+        self.list.cursors.insert(self.snap.dir_path.clone(), c);
     }
 
     /// Opens the directory of entry `index` of the snapshot: in tree mode a row at any depth,
@@ -98,11 +94,11 @@ impl App {
     pub(super) fn enter(&mut self, index: usize) {
         self.save_cursor();
         let target = crate::state::tree::target_of(&self.snap, index);
-        let saved = self.cursors.get(&target.path).cloned();
+        let saved = self.list.cursors.get(&target.path).cloned();
         self.target = target;
-        self.moved = saved.is_some();
+        self.list.moved = saved.is_some();
         self.selected = saved.as_ref().and_then(|c| c.selected.clone());
-        self.scroll = saved.map_or(0, |c| c.scroll);
+        self.list.scroll = saved.map_or(0, |c| c.scroll);
     }
 
     pub(super) fn up(&mut self) {
@@ -115,14 +111,14 @@ impl App {
             return;
         };
         let name = name.to_vec();
-        let saved = self.cursors.get(&parent).cloned();
+        let saved = self.list.cursors.get(&parent).cloned();
         self.target = Target {
             node: None,
             path: parent,
             ident: None,
         };
-        self.moved = true;
-        self.scroll = saved.as_ref().map_or(0, |c| c.scroll);
+        self.list.moved = true;
+        self.list.scroll = saved.as_ref().map_or(0, |c| c.scroll);
         // Select the directory we came from, found again by name after the refresh.
         self.selected = Some(Selection::named(name));
     }
@@ -141,8 +137,8 @@ impl App {
             path: parent,
             ident: None,
         };
-        self.moved = true;
-        self.scroll = 0;
+        self.list.moved = true;
+        self.list.scroll = 0;
         self.selected = Some(Selection::named(name.to_vec()));
     }
 }
@@ -206,14 +202,14 @@ mod tests {
         app.refresh(snap_with_totals(entries, 2), t0);
         app.reorder(t0);
         let at = app.selected_index().expect("still selected");
-        assert_eq!(app.snap.entries[app.rows[at]].name, b"d3");
+        assert_eq!(app.snap.entries[app.list.rows[at]].name, b"d3");
     }
 
     #[test]
     fn the_cursor_of_a_directory_left_comes_back() {
         let (mut app, t0) = browser();
         app.move_to(2);
-        app.enter(app.rows[2]);
+        app.enter(app.list.rows[2]);
         assert_eq!(app.target.path, HostPath::from("/r").join(b"d2"));
         assert!(
             app.selected.is_none(),

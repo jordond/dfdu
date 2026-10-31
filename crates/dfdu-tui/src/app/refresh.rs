@@ -128,7 +128,8 @@ impl SortSchedule {
         )
     }
 
-    fn sorted(&mut self, now: Instant) {
+    /// Records a sort at `now`, which took in every snapshot that changed before it.
+    fn record_sort(&mut self, now: Instant) {
         self.last_sort = now;
         self.changed = false;
     }
@@ -149,12 +150,20 @@ enum Reorder {
     Top,
 }
 
+impl Reorder {
+    /// Whether the rows are sorted again. Sorting the first screen leaves the rows below it
+    /// waiting for the automatic sort.
+    fn resorts(self) -> bool {
+        !matches!(self, Reorder::Sync | Reorder::Top)
+    }
+}
+
 impl App {
     /// Whether a fresh snapshot sorts the rows on the first screen: while the user has not moved
     /// the cursor in this directory, or it is on the first row (`index`, before the snapshot).
     /// Deleted rows kept as placeholders hold still until the next re-sort.
     fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
-        (!self.moved || index == Some(0)) && !self.motion.has_ghosts()
+        (!self.list.moved || index == Some(0)) && !self.motion.has_ghosts()
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
@@ -212,7 +221,7 @@ impl App {
                 .enumerate()
                 .map(|(i, e)| (e.node, i))
                 .collect();
-            self.order.remap(|i| {
+            self.list.order.remap(|i| {
                 let node = old.entries[i].node;
                 pos.get(swapped.get(&node).unwrap_or(&node)).copied()
             });
@@ -275,7 +284,7 @@ impl App {
             && refilter
             && !requested
             && !fresh
-            && self.order.refilter(entries, visible, self.sort);
+            && self.list.order.refilter(entries, visible, self.sort);
         match mode {
             _ if tree => {
                 let how = match mode {
@@ -286,75 +295,70 @@ impl App {
                 // Between sorts a deleted row keeps its place, as the list keeps its row.
                 let keep = how == Siblings::Keep;
                 let visible = |i: usize, e: &EntryData| visible(i, e) || (keep && e.ghost);
-                self.order.sort_tree(entries, visible, self.sort, how);
+                self.list.order.sort_tree(entries, visible, self.sort, how);
             }
             Reorder::Exact if refiltered => {}
             Reorder::Exact => {
-                self.order = Order::default();
+                self.list.order = Order::default();
                 if filter.active() {
-                    self.order.sort_exact(entries, visible, self.sort);
+                    self.list.order.sort_exact(entries, visible, self.sort);
                 } else {
-                    self.order
+                    self.list
+                        .order
                         .sort_exact_unfiltered(entries, visible, self.sort);
                 }
             }
-            Reorder::Auto => self.order.sort_auto(entries, visible, self.sort),
-            Reorder::Sync => self.order.sync(entries, visible, self.sort),
+            Reorder::Auto => self.list.order.sort_auto(entries, visible, self.sort),
+            Reorder::Sync => self.list.order.sync(entries, visible, self.sort),
             Reorder::Top => {
-                self.order
+                self.list
+                    .order
                     .sort_top(entries, visible, self.sort, self.list_height);
             }
         }
-        // Sorting the first screen leaves the rows below it waiting for the automatic sort.
-        let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
+        let resorted = mode.resorts();
         if resorted {
-            self.sort_gen += 1;
-            self.sort_schedule.sorted(now);
+            self.list.sort_gen += 1;
+            self.sort_schedule.record_sort(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
         let old_rows = if resorted && !dir_changed {
-            std::mem::take(&mut self.rows)
+            std::mem::take(&mut self.list.rows)
         } else {
-            self.rows.clear();
+            self.list.rows.clear();
             Vec::new()
         };
-        self.rows.extend_from_slice(self.order.rows());
+        self.list.rows.extend_from_slice(self.list.order.rows());
         if resorted && !dir_changed {
             let auto = mode == Reorder::Auto;
-            self.motion.resorted(&old_rows, &self.rows, entries, auto);
+            self.motion
+                .resorted(&old_rows, &self.list.rows, entries, auto);
         }
-        self.new_count = self.order.new_entries().len();
-        self.new_largest = self
-            .order
-            .new_entries()
-            .iter()
-            .map(|&i| entries[i].size)
-            .max()
-            .unwrap_or(0);
-        self.rows_largest = self
-            .rows
-            .iter()
-            .map(|&i| entries[i].size)
-            .max()
-            .unwrap_or(0);
+        self.list.tally(entries);
+        self.restore_cursor(mode, dir_changed, old_index);
+    }
 
+    /// Finds the selection again in the rows just updated by `mode` and puts the scroll position
+    /// back: a cursor the user has not moved stays at the top, a moved one on its screen line
+    /// across a re-sort in the same directory.
+    fn restore_cursor(&mut self, mode: Reorder, dir_changed: bool, old_index: Option<usize>) {
         self.fix_selection(old_index);
-        if mode == Reorder::Top && !self.moved {
+        if mode == Reorder::Top && !self.list.moved {
             self.select(0);
-            self.scroll = 0;
+            self.list.scroll = 0;
         }
-        if resorted && !dir_changed {
-            if self.moved {
+        if mode.resorts() && !dir_changed {
+            if self.list.moved {
                 // Keep the selected row on the same screen line.
                 if let (Some(old), Some(new)) = (old_index, self.selected_index()) {
-                    let line = old.saturating_sub(self.scroll);
-                    self.scroll = new.saturating_sub(line);
+                    let line = old.saturating_sub(self.list.scroll);
+                    self.list.scroll = new.saturating_sub(line);
                 }
             } else {
                 // The user has not moved the cursor here: stay at the top.
                 self.select(0);
-                self.scroll = 0;
+                self.list.scroll = 0;
             }
         }
     }
@@ -398,7 +402,7 @@ impl App {
             return;
         }
         if let Some(sel) = &self.selected {
-            let found = self.rows.iter().find(|&&i| {
+            let found = self.list.rows.iter().find(|&&i| {
                 let e = &self.snap.entries[i];
                 e.name[..] == sel.name[..] && (sel.dev_ino == (0, 0) || e.dev_ino == sel.dev_ino)
             });
@@ -407,11 +411,11 @@ impl App {
                 return;
             }
         }
-        if self.rows.is_empty() {
+        if self.list.rows.is_empty() {
             self.selected = None;
             return;
         }
-        let i = old_index.unwrap_or(0).min(self.rows.len() - 1);
-        self.selected = Some(Selection::of(&self.snap.entries[self.rows[i]]));
+        let i = old_index.unwrap_or(0).min(self.list.rows.len() - 1);
+        self.selected = Some(Selection::of(&self.snap.entries[self.list.rows[i]]));
     }
 }

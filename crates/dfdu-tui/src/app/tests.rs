@@ -17,6 +17,7 @@ fn sort_keys_apply_without_a_new_snapshot() {
     app.key(press(KeyCode::Char('n')), t0);
     app.reorder(t0);
     let names: Vec<&[u8]> = app
+        .list
         .rows
         .iter()
         .map(|&i| &app.snap.entries[i].name[..])

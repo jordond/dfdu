@@ -24,7 +24,7 @@ fn a_selection_whose_entry_is_gone_keeps_its_position() {
     // on the last row there is.
     let gone = vec![es[0].clone(), es[1].clone(), test_entry(3, "d", 5)];
     app.refresh(snap_without_totals(gone, 2), t0);
-    assert_eq!(app.rows.len(), 2);
+    assert_eq!(app.list.rows.len(), 2);
     assert_eq!(
         app.selected_entry().map(|e| e.name.to_vec()),
         Some(b"b".to_vec())
@@ -43,7 +43,7 @@ fn cursor_follows_node_across_resort_and_keeps_its_line() {
     for _ in 0..3 {
         app.key(press(KeyCode::Down), t0);
     }
-    app.scroll = 1;
+    app.list.scroll = 1;
     let picked = app.selected.clone().expect("selected").node;
     assert_eq!(app.selected_index(), Some(3));
 
@@ -60,7 +60,7 @@ fn cursor_follows_node_across_resort_and_keeps_its_line() {
     app.refresh(snap_without_totals(es, 3), t0 + Duration::from_secs(3));
     assert_eq!(app.selected.as_ref().and_then(|s| s.node), picked);
     assert_eq!(app.selected_index(), Some(0));
-    assert_eq!(app.scroll, 0);
+    assert_eq!(app.list.scroll, 0);
 }
 
 #[test]
@@ -73,12 +73,12 @@ fn new_entries_wait_for_sort() {
     es.push(test_entry(2, "c", 50));
     app.key(press(KeyCode::Down), t0);
     app.refresh(snap_without_totals(es.clone(), 2), t0);
-    assert_eq!(app.rows.len(), 1);
-    assert_eq!((app.new_count, app.new_largest), (2, 99));
+    assert_eq!(app.list.rows.len(), 1);
+    assert_eq!((app.list.new_count, app.list.new_largest), (2, 99));
     app.key(press(KeyCode::Char('S')), t0);
     app.refresh(snap_without_totals(es, 3), t0);
-    assert_eq!(app.rows.len(), 3);
-    assert_eq!(app.new_count, 0);
+    assert_eq!(app.list.rows.len(), 3);
+    assert_eq!(app.list.new_count, 0);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn finishing_scan_sorts_at_once_when_idle() {
     done.busy = false;
     // 100 ms after the first sort: well inside the minimum interval.
     app.refresh(done, t0 + Duration::from_millis(100));
-    assert_eq!(app.snap.entries[app.rows[0]].name, b"b");
+    assert_eq!(app.snap.entries[app.list.rows[0]].name, b"b");
     // The cursor was never moved, so it goes to the top with the new order.
     assert_eq!(
         app.selected_entry().map(|e| e.name.to_vec()),
@@ -123,8 +123,8 @@ fn rescanned_child_keeps_its_row() {
         snap_without_totals(vec![es[0].clone(), b2, es[2].clone()], 2),
         t0,
     );
-    assert_eq!(app.new_count, 0, "the swapped row is not shown as new");
-    assert_eq!(app.rows.len(), 3);
+    assert_eq!(app.list.new_count, 0, "the swapped row is not shown as new");
+    assert_eq!(app.list.rows.len(), 3);
     assert_eq!(app.selected_index(), Some(1));
     assert_eq!(app.selected.as_ref().and_then(|s| s.node), Some(new_node));
 }
@@ -142,7 +142,7 @@ fn untouched_cursor_stays_at_top_after_resort() {
         app.selected_entry().map(|e| e.name.to_vec()),
         Some(b"b".to_vec())
     );
-    assert_eq!(app.scroll, 0);
+    assert_eq!(app.list.scroll, 0);
 }
 
 /// Six entries a to f, largest first, in a list three rows high.
@@ -176,9 +176,9 @@ fn untouched_cursor_keeps_the_first_screen_sorted() {
     app.refresh(snap_without_totals(es, 2), t1);
     // The three rows on screen are sorted at once; the rows below wait for the automatic sort.
     assert_eq!(row_names(&app), ["g", "e", "f", "a", "b", "c", "d"]);
-    assert_eq!(app.new_count, 1);
+    assert_eq!(app.list.new_count, 1);
     assert_eq!(selected_name(&app).as_deref(), Some("g"));
-    assert_eq!(app.scroll, 0);
+    assert_eq!(app.list.scroll, 0);
     assert!(app.sort_pending(), "the rows below the screen still wait");
 }
 
