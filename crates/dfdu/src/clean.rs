@@ -24,7 +24,7 @@ use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::Backend;
 use dfdu_tree::{ClassFlags, NodeRef, Safety};
 
-use crate::args::{ReportFormat, safety_arg};
+use crate::args::{BadValue, ReportFormat, safety_arg};
 use crate::matches::{self, Filter, Item};
 use crate::output::plural;
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
@@ -97,11 +97,11 @@ impl ModeArg {
     }
 }
 
-fn clean_safety(s: &str) -> Result<Safety, String> {
+fn clean_safety(s: &str) -> Result<Safety, BadValue> {
     match safety_arg(s)? {
-        Safety::Manual | Safety::Protected => {
-            Err(format!("{s} matches are never deleted by dfdu clean"))
-        }
+        Safety::Manual | Safety::Protected => Err(BadValue::new(format!(
+            "{s} matches are never deleted by dfdu clean"
+        ))),
         l => Ok(l),
     }
 }

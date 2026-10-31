@@ -15,3 +15,31 @@ fn sizes_and_ages_parse() {
     assert!(category_arg("dev").is_ok() && category_arg("dev.build").is_ok());
     assert!(category_arg("de").is_err() && category_arg("build-cache").is_err());
 }
+
+/// A refused value says what was given and what is expected: clap prints it after the flag.
+#[test]
+fn refused_values_say_what_is_expected() {
+    let msg = |e: BadValue| e.to_string();
+    assert_eq!(
+        size_arg("lots").map_err(msg),
+        Err("`lots` is not a size (100M, 1.5GiB, 500KB)".into())
+    );
+    assert_eq!(
+        age_arg("99999999999999999").map_err(msg),
+        Err("`99999999999999999` is too long".into())
+    );
+    assert_eq!(safety_arg("review"), Ok(Safety::Review));
+    let risky = safety_arg("risky").map_err(msg).unwrap_err();
+    assert!(
+        risky.starts_with("`risky` is not a safety level"),
+        "{risky}"
+    );
+    assert_eq!(seconds("1.5"), Ok(1.5));
+    assert!(seconds("-1").is_err() && seconds("40000000").is_err());
+    assert_eq!(
+        type_filter("").map_err(msg),
+        Err("name at least one type or extension".into())
+    );
+    let boxed: Box<dyn std::error::Error + Send + Sync> = BadValue::new("no").into();
+    assert_eq!(boxed.to_string(), "no");
+}

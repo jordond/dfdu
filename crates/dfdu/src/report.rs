@@ -7,11 +7,13 @@ mod output;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Args;
+use dfdu_engine::Model;
 use dfdu_rules::RuleSet;
-use dfdu_tree::{Safety, now_secs};
-use serde_json::json;
+use dfdu_tree::{Ix, Safety, now_secs};
+use serde_json::{Map, Value, json};
 
 use crate::args::{ReportFormat, safety_arg, size_arg};
 use crate::matches::{Filter, Item, item_json, items, reclaimable, scan};
@@ -52,55 +54,84 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
         let Some(root) = m.tree.roots().next() else {
             return Err(ExitCode::from(1));
         };
-        let max = args.safety.unwrap_or(Safety::Protected);
-        let list: Vec<Item> = items(m, rules, &args.filter, now)
-            .into_iter()
-            .filter(|i| i.safety() <= max)
-            .collect();
-        let total = reclaimable(&list);
-        let exceeded = args.fail_above.is_some_and(|t| total > t);
-        let left_out = outside::gather(m, root, true);
+        let list = at_most(items(m, rules, &args.filter, now), args.safety);
+        let exceeded = exceeded(&list, args.fail_above);
         if args.format == ReportFormat::Json {
-            let mut doc = js::document(&m.tree.host_path(root));
-            doc.insert("generated_at".into(), now.into());
-            doc.insert("complete".into(), m.complete(root).into());
-            doc.insert(
-                "elapsed_ms".into(),
-                u64::try_from(elapsed.as_millis())
-                    .unwrap_or(u64::MAX)
-                    .into(),
-            );
-            doc.insert(
-                "items".into(),
-                list.iter()
-                    .map(|i| item_json(rules, i, now))
-                    .collect::<Vec<_>>()
-                    .into(),
-            );
-            doc.insert("summary".into(), summary(&list));
-            outside::put_json(&mut doc, &left_out, Some(rules));
-            if let Some(t) = args.fail_above {
-                doc.insert(
-                    "threshold".into(),
-                    json!({ "fail_above": t, "exceeded": exceeded }),
-                );
-            }
+            let doc = document(m, root, rules, &list, now, elapsed, args.fail_above);
             written(js::print(doc))?;
         } else {
+            let left_out = outside::gather(m, root, true);
             let lines = outside::lines(&left_out, Some(rules), "dfdu report");
             print_out(|w| {
                 table(w, rules, &list, now, args.fail_above, exceeded)?;
                 outside::print(w, &lines)
             })?;
         }
-        Ok(if exceeded {
-            ExitCode::from(EXIT_THRESHOLD)
-        } else if !m.complete(root) {
-            ExitCode::from(EXIT_PARTIAL)
-        } else {
-            ExitCode::SUCCESS
-        })
+        Ok(exit_code(exceeded, m.complete(root)))
     });
     engine.shutdown(launch::SHUTDOWN);
     code
 }
+
+/// The matches of `list` as safe as `max` or safer; all of them without `--safety`.
+fn at_most(list: Vec<Item>, max: Option<Safety>) -> Vec<Item> {
+    let max = max.unwrap_or(Safety::Protected);
+    list.into_iter().filter(|i| i.safety() <= max).collect()
+}
+
+/// Whether the matches listed, protected ones left out, add up to more than `--fail-above`.
+fn exceeded(list: &[Item], fail_above: Option<u64>) -> bool {
+    fail_above.is_some_and(|t| reclaimable(list) > t)
+}
+
+/// The JSON document of the matches listed in the scan of `root` (schema/report.v1.json).
+fn document(
+    m: &Model,
+    root: Ix,
+    rules: &RuleSet,
+    list: &[Item],
+    now: i64,
+    elapsed: Duration,
+    fail_above: Option<u64>,
+) -> Map<String, Value> {
+    let mut doc = js::document(&m.tree.host_path(root));
+    doc.insert("generated_at".into(), now.into());
+    doc.insert("complete".into(), m.complete(root).into());
+    doc.insert(
+        "elapsed_ms".into(),
+        u64::try_from(elapsed.as_millis())
+            .unwrap_or(u64::MAX)
+            .into(),
+    );
+    doc.insert(
+        "items".into(),
+        list.iter()
+            .map(|i| item_json(rules, i, now))
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    doc.insert("summary".into(), summary(list));
+    outside::put_json(&mut doc, &outside::gather(m, root, true), Some(rules));
+    if let Some(t) = fail_above {
+        doc.insert(
+            "threshold".into(),
+            json!({ "fail_above": t, "exceeded": exceeded(list, fail_above) }),
+        );
+    }
+    doc
+}
+
+/// The exit code of a report: [`EXIT_THRESHOLD`] past `--fail-above`, else
+/// [`EXIT_PARTIAL`] when the scan is incomplete.
+fn exit_code(exceeded: bool, complete: bool) -> ExitCode {
+    if exceeded {
+        ExitCode::from(EXIT_THRESHOLD)
+    } else if !complete {
+        ExitCode::from(EXIT_PARTIAL)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests;

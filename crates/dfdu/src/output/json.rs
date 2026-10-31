@@ -278,3 +278,6 @@ pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::R
     }
     line(w, "summary", summary)
 }
+
+#[cfg(test)]
+mod tests;
