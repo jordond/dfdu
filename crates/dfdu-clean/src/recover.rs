@@ -273,6 +273,22 @@ impl Recovery {
                 return Err(refused("it is in the trash: empty the trash to delete it"));
             }
         };
+        let id = identity(&u.rec);
+        // Refused before the intent is written, so a swapped stage path leaves the item whole and
+        // still restorable; remove_verified checks again on the way down.
+        match crate::stage::meta(stage) {
+            Ok(now) if (now.dev, now.ino, now.kind) != (id.dev, id.ino, id.kind) => {
+                return Err(refused("something else is at its stage path"));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", stage.display()),
+                ));
+            }
+        }
         let j = &mut self.sessions[u.session].journal;
         if matches!(u.state, Pending::Staged { .. }) {
             record(
@@ -283,7 +299,6 @@ impl Recovery {
             )?;
         }
         // Only what was staged: a path swapped since then deletes nothing.
-        let id = identity(&u.rec);
         match crate::remove_verified(stage, id.kind, id.dev, id.ino) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}

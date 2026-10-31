@@ -98,7 +98,8 @@ fn second_instance_leaves_a_live_session_alone() {
 }
 
 /// Finishing a staged item deletes only that item: something else put at its stage path since
-/// the session ended is left alone, and the item can be finished once it is back.
+/// the session ended is left alone, the item stays restorable, and it can be finished once it
+/// is back.
 #[test]
 fn finish_leaves_a_swapped_stage_path_alone() {
     let tmp = canonical_tempdir();
@@ -126,6 +127,13 @@ fn finish_leaves_a_swapped_stage_path_alone() {
     fs::remove_dir_all(&staged[0]).unwrap();
     fs::rename(&aside, &staged[0]).unwrap();
     let mut r = recover::scan(&state.join("ops")).unwrap();
+    assert_eq!(
+        r.items[0].state,
+        Pending::Staged {
+            stage: staged[0].clone()
+        },
+        "the refused finish left the item restorable"
+    );
     r.finish(0).unwrap();
     assert!(!staged[0].exists());
     drop(r);
