@@ -1,5 +1,7 @@
 //! macOS calls without a safe binding: `getattrlistbulk(2)`, and `fgetattrlist(2)` for APFS
-//! clone information.
+//! clone information. The FSEvents history is in [`fsevents`].
+
+pub mod fsevents;
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};

@@ -1,7 +1,7 @@
 //! Windows calls behind safe wrappers: directory enumeration with sizes
 //! (`GetFileInformationByHandleEx` with `FileIdExtdDirectoryInfo`), link counts by name
 //! relative to an open directory (`NtQueryInformationByName`), and the metadata of one path
-//! from an open handle, as [`dfdu_tree::WinStat`].
+//! from an open handle, as [`dfdu_tree::WinStat`]; and the NTFS change journal.
 //!
 //! Paths are opened with `NtCreateFile` in the NT namespace (`\??\C:\dir`), so they are not
 //! limited to `MAX_PATH`; a path already in verbatim form (`\\?\`, see [`verbatim_path`]) is
@@ -46,9 +46,11 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 
 mod dir;
 mod links;
+mod usn;
 
 pub use dir::{DirReader, RawEntry};
 pub use links::{LinkQuery, Links};
+pub use usn::{UsnChanges, usn_changes_since, usn_position};
 
 /// `FILE_SUPPORTS_HARD_LINKS` in the file system flags.
 const FILE_SUPPORTS_HARD_LINKS: u32 = 0x0040_0000;

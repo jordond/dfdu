@@ -42,7 +42,7 @@ const TAG: [u8; 4] = *b"USN\0";
 /// More directories than this changed on the volume: rescanning everything is as quick.
 const MAX_DIRS: usize = 200_000;
 
-/// What changed below a root since a position ([`changes_since`]).
+/// What changed below a root since a position ([`usn_changes_since`]).
 #[derive(Debug, Default)]
 pub struct UsnChanges {
     /// Changed directories relative to the root (the root itself is the empty path).
@@ -94,7 +94,7 @@ fn query(f: &File) -> io::Result<USN_JOURNAL_DATA_V0> {
             null(),
             0,
             (&raw mut data).cast::<c_void>(),
-            crate::windows::len_u32(size_of::<USN_JOURNAL_DATA_V0>()),
+            super::len_u32(size_of::<USN_JOURNAL_DATA_V0>()),
             &raw mut got,
             null_mut(),
         )
@@ -180,9 +180,9 @@ pub fn usn_changes_since(root: &Path, id: [u8; 16], usn: u64) -> io::Result<UsnC
                 f.as_raw_handle(),
                 FSCTL_READ_UNPRIVILEGED_USN_JOURNAL,
                 (&raw mut req).cast::<c_void>(),
-                crate::windows::len_u32(size_of::<READ_USN_JOURNAL_DATA_V0>()),
+                super::len_u32(size_of::<READ_USN_JOURNAL_DATA_V0>()),
                 buf.as_mut_ptr().cast::<c_void>(),
-                crate::windows::len_u32(buf.len() * 8),
+                super::len_u32(buf.len() * 8),
                 &raw mut got,
                 null_mut(),
             )
@@ -270,7 +270,7 @@ fn parse(out: &[u8], parents: &mut HashSet<Parent>) -> io::Result<(i64, bool)> {
 /// The path of the directory with id `p` on `volume`'s volume.
 fn path_of(volume: &File, p: Parent) -> io::Result<PathBuf> {
     let mut desc = FILE_ID_DESCRIPTOR {
-        dwSize: crate::windows::len_u32(size_of::<FILE_ID_DESCRIPTOR>()),
+        dwSize: super::len_u32(size_of::<FILE_ID_DESCRIPTOR>()),
         Type: FileIdType,
         Anonymous: FILE_ID_DESCRIPTOR_0 { FileId: 0 },
     };
@@ -311,7 +311,7 @@ fn final_path(f: &File) -> io::Result<PathBuf> {
             GetFinalPathNameByHandleW(
                 f.as_raw_handle(),
                 buf.as_mut_ptr(),
-                crate::windows::len_u32(buf.len()),
+                super::len_u32(buf.len()),
                 FILE_NAME_NORMALIZED,
             )
         } as usize;
