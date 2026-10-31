@@ -97,7 +97,7 @@ fn a_snapshot_written_in_steps_is_the_same() {
 #[test]
 fn the_header_holds_the_journal_position_only_when_there_is_one() {
     let h = header();
-    let j = h.journal.clone().unwrap();
+    let j = h.journal.unwrap();
     let none = Header {
         journal: None,
         ..header()
