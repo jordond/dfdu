@@ -12,7 +12,7 @@ use crate::theme::Theme;
 
 /// A directory with a few files in it, and the cache link for it, its cache in `cache` below
 /// `tmp`.
-fn link(tmp: &Path) -> CacheLink {
+pub(super) fn link(tmp: &Path) -> CacheLink {
     let dir = tmp.join("scanned");
     fs::create_dir_all(dir.join("sub")).unwrap();
     fs::write(dir.join("a"), b"data").unwrap();
@@ -28,7 +28,7 @@ fn link(tmp: &Path) -> CacheLink {
 
 /// A cacher for `link` that saves scans of any length and asks no change journal (its answers
 /// take a while, and a full rescan is what is tested here).
-fn cacher(link: &CacheLink) -> Cacher {
+pub(super) fn cacher(link: &CacheLink) -> Cacher {
     let mut c = Cacher::new(Some(link.clone()));
     c.min_scan_ms = 0;
     c.position = |_| None;
@@ -36,7 +36,7 @@ fn cacher(link: &CacheLink) -> Cacher {
 }
 
 /// Polls until `done` holds, at most 10 s.
-fn poll_until(
+pub(super) fn poll_until(
     c: &mut Cacher,
     app: &mut App,
     engine: &Engine<PortableBackend>,
@@ -303,40 +303,4 @@ fn measure_opening_a_million() {
     );
     drop(c);
     e.shutdown(Duration::from_millis(500));
-}
-
-/// A save whose thread cannot start is reported in the status line, and the tree is not tried
-/// again until it changes.
-#[test]
-fn a_save_that_cannot_start_is_reported_and_not_retried() {
-    let tmp = tempfile::tempdir().unwrap();
-    let link = link(tmp.path());
-    let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
-    let mut c = cacher(&link);
-    poll_until(&mut c, &mut app, &e, |c, _| {
-        c.run
-            .as_ref()
-            .is_some_and(|r| r.saved_as != SavedAs::Pending)
-            && c.writer.is_none()
-    });
-    let version = c.saved.expect("saved once");
-    c.saved = None;
-    let failed = Err(std::io::Error::other("no threads"));
-    assert!(c.save_started(&link, &mut app, version, failed));
-    let status = app.status.clone().expect("a notice");
-    assert_eq!(
-        status,
-        format!(
-            "cache {}: cannot start a thread: no threads",
-            link.slot.path.display()
-        )
-    );
-    assert_eq!(c.saved, Some(version));
-    for _ in 0..3 {
-        assert!(!c.poll(&mut app, &e));
-    }
-    assert!(c.writer.is_none() && c.changed.is_none());
-    assert!(!c.busy());
-    e.shutdown(Duration::from_millis(200));
 }

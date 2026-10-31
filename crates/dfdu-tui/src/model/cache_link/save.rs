@@ -167,3 +167,6 @@ impl Drop for Cacher {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
