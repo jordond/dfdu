@@ -8,10 +8,7 @@ use std::io::{BufRead, BufReader, Read};
 use dfdu_scan::journal::JournalPosition;
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
-use super::{
-    CLOSE, DIR, DIR_FLAGS, ENTRY, Header, Loaded, MAGIC, OPT_JOURNAL, VERSION, VERSION_1,
-    VERSION_2, VERSION_3,
-};
+use super::{CLOSE, DIR, DIR_FLAGS, ENTRY, Header, Loaded, MAGIC, OPT_JOURNAL, VERSION};
 use crate::ImportError;
 use crate::Limits;
 use frames::{FrameReader, Rec, bad, bad_at, frame_error, le_u32, truncated};
@@ -30,8 +27,8 @@ pub fn is_snapshot(bytes: &[u8]) -> bool {
 /// When `r` fails, the data is not a snapshot of a format this version reads, it is damaged
 /// or cut short, or it exceeds `limits`.
 pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
-    let (mut rec, version) = open_records(r)?;
-    let (root_path, header) = read_header_records(&mut rec, version, limits)?;
+    let mut rec = open_records(r)?;
+    let (root_path, header) = read_header_records(&mut rec, limits)?;
 
     let mut tree = Tree::new();
     let mut devs: Vec<u64> = vec![];
@@ -140,15 +137,15 @@ pub fn read(r: impl Read, limits: &Limits) -> Result<Loaded, ImportError> {
 ///
 /// When `r` fails, or its start is not that of a snapshot of a format this version reads.
 pub fn read_header(r: impl Read, limits: &Limits) -> Result<(Vec<u8>, Header), ImportError> {
-    let (mut rec, version) = open_records(r)?;
-    read_header_records(&mut rec, version, limits)
+    let mut rec = open_records(r)?;
+    read_header_records(&mut rec, limits)
 }
 
 /// The records of a snapshot read from `R`.
 type Records<R> = Rec<BufReader<FrameReader<BufReader<R>>>>;
 
-/// Checks the magic and the format version, and returns the record stream and the version.
-fn open_records<R: Read>(r: R) -> Result<(Records<R>, u32), ImportError> {
+/// Checks the magic and the format version, and returns the record stream.
+fn open_records<R: Read>(r: R) -> Result<Records<R>, ImportError> {
     let mut r = BufReader::with_capacity(1 << 16, r);
     let mut head = [0u8; 12];
     r.read_exact(&mut head).map_err(truncated)?;
@@ -156,14 +153,14 @@ fn open_records<R: Read>(r: R) -> Result<(Records<R>, u32), ImportError> {
         return Err(bad_at(0, "not a dfdu snapshot"));
     }
     let version = le_u32(&head, 8);
-    if !matches!(version, VERSION | VERSION_1 | VERSION_2 | VERSION_3) {
+    if version != VERSION {
         return Err(bad_at(
             8,
             format!("snapshot format {version}; this dfdu reads {VERSION}"),
         ));
     }
     let fr = FrameReader::new(r);
-    Ok((Rec(BufReader::with_capacity(1 << 16, fr)), version))
+    Ok(Rec(BufReader::with_capacity(1 << 16, fr)))
 }
 
 /// Checks that the records end where the frames do, and that the footer counts `entries`.
@@ -185,7 +182,6 @@ fn check_end<R: Read>(
 /// The scan's header records ([`put_header`](super::write)): the root path and the header.
 fn read_header_records(
     rec: &mut Rec<impl BufRead>,
-    version: u32,
     limits: &Limits,
 ) -> Result<(Vec<u8>, Header), ImportError> {
     let root_path = rec.bytes(limits.max_name.max(1 << 16))?;
@@ -195,21 +191,18 @@ fn read_header_records(
     let tool_version = String::from_utf8_lossy(&rec.bytes(256)?).into_owned();
     let written = rec.u()?;
     let opts = rec.u()?;
-    let journal = if version != VERSION_1 && opts & OPT_JOURNAL != 0 {
+    let journal = if opts & OPT_JOURNAL != 0 {
         let volume = rec.bytes(16)?;
         Some(JournalPosition {
             volume: volume.try_into().map_err(|_| bad("bad journal identity"))?,
             event_id: rec.u()?,
-            time: if version >= VERSION_3 { rec.u()? } else { 0 },
+            time: rec.u()?,
         })
     } else {
         None
     };
-    let (last_full_scan, scan_ms) = if version >= VERSION {
-        (rec.u()?, rec.u()?)
-    } else {
-        (0, 0)
-    };
+    let last_full_scan = rec.u()?;
+    let scan_ms = rec.u()?;
     let header = Header {
         tool_version,
         written,
