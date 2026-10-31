@@ -283,9 +283,8 @@ fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
         rules.rule(it.class.rule),
         it.class,
         it.size,
-        it.mtime,
+        now.saturating_sub(it.mtime),
         it.scanning,
-        now,
     ))
 }
 
