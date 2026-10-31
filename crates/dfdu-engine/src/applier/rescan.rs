@@ -191,19 +191,20 @@ impl<B: Backend> Applier<B> {
         kept: Option<Box<Kept>>,
     ) {
         let Some(ix) = m.tree.resolve_visible(node) else {
-            m.status.notice("rescan: that directory is gone".into());
+            m.status
+                .push_notice("rescan: that directory is gone".into());
             return;
         };
         let owner_id = match rescan_owner(&m.tree, ix, enter) {
             Ok(id) => id,
             Err(why) => {
-                m.status.notice(why.to_string());
+                m.status.push_notice(why.to_string());
                 return;
             }
         };
         // Overlap with deletes and other rescans.
         if self.plan_overlaps(&m.tree, ix) {
-            m.status.notice(
+            m.status.push_notice(
                 "rescan: a delete in this directory is in progress; rescan after it completes"
                     .into(),
             );
@@ -315,7 +316,7 @@ impl<B: Backend> Applier<B> {
             };
             if t == ix || Self::is_ancestor(&m.tree, t, ix) {
                 m.status
-                    .notice("rescan: already rescanning this directory or a parent".into());
+                    .push_notice("rescan: already rescanning this directory or a parent".into());
                 return false;
             }
             if Self::is_ancestor(&m.tree, ix, t) {

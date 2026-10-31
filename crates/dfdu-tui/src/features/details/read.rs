@@ -64,7 +64,7 @@ pub struct Matched {
     pub lost: String,
     /// The `degrade` condition that holds.
     pub degraded: Option<String>,
-    pub flags: u8,
+    pub flags: dfdu_tree::ClassFlags,
 }
 
 /// The rule node `ix` matched, or the match above it.

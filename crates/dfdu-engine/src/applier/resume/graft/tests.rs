@@ -1,5 +1,5 @@
 use dfdu_scan::PortableBackend;
-use dfdu_tree::Kind;
+use dfdu_tree::{ClassFlags, Kind};
 
 use super::*;
 use crate::test_support::meta;
@@ -161,12 +161,12 @@ fn a_verdict_leaves_out_the_pools_flags() {
         rule: RuleIx(3),
         safety: Safety::Review,
         degraded: Some(1),
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     };
     assert_eq!(
         verdict(c),
         verdict(Class {
-            flags: Class::CHECKED,
+            flags: ClassFlags::CHECKED,
             ..c
         })
     );

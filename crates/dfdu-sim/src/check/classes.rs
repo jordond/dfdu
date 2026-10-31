@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use dfdu_engine::{CheckMsg, CheckReq, Model};
 use dfdu_rules::protected::State;
 use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
-use dfdu_tree::{Class, DirState, Ix, Kind, RuleIx};
+use dfdu_tree::{Class, ClassFlags, DirState, Ix, Kind, RuleIx};
 
 use crate::{ROOT, ROOT_NAME, Spec};
 
@@ -131,7 +131,7 @@ pub(crate) fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Resu
                             rule: h.rule,
                             safety: h.safety,
                             degraded: h.degraded,
-                            flags: 0,
+                            flags: dfdu_tree::ClassFlags::NONE,
                         })
                     });
                     if !looked {
@@ -147,9 +147,12 @@ pub(crate) fn check_classes(spec: &Spec, model: &Model, rules: &RuleSet) -> Resu
             // The classifier pool's flags, and the protection a git-tracked match gets, are not
             // the scan's to decide (`check_pool_flags`).
             let in_effect = rules.class_in_effect(tree, cix);
-            let got = in_effect.map(|(_, c)| Class { flags: 0, ..c });
+            let got = in_effect.map(|(_, c)| Class {
+                flags: dfdu_tree::ClassFlags::NONE,
+                ..c
+            });
             if let (Some(w), Some((_, c))) = (want.as_mut(), in_effect)
-                && c.has(Class::VCS_TRACKED)
+                && c.has(ClassFlags::VCS_TRACKED)
             {
                 w.safety = c.safety;
             }
@@ -234,7 +237,7 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
         // Hashed as the request had it.
         let path = tree.path_buf(ix);
         let show = || format!("{} ({c:?})", path.display());
-        if !c.has(Class::CHECKED) || c.has(Class::QUEUED) {
+        if !c.has(ClassFlags::CHECKED) || c.has(ClassFlags::QUEUED) {
             return Err(format!("{}: not checked", show()));
         }
         let (t, r) = pool_answer(
@@ -243,7 +246,7 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
             &g.not_running,
         );
         let t = t == Some(true);
-        if c.has(Class::VCS_TRACKED) != t || c.has(Class::IN_USE) != r.is_some() {
+        if c.has(ClassFlags::VCS_TRACKED) != t || c.has(ClassFlags::IN_USE) != r.is_some() {
             return Err(format!(
                 "{}: flags do not match the answer for its path",
                 show()
