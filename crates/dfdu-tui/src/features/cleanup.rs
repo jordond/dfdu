@@ -89,7 +89,6 @@ pub struct Item {
 #[derive(Clone, Debug, Default)]
 pub struct NativeView {
     pub id: u64,
-    pub command: String,
     pub lines: Vec<String>,
     pub done: Option<Result<(), String>>,
 }
@@ -204,7 +203,6 @@ pub fn read(m: &Model, app: &App) -> Info {
         .collect();
     let native = m.status.native.as_ref().map(|n| NativeView {
         id: n.id,
-        command: n.command.clone(),
         lines: n
             .lines
             .iter()
