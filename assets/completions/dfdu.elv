@@ -192,6 +192,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand --restore 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it'
             cand --dismiss 'Close these interrupted items: nothing is done on disk'
             cand --journals 'The journal directory (the default is dfdu''s state directory)'
+            cand --yes 'Finish and restore. Without it nothing is changed: what would be done is printed'
             cand -h 'Print help'
             cand --help 'Print help'
         }
