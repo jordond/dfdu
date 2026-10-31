@@ -216,6 +216,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--restore=[Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it]:N:_default' \
 '*--dismiss=[Close these interrupted items\: nothing is done on disk]:N:_default' \
 '--journals=[The journal directory (the default is dfdu'\''s state directory)]:JOURNALS:_files' \
+'--yes[Finish and restore. Without it nothing is changed\: what would be done is printed]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

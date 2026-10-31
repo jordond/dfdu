@@ -205,6 +205,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--restore', '--restore', [CompletionResultType]::ParameterName, 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it')
             [CompletionResult]::new('--dismiss', '--dismiss', [CompletionResultType]::ParameterName, 'Close these interrupted items: nothing is done on disk')
             [CompletionResult]::new('--journals', '--journals', [CompletionResultType]::ParameterName, 'The journal directory (the default is dfdu''s state directory)')
+            [CompletionResult]::new('--yes', '--yes', [CompletionResultType]::ParameterName, 'Finish and restore. Without it nothing is changed: what would be done is printed')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break

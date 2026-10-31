@@ -1,6 +1,8 @@
 //! `dfdu scan`: scans a directory and prints a summary (a table, JSON, NDJSON or an ncdu
 //! export).
 
+mod inject;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -12,12 +14,11 @@ use dfdu_tree::filetype::TypeFilter;
 use dfdu_tree::{HostPath, Ix};
 
 use crate::launch::{self, Local};
-use crate::table::{
+use crate::output::table::{
     notes, print_by_type, print_debug_stats, print_errors, print_footer, print_tree, shown_total,
 };
-use crate::{
-    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, outside, print_out, remote, transfer,
-};
+use crate::output::{json, outside};
+use crate::{EXIT_PARTIAL, MountArgs, RuleArgs, history, print_out, remote, transfer};
 
 #[derive(Args)]
 #[expect(
@@ -71,7 +72,7 @@ pub struct ScanArgs {
     /// Count only files of these types or extensions, comma-separated: `video,audio,.iso`.
     /// Types: video, audio, image, document, archive, disk-image, code, executable, font, data,
     /// other. Folders show the size of the matching files inside them.
-    #[arg(long = "type", value_name = "TYPES", value_parser = crate::type_filter)]
+    #[arg(long = "type", value_name = "TYPES", value_parser = crate::args::type_filter)]
     pub types: Option<TypeFilter>,
     /// After the tree, print disk usage by file type and the largest extensions.
     #[arg(long)]
@@ -86,10 +87,10 @@ pub struct ScanArgs {
     #[arg(long)]
     pub no_history: bool,
     /// Abandon directories stalled this many seconds.
-    #[arg(long, default_value_t = 30.0, value_parser = crate::seconds)]
+    #[arg(long, default_value_t = 30.0, value_parser = crate::args::seconds)]
     pub stall_abandon: f64,
     /// Report a directory as stalled after one call on it took this many seconds (tests).
-    #[arg(long, default_value_t = 10.0, value_parser = crate::seconds, hide = true)]
+    #[arg(long, default_value_t = 10.0, value_parser = crate::args::seconds, hide = true)]
     pub stall_after: f64,
     /// Print pipeline counters and applier timing (lock hold and wait) after the scan.
     #[arg(long, hide = true)]
