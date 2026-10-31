@@ -2,7 +2,7 @@
 //! there, and where its bytes come from: `DFDU_AGENT_DIR`, this very binary, the local agent
 //! cache, or the release (downloaded, with feature `agent-download`).
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -188,16 +188,12 @@ fn read(path: &Path) -> io::Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
 
-/// Writes `bin` to `path` whole or not at all.
+/// Writes `bin` to `path` whole or not at all, durably: a cached agent is sent without a
+/// checksum, so one cut short by a crash must never be left under its name.
 fn store(path: &Path, bin: &[u8]) -> io::Result<()> {
     let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".dfdu.{}", std::process::id()));
-    std::fs::write(&tmp, bin)
-        .and_then(|()| std::fs::rename(&tmp, path))
-        .inspect_err(|_| {
-            let _ = std::fs::remove_file(&tmp);
-        })
+    dfdu_store::write_atomic(path, |f| f.write_all(bin))
 }
 
 #[cfg(test)]
