@@ -149,23 +149,30 @@ pub fn wait_scan<B: Backend>(engine: Engine<B>) -> Result<Engine<B>, ExitCode> {
     Ok(engine)
 }
 
-/// Reads the model with `f` every 10 ms until it gives `Some`. `None` when the engine stopped on
-/// a fatal error first, or `limit` passed (without one it waits as long as that takes).
-pub fn poll<B: Backend, T>(
+/// The longest [`wait_for`] waits on the engine's changes before reading the model again: the
+/// browser is not running to take them, but a change taken elsewhere is still seen.
+const RECHECK: Duration = Duration::from_millis(100);
+
+/// Reads the model with `f` each time it changes until it gives `Some`. `None` when the engine
+/// stopped on a fatal error first, or `limit` passed (without one it waits as long as that
+/// takes).
+pub fn wait_for<B: Backend, T>(
     engine: &Engine<B>,
     limit: Option<Duration>,
     f: impl Fn(&Model) -> Option<T>,
 ) -> Option<T> {
-    let t0 = Instant::now();
+    let deadline = limit.map(|l| Instant::now() + l);
     loop {
         let (v, fatal) = engine.read(|m| (f(m), m.status.fatal.is_some()));
         if v.is_some() || fatal {
             return v;
         }
-        if limit.is_some_and(|l| t0.elapsed() > l) {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+        let wait = match deadline {
+            Some(d) if Instant::now() >= d => return None,
+            Some(d) => d.saturating_duration_since(Instant::now()).min(RECHECK),
+            None => RECHECK,
+        };
+        let _ = engine.changes().recv_timeout(wait);
     }
 }
 
@@ -249,16 +256,33 @@ mod tests {
     }
 
     #[test]
-    fn poll_returns_what_it_reads_or_none_once_its_limit_passed() {
+    fn wait_for_returns_what_it_reads_or_none_once_its_limit_passed() {
         let engine = Engine::start(PortableBackend::default(), headless(false));
         let limit = Some(Duration::from_millis(30));
         let t0 = Instant::now();
-        assert_eq!(poll(&engine, limit, |_| None::<()>), None);
+        assert_eq!(wait_for(&engine, limit, |_| None::<()>), None);
         assert!(t0.elapsed() >= Duration::from_millis(30));
         assert_eq!(
-            poll(&engine, None, |m| Some(m.tree.roots().count())),
+            wait_for(&engine, None, |m| Some(m.tree.roots().count())),
             Some(0)
         );
+        engine.shutdown(SHUTDOWN);
+    }
+
+    /// What a scan sent before the wait adds to the model is seen once the applier made it.
+    #[test]
+    fn wait_for_sees_the_changes_of_a_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a"), b"x").unwrap();
+        let engine = Engine::start(PortableBackend::default(), headless(false));
+        engine.send(Command::Scan {
+            path: dir.path().to_path_buf().into(),
+            opts: JobOptions::default(),
+        });
+        let roots = wait_for(&engine, Some(Duration::from_secs(20)), |m| {
+            m.tree.roots().next().map(|_| m.tree.roots().count())
+        });
+        assert_eq!(roots, Some(1));
         engine.shutdown(SHUTDOWN);
     }
 }
