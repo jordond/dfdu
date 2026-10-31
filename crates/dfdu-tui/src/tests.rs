@@ -378,7 +378,7 @@ pub(crate) fn classified() -> Fixture {
         rule: rules.index("rust.target").unwrap(),
         safety: dfdu_tree::Safety::Regenerable,
         degraded: None,
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     };
     let cachedir = dfdu_tree::Class {
         rule: rules.index("generic.cachedir-tag").unwrap(),

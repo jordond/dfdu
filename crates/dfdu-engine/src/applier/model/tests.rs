@@ -26,7 +26,7 @@ fn timing_buckets_hold_their_durations() {
 fn fingerprint_changes_with_what_readers_show() {
     let mut m = Model::default();
     for _ in 0..100 {
-        m.status.notice("n".into());
+        m.status.push_notice("n".into());
     }
     let mut last = m.fingerprint();
     let mut changed = |m: &Model, what: &str| {
@@ -34,7 +34,7 @@ fn fingerprint_changes_with_what_readers_show() {
         assert_ne!(now, last, "{what}");
         last = now;
     };
-    m.status.notice("n".into());
+    m.status.push_notice("n".into());
     changed(&m, "a notice when 100 are kept");
     m.status.fatal = Some("panic".into());
     changed(&m, "fatal");
@@ -48,7 +48,7 @@ fn fingerprint_changes_with_what_readers_show() {
     changed(&m, "compressed_upper_bound");
     m.status.profile = Some((dfdu_sys::Profile::Raid1, 2.0));
     changed(&m, "profile");
-    m.status.anomaly("a".into());
+    m.status.push_anomaly("a".into());
     changed(&m, "anomalies");
     m.native_sizes.insert(dfdu_tree::RuleIx(0), Ok(1));
     changed(&m, "native_sizes");

@@ -102,7 +102,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
         let now = t1 + FRAME * n;
         let t = Instant::now();
         frame(&mut app, now, &visible);
-        post_process(&mut app, &mut buf, now);
+        post_process(&app, &mut buf, now);
         costs.push(t.elapsed());
         assert!(app.motion.easing);
         assert!(app.motion.flash_at.is_some());

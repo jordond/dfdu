@@ -22,9 +22,11 @@ use clap::Args;
 use dfdu_engine::{Command, Engine, Mode};
 use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, NodeRef, Safety};
+use dfdu_tree::{ClassFlags, NodeRef, Safety};
 
-use crate::report::{self, Filter, Item};
+use crate::args::{ReportFormat, safety_arg};
+use crate::matches::{self, Filter, Item};
+use crate::output::plural;
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
 use output::{Results, print_json, print_table};
 
@@ -69,8 +71,8 @@ pub struct CleanArgs {
     #[arg(long)]
     pub restore_staged: bool,
     /// Output: table or json (schema/clean.v1.json).
-    #[arg(long, value_enum, default_value_t = report::ReportFormat::Table)]
-    pub format: report::ReportFormat,
+    #[arg(long, value_enum, default_value_t = ReportFormat::Table)]
+    pub format: ReportFormat,
     /// Worker threads.
     #[arg(long)]
     pub threads: Option<usize>,
@@ -96,7 +98,7 @@ impl ModeArg {
 }
 
 fn clean_safety(s: &str) -> Result<Safety, String> {
-    match report::safety_arg(s)? {
+    match safety_arg(s)? {
         Safety::Manual | Safety::Protected => {
             Err(format!("{s} matches are never deleted by dfdu clean"))
         }
@@ -143,13 +145,14 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
             it.safety().as_str(),
             args.safety.as_str()
         )
-    } else if c.has(Class::VCS_TRACKED) {
+    } else if c.has(ClassFlags::VCS_TRACKED) {
         "tracked by version control".into()
-    } else if c.has(Class::VCS_UNKNOWN) {
+    } else if c.has(ClassFlags::VCS_UNKNOWN) {
         "git could not tell whether it tracks files in it".into()
-    } else if c.has(Class::IN_USE) {
+    } else if c.has(ClassFlags::IN_USE) {
         "in use: a process it belongs to is running".into()
-    } else if !c.has(Class::CHECKED) && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
+    } else if !c.has(ClassFlags::CHECKED)
+        && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
     {
         "its checks (git tracking, running processes) did not finish".into()
     } else if it.scanning {
@@ -212,9 +215,8 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
     }
     if !r.items.is_empty() {
         eprintln!(
-            "dfdu: {} item{} earlier sessions left unfinished (dfdu recover lists them{})",
-            r.items.len(),
-            if r.items.len() == 1 { "" } else { "s" },
+            "dfdu: {} earlier sessions left unfinished (dfdu recover lists them{})",
+            plural(r.items.len(), "item", "items"),
             if act {
                 ""
             } else {
@@ -227,12 +229,12 @@ fn earlier_sessions(args: &CleanArgs) -> bool {
 
 pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode> {
     let earlier_failed = earlier_sessions(args);
-    let (engine, _) = report::scan(&args.path, args.mounts, args.threads, rules.clone(), true)?;
+    let (engine, _) = matches::scan(&args.path, args.mounts, args.threads, rules.clone(), true)?;
     let now = dfdu_tree::now_secs();
     let (root, complete, items) = engine.read(|m| {
         let root = m.tree.roots().next().map(|r| m.tree.path_buf(r));
         let complete = m.tree.roots().next().is_some_and(|r| m.complete(r));
-        (root, complete, report::items(m, rules, &args.filter, now))
+        (root, complete, matches::items(m, rules, &args.filter, now))
     });
     let Some(root) = root else {
         return Err(ExitCode::from(1));
@@ -248,7 +250,7 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode>
         execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
     engine.shutdown(launch::SHUTDOWN);
-    if args.format == report::ReportFormat::Json {
+    if args.format == ReportFormat::Json {
         written(print_json(
             rules,
             args,

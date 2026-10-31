@@ -4,53 +4,16 @@
 //! when they are not valid UTF-8. The schemas are in `schema/` at the top of the repository.
 
 use std::io::{self, Write};
-use std::path::Path;
 
 use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeFlags, Totals, Tree};
 use serde_json::{Map, Value, json};
 
+use super::outside::{self, Outside};
+use super::{put_bytes, put_host_path};
+
 /// Bumped when a field changes meaning or goes away; new fields keep the version.
 pub const SCHEMA_VERSION: u64 = 1;
-
-/// Standard base64 with padding.
-pub fn base64(bytes: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let n = u32::from(c[0]) << 16
-            | u32::from(*c.get(1).unwrap_or(&0)) << 8
-            | u32::from(*c.get(2).unwrap_or(&0));
-        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            out.push(if i <= c.len() {
-                ABC[(n >> shift & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-    }
-    out
-}
-
-/// Adds `key` with the text of `bytes`, and `key_bytes_b64` when they are not UTF-8.
-fn put_bytes(o: &mut Map<String, Value>, key: &str, bytes: &[u8]) {
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        o.insert(key.into(), s.into());
-    } else {
-        o.insert(key.into(), String::from_utf8_lossy(bytes).into());
-        o.insert(format!("{key}_bytes_b64"), base64(bytes).into());
-    }
-}
-
-/// A path on this machine.
-pub fn put_path(o: &mut Map<String, Value>, key: &str, path: &Path) {
-    put_bytes(o, key, path.as_os_str().as_encoded_bytes());
-}
-
-/// A path of a tree, on the host it was scanned on.
-pub fn put_host_path(o: &mut Map<String, Value>, key: &str, path: &HostPath) {
-    put_bytes(o, key, path.as_bytes());
-}
 
 pub fn tool() -> Value {
     json!({ "name": "dfdu", "version": env!("CARGO_PKG_VERSION") })
@@ -242,7 +205,7 @@ pub struct ScanOut<'a> {
     pub note: &'a dyn Fn(Ix) -> String,
     /// What the scan did not enter, for `not_entered` and `links_outside`: fields of the JSON
     /// document, and of the NDJSON summary record.
-    pub outside: Option<&'a crate::outside::Outside>,
+    pub outside: Option<&'a Outside>,
 }
 
 /// `scan --format json`: one document.
@@ -264,7 +227,7 @@ pub fn scan(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::Result<(
     doc.insert("errors".into(), errors(m, root).into());
     doc.insert("skipped".into(), skipped(m, root).into());
     if let Some(left_out) = o.outside {
-        crate::outside::put_json(&mut doc, left_out, m.rules.as_deref());
+        outside::put_json(&mut doc, left_out, m.rules.as_deref());
     }
     serde_json::to_writer_pretty(&mut *w, &Value::Object(doc))?;
     writeln!(w)
@@ -311,28 +274,7 @@ pub fn scan_ndjson(w: &mut dyn Write, m: &Model, root: Ix, o: &ScanOut) -> io::R
     summary.insert("elapsed_ms".into(), o.elapsed_ms.into());
     summary.insert("totals".into(), totals(&t.total(root)));
     if let Some(left_out) = o.outside {
-        crate::outside::put_json(&mut summary, left_out, m.rules.as_deref());
+        outside::put_json(&mut summary, left_out, m.rules.as_deref());
     }
     line(w, "summary", summary)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base64_matches_rfc4648() {
-        for (raw, enc) in [
-            ("", ""),
-            ("f", "Zg=="),
-            ("fo", "Zm8="),
-            ("foo", "Zm9v"),
-            ("foob", "Zm9vYg=="),
-            ("fooba", "Zm9vYmE="),
-            ("foobar", "Zm9vYmFy"),
-        ] {
-            assert_eq!(base64(raw.as_bytes()), enc);
-        }
-        assert_eq!(base64(&[0xff, 0xfe, 0x80]), "//6A");
-    }
 }

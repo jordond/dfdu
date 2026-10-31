@@ -186,7 +186,7 @@ fn pick(chain: &[Hit], inside: &[bool], sib: Option<&[Sib]>) -> Option<Class> {
             rule: h.rule,
             safety,
             degraded,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         })
     })
 }
@@ -206,7 +206,7 @@ fn class_of(h: &Hit) -> Class {
         rule: h.rule,
         safety: h.safety,
         degraded: h.degraded,
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     }
 }
 

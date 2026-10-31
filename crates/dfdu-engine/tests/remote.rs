@@ -262,7 +262,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<ClassRow> {
     while e.read(|m| {
         m.tree
             .classes()
-            .any(|(_, c)| c.has(dfdu_tree::Class::QUEUED))
+            .any(|(_, c)| c.has(dfdu_tree::ClassFlags::QUEUED))
     }) {
         assert!(
             t.elapsed() < Duration::from_secs(20),
@@ -281,7 +281,7 @@ fn classes(e: &Engine<PortableBackend>) -> Vec<ClassRow> {
                     rules.rule(c.rule).id.clone(),
                     Some(c.safety),
                     c.degraded.map_or(0, |d| u8::try_from(d).unwrap() + 1),
-                    c.flags,
+                    c.flags.bits(),
                 )
             })
             .collect();
@@ -357,7 +357,7 @@ fn a_remote_scan_classifies_as_a_local_one() {
     assert!(local.wait_idle(Some(Duration::from_secs(30))).is_idle());
     let want = classes(&local);
     assert!(want.len() >= 5, "{want:?}");
-    let tracked = dfdu_tree::Class::CHECKED | dfdu_tree::Class::VCS_TRACKED;
+    let tracked = (dfdu_tree::ClassFlags::CHECKED | dfdu_tree::ClassFlags::VCS_TRACKED).bits();
     assert!(
         want.iter()
             .any(|c| c.0.ends_with("git/node_modules") && c.4 == tracked),

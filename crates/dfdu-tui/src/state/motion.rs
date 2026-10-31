@@ -416,7 +416,7 @@ pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
 
 /// Effects applied to the finished frame: the flash of moved rows and the fade of deleted ones,
 /// on the rows where [`frame`] last found them, except where an overlay covers them.
-pub fn post_process(app: &mut App, buf: &mut Buffer, now: Instant) {
+pub fn post_process(app: &App, buf: &mut Buffer, now: Instant) {
     let m = &app.motion;
     let rgb = effects::rgb_effects(&app.theme);
     let flash = m.flash_at.map(|t| now.saturating_duration_since(t));

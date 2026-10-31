@@ -1,19 +1,56 @@
+use dfdu_rules::{Action, Env, Platform};
+use dfdu_tree::{ClassFlags, RuleIx};
+
 use super::*;
 
+pub(crate) const DAY: i64 = 86_400;
+
+/// The built-in rules of Linux, the last of them made to report its matches only (none of the
+/// built-in rules does).
+pub(crate) fn rules() -> RuleSet {
+    let env = Env::with(Platform::Linux, &[("HOME", "/home/u")]);
+    let mut rules = dfdu_rules::builtin(&env).0.rules().to_vec();
+    rules.last_mut().expect("a rule").action = Action::Report;
+    RuleSet::new(rules, &env)
+}
+
+/// The first rule whose action is `action` (by its name in rule files).
+pub(crate) fn rule_with(rules: &RuleSet, action: &str) -> RuleIx {
+    let r = rules.rules().iter().find(|r| r.action.as_str() == action);
+    rules
+        .index(&r.unwrap_or_else(|| panic!("a {action} rule")).id)
+        .expect("its index")
+}
+
+/// A directory matched by `rule` at `safety`, of `disk` bytes on disk.
+pub(crate) fn item(rule: RuleIx, safety: Safety, disk: u64) -> Item {
+    Item {
+        node: NodeRef::from_bits(1),
+        path: HostPath::from("/home/u/x"),
+        kind: Kind::Dir,
+        class: Class {
+            rule,
+            safety,
+            degraded: None,
+            flags: dfdu_tree::ClassFlags::NONE,
+        },
+        disk,
+        apparent: disk / 2,
+        entries: 3,
+        shared_out: 0,
+        mtime: 0,
+        scanning: false,
+        recommended: false,
+        matches_inside: 0,
+        rest: vec![],
+    }
+}
+
 #[test]
-fn sizes_and_ages_parse() {
-    assert_eq!(size_arg("100M"), Ok(100 << 20));
-    assert_eq!(size_arg("1.5GiB"), Ok(3 << 29));
-    assert_eq!(size_arg("500 KB"), Ok(500_000));
-    assert_eq!(size_arg("0"), Ok(0));
-    assert!(size_arg("lots").is_err());
-    assert_eq!(age_arg("30d"), Ok(30 * 86_400));
-    assert_eq!(age_arg("2w"), Ok(14 * 86_400));
-    assert_eq!(age_arg("12h"), Ok(12 * 3_600));
-    assert_eq!(age_arg("3"), Ok(3 * 86_400));
-    assert!(age_arg("3y").is_err() && age_arg("d").is_err());
-    assert!(category_arg("dev").is_ok() && category_arg("dev.build").is_ok());
-    assert!(category_arg("de").is_err() && category_arg("build-cache").is_err());
+fn ages_are_whole_days_and_never_negative() {
+    assert_eq!(age_days(10 * DAY, 10 * DAY), 0);
+    assert_eq!(age_days(10 * DAY, 7 * DAY + 1), 2);
+    assert_eq!(age_days(DAY, 5 * DAY), 0, "a match from the future is new");
 }
 
 /// The user caches with pip's cache (300 bytes) and other things (1000 bytes) in them: pip
@@ -54,7 +91,7 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
             rule: rules.index(id).expect(id),
             safety: Safety::Safe,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         };
         t.set_class(ix, Some(class));
     }
@@ -125,13 +162,70 @@ fn guarded_matches_wait_for_their_checks() {
         degraded: None,
         flags,
     };
-    m.tree.set_class(a, Some(class(guarded(false), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(false), ClassFlags::NONE)));
     assert!(guards_checked(&m));
-    m.tree.set_class(a, Some(class(guarded(true), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(true), ClassFlags::NONE)));
     assert!(!guards_checked(&m));
     m.tree
-        .set_class(a, Some(class(guarded(true), Class::CHECKED)));
+        .set_class(a, Some(class(guarded(true), ClassFlags::CHECKED)));
     assert!(guards_checked(&m));
     let msg = checks_cut_short(CHECK_WAIT);
     assert!(msg.contains("did not finish in 60 s"), "{msg}");
+}
+
+/// An item's JSON names its rule and action, its sizes and flags; the native command and the
+/// matches inside it only when there are.
+#[test]
+fn an_item_in_json_names_its_rule_its_sizes_and_its_flags() {
+    let rules = rules();
+    let rule = rule_with(&rules, "delete");
+    let mut it = item(rule, Safety::Regenerable, 4096);
+    it.class.flags = ClassFlags::CHECKED | ClassFlags::IN_USE;
+    it.mtime = 3 * DAY;
+    let j = item_json(&rules, &it, 10 * DAY);
+    let r = rules.rule(rule);
+    assert_eq!(j["path"], "/home/u/x");
+    assert_eq!(
+        (j["type"].as_str(), j["rule"].as_str()),
+        (Some("dir"), Some(r.id.as_str()))
+    );
+    assert_eq!(
+        (j["safety"].as_str(), j["action"].as_str()),
+        (Some("regenerable"), Some("delete"))
+    );
+    assert_eq!(
+        (j["disk"].as_u64(), j["apparent"].as_u64()),
+        (Some(4096), Some(2048))
+    );
+    assert_eq!(
+        (j["entries"].as_u64(), j["age_days"].as_i64()),
+        (Some(3), Some(7))
+    );
+    let flags = [
+        "checked",
+        "in_use",
+        "vcs_tracked",
+        "recommended",
+        "scanning",
+    ];
+    let flags = flags.map(|f| j[f].as_bool());
+    assert_eq!(flags, [true, true, false, false, false].map(Some));
+    assert!(j.get("native_command").is_none() && j.get("matches_inside").is_none());
+    assert!(j.get("degraded").is_none());
+
+    let native = rule_with(&rules, "native");
+    let mut it = item(native, Safety::Safe, 1);
+    it.kind = Kind::File;
+    it.matches_inside = 2;
+    let j = item_json(&rules, &it, 0);
+    assert_eq!(j["type"], "file");
+    assert!(
+        j["native_command"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty()),
+        "{j}"
+    );
+    assert_eq!(j["matches_inside"], 2);
 }

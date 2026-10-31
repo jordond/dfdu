@@ -10,10 +10,9 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, SystemTime};
 
 use crossbeam_channel::Sender;
 use dfdu_tree::{HostPath, NodeRef, RuleIx};
@@ -23,6 +22,9 @@ use crate::threads::spawn_pool;
 
 /// How long one external command may take.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The pool's commands are not stopped early: each ends by its time limit.
+static NO_ABORT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug)]
 pub enum CheckReq {
@@ -120,53 +122,15 @@ pub fn check_batch(batch: &[CheckReq]) -> Vec<CheckMsg> {
         .collect()
 }
 
-/// Runs `argv` with no shell, stdin closed and a time limit; its stdout, or why it failed.
-fn run(argv: &[String], cwd: Option<&Path>) -> Result<Vec<u8>, String> {
-    let (prog, prog_args) = argv.split_first().ok_or("empty command")?;
-    let mut cmd = Command::new(prog);
-    cmd.args(prog_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if let Some(d) = cwd {
-        cmd.current_dir(d);
-    }
-    let mut child = cmd.spawn().map_err(|e| format!("{prog}: {e}"))?;
-    let Some(mut out) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("{prog}: no output pipe"));
-    };
-    let reader = thread::spawn(move || {
+/// Runs `argv` with no shell, stdin closed and a time limit ([`dfdu_clean::run_command`]); its
+/// stdout, or why it failed.
+fn run(argv: &[String]) -> Result<Vec<u8>, String> {
+    let read = |mut r: Box<dyn Read + Send>| {
         let mut buf = Vec::new();
-        let _ = out.read_to_end(&mut buf);
-        buf
-    });
-    let deadline = Instant::now() + COMMAND_TIMEOUT;
-    let waited = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => break Err(format!("no answer in {}s", COMMAND_TIMEOUT.as_secs())),
-            Err(e) => break Err(e.to_string()),
-        }
+        r.read_to_end(&mut buf).map(|_| buf)
     };
-    let status = match waited {
-        Ok(s) => s,
-        Err(e) => {
-            // A timeout or a failed wait: the child is killed and reaped, and the reader ends
-            // when the pipe closes.
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{prog}: {e}"));
-        }
-    };
-    let buf = reader.join().unwrap_or_default();
-    if status.success() {
-        Ok(buf)
-    } else {
-        Err(format!("{prog}: {status}"))
-    }
+    let out = dfdu_clean::run_command(argv, None, COMMAND_TIMEOUT, &NO_ABORT, false, read)?;
+    Ok(out.into_iter().next().unwrap_or_default())
 }
 
 /// Whether git tracks a file in the directory at `path` (or the file itself): read from the
@@ -240,7 +204,7 @@ fn index(root: &Path) -> Option<Arc<gix_index::File>> {
 fn process_names() -> Option<Vec<String>> {
     if cfg!(windows) {
         let argv = ["tasklist", "/fo", "csv", "/nh"].map(String::from);
-        let out = run(&argv, None).ok()?;
+        let out = run(&argv).ok()?;
         Some(
             String::from_utf8_lossy(&out)
                 .lines()
@@ -250,7 +214,7 @@ fn process_names() -> Option<Vec<String>> {
         )
     } else {
         let argv = ["ps", "-axo", "comm="].map(String::from);
-        let out = run(&argv, None).ok()?;
+        let out = run(&argv).ok()?;
         Some(
             String::from_utf8_lossy(&out)
                 .lines()
@@ -270,10 +234,8 @@ fn same_process(listed: &str, name: &str) -> bool {
 /// Runs `check` (the tool is there and working), then `command`, and reads the reclaimable
 /// size from its output ([`parse_reclaimable`]).
 fn native_size(check: &[String], command: &[String]) -> Result<u64, String> {
-    if !check.is_empty() {
-        run(check, None)?;
-    }
-    let out = run(command, None)?;
+    dfdu_clean::check_tool(check, &NO_ABORT)?;
+    let out = run(command)?;
     parse_reclaimable(&String::from_utf8_lossy(&out))
         .ok_or_else(|| "no size in the output".to_string())
 }
@@ -328,6 +290,8 @@ fn parse_unit_size(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::{Command, Stdio};
+
     use super::*;
 
     #[test]
@@ -411,6 +375,24 @@ mod tests {
                 .any(|n| me.starts_with(n.as_str()) && n.len() >= 8),
             "{me} not among {} processes",
             names.len()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_sizes_fail_as_native_commands_do() {
+        let argv = |a: &[&str]| a.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        let size = native_size(&argv(&["dfdu-no-such-tool"]), &argv(&["true"]));
+        assert!(
+            size.as_ref()
+                .is_err_and(|e| e.starts_with("dfdu-no-such-tool is not available: ")),
+            "{size:?}"
+        );
+        let size = native_size(&[], &argv(&["sh", "-c", "exit 3"]));
+        assert_eq!(size, Err("sh: exited with status 3".into()));
+        assert_eq!(
+            native_size(&argv(&["true"]), &argv(&["echo", "42"])),
+            Ok(42)
         );
     }
 }

@@ -11,7 +11,7 @@ use dfdu_sys::MountInfo;
 use dfdu_tree::Ix;
 use serde_json::{Map, Value};
 
-use crate::json::{put_host_path, put_path};
+use super::{put_host_path, put_path};
 
 /// What was looked up once the scan ended.
 pub struct Outside {

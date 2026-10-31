@@ -70,28 +70,67 @@ pub struct Class {
     pub safety: Safety,
     /// Index into the rule's `degrade` list.
     pub degraded: Option<u16>,
-    /// What the classifier pool found (`Class::CHECKED` and the others).
-    pub flags: u8,
+    /// What the classifier pool found ([`ClassFlags::CHECKED`] and the others).
+    pub flags: ClassFlags,
 }
 
 const _: () = assert!(std::mem::size_of::<Class>() == 8);
 
 impl Class {
+    /// Whether any of the flags in `f` is set.
+    #[must_use]
+    pub fn has(self, f: ClassFlags) -> bool {
+        self.flags.has(f)
+    }
+}
+
+/// What the classifier pool found for a classified node.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+pub struct ClassFlags(u8);
+
+impl ClassFlags {
+    /// No checks queued or run.
+    pub const NONE: ClassFlags = ClassFlags(0);
     /// Queued for the classifier pool's checks.
-    pub const QUEUED: u8 = 1;
+    pub const QUEUED: ClassFlags = ClassFlags(1);
     /// The pool's checks ran.
-    pub const CHECKED: u8 = 2;
+    pub const CHECKED: ClassFlags = ClassFlags(2);
     /// Version control tracks files in it, so it is protected.
-    pub const VCS_TRACKED: u8 = 4;
+    pub const VCS_TRACKED: ClassFlags = ClassFlags(4);
     /// A process the rule names (`guard.not_running`) was running when checked.
-    pub const IN_USE: u8 = 8;
+    pub const IN_USE: ClassFlags = ClassFlags(8);
     /// `guard.not_vcs_tracked` asked, but git could not tell (not installed, an error, a
     /// repository it refuses): never recommended or cleaned.
-    pub const VCS_UNKNOWN: u8 = 16;
+    pub const VCS_UNKNOWN: ClassFlags = ClassFlags(16);
 
+    /// The flags with these bits, as formats store them.
     #[must_use]
-    pub fn has(self, flag: u8) -> bool {
-        self.flags & flag != 0
+    pub fn from_bits(bits: u8) -> ClassFlags {
+        ClassFlags(bits)
+    }
+
+    /// The flags as bits, for formats that store them.
+    #[must_use]
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Whether any of the flags in `f` is set.
+    #[must_use]
+    pub fn has(self, f: ClassFlags) -> bool {
+        self.0 & f.0 != 0
+    }
+
+    pub fn set(&mut self, f: ClassFlags, on: bool) {
+        if on { self.0 |= f.0 } else { self.0 &= !f.0 }
+    }
+}
+
+impl std::ops::BitOr for ClassFlags {
+    type Output = ClassFlags;
+
+    fn bitor(self, rhs: ClassFlags) -> ClassFlags {
+        ClassFlags(self.0 | rhs.0)
     }
 }
 
@@ -109,5 +148,16 @@ mod tests {
             Safety::from_u8(u8::try_from(Safety::ALL.len()).unwrap()),
             None
         );
+    }
+
+    #[test]
+    fn class_flags_set_and_clear_one_flag() {
+        let mut f = ClassFlags::QUEUED | ClassFlags::IN_USE;
+        f.set(ClassFlags::QUEUED, false);
+        f.set(ClassFlags::CHECKED, true);
+        assert!(f.has(ClassFlags::CHECKED) && f.has(ClassFlags::IN_USE));
+        assert!(!f.has(ClassFlags::QUEUED));
+        assert_eq!(ClassFlags::from_bits(f.bits()), f);
+        assert!(!ClassFlags::default().has(ClassFlags::CHECKED | ClassFlags::QUEUED));
     }
 }
