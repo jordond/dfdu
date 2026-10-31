@@ -155,8 +155,13 @@ pub fn run(args: ScanArgs) -> ExitCode {
             Err(code) => code,
         };
     }
-    let local = Local::new(&args.path, args.mounts, args.threads, args.rules.load());
-    let (storage, opts) = launch::for_storage(&args.path, args.threads, opts);
+    let local = Local {
+        mft: args.mounts.use_mft(&args.path),
+        threads: args.threads,
+        job: base,
+        rules: args.rules.load(),
+    };
+    let (storage, opts) = local.engine_options(&args.path, opts);
     if args.debug_stats {
         eprintln!("storage: {storage:?}, {} workers", opts.workers);
     }

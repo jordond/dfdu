@@ -50,7 +50,8 @@ pub fn for_storage(
 }
 
 /// How a scan of this host's files is set up: the native backend for the storage the scanned
-/// directory is on, with as many workers as suit it, classifying with the rules.
+/// directory is on, with as many workers as suit it, classifying with the rules. Each command
+/// fills in the fields itself: they differ in when --mft applies and which mounts are entered.
 pub struct Local {
     /// List NTFS volumes from their master file tables ([`MountArgs::use_mft`]).
     pub mft: bool,
@@ -63,19 +64,10 @@ pub struct Local {
 }
 
 impl Local {
-    /// A scan of `path` with the mount options in `mounts`, saying why --mft cannot be used.
-    pub fn new(
-        path: &Path,
-        mounts: MountArgs,
-        threads: Option<usize>,
-        rules: Option<Arc<RuleSet>>,
-    ) -> Local {
-        Local {
-            mft: mounts.use_mft(path),
-            threads,
-            job: mounts.job(),
-            rules,
-        }
+    /// `opts` with this scan's workers for the storage `path` is on ([`for_storage`]), and
+    /// that storage.
+    pub fn engine_options(&self, path: &Path, opts: EngineOptions) -> (Storage, EngineOptions) {
+        for_storage(path, self.threads, opts)
     }
 
     /// The native backend for data on `storage`.
@@ -94,7 +86,7 @@ impl Local {
     /// An engine with `opts` for a scan of `path`, and the options of that scan. Nothing is
     /// sent to it yet.
     pub fn start(self, path: &Path, opts: EngineOptions) -> (Engine<NativeBackend>, JobOptions) {
-        let (storage, opts) = for_storage(path, self.threads, opts);
+        let (storage, opts) = self.engine_options(path, opts);
         let engine = Engine::start(self.backend(storage), opts);
         (engine, self.job(path))
     }
@@ -109,7 +101,13 @@ pub fn scan(
     rules: Option<Arc<RuleSet>>,
     journal: bool,
 ) -> Result<Engine<NativeBackend>, ExitCode> {
-    let (engine, job) = Local::new(path, mounts, threads, rules).start(path, headless(journal));
+    let local = Local {
+        mft: mounts.use_mft(path),
+        threads,
+        job: mounts.job(),
+        rules,
+    };
+    let (engine, job) = local.start(path, headless(journal));
     run_scan(
         engine,
         Command::Scan {
@@ -176,6 +174,14 @@ mod tests {
         assert_eq!(auto.workers, dfdu_engine::workers_for(storage));
         let (_, given) = for_storage(dir.path(), Some(3), EngineOptions::default());
         assert_eq!(given.workers, 3);
+        let local = Local {
+            mft: false,
+            threads: Some(2),
+            job: JobOptions::default(),
+            rules: None,
+        };
+        let (_, own) = local.engine_options(dir.path(), EngineOptions::default());
+        assert_eq!(own.workers, 2);
     }
 
     #[test]
