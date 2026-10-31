@@ -15,7 +15,8 @@ use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::{DirState, Ix, Kind, Meta, Tree};
 
 mod common;
-use common::loaded::{find, loaded, resume_changed};
+use common::journal::resume_changed;
+use common::loaded::{find, loaded};
 use common::tempdir;
 
 /// Files of a loaded tree that are not on disk, on device `dev`, each an inode of its own.

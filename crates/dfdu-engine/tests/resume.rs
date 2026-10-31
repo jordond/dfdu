@@ -17,8 +17,10 @@ use dfdu_tree::NodeRef;
 
 mod common;
 #[cfg(unix)]
-use common::loaded::{OLD, age, answer, resume_held, set_mtime};
-use common::loaded::{find, loaded, resume, resume_since, scanned, totals, write};
+use common::files::{OLD, age, set_mtime, write};
+use common::journal::{answer, resume, resume_held, resume_since};
+use common::loaded::{find, loaded};
+use common::portable::{scanned, totals};
 use common::tempdir;
 #[cfg(unix)]
 use common::wait_for;

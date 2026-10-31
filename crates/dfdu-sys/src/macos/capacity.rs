@@ -80,3 +80,25 @@ pub(crate) fn important_available(path: &Path) -> Option<u64> {
     };
     if read { u64::try_from(n).ok() } else { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The root volume's space for important use is known, and no more than the volume holds.
+    #[test]
+    fn the_root_volume_says_what_is_available() {
+        let n = important_available(Path::new("/")).expect("the root volume's capacity");
+        let space = crate::macos::statfs_space(Path::new("/")).expect("statfs /");
+        assert!(n > 0 && n <= space.total, "{n} of {}", space.total);
+    }
+
+    /// A path that does not exist has no volume to ask about.
+    #[test]
+    fn a_missing_path_has_no_capacity() {
+        assert_eq!(
+            important_available(Path::new("/nonexistent/dfdu-capacity-test")),
+            None
+        );
+    }
+}
