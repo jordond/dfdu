@@ -46,16 +46,13 @@ mod clean;
 mod disks;
 mod dupes;
 mod history;
-mod inject;
-mod json;
 mod launch;
 mod matches;
-mod outside;
+mod output;
 mod recover;
 mod remote;
 mod report;
 mod scan;
-mod table;
 mod transfer;
 
 /// The exit codes, for `--help` and the man page.

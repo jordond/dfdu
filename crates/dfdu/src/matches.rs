@@ -15,7 +15,8 @@ use dfdu_tree::{Class, HostPath, Kind, NodeRef, Safety};
 use serde_json::{Map, Value};
 
 use crate::args::{age_arg, category_arg, size_arg};
-use crate::{MountArgs, json as js, launch};
+use crate::output::put_host_path;
+use crate::{MountArgs, launch};
 
 /// How long the guard checks (git tracking, running processes) may take after the scan.
 const CHECK_WAIT: Duration = Duration::from_secs(60);
@@ -185,7 +186,7 @@ pub fn item_json(rules: &RuleSet, it: &Item, now: i64) -> Value {
     let r = rules.rule(it.class.rule);
     let c = &it.class;
     let mut o = Map::new();
-    js::put_host_path(&mut o, "path", &it.path);
+    put_host_path(&mut o, "path", &it.path);
     o.insert(
         "type".into(),
         if it.kind == Kind::Dir { "dir" } else { "file" }.into(),

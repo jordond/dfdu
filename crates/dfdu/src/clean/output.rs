@@ -8,8 +8,8 @@ use dfdu_tree::HostPath;
 use serde_json::{Value, json};
 
 use super::{CleanArgs, ModeArg, Outcome};
-use crate::json as js;
 use crate::matches::{Item, item_json};
+use crate::output::json as js;
 
 fn verb(mode: ModeArg) -> &'static str {
     match mode {

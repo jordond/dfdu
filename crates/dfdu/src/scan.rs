@@ -1,6 +1,8 @@
 //! `dfdu scan`: scans a directory and prints a summary (a table, JSON, NDJSON or an ncdu
 //! export).
 
+mod inject;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -12,12 +14,11 @@ use dfdu_tree::filetype::TypeFilter;
 use dfdu_tree::{HostPath, Ix};
 
 use crate::launch::{self, Local};
-use crate::table::{
+use crate::output::table::{
     notes, print_by_type, print_debug_stats, print_errors, print_footer, print_tree, shown_total,
 };
-use crate::{
-    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, outside, print_out, remote, transfer,
-};
+use crate::output::{json, outside};
+use crate::{EXIT_PARTIAL, MountArgs, RuleArgs, history, print_out, remote, transfer};
 
 #[derive(Args)]
 #[expect(

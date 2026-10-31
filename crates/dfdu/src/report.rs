@@ -15,7 +15,8 @@ use serde_json::json;
 
 use crate::args::{ReportFormat, safety_arg, size_arg};
 use crate::matches::{Filter, Item, item_json, items, reclaimable, scan};
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
+use crate::output::{json as js, outside};
+use crate::{EXIT_PARTIAL, MountArgs, launch, print_out, written};
 use output::{summary, table};
 
 /// Exit code when `--fail-above` is exceeded.
@@ -58,7 +59,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
             .collect();
         let total = reclaimable(&list);
         let exceeded = args.fail_above.is_some_and(|t| total > t);
-        let left_out = crate::outside::gather(m, root, true);
+        let left_out = outside::gather(m, root, true);
         if args.format == ReportFormat::Json {
             let mut doc = js::document(&m.tree.host_path(root));
             doc.insert("generated_at".into(), now.into());
@@ -77,7 +78,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
                     .into(),
             );
             doc.insert("summary".into(), summary(&list));
-            crate::outside::put_json(&mut doc, &left_out, Some(rules));
+            outside::put_json(&mut doc, &left_out, Some(rules));
             if let Some(t) = args.fail_above {
                 doc.insert(
                     "threshold".into(),
@@ -86,10 +87,10 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
             }
             written(js::print(doc))?;
         } else {
-            let lines = crate::outside::lines(&left_out, Some(rules), "dfdu report");
+            let lines = outside::lines(&left_out, Some(rules), "dfdu report");
             print_out(|w| {
                 table(w, rules, &list, now, args.fail_above, exceeded)?;
-                crate::outside::print(w, &lines)
+                outside::print(w, &lines)
             })?;
         }
         Ok(if exceeded {

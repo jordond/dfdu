@@ -10,7 +10,7 @@ use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
-use crate::table::{print_by_type, print_tree, shown_total};
+use crate::output::table::{print_by_type, print_tree, shown_total};
 use crate::{EXIT_PARTIAL, MountArgs, print_out, remote, written_to};
 
 #[derive(Args)]

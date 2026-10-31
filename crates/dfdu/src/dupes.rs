@@ -11,7 +11,8 @@ use clap::Args;
 use dfdu_dupes::{Found, Options, Progress};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, args, json as js, launch, print_out};
+use crate::output::{json as js, put_path};
+use crate::{EXIT_PARTIAL, MountArgs, args, launch, print_out};
 
 #[derive(Args)]
 pub struct DupesArgs {
@@ -180,7 +181,7 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
                 .iter()
                 .map(|f| {
                     let mut o = Map::new();
-                    js::put_path(&mut o, "path", &f.path);
+                    put_path(&mut o, "path", &f.path);
                     o.insert("disk".into(), f.alloc.into());
                     o.insert("mtime".into(), f.mtime.into());
                     o.insert("links".into(), f.links.into());
