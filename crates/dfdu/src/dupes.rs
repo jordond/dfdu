@@ -192,7 +192,7 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
                 .collect();
             json!({
                 "size": g.size,
-                "sha256": dfdu_dupes::hex(&g.hash),
+                "sha256": hex::encode(g.hash),
                 "wasted": g.wasted(),
                 "clones": g.all_clones(),
                 "files": files,
