@@ -153,7 +153,10 @@ pub(super) fn frame_error(e: io::Error) -> ImportError {
         io::ErrorKind::UnexpectedEof => bad("the records end early"),
         io::ErrorKind::InvalidData => {
             let text = e.to_string();
-            match e.into_inner().map(|b| b.downcast::<ImportError>()) {
+            match e
+                .into_inner()
+                .map(<dyn std::error::Error + Send + Sync>::downcast::<ImportError>)
+            {
                 Some(Ok(ie)) => *ie,
                 _ => bad(text),
             }

@@ -7,7 +7,7 @@ use crate::test_util::meta;
 const KEY: (u64, u64) = (1, 50);
 
 /// `/r` with the directories `a` and `b`.
-fn tree() -> (Tree, Ix, Ix) {
+fn two_dirs() -> (Tree, Ix, Ix) {
     let mut t = Tree::new();
     let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     let a = t.add_dir(r, b"a", &meta(Kind::Dir, 0, 2));
@@ -58,8 +58,8 @@ fn free(t: &mut Tree, n: NodeRef) {
 
 #[test]
 fn a_small_list_grows_past_two_and_shrinks_back() {
-    let mut s = Small::default();
-    assert!(s.is_empty());
+    let mut s = Small::<i32>::default();
+    assert!(matches!(s, Small::Empty));
     for x in 1..=4 {
         s.push(x);
     }
@@ -81,21 +81,21 @@ fn a_small_list_grows_past_two_and_shrinks_back() {
 /// scope charges its own.
 #[test]
 fn the_first_link_found_in_a_scope_is_charged() {
-    let (mut t, a, b) = tree();
+    let (mut tree, dir_a, dir_b) = two_dirs();
     let mut links = LinkTable::default();
     assert!(!links.has(KEY));
     assert_eq!(links.nlink(KEY), 0);
-    let x = link(&mut t, &mut links, KEY, VISIBLE, b, "x");
-    let y = link(&mut t, &mut links, KEY, VISIBLE, a, "y");
-    let z = link(&mut t, &mut links, KEY, 7, a, "z");
+    let x = link(&mut tree, &mut links, KEY, VISIBLE, dir_b, "x");
+    let y = link(&mut tree, &mut links, KEY, VISIBLE, dir_a, "y");
+    let z = link(&mut tree, &mut links, KEY, 7, dir_a, "z");
     assert!(links.has(KEY));
     assert_eq!(links.nlink(KEY), 2);
     assert_eq!(links.charged(KEY, VISIBLE), Some(x));
     assert_eq!(links.charged(KEY, 7), Some(z));
     assert_eq!(links.charged(KEY, 8), None);
-    assert!(is_charged(&t, x) && !is_charged(&t, y) && is_charged(&t, z));
+    assert!(is_charged(&tree, x) && !is_charged(&tree, y) && is_charged(&tree, z));
     assert_eq!(links.shared_keys(VISIBLE), [KEY]);
-    assert!(links.shared_keys(7).is_empty());
+    assert_eq!(links.shared_keys(7), Vec::<(u64, u64)>::new());
     assert_eq!(links.keys_in(VISIBLE), [KEY]);
     assert_eq!(links.keys_in(7), [KEY]);
 }
@@ -103,63 +103,63 @@ fn the_first_link_found_in_a_scope_is_charged() {
 /// Re-electing charges the link with the lowest path and takes the charge off the old one.
 #[test]
 fn reelecting_charges_the_lowest_path() {
-    let (mut t, a, b) = tree();
+    let (mut tree, dir_a, dir_b) = two_dirs();
     let mut links = LinkTable::default();
-    let x = link(&mut t, &mut links, KEY, VISIBLE, b, "x");
-    let y = link(&mut t, &mut links, KEY, VISIBLE, a, "y");
-    assert_eq!(links.reelect(&mut t, KEY, VISIBLE), (true, 2));
+    let x = link(&mut tree, &mut links, KEY, VISIBLE, dir_b, "x");
+    let y = link(&mut tree, &mut links, KEY, VISIBLE, dir_a, "y");
+    assert_eq!(links.reelect(&mut tree, KEY, VISIBLE), (true, 2));
     assert_eq!(links.charged(KEY, VISIBLE), Some(y));
-    assert!(is_charged(&t, y) && !is_charged(&t, x));
-    assert_eq!(links.reelect(&mut t, KEY, VISIBLE), (false, 2));
-    assert_eq!(links.reelect(&mut t, KEY, 7), (false, 0));
-    assert_eq!(links.reelect(&mut t, (9, 9), VISIBLE), (false, 0));
+    assert!(is_charged(&tree, y) && !is_charged(&tree, x));
+    assert_eq!(links.reelect(&mut tree, KEY, VISIBLE), (false, 2));
+    assert_eq!(links.reelect(&mut tree, KEY, 7), (false, 0));
+    assert_eq!(links.reelect(&mut tree, (9, 9), VISIBLE), (false, 0));
 }
 
 /// Freeing the charged link asks for a re-election in its scope; once half the links are
 /// freed the inode is pruned, and with none left it is forgotten.
 #[test]
 fn freed_links_are_reelected_around_and_pruned() {
-    let (mut t, a, b) = tree();
+    let (mut tree, dir_a, dir_b) = two_dirs();
     let mut links = LinkTable::default();
-    let x = link(&mut t, &mut links, KEY, VISIBLE, a, "x");
-    let y = link(&mut t, &mut links, KEY, VISIBLE, b, "y");
-    free(&mut t, x);
+    let x = link(&mut tree, &mut links, KEY, VISIBLE, dir_a, "x");
+    let y = link(&mut tree, &mut links, KEY, VISIBLE, dir_b, "y");
+    free(&mut tree, x);
     assert_eq!(links.remove(KEY, x), (Some(VISIBLE), true));
     assert_eq!(links.charged(KEY, VISIBLE), None);
-    assert_eq!(links.prune(&t, KEY), 2);
+    assert_eq!(links.prune(&tree, KEY), 2);
     assert_eq!(links.shared_keys(VISIBLE), Vec::<(u64, u64)>::new());
-    assert_eq!(links.reelect(&mut t, KEY, VISIBLE), (true, 1));
+    assert_eq!(links.reelect(&mut tree, KEY, VISIBLE), (true, 1));
     assert_eq!(links.charged(KEY, VISIBLE), Some(y));
-    assert!(is_charged(&t, y));
+    assert!(is_charged(&tree, y));
 
-    free(&mut t, y);
+    free(&mut tree, y);
     assert_eq!(links.remove(KEY, y), (Some(VISIBLE), true));
-    assert_eq!(links.prune(&t, KEY), 1);
+    assert_eq!(links.prune(&tree, KEY), 1);
     assert!(!links.has(KEY));
     assert_eq!(links.remove(KEY, y), (None, false));
-    assert_eq!(links.prune(&t, KEY), 0);
+    assert_eq!(links.prune(&tree, KEY), 0);
 }
 
 /// Merging a rescan's links into the visible scope keeps one charged link: the moved one is
 /// uncharged when both scopes had one, and becomes the charged one when only it was.
 #[test]
 fn merged_links_keep_one_charged() {
-    let (mut t, a, b) = tree();
+    let (mut tree, dir_a, dir_b) = two_dirs();
     let mut links = LinkTable::default();
-    let x = link(&mut t, &mut links, KEY, VISIBLE, b, "x");
-    let z = link(&mut t, &mut links, KEY, 7, a, "z");
-    assert_eq!(links.merge_key(&mut t, KEY, 7, VISIBLE), (true, 1));
-    assert!(is_charged(&t, x) && !is_charged(&t, z));
-    assert!(links.keys_in(7).is_empty());
+    let x = link(&mut tree, &mut links, KEY, VISIBLE, dir_b, "x");
+    let z = link(&mut tree, &mut links, KEY, 7, dir_a, "z");
+    assert_eq!(links.merge_key(&mut tree, KEY, 7, VISIBLE), (true, 1));
+    assert!(is_charged(&tree, x) && !is_charged(&tree, z));
+    assert_eq!(links.keys_in(7), Vec::<(u64, u64)>::new());
     assert_eq!(links.shared_keys(VISIBLE), [KEY]);
-    assert_eq!(links.reelect(&mut t, KEY, VISIBLE), (true, 2));
-    assert!(is_charged(&t, z) && !is_charged(&t, x));
+    assert_eq!(links.reelect(&mut tree, KEY, VISIBLE), (true, 2));
+    assert!(is_charged(&tree, z) && !is_charged(&tree, x));
 
     let other = (1, 60);
-    let w = link(&mut t, &mut links, other, 7, a, "w");
-    assert_eq!(links.merge_key(&mut t, other, 7, VISIBLE), (false, 1));
+    let w = link(&mut tree, &mut links, other, 7, dir_a, "w");
+    assert_eq!(links.merge_key(&mut tree, other, 7, VISIBLE), (false, 1));
     assert_eq!(links.charged(other, VISIBLE), Some(w));
-    assert!(is_charged(&t, w));
-    assert_eq!(links.merge_key(&mut t, other, 7, VISIBLE), (false, 0));
-    assert_eq!(links.merge_key(&mut t, (9, 9), 7, VISIBLE), (false, 0));
+    assert!(is_charged(&tree, w));
+    assert_eq!(links.merge_key(&mut tree, other, 7, VISIBLE), (false, 0));
+    assert_eq!(links.merge_key(&mut tree, (9, 9), 7, VISIBLE), (false, 0));
 }
