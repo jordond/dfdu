@@ -5,10 +5,12 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use dfdu_tree::Safety;
+
 use crate::schema::{DegradeWhen, File, MatchDef, NativeDef, PerOs, RuleDef};
 use crate::vars::Env;
 use crate::{
-    Action, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet, Safety, Source,
+    Action, Degrade, Glob, Guard, Kind, MAX_RULES, Marker, Platform, Rule, RuleSet, Source,
     category_index, glob, parse_size,
 };
 

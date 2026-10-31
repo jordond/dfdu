@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use dfdu_engine::{CheckMsg, CheckReq, Model};
 use dfdu_rules::protected::State;
-use dfdu_rules::{Candidate, Inside, RuleIx, RuleSet, Verdict};
-use dfdu_tree::{Class, DirState, Ix, Kind};
+use dfdu_rules::{Candidate, Inside, RuleSet, Verdict};
+use dfdu_tree::{Class, DirState, Ix, Kind, RuleIx};
 
 use crate::{ROOT, ROOT_NAME, Spec};
 
@@ -249,7 +249,7 @@ pub(crate) fn check_pool_flags(model: &Model, rules: &RuleSet) -> Result<(u64, u
                 show()
             ));
         }
-        if t && c.safety != dfdu_rules::Safety::Protected {
+        if t && c.safety != dfdu_tree::Safety::Protected {
             return Err(format!("{}: git-tracked but not protected", show()));
         }
         tracked += u64::from(t);

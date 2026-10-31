@@ -342,10 +342,10 @@ fn a_git_tracked_target_is_protected() {
     engine.read(|m| {
         let vendored = m.tree.class(find(m, "vendored/target")).unwrap();
         assert!(vendored.has(Class::VCS_TRACKED));
-        assert_eq!(vendored.safety, dfdu_rules::Safety::Protected);
+        assert_eq!(vendored.safety, dfdu_tree::Safety::Protected);
         let own = m.tree.class(find(m, "rust/target")).unwrap();
         assert!(own.has(Class::CHECKED) && !own.has(Class::VCS_TRACKED));
-        assert_eq!(own.safety, dfdu_rules::Safety::Regenerable);
+        assert_eq!(own.safety, dfdu_tree::Safety::Regenerable);
     });
     engine.shutdown(Duration::from_millis(200));
 }

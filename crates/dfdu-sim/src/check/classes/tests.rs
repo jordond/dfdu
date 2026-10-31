@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use dfdu_rules::RuleIx;
-use dfdu_tree::{HostPath, NodeRef};
+use dfdu_tree::{HostPath, NodeRef, RuleIx};
 
 use super::*;
 use crate::test_util::{find, quiet};

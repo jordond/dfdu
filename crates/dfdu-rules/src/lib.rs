@@ -16,7 +16,6 @@ pub mod protected;
 pub mod schema;
 pub mod vars;
 
-pub use dfdu_tree::{RuleIx, Safety};
 pub use glob::{Glob, GlobError};
 pub use linked::{Linked, linked_outside};
 pub use load::{LoadError, builtin, load, load_from, sources};
@@ -24,6 +23,8 @@ pub use matcher::{
     Candidate, Dir, Hit, Inside, MAX_RULES, Reach, ReadMarker, RuleSet, Stat, Verdict, stem,
 };
 pub use vars::{Env, ExpandError};
+
+use dfdu_tree::Safety;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Platform {

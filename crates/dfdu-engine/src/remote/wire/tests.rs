@@ -6,8 +6,8 @@ use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 use dfdu_clean::inside::{Listing, Listings};
 use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal};
 use dfdu_rules::protected::State;
-use dfdu_rules::{Hit, Inside, RuleIx, RuleSet, Safety};
-use dfdu_tree::{Class, ErrKind, Kind, Meta, NodeRef, Subvol};
+use dfdu_rules::{Hit, Inside, RuleSet};
+use dfdu_tree::{Class, ErrKind, Kind, Meta, NodeRef, RuleIx, Safety, Subvol};
 
 use dfdu_scan::{
     Chunk, ChunkStatus, DirId, Entry, EntryError, FileRec, JobId, ListingStatus, Mark, NameSpan,

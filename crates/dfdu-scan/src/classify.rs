@@ -29,10 +29,8 @@ use std::sync::Arc;
 
 use dfdu_rules::hash::FastSet as HashSet;
 use dfdu_rules::protected::State;
-use dfdu_rules::{
-    Candidate, Hit, Inside, Reach, RuleIx, RuleSet, Safety, Stat, Verdict, rule_path,
-};
-use dfdu_tree::{Class, Kind};
+use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Stat, Verdict, rule_path};
+use dfdu_tree::{Class, Kind, RuleIx, Safety};
 
 use crate::proto::{DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
 use crate::sync::Mutex;

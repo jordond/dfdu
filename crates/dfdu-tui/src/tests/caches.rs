@@ -2,8 +2,9 @@
 //! view and the details pane show for a container that yields to the matches inside it
 //! ([`dfdu_engine::listed`]).
 
-use dfdu_rules::{Env, Platform, RuleSet, Safety};
-use dfdu_tree::{Class, DirState, Ix, Kind, Tree};
+use dfdu_rules::{Env, Platform, RuleSet};
+
+use dfdu_tree::{Class, DirState, Ix, Kind, Safety, Tree};
 
 use super::meta;
 

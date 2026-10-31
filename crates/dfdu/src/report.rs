@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 use dfdu_engine::{Engine, Model};
-use dfdu_rules::{Action, RuleSet, Safety};
+use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, HostPath, Kind, NodeRef, now_secs};
+use dfdu_tree::{Class, HostPath, Kind, NodeRef, Safety, now_secs};
 use serde_json::{Map, Value, json};
 
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};

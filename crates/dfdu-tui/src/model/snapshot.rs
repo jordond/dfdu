@@ -114,7 +114,7 @@ impl Tag {
     /// A match offered for cleanup without review: safe or regenerable (a match version
     /// control tracks is protected).
     pub fn candidate(self) -> bool {
-        self.class.safety <= dfdu_rules::Safety::Regenerable
+        self.class.safety <= dfdu_tree::Safety::Regenerable
     }
 }
 

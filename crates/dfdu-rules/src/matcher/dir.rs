@@ -1,8 +1,10 @@
 //! A directory's entries classified together: the rules and protected paths that can match
 //! below it are picked once per listing, then each entry is checked against those.
 
+use dfdu_tree::RuleIx;
+
 use super::{Candidate, Hit, RuleSet, Verdict};
-use crate::{Glob, RuleIx, glob, protected};
+use crate::{Glob, glob, protected};
 
 #[cfg(test)]
 mod tests;

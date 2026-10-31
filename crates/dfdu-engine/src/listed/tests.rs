@@ -1,5 +1,5 @@
-use dfdu_rules::{Env, Platform, Safety};
-use dfdu_tree::Kind;
+use dfdu_rules::{Env, Platform};
+use dfdu_tree::{Kind, Safety};
 
 use super::*;
 use crate::test_util::meta;

@@ -1,7 +1,7 @@
 //! The view's rows: a section per safety level, the categories in it and their items, and
 //! which sections and categories are open.
 
-use dfdu_rules::Safety;
+use dfdu_tree::Safety;
 
 use super::Item;
 use crate::app::App;

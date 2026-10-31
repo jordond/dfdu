@@ -1,8 +1,7 @@
 //! The payload encoding: LEB128 varints (signed ones zigzag-encoded), byte strings as a
 //! varint length and the bytes.
 
-use dfdu_rules::{RuleIx, Safety};
-use dfdu_tree::{Host, Kind};
+use dfdu_tree::{Host, Kind, RuleIx, Safety};
 
 use super::WireError;
 

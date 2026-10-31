@@ -7,7 +7,9 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-use crate::{RuleIx, RuleSet};
+use dfdu_tree::RuleIx;
+
+use crate::RuleSet;
 
 /// A symbolic link below the scan root, on the way to rule locations, that leads out of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
