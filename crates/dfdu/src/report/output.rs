@@ -193,3 +193,6 @@ fn truncate(s: &str, n: usize) -> String {
         t
     }
 }
+
+#[cfg(test)]
+mod tests;
