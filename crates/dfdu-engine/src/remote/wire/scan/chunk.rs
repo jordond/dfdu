@@ -30,40 +30,22 @@ fn dec_span(d: &mut Dec, names: usize) -> R<NameSpan> {
 }
 
 fn enc_probe(e: &mut Enc, p: &Probe) {
-    match &p.subvol {
-        Some(s) => {
-            e.u8(1);
-            e.var(s.id);
-            e.0.extend_from_slice(&s.uuid);
-            match s.parent_uuid {
-                Some(parent) => {
-                    e.u8(1);
-                    e.0.extend_from_slice(&parent);
-                }
-                None => e.u8(0),
-            }
-            e.bool(s.read_only);
-            e.zig(s.otime);
-            match s.qgroup {
-                Some((rfer, excl)) => {
-                    e.u8(1);
-                    e.var(rfer);
-                    e.var(excl);
-                }
-                None => e.u8(0),
-            }
-        }
-        None => e.u8(0),
-    }
+    e.opt(p.subvol.as_ref(), |e, s| {
+        e.var(s.id);
+        e.0.extend_from_slice(&s.uuid);
+        e.opt(s.parent_uuid, |e, parent| e.0.extend_from_slice(&parent));
+        e.bool(s.read_only);
+        e.zig(s.otime);
+        e.opt(s.qgroup, |e, (rfer, excl)| {
+            e.var(rfer);
+            e.var(excl);
+        });
+    });
     e.bool(p.shares_extents);
-    match p.profile {
-        Some((profile, ratio)) => {
-            e.u8(1);
-            e.u8(profile as u8);
-            e.0.extend_from_slice(&ratio.to_le_bytes());
-        }
-        None => e.u8(0),
-    }
+    e.opt(p.profile, |e, (profile, ratio)| {
+        e.u8(profile as u8);
+        e.0.extend_from_slice(&ratio.to_le_bytes());
+    });
 }
 
 fn dec_probe(d: &mut Dec) -> R<Probe> {
@@ -74,44 +56,29 @@ fn dec_probe(d: &mut Dec) -> R<Probe> {
         }
         Ok(u)
     };
-    let subvol = match d.u8()? {
-        0 => None,
-        1 => Some(Subvol {
+    let subvol = d.opt("subvolume", |d| {
+        Ok(Subvol {
             id: d.var()?,
             uuid: uuid(d)?,
-            parent_uuid: match d.u8()? {
-                0 => None,
-                1 => Some(uuid(d)?),
-                _ => return bad("parent uuid"),
-            },
+            parent_uuid: d.opt("parent uuid", uuid)?,
             read_only: d.bool()?,
             otime: d.zig()?,
-            qgroup: match d.u8()? {
-                0 => None,
-                1 => Some((d.var()?, d.var()?)),
-                _ => return bad("qgroup"),
-            },
-        }),
-        _ => return bad("subvolume"),
-    };
+            qgroup: d.opt("qgroup", |d| Ok((d.var()?, d.var()?)))?,
+        })
+    })?;
     let shares_extents = d.bool()?;
-    let profile = match d.u8()? {
-        0 => None,
-        1 => {
-            let profile =
-                dfdu_sys::Profile::from_u8(d.u8()?).ok_or(WireError::Malformed("profile"))?;
-            let mut f = [0u8; 8];
-            for b in &mut f {
-                *b = d.u8()?;
-            }
-            let ratio = f64::from_le_bytes(f);
-            if !(ratio.is_finite() && ratio > 0.0) {
-                return bad("profile ratio");
-            }
-            Some((profile, ratio))
+    let profile = d.opt("profile", |d| {
+        let profile = dfdu_sys::Profile::from_u8(d.u8()?).ok_or(WireError::Malformed("profile"))?;
+        let mut f = [0u8; 8];
+        for b in &mut f {
+            *b = d.u8()?;
         }
-        _ => return bad("profile"),
-    };
+        let ratio = f64::from_le_bytes(f);
+        if !(ratio.is_finite() && ratio > 0.0) {
+            return bad("profile ratio");
+        }
+        Ok((profile, ratio))
+    })?;
     Ok(Probe {
         subvol,
         shares_extents,
@@ -123,29 +90,15 @@ pub(super) fn enc_chunk(e: &mut Enc, c: &Chunk) {
     e.var(c.job.0.into());
     e.var(c.dir.0.into());
     e.var(c.seq.into());
-    match &c.root_meta {
-        Some(m) => {
-            e.u8(1);
-            enc_meta(e, m);
-        }
-        None => e.u8(0),
-    }
-    match &c.probe {
-        Some(p) => {
-            e.u8(1);
-            enc_probe(e, p);
-        }
-        None => e.u8(0),
-    }
+    e.opt(c.root_meta.as_ref(), enc_meta);
+    e.opt(c.probe.as_deref(), enc_probe);
     e.bytes(&c.names);
-    e.var(c.files.len() as u64);
-    for f in &c.files {
+    e.list(&c.files, |e, f| {
         enc_span(e, f.name);
         enc_meta(e, &f.meta);
-    }
+    });
     e.var(c.first_subdir.0.into());
-    e.var(c.subdirs.len() as u64);
-    for s in &c.subdirs {
+    e.list(&c.subdirs, |e, s| {
         enc_span(e, s.name);
         enc_meta(e, &s.meta);
         e.bool(s.mount_root);
@@ -158,14 +111,12 @@ pub(super) fn enc_chunk(e: &mut Enc, c: &Chunk) {
             Some(SkipReason::Excluded) => 5,
             Some(SkipReason::Kept) => 6,
         });
-    }
-    e.var(c.errors.len() as u64);
-    for x in &c.errors {
+    });
+    e.list(&c.errors, |e, x| {
         enc_span(e, x.name);
         enc_err(e, x.err);
-    }
-    e.var(c.marks.len() as u64);
-    for (entry, mark) in &c.marks {
+    });
+    e.list(&c.marks, |e, (entry, mark)| {
         match *entry {
             Entry::File(i) => {
                 e.u8(0);
@@ -184,7 +135,7 @@ pub(super) fn enc_chunk(e: &mut Enc, c: &Chunk) {
             Mark::Protected => e.u8(1),
             Mark::Excepted => e.u8(2),
         }
-    }
+    });
     match &c.status {
         ChunkStatus::Ok => e.u8(0),
         ChunkStatus::Panicked(s) => {
@@ -202,25 +153,15 @@ pub(super) fn dec_chunk(d: &mut Dec, rules: Option<&RuleSet>) -> R<Chunk> {
     let job = JobId(d.u32()?);
     let dir = DirId(d.u32()?);
     let seq = d.u32()?;
-    let root_meta = match d.u8()? {
-        0 => None,
-        1 => Some(dec_meta(d)?),
-        _ => return bad("root meta"),
-    };
-    let probe = match d.u8()? {
-        0 => None,
-        1 => Some(Box::new(dec_probe(d)?)),
-        _ => return bad("probe"),
-    };
+    let root_meta = d.opt("root meta", dec_meta)?;
+    let probe = d.opt("probe", |d| dec_probe(d).map(Box::new))?;
     let names = d.bytes()?.to_vec();
-    let n = d.count(2 + MIN_META)?;
-    let mut files = Vec::with_capacity(n);
-    for _ in 0..n {
-        files.push(FileRec {
+    let files = d.list(2 + MIN_META, |d| {
+        Ok(FileRec {
             name: dec_span(d, names.len())?,
             meta: dec_meta(d)?,
-        });
-    }
+        })
+    })?;
     let first_subdir = DirId(d.u32()?);
     let n = d.count(4 + MIN_META)?;
     if u64::from(first_subdir.0) + n as u64 > u64::from(u32::MAX) {
@@ -244,17 +185,13 @@ pub(super) fn dec_chunk(d: &mut Dec, rules: Option<&RuleSet>) -> R<Chunk> {
             },
         });
     }
-    let n = d.count(3)?;
-    let mut errors = Vec::with_capacity(n);
-    for _ in 0..n {
-        errors.push(EntryError {
+    let errors = d.list(3, |d| {
+        Ok(EntryError {
             name: dec_span(d, names.len())?,
             err: dec_err(d)?,
-        });
-    }
-    let n = d.count(3)?;
-    let mut marks = Vec::with_capacity(n);
-    for _ in 0..n {
+        })
+    })?;
+    let marks = d.list(3, |d| {
         let entry = match d.u8()? {
             0 => in_chunk(Entry::File(d.u32()?), files.len())?,
             1 => in_chunk(Entry::Subdir(d.u32()?), subdirs.len())?,
@@ -266,8 +203,8 @@ pub(super) fn dec_chunk(d: &mut Dec, rules: Option<&RuleSet>) -> R<Chunk> {
             2 => Mark::Excepted,
             _ => return bad("mark"),
         };
-        marks.push((entry, mark));
-    }
+        Ok((entry, mark))
+    })?;
     let status = match d.u8()? {
         0 => ChunkStatus::Ok,
         1 => ChunkStatus::Panicked(String::from_utf8_lossy(d.bytes()?).into_owned()),

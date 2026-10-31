@@ -497,6 +497,27 @@ fn kind_layout() {
     ));
 }
 
+/// Options go as a 0 or 1 tag before the value and lists as their length before the items;
+/// any other tag is the option's own error, and a count larger than the payload an error.
+#[test]
+fn option_and_list_layout() {
+    let mut e = Enc::default();
+    e.opt(None::<u8>, Enc::u8);
+    e.opt(Some(7), Enc::u8);
+    e.list(&[1, 2], |e, &x| e.u8(x));
+    assert_eq!(e.0, [0, 1, 7, 2, 1, 2]);
+    let mut d = Dec::new(&e.0);
+    assert_eq!(d.opt("x", Dec::u8).unwrap(), None);
+    assert_eq!(d.opt("x", Dec::u8).unwrap(), Some(7));
+    assert_eq!(d.list(1, Dec::u8).unwrap(), [1, 2]);
+    assert!(d.end().is_ok());
+    assert!(matches!(
+        Dec::new(&[2, 0]).opt("x", Dec::u8),
+        Err(WireError::Malformed("x"))
+    ));
+    assert!(Dec::new(&[3, 0, 0]).list(1, Dec::u8).is_err());
+}
+
 /// Protection states go as one byte each; an unknown byte is an error.
 #[test]
 fn protection_layout() {
