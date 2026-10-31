@@ -34,6 +34,7 @@ use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
 use cursor::Cursor;
 pub use cursor::Selection;
+use refresh::SortSchedule;
 
 /// Automatic re-sort after this long without input...
 pub const IDLE_BEFORE_SORT: Duration = Duration::from_millis(1500);
@@ -147,12 +148,7 @@ pub struct App {
     /// Nothing is deleted: the actions that delete are left out (`keys::Action::deletes`) and
     /// cleanup commands run only as dry runs.
     pub read_only: bool,
-    last_input: Instant,
-    last_sort: Instant,
-    sort_requested: bool,
-    /// The filter changed: its rows are needed before the next frame.
-    refilter_requested: bool,
-    changed_since_sort: bool,
+    sort_schedule: SortSchedule,
     /// The user moved the cursor in the current directory; re-sorts then follow the selected
     /// row instead of returning to the top.
     moved: bool,
@@ -217,12 +213,7 @@ impl App {
             outside: crate::model::outside::Outside::default(),
             sort_gen: 0,
             read_only: false,
-            // No key pressed yet counts as idle.
-            last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
-            last_sort: now,
-            sort_requested: true,
-            refilter_requested: false,
-            changed_since_sort: false,
+            sort_schedule: SortSchedule::new(now),
             moved: false,
             cursors: HashMap::new(),
             sel_hint: Cell::new(0),
@@ -248,13 +239,12 @@ impl App {
 
     /// True when an automatic re-sort is waiting for the user to be idle.
     pub fn sort_pending(&self) -> bool {
-        self.new_count > 0 || self.changed_since_sort
+        self.new_count > 0 || self.sort_schedule.changed()
     }
 
     /// When the run loop should wake for an automatic re-sort, if one is pending.
     pub fn next_sort_at(&self) -> Option<Instant> {
-        self.sort_pending()
-            .then(|| (self.last_input + IDLE_BEFORE_SORT).max(self.last_sort + MIN_SORT_INTERVAL))
+        self.sort_pending().then(|| self.sort_schedule.due_at())
     }
 
     /// True when the features need a read of the engine model for the next frame although no
@@ -277,12 +267,12 @@ impl App {
 
     /// Asks for an exact sort before the next frame.
     pub(crate) fn request_sort(&mut self) {
-        self.sort_requested = true;
+        self.sort_schedule.request_sort();
     }
 
     /// Asks for the rows of a changed filter before the next frame: those an exact sort gives.
     pub(crate) fn request_refilter(&mut self) {
-        self.refilter_requested = true;
+        self.sort_schedule.request_refilter();
     }
 
     /// Makes the order keep an exact sort of every entry the filter can show, unless it holds
@@ -295,7 +285,7 @@ impl App {
 
     /// Records user input at `now`: automatic re-sorts wait until the user is idle.
     pub(crate) fn note_input(&mut self, now: Instant) {
-        self.last_input = now;
+        self.sort_schedule.note_input(now);
     }
 
     /// Opens the error list read by the run loop for [`Effect::ShowErrors`].
