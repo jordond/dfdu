@@ -16,9 +16,12 @@ use dfdu_scan::PortableBackend;
 use dfdu_tree::NodeRef;
 
 mod common;
+use common::files::write;
 #[cfg(unix)]
-use common::files::{OLD, age, set_mtime, write};
-use common::journal::{answer, resume, resume_held, resume_since};
+use common::files::{OLD, age, set_mtime};
+#[cfg(unix)]
+use common::journal::{answer, resume_held};
+use common::journal::{resume, resume_since};
 use common::loaded::{find, loaded};
 use common::portable::{scanned, totals};
 use common::tempdir;
