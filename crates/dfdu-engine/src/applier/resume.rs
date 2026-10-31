@@ -12,6 +12,7 @@
 //! again stays refused to deletes ([`Applier::unverified`]).
 
 mod graft;
+mod reclassify;
 mod rescans;
 mod verify;
 mod walk;
@@ -26,8 +27,8 @@ use dfdu_tree::{Ix, Meta, NodeRef, Pages, Tree};
 use super::links::VISIBLE;
 use super::work::Work;
 use super::{Applier, Command, Job, JobKind, JobPhase, Model};
-use crate::reclassify::ClassifyLoaded;
 pub(in crate::applier) use graft::Grafted;
+use reclassify::ClassifyLoaded;
 use verify::Verify;
 pub(in crate::applier) use walk::ResumeWalk;
 

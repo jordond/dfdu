@@ -13,7 +13,6 @@ mod nanos;
 mod notes;
 mod outside;
 mod recent;
-mod reclassify;
 mod recommend;
 mod remote;
 mod runtime;
