@@ -19,7 +19,9 @@ use common::Recording;
 use crossbeam_channel::{Sender, unbounded};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
-use dfdu_tui::{ColorLevel, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Theme, UiOptions};
+use dfdu_tui::{
+    ColorLevel, IDLE_BEFORE_SORT, MAX_EASING_STEP, MIN_SORT_INTERVAL, Theme, UiOptions,
+};
 use ratatui::Terminal;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -244,7 +246,9 @@ fn palette_theme_after_mono_gets_the_terminal_colour_level() {
 
 /// Deletes the entry at the top of a settled browser, then checks that the animations that
 /// brings (the placeholder, the re-sort that drops it, the bars that grow) draw nothing more
-/// than 1 s after each step.
+/// than 1 s after each step. A frame drawn more than [`MAX_EASING_STEP`] after the one before
+/// eases the bars by only that much, so the second gets the time such stalls lost on top: on a
+/// loaded machine the loop can wake late without any animation running on.
 fn animations_finish(tx: Sender<Event>, frames: &Mutex<Frames>) {
     let before = count(frames);
     assert!(
@@ -290,20 +294,25 @@ fn animations_finish(tx: Sender<Event>, frames: &Mutex<Frames>) {
     let (at, n) = (f.at.clone(), f.at.len());
     drop(f);
     let late = |from: usize, to: usize| {
-        (from..to)
-            .filter(|&i| at[i] > at[from] + Duration::from_secs(1))
-            .map(|i| at[i] - at[from])
-            .collect::<Vec<_>>()
+        let mut stalled = Duration::ZERO;
+        let mut late = vec![];
+        for i in from + 1..to {
+            stalled += (at[i] - at[i - 1]).saturating_sub(MAX_EASING_STEP);
+            if at[i] > at[from] + Duration::from_secs(1) + stalled {
+                late.push((at[i] - at[from], stalled));
+            }
+        }
+        late
     };
     let after_delete = late(shown, resort);
     assert!(
         after_delete.is_empty(),
-        "frames more than 1 s after the delete was shown: {after_delete:?}"
+        "frames more than 1 s after the delete was shown (when, time lost to stalls): {after_delete:?}"
     );
     let after_resort = late(resort, n);
     assert!(
         after_resort.is_empty(),
-        "frames more than 1 s after the re-sort: {after_resort:?}"
+        "frames more than 1 s after the re-sort (when, time lost to stalls): {after_resort:?}"
     );
     drop(tx);
 }

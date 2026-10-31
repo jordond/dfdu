@@ -29,8 +29,9 @@ use crate::model::snapshot::{EntryData, Mark, Snapshot};
 const FRAME: Duration = Duration::from_millis(33);
 /// Time constant of the bar easing: a bar covers 1 - 1/e of the way to its target in this time.
 const TAU: f64 = 0.120;
-/// The longest step one frame eases by, so a frame drawn late does not make the bars jump.
-const MAX_STEP: Duration = Duration::from_millis(100);
+/// The longest step one frame eases by, so a frame drawn late does not make the bars jump. A
+/// frame that comes later than this after the last one stretches the easing by the difference.
+pub const MAX_STEP: Duration = Duration::from_millis(100);
 /// A bar this close to its target (a sixteenth of a cell of the widest bar, 24 cells) is drawn
 /// at the target and stops easing.
 const SNAP: f64 = 1.0 / (16.0 * 24.0);

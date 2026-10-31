@@ -38,7 +38,7 @@ dfdu-bench = { path = "crates/dfdu-bench" }
 dfdu-dupes = { path = "crates/dfdu-dupes" }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 clap = { version = "4.6.7", features = ["derive"] }
 clap_mangen = "0.3.3"
 clap_complete = "4.6.11"
@@ -64,16 +64,16 @@ gix-index = "0.58.0"
 gix-discover = "0.57.1"
 gix-hash = { version = "0.28.1", features = ["sha1"] }
 gix-path = "0.14.1"
-rusqlite = { version = "0.41.0", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 ruzstd = "0.9.1"
 fixedbitset = "0.5.7"
 tempfile = "3.27.0"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
 libc = "0.2.191"
-sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 rand = { version = "0.10.3", default-features = false, features = ["chacha"] }
 ratatui = "0.30.2"
-unicode-width = "0.2.2"
+unicode-width = "0.2.3"
 tachyonfx = { version = "0.25.2", default-features = false, features = ["std", "std-duration"] }
 nucleo-matcher = "0.3.1"
 terminal-colorsaurus = "1.0.3"
