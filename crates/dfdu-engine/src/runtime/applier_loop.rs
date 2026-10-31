@@ -12,7 +12,6 @@ use dfdu_scan::runtime::RealClock;
 use dfdu_scan::{Backend, Batch, Budget, Clock, ScanMsg, Shared};
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-use super::EngineOptions;
 use crate::applier::{Applier, ApplierSettings, Command, Model};
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::measure::{MeasureMsg, MeasureReq};
@@ -34,6 +33,8 @@ const WAIT_LATE: Duration = Duration::from_millis(6);
 pub(super) struct Channels {
     pub(super) cmd_rx: Receiver<Command>,
     pub(super) inbox_rx: Receiver<Batch>,
+    /// The byte budget the inbox's batches are released to as they are applied.
+    pub(super) budget: Arc<Budget>,
     pub(super) del_rx: Receiver<DeleterMsg>,
     pub(super) plans: Sender<DeleterReq>,
     pub(super) meas_rx: Receiver<Vec<MeasureMsg>>,
@@ -126,18 +127,22 @@ fn apply_inbox<B: Backend>(
     }
 }
 
+/// Runs the applier until `stop` is set or the engine is dropped. A stalled directory is
+/// abandoned after `auto_abandon`, when set; with `check_invariants` the model is checked after
+/// every slice.
 pub(super) fn applier_loop<B: Backend>(
     model: &RwLock<Model>,
     shared: Arc<Shared<B>>,
     settings: ApplierSettings,
     ch: Channels,
-    budget: &Budget,
     stop: &AtomicBool,
-    opts: &EngineOptions,
+    auto_abandon: Option<Duration>,
+    check_invariants: bool,
 ) {
     let Channels {
         cmd_rx,
         inbox_rx,
+        budget,
         del_rx,
         plans,
         meas_rx,
@@ -153,7 +158,7 @@ pub(super) fn applier_loop<B: Backend>(
     let mut meas: VecDeque<MeasureMsg> = VecDeque::new();
     let mut cur: Option<(VecDeque<ScanMsg>, usize)> = None;
     let mut cmds: VecDeque<Command> = VecDeque::new();
-    let auto_abandon = opts.auto_abandon.map(nanos);
+    let auto_abandon = auto_abandon.map(nanos);
     while !stop.load(SeqCst) {
         if !applier.has_work()
             && cur.is_none()
@@ -208,7 +213,7 @@ pub(super) fn applier_loop<B: Backend>(
             &mut g,
             &mut cur,
             &inbox_rx,
-            budget,
+            &budget,
             now,
             started,
         );
@@ -217,9 +222,7 @@ pub(super) fn applier_loop<B: Backend>(
         }
         applier.tick(&mut g, now, auto_abandon);
         applier.refresh_status(&mut g);
-        if opts.check_invariants
-            && let Err(e) = applier.check(&g)
-        {
+        if check_invariants && let Err(e) = applier.check(&g) {
             g.status.incomplete = true;
             g.status.notices.push(format!("invariant violated: {e}"));
         }

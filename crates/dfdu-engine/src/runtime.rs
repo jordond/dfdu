@@ -238,6 +238,7 @@ impl<B: Backend> Engine<B> {
         let chans = Channels {
             cmd_rx,
             inbox_rx,
+            budget,
             del_rx,
             plans: deleter.reqs,
             meas_rx,
@@ -251,7 +252,15 @@ impl<B: Backend> Engine<B> {
             let crash_dir = opts.crash_dir.clone();
             let model = m.clone();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                applier_loop(&m, sh, settings, chans, &budget, &st, &opts);
+                applier_loop(
+                    &m,
+                    sh,
+                    settings,
+                    chans,
+                    &st,
+                    opts.auto_abandon,
+                    opts.check_invariants,
+                );
             }));
             if let Err(p) = r {
                 // An applier panic is a bug. Record it where readers will see it, write a
