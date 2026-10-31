@@ -189,7 +189,7 @@ impl Cacher {
         }
         changed |= self.run_ended(&link, app, engine);
         changed |= self.save_ended(&link, app);
-        self.resave(&link, engine);
+        changed |= self.resave(&link, app, engine);
         changed
     }
 
@@ -303,18 +303,25 @@ impl Cacher {
         };
         let shown = app.cached.take().is_some();
         if worth {
-            self.save(link, engine, version);
+            return self.save(link, app, engine, version) | shown;
         }
         shown
     }
 
-    /// Saves the tree, at `version`, on a thread.
-    fn save<B: dfdu_scan::Backend>(&mut self, link: &CacheLink, engine: &Engine<B>, version: u64) {
+    /// Saves the tree, at `version`, on a thread. True when a thread could not be started,
+    /// which the status line says.
+    fn save<B: dfdu_scan::Backend>(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        engine: &Engine<B>,
+        version: u64,
+    ) -> bool {
         let Some(run) = &self.run else {
-            return;
+            return false;
         };
         let SavedAs::Save(full_scan) = run.saved_as else {
-            return;
+            return false;
         };
         let now = cache::now();
         let header = Header::new(
@@ -338,14 +345,38 @@ impl Cacher {
                 }
                 Ok(saved)
             });
-        if let Ok(thread) = spawned {
-            self.writer = Some(Writer {
-                thread,
-                cancel,
-                done,
-            });
-            self.saved = Some(version);
-            self.changed = None;
+        let writer = spawned.map(|thread| Writer {
+            thread,
+            cancel,
+            done,
+        });
+        self.save_started(link, app, version, writer)
+    }
+
+    /// Takes in the start of a save of the tree at `version`. A thread that could not be
+    /// started goes in the status line, and that version is not tried again: only a change to
+    /// the tree is saved again. True when the status line changed.
+    fn save_started(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        version: u64,
+        writer: std::io::Result<Writer>,
+    ) -> bool {
+        self.saved = Some(version);
+        self.changed = None;
+        match writer {
+            Ok(w) => {
+                self.writer = Some(w);
+                false
+            }
+            Err(e) => {
+                app.status = Some(format!(
+                    "cache {}: cannot start a thread: {e}",
+                    link.slot.path.display()
+                ));
+                true
+            }
         }
     }
 
@@ -379,31 +410,37 @@ impl Cacher {
     }
 
     /// Saves again a tree that changed since it was saved, once it has stayed the same for
-    /// [`RESAVE_QUIET`] and is still complete.
-    fn resave<B: dfdu_scan::Backend>(&mut self, link: &CacheLink, engine: &Engine<B>) {
+    /// [`RESAVE_QUIET`] and is still complete. True when the status line changed.
+    fn resave<B: dfdu_scan::Backend>(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        engine: &Engine<B>,
+    ) -> bool {
         let worth = self
             .run
             .as_ref()
             .is_some_and(|r| matches!(r.saved_as, SavedAs::Save(_)));
         if !worth || self.writer.is_some() {
-            return;
+            return false;
         }
         let Some((true, version)) = ended(engine) else {
             self.changed = None;
-            return;
+            return false;
         };
         if self.saved == Some(version) {
             self.changed = None;
-            return;
+            return false;
         }
         match self.changed {
             Some((v, since)) if v == version => {
                 if since.elapsed() >= RESAVE_QUIET {
-                    self.save(link, engine, version);
+                    return self.save(link, app, engine, version);
                 }
             }
             _ => self.changed = Some((version, Instant::now())),
         }
+        false
     }
 
     /// Something is being loaded, saved or waited for, so [`Cacher::poll`] has more to take
