@@ -49,7 +49,7 @@ pub use outside::{
     not_entered_lines, rel_text, tilde,
 };
 pub use recent::{Event, RECENT, Recent};
-pub use recommend::{Verdict, recommends, verdict};
+pub use recommend::{Verdict, verdict};
 pub use remote::{Connected, DEAD, RemoteIo, RemoteRules, agent, wire};
 pub use runtime::{Engine, EngineOptions, JournalQuery, WaitIdle, workers_for};
 pub use sizes::{SizeMode, human};

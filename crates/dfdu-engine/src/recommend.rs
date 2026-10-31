@@ -39,32 +39,25 @@ impl Verdict {
     }
 }
 
-/// Whether a match of `rule` is recommended for deletion: `safe` above the rule's minimum
-/// size, `regenerable` only when also unchanged for the rule's minimum age, never `review` or
-/// worse, nothing changed in the last 7 days, in use, tracked by version control
-/// or still being scanned. `size` is its disk usage, `age` the seconds since it last changed
-/// (now less its mtime).
-#[must_use]
-pub fn recommends(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -> bool {
-    verdict(rule, class, size, age, scanning).recommended()
-}
-
-/// What [`recommends`] decides, with the reason: the safety level first, then what is in use or
-/// tracked, the scan, the age and the size.
+/// Whether a match of `rule` is recommended for deletion, and why: `safe` above the rule's
+/// minimum size, `regenerable` only when also unchanged for the rule's minimum age, never
+/// `review` or worse, nothing changed in the last 7 days, in use, tracked by version control or
+/// still being scanned. The safety level is decided first, then what is in use or tracked, the
+/// scan, the age and the size. `size` is its disk usage, `age` the seconds since it last
+/// changed (now less its mtime).
 #[must_use]
 pub fn verdict(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -> Verdict {
     let days = |d: i64| age >= d * 86_400;
-    let c = &class;
-    let min_age = match c.safety {
+    let min_age = match class.safety {
         Safety::Safe => QUIET_DAYS,
         Safety::Regenerable => i64::from(rule.min_age_days).max(QUIET_DAYS),
         s => return Verdict::Level(s),
     };
-    if c.has(Class::IN_USE) {
+    if class.has(Class::IN_USE) {
         Verdict::InUse
-    } else if c.has(Class::VCS_TRACKED) {
+    } else if class.has(Class::VCS_TRACKED) {
         Verdict::Tracked
-    } else if c.has(Class::VCS_UNKNOWN) {
+    } else if class.has(Class::VCS_UNKNOWN) {
         Verdict::VcsUnknown
     } else if scanning {
         Verdict::Scanning
@@ -72,7 +65,7 @@ pub fn verdict(rule: &Rule, class: Class, size: u64, age: i64, scanning: bool) -
         Verdict::Newer(min_age)
     } else if size < rule.min_size {
         Verdict::Below(rule.min_size)
-    } else if c.safety == Safety::Safe {
+    } else if class.safety == Safety::Safe {
         Verdict::Safe
     } else {
         Verdict::Stale(min_age)
