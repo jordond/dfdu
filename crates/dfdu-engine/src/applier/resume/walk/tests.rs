@@ -2,7 +2,7 @@ use dfdu_tree::{Kind, Meta};
 
 use super::*;
 use crate::applier::resume::tests::{resumed, tree};
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// Taking a directory over gives it to the resume's job, registers its hard links, and keeps
 /// the mounts and subvolumes below the root, which are scanned again in full.

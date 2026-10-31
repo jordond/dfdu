@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_util::meta;
+use crate::test_support::meta;
 use dfdu_tree::{Kind, Totals};
 
 /// /r/{a/{x,y}, b/{z}} with 100-byte files; returns (tree, root, [x, y, z]).

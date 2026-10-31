@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use dfdu_engine::test_support::caches;
+
 use super::*;
 use crate::features::details::tests::{app_on, child, model};
-use crate::tests::caches::caches;
 use crate::theme::Theme;
 
 /// The names and sizes `largest` lists.

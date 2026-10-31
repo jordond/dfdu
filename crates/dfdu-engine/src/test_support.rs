@@ -1,12 +1,18 @@
 //! Helpers for the tests of this crate and of the crates above it (the `test-support` feature):
 //! a gate that holds threads until it is opened, a local mount as the mount table describes it,
-//! and a wide tree of about a million entries for the measurements of saving and opening scans.
+//! the nodes of a test tree built by hand, the user caches with caches of their own inside
+//! (`caches`), and a wide tree of about a million entries for the measurements of saving and
+//! opening scans.
+
+mod caches;
 
 use std::path::Path;
 use std::sync::{Condvar, Mutex, PoisonError};
 
 use dfdu_sys::{FsClass, MountInfo};
-use dfdu_tree::{DirState, Kind, Meta, NodeFlags, Tree};
+use dfdu_tree::{DirState, Ix, Kind, Meta, NodeFlags, Tree};
+
+pub use caches::{Caches, caches};
 
 /// A gate threads wait at until it is opened: a change journal or a filesystem call that
 /// answers late. `const` so that a test can hold one in a static, for a plain `fn` to wait at.
@@ -54,6 +60,48 @@ pub fn local_mount(fstype: &str, used: Option<u64>) -> MountInfo {
         used,
         total: used.map(|u| u * 3),
     }
+}
+
+/// The metadata of a node of a test tree: `size` bytes, apparent and allocated, on device 1.
+#[must_use]
+pub fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
+    Meta {
+        kind,
+        apparent: size,
+        alloc: size,
+        mtime: 0,
+        dev: 1,
+        ino,
+        nlink: 1,
+        mount: 0,
+    }
+}
+
+/// Adds directory `name` to `parent`, read to the end, its inode `ino`.
+///
+/// # Panics
+///
+/// When `parent` is not a directory of `t`.
+pub fn add_dir(t: &mut Tree, parent: Ix, name: &str, ino: u64) -> Ix {
+    let d = t.add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, ino));
+    let own = t.own(d);
+    t.propagate_add(d, &own);
+    t.dir_mut(d).expect("directory").state = DirState::Complete;
+    d
+}
+
+/// Adds file `name` of `size` bytes to `parent`, its inode `ino`, counted in the totals above.
+pub fn add_file(t: &mut Tree, parent: Ix, name: &str, size: u64, ino: u64) -> Ix {
+    let f = t.add_file(
+        parent,
+        name.as_bytes(),
+        &meta(Kind::File, size, ino),
+        false,
+        None,
+    );
+    let own = t.own(f);
+    t.propagate_add(parent, &own);
+    f
 }
 
 /// The tree of the directory `root`, its stat `meta`: `dirs` directories `dir-00000` and on,
@@ -107,7 +155,6 @@ mod tests {
     use std::thread;
 
     use super::*;
-    use crate::test_util::meta;
 
     #[test]
     fn a_gate_holds_its_waiters_until_opened() {
@@ -142,5 +189,18 @@ mod tests {
         let sizes: Vec<u64> = t.children(first).map(|f| t.raw_size(f).0).collect();
         assert_eq!(sizes, [0, 1000, 2000, 3000]);
         assert_eq!(t.total(r).alloc, 3 * 4 * 4096);
+    }
+
+    #[test]
+    fn added_nodes_count_in_the_totals_above() {
+        let mut t = Tree::new();
+        let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
+        let d = add_dir(&mut t, r, "d", 2);
+        let f = add_file(&mut t, d, "f", 300, 3);
+        assert!(t.dir(d).is_some_and(|d| d.state == DirState::Complete));
+        assert_eq!((t.name(d), t.name(f)), (&b"d"[..], &b"f"[..]));
+        assert_eq!(t.total(d).alloc, 300);
+        assert_eq!(t.total(r).alloc, 300);
+        assert_eq!(t.total(r).items, t.total(d).items + 1);
     }
 }

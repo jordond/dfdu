@@ -10,7 +10,7 @@
 //! Files, in its directory, and `d` deletes what is ticked.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
@@ -237,7 +237,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 }
 
 /// The nodes of the files the view lists, for `d` to act on its ticks only.
-pub fn listed(app: &App) -> std::collections::HashSet<NodeRef> {
+pub fn listed(app: &App) -> HashSet<NodeRef> {
     app.largest.files.iter().map(|f| f.node).collect()
 }
 

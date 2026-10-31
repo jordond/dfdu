@@ -4,6 +4,7 @@
 use std::fs;
 use std::time::{Duration, Instant};
 
+use dfdu_engine::test_support::{add_dir, add_file};
 use dfdu_engine::{Command, Engine, EngineOptions, Model, SizeMode};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::filetype::TypeFilter;
@@ -44,28 +45,12 @@ impl Fx {
 
     pub(crate) fn dir(&mut self, parent: Ix, name: &str) -> Ix {
         self.ino += 1;
-        let d = self
-            .m
-            .tree
-            .add_dir(parent, name.as_bytes(), &meta(Kind::Dir, 0, self.ino));
-        let own = self.m.tree.own(d);
-        self.m.tree.propagate_add(d, &own);
-        self.m.tree.dir_mut(d).expect("directory").state = DirState::Complete;
-        d
+        add_dir(&mut self.m.tree, parent, name, self.ino)
     }
 
     pub(crate) fn file(&mut self, parent: Ix, name: &str, size: u64) -> Ix {
         self.ino += 1;
-        let f = self.m.tree.add_file(
-            parent,
-            name.as_bytes(),
-            &meta(Kind::File, size, self.ino),
-            false,
-            None,
-        );
-        let own = self.m.tree.own(f);
-        self.m.tree.propagate_add(parent, &own);
-        f
+        add_file(&mut self.m.tree, parent, name, size, self.ino)
     }
 
     pub(crate) fn expand(&self, t: &mut TreeState, ix: Ix) {

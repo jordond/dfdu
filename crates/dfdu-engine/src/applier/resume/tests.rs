@@ -6,7 +6,7 @@ use dfdu_tree::{DirState, Kind};
 use super::rescans::kept_by_target;
 use super::*;
 use crate::applier::ApplierSettings;
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 mod cancel;
 

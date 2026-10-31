@@ -5,7 +5,7 @@ use super::*;
 use crate::applier::Command;
 use crate::applier::delete::tests::{rig, small};
 use crate::applier::test_util::Rig;
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// What the tree refuses: a mount point, a protected node, one holding mounts (counted in the
 /// message), one inside a read-only snapshot, and a snapshot without root.

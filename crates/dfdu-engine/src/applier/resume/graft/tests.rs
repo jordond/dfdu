@@ -2,7 +2,7 @@ use dfdu_scan::PortableBackend;
 use dfdu_tree::Kind;
 
 use super::*;
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 type A = Applier<PortableBackend>;
 

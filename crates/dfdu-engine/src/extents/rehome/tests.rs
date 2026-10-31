@@ -3,7 +3,7 @@ use dfdu_tree::Kind;
 use super::*;
 use crate::extents::Measurement;
 use crate::extents::tests::{alloc, tree};
-use crate::test_util::meta;
+use crate::test_support::meta;
 
 /// A pass over a table whose homes are all visible moves nothing, and one over an empty table
 /// ends at once.

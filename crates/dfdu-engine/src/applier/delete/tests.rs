@@ -40,7 +40,7 @@ fn problems_past_the_limit_are_counted_not_kept() {
     reason = "nodes named as in the fixture's diagram"
 )]
 pub(super) fn small() -> (Tree, [Ix; 3]) {
-    use crate::test_util::meta;
+    use crate::test_support::meta;
     let mut t = Tree::new();
     let r = t.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
     let f = t.add_file(r, b"f", &meta(Kind::File, 10, 2), false, None);

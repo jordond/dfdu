@@ -146,7 +146,7 @@ pub fn delete(app: &mut App, mode: Mode) -> Vec<Effect> {
         View::Files | View::Map => return confirm::open(app, mode),
         View::Largest => largest::listed(app),
         View::Cleanup => cleanup::listed(app),
-        View::Duplicates => dupes::listed(app).unwrap_or_default(),
+        View::Duplicates => dupes::listed(app),
     };
     let ticked = (app.marks.items().iter())
         .filter_map(|m| m.target.node)

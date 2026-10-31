@@ -10,7 +10,6 @@
 mod blocked;
 #[cfg(target_os = "linux")]
 mod btrfs;
-pub(crate) mod caches;
 mod columns;
 mod frames;
 mod matrix;
@@ -25,7 +24,8 @@ use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::Model;
-use dfdu_tree::{HostPath, Ix, Kind, Meta, Totals};
+pub(crate) use dfdu_engine::test_support::meta;
+use dfdu_tree::{HostPath, Ix, Kind, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
@@ -315,20 +315,6 @@ pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
-/// The metadata of a node of a test tree: `size` bytes, apparent and allocated, on device 1.
-pub(crate) fn meta(kind: Kind, size: u64, ino: u64) -> Meta {
-    Meta {
-        kind,
-        apparent: size,
-        alloc: size,
-        mtime: 0,
-        dev: 1,
-        ino,
-        nlink: 1,
-        mount: 0,
-    }
-}
-
 /// A model holding only the root `/r`, and the root.
 pub(crate) fn root_model() -> (Model, Ix) {
     let mut m = Model::default();
@@ -348,16 +334,7 @@ pub(crate) fn add_dir(m: &mut Model, parent: Ix, name: &str, ino: u64) -> Ix {
 
 /// Adds the file `name` of `size` bytes (inode `ino`) to `parent`, counted in its totals.
 pub(crate) fn add_file(m: &mut Model, parent: Ix, name: &str, size: u64, ino: u64) -> Ix {
-    let f = m.tree.add_file(
-        parent,
-        name.as_bytes(),
-        &meta(Kind::File, size, ino),
-        false,
-        None,
-    );
-    let own = m.tree.own(f);
-    m.tree.propagate_add(parent, &own);
-    f
+    dfdu_engine::test_support::add_file(&mut m.tree, parent, name, size, ino)
 }
 
 /// A snapshot of `/r` while it is scanned, holding `entries`, with its totals left at zero.
