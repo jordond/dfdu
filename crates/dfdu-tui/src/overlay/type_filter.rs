@@ -291,11 +291,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
 mod tests {
     use std::time::Instant;
 
-    use dfdu_tree::Kind;
+    use dfdu_tree::{Kind, Target};
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
-    use crate::model::snapshot::{self, Target};
+    use crate::model::snapshot;
     use crate::tests::{press, render};
     use crate::theme::Theme;
 

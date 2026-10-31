@@ -22,4 +22,7 @@ pub use ids::{DirId, JobId};
 pub use meta::{ErrKind, Kind, Meta, Subvol, Totals, WinStat, win_attr};
 pub use names::{name_bytes, name_bytes_wide, name_os};
 pub use pages::Pages;
-pub use tree::{Children, DirRec, DirState, FreedLink, Ix, NodeFlags, NodeRef, SEP, Tree};
+pub use tree::{
+    Children, DirRec, DirState, FreedLink, Ident, Ix, NodeFlags, NodeRef, SEP, Target, Tree,
+    find_path,
+};

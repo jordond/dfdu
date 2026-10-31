@@ -2,10 +2,10 @@
 //! and identity, the moves through the rows, and the way into and out of directories, which
 //! remembers the cursor of each directory left to restore it on the way back.
 
-use dfdu_tree::{HostPath, NodeRef};
+use dfdu_tree::{HostPath, NodeRef, Target};
 
 use super::App;
-use crate::model::snapshot::{EntryData, Target};
+use crate::model::snapshot::EntryData;
 
 /// The selected entry: its reference, plus name and identity to find it again after a rescan.
 #[derive(Clone, Debug)]

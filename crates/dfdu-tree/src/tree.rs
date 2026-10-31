@@ -8,6 +8,7 @@ mod extents;
 mod node;
 mod paths;
 mod refs;
+mod target;
 
 pub use dir::{Children, DirRec, DirState};
 use edit::FreeWork;
@@ -15,6 +16,7 @@ pub use edit::FreedLink;
 use node::Node;
 pub use node::NodeFlags;
 pub use refs::NodeRef;
+pub use target::{Ident, Target, find_path};
 
 const NONE: u32 = u32::MAX;
 

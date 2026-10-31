@@ -9,11 +9,11 @@
 use std::collections::{HashMap, HashSet};
 
 use dfdu_engine::{JobKind, JobPhase, Model};
-use dfdu_tree::{DirState, HostPath, Ix, NodeRef};
+use dfdu_tree::{DirState, HostPath, Ident, Ix, NodeRef, Target, find_path};
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::model::snapshot::{EntryData, Ident, Mark, Target, find_path};
+use crate::model::snapshot::{EntryData, Mark};
 use crate::theme::human;
 
 pub mod range;

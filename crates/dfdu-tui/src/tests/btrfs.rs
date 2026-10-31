@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, NativeBackend};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 
 use crate::app::{App, Effect, Overlay};
-use crate::model::snapshot::{self, Target};
+use crate::model::snapshot;
 use crate::tests::{press, render, select};
 use crate::theme::{Theme, human};
 
@@ -45,7 +46,7 @@ fn scan(root: &Path, journal: &Path) -> Engine<NativeBackend> {
 /// The browser showing `dir`, drawn 160 columns wide.
 fn show(e: &Engine<NativeBackend>, app: &mut App, dir: &Path, t: Instant) -> String {
     let mut target = e.read(|m| {
-        let ix = snapshot::find_path(&m.tree, &dir.into()).expect("directory in the tree");
+        let ix = dfdu_tree::find_path(&m.tree, &dir.into()).expect("directory in the tree");
         Target::of(&m.tree, ix)
     });
     let snap = e.read(|m| snapshot::build(m, &mut target, app.size_mode));
@@ -76,7 +77,7 @@ fn compressed_labels_and_quota_groups() {
     let random = line_with(&plain, "random.bin");
     assert!(!random.contains("compressed"), "{plain}");
     let quota = e.read(|m| {
-        let ix = snapshot::find_path(&m.tree, &f.join("sub").into()).unwrap();
+        let ix = dfdu_tree::find_path(&m.tree, &f.join("sub").into()).unwrap();
         m.subvols[&m.tree.node_ref(ix)].qgroup
     });
     if dfdu_sys::is_privileged() {

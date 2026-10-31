@@ -2,11 +2,10 @@
 //! followed by its files, the copy the keep rule keeps, and the copies the others are.
 
 use dfdu_dupes::{Candidate, Group};
-use dfdu_tree::{HostPath, Kind, NodeRef};
+use dfdu_tree::{HostPath, Ident, Kind, NodeRef, Target};
 
 use super::{Keep, found};
 use crate::app::App;
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 
 /// A row of the view: a group, or a file of one by its index in the group.

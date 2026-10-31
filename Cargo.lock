@@ -868,7 +868,6 @@ dependencies = [
  "dfdu-scan",
  "dfdu-sys",
  "dfdu-tree",
- "dfdu-tui",
  "parking_lot",
  "rand 0.10.3",
 ]

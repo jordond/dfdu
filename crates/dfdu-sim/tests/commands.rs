@@ -500,8 +500,8 @@ fn mark_on_replaced_file_is_gone_after_swap() {
         finish_jobs(sim);
         let t = &sim.model.tree;
         let (f, g) = (
-            dfdu_tui::Target::of(t, find(sim, "w/f")),
-            dfdu_tui::Target::of(t, find(sim, "w/g")),
+            dfdu_tree::Target::of(t, find(sim, "w/f")),
+            dfdu_tree::Target::of(t, find(sim, "w/g")),
         );
         let w = sim.spec.nodes[0].children[0];
         let kids = sim.spec.nodes[w as usize].children.clone();

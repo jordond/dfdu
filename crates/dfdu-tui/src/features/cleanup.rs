@@ -17,12 +17,11 @@ use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
 use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
+use dfdu_tree::{Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Target, Totals, now_secs};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
-use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
 use crate::theme::human;
 

@@ -47,7 +47,7 @@ pub use features::debug::summary as debug_summary;
 pub use features::picker::{Picked, Picker};
 pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
-pub use model::snapshot::{Snapshot, Target};
+pub use model::snapshot::Snapshot;
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings, theme_dir};
 pub use theme::{Bars, BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};

@@ -333,7 +333,7 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
             let node = match app.extras.dupes.get(&c.path) {
                 Some(Some(n)) => m.tree.resolve_visible(*n).map(|_| *n),
                 Some(None) => None,
-                None => crate::model::snapshot::find_path(&m.tree, &HostPath::local(&c.path))
+                None => dfdu_tree::find_path(&m.tree, &HostPath::local(&c.path))
                     .filter(|&ix| m.tree.dev_ino(ix) == c.dev_ino)
                     .map(|ix| m.tree.node_ref(ix)),
             };

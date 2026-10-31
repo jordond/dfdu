@@ -2,14 +2,14 @@ use std::time::Instant;
 
 use dfdu_engine::{Model, SizeMode};
 use dfdu_scan::Budget;
-use dfdu_tree::{DirState, ErrKind, Ix, Meta, NodeFlags, Tree};
+use dfdu_tree::{DirState, ErrKind, Ix, Meta, NodeFlags, Target, Tree};
 use ratatui::crossterm::event::KeyCode;
 
 use super::read::read_within;
 use super::*;
 use crate::features::debug::Counters;
 use crate::model::extras;
-use crate::model::snapshot::{self, Mark, Target};
+use crate::model::snapshot::{self, Mark};
 use crate::tests::{assert_cue, press, render, render_buffer};
 use crate::theme::Theme;
 

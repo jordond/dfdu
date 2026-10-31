@@ -18,13 +18,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command, ErrorList, SizeMode};
-use dfdu_tree::HostPath;
+use dfdu_tree::{HostPath, Target};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
 use crate::input::mouse;
 use crate::model::extras::Extras;
-use crate::model::snapshot::{EntryData, Snapshot, Target};
+use crate::model::snapshot::{EntryData, Snapshot};
 
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::motion::Motion;

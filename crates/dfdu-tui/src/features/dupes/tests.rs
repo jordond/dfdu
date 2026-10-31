@@ -3,11 +3,12 @@ use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
 use super::*;
-use crate::model::snapshot::{self, Target};
+use crate::model::snapshot;
 use crate::tests::{press, render};
 use crate::theme::Theme;
 

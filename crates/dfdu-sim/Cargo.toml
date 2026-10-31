@@ -19,6 +19,3 @@ dfdu-engine.workspace = true
 dfdu-clean.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-
-[dev-dependencies]
-dfdu-tui.workspace = true

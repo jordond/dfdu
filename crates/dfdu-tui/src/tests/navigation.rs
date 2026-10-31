@@ -13,7 +13,7 @@ use super::{
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect};
 use crate::features::treemap::tests::sync;
-use crate::model::snapshot::{self, test_entry};
+use crate::model::snapshot::test_entry;
 use crate::theme::Theme;
 
 fn ctrl(c: char) -> KeyEvent {
@@ -128,7 +128,7 @@ fn paths_of_another_kind_of_host_are_shown_and_found_as_they_are() {
     let dir = (m.tree).add_dir(root, name.as_bytes(), &meta(Kind::Dir, 0, 2));
     let path = HostPath::new(host, want.as_bytes().to_vec());
     assert_eq!(m.tree.host_path(dir), path);
-    assert_eq!(snapshot::find_path(&m.tree, &path), Some(dir));
+    assert_eq!(dfdu_tree::find_path(&m.tree, &path), Some(dir));
 
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
