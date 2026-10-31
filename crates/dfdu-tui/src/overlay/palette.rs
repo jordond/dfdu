@@ -4,7 +4,6 @@
 //! Settings without a key (the theme) follow the actions.
 
 use std::cell::Cell;
-use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
@@ -122,7 +121,7 @@ pub fn open(app: &mut App) {
 
 /// Typing searches; `↑`/`↓`/`PgUp`/`PgDn` move, `Enter` closes the palette and runs the entry,
 /// `Esc` closes it.
-pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
+pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let page = super::list_page(app);
     let Overlay::Palette(p) = &mut app.overlay else {
         return Vec::new();
@@ -141,7 +140,7 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
                 .map(|&(i, _)| p.entries[i].run.clone());
             app.overlay = Overlay::None;
             return match run {
-                Some(run) => run_entry(app, run, now),
+                Some(run) => run_entry(app, run),
                 None => Vec::new(),
             };
         }
@@ -151,10 +150,10 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
     Vec::new()
 }
 
-fn run_entry(app: &mut App, run: Run, now: Instant) -> Vec<Effect> {
+fn run_entry(app: &mut App, run: Run) -> Vec<Effect> {
     app.status = None;
     match run {
-        Run::Action(a) => keys::run(app, a, now),
+        Run::Action(a) => keys::run(app, a),
         Run::Theme(name) => {
             if let Some(theme) = Theme::named(&name, app.color_level, app.background) {
                 let bars = app.theme.bars;
@@ -246,6 +245,8 @@ fn entry_line(app: &App, e: &Entry, indices: &[u32], width: usize) -> Line<'stat
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::{Color, Modifier};
 

@@ -146,7 +146,7 @@ fn click_list(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> 
     }
     if line == entries && new_row {
         app.mouse.last_click = None;
-        return Some(keys::run(app, Action::Resort, now));
+        return Some(keys::run(app, Action::Resort));
     }
     None
 }
@@ -168,7 +168,7 @@ fn click_row(app: &mut App, row: usize, x: u16, now: Instant) -> Vec<Effect> {
         app.mouse.last_click = None;
         // The selection may have moved since the first click; open the row clicked.
         app.move_to(row);
-        return keys::run(app, Action::Enter, now);
+        return keys::run(app, Action::Enter);
     }
     app.mouse.last_click = Some((now, node));
     app.move_to(row);

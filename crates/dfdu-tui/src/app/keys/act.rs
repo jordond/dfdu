@@ -1,8 +1,6 @@
 //! Carrying out the actions of the registry on the list ([`run`]), with those that take more
 //! than a line on their own.
 
-use std::time::Instant;
-
 use dfdu_engine::{Command, Mode, SizeMode};
 
 use super::{Action, READ_ONLY, first_key};
@@ -16,7 +14,7 @@ use crate::state::{filter, marks, tree};
 
 /// Carries out `a` on the list (no overlay open) and returns the effects for the run loop. In a
 /// read-only browser an action that deletes only says so.
-pub fn run(app: &mut App, a: Action, _now: Instant) -> Vec<Effect> {
+pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
     let mut fx = Vec::new();
     if app.read_only && a.deletes() {
         app.status = Some(READ_ONLY.into());
@@ -192,6 +190,8 @@ fn toggle_size(app: &mut App, mode: SizeMode) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use dfdu_engine::UndoInfo;
 
     use super::*;
@@ -274,11 +274,11 @@ mod tests {
 
     #[test]
     fn a_read_only_browser_only_says_it_deletes_nothing() {
-        let (mut app, t0) = browser();
+        let (mut app, _) = browser();
         app.read_only = true;
         for a in [Action::Trash, Action::DeletePermanent, Action::Undo] {
             app.status = None;
-            assert!(run(&mut app, a, t0).is_empty(), "{a:?}");
+            assert!(run(&mut app, a).is_empty(), "{a:?}");
             assert_eq!(app.status.as_deref(), Some(READ_ONLY));
             assert!(matches!(app.overlay, Overlay::None));
         }
@@ -286,8 +286,8 @@ mod tests {
 
     #[test]
     fn undo_puts_back_the_last_plan_once() {
-        let (mut app, t0) = browser();
-        assert!(run(&mut app, Action::Undo, t0).is_empty());
+        let (mut app, _) = browser();
+        assert!(run(&mut app, Action::Undo).is_empty());
         assert_eq!(app.status.as_deref(), Some("nothing to undo"));
         app.snap.undo = Some(UndoInfo {
             plan: 7,
@@ -295,7 +295,7 @@ mod tests {
             items: 2,
             bytes: 1 << 20,
         });
-        let fx = run(&mut app, Action::Undo, t0);
+        let fx = run(&mut app, Action::Undo);
         assert!(matches!(fx[..], [Effect::Send(Command::Undo { plan: 7 })]));
         assert_eq!(
             app.status.as_deref(),
@@ -303,18 +303,18 @@ mod tests {
         );
         // While it runs, not again.
         app.snap.undoing = true;
-        assert!(run(&mut app, Action::Undo, t0).is_empty());
+        assert!(run(&mut app, Action::Undo).is_empty());
     }
 
     #[test]
     fn rescan_takes_the_selected_directory_or_the_one_shown() {
-        let (mut app, t0) = browser();
+        let (mut app, _) = browser();
         let library = app.snap.entries[0].node;
-        let fx = run(&mut app, Action::Rescan, t0);
+        let fx = run(&mut app, Action::Rescan);
         assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == library));
         app.move_to(1);
         let dir = app.snap.dir_node.expect("the directory shown");
-        let fx = run(&mut app, Action::Rescan, t0);
+        let fx = run(&mut app, Action::Rescan);
         assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == dir));
         assert_eq!(app.status.as_deref(), Some("rescan requested"));
     }

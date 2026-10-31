@@ -321,7 +321,7 @@ impl App {
             Overlay::Help(_) => return help::key(self, k),
             Overlay::Errors { .. } => return error_list::key(self, k),
             Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
-            Overlay::Palette { .. } => return palette::key(self, k, now),
+            Overlay::Palette { .. } => return palette::key(self, k),
             Overlay::Types(_) => return type_filter::key(self, k),
             Overlay::MarkPattern(_) => return mark_pattern::key(self, k),
         }
@@ -329,7 +329,7 @@ impl App {
             return filter::key(self, k, now);
         }
         if crate::features::marks_pane::is_open(self)
-            && let Some(fx) = crate::features::marks_pane::key(self, &k, now)
+            && let Some(fx) = crate::features::marks_pane::key(self, &k)
         {
             return fx;
         }
@@ -350,7 +350,7 @@ impl App {
         }
         self.status = None;
         match keys::action_for(&k) {
-            Some(a) => keys::run(self, a, now),
+            Some(a) => keys::run(self, a),
             None => Vec::new(),
         }
     }

@@ -15,7 +15,6 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
-use std::time::Instant;
 
 use crate::app::keys::{self, Action, first_key};
 use crate::app::{App, Effect};
@@ -127,7 +126,7 @@ pub const INVERT_KEY: char = '*';
 /// Handles a key while the pane is open; `None` passes it on to the list. Keys are read
 /// through [`keys::ACTIONS`], so the list's bindings move the cursor here, except
 /// [`INVERT_KEY`], which only this pane has.
-pub fn key(app: &mut App, k: &KeyEvent, now: Instant) -> Option<Vec<Effect>> {
+pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let page = page(app) as isize;
     let mut fx = Vec::new();
     let action = if k.code == KeyCode::Char(INVERT_KEY) {
@@ -159,7 +158,7 @@ pub fn key(app: &mut App, k: &KeyEvent, now: Instant) -> Option<Vec<Effect>> {
                 let space = first_key(Action::ToggleMark);
                 app.status = Some(format!("nothing is marked: {space} in the list marks"));
             } else {
-                fx = keys::run(app, a, now);
+                fx = keys::run(app, a);
             }
         }
         _ => return None,
