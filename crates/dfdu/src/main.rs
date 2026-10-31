@@ -9,22 +9,9 @@ use dfdu_scan::JobOptions;
 use dfdu_tree::filetype::TypeFilter;
 use dfdu_tui::{Bars, ColorLevel};
 
-/// `println!` that ends the process quietly when stdout is closed (`dfdu scan | head`), instead
-/// of panicking.
-macro_rules! outln {
-    ($($t:tt)*) => {{
-        use std::io::Write as _;
-        if let Err(e) = writeln!(std::io::stdout(), $($t)*)
-            && e.kind() == std::io::ErrorKind::BrokenPipe
-        {
-            std::process::exit(0);
-        }
-    }};
-}
-
 /// What writing the output on stdout ends the command with: nothing when it was written, a
-/// quiet success when stdout was closed (`dfdu ... | head`, as [`outln!`] does), and exit code
-/// 1 with the error otherwise.
+/// quiet success when stdout was closed (`dfdu ... | head`), and exit code 1 with the error
+/// otherwise.
 fn written<T>(r: std::io::Result<T>) -> Result<T, ExitCode> {
     written_to(&"writing the output", r)
 }
@@ -50,7 +37,6 @@ fn written_to<T>(what: &dyn std::fmt::Display, r: std::io::Result<T>) -> Result<
     }
 }
 
-// After `outln!`, which they use.
 mod browse;
 mod cache;
 mod clean;
@@ -407,7 +393,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     let rules = || RuleArgs::default().load().ok_or(ExitCode::from(1));
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan::run(args),
-        Some(Cmd::Disks) => Ok(disks::run()),
+        Some(Cmd::Disks) => disks::run(),
         Some(Cmd::Report(args)) => report::run(&args, &rules()?),
         Some(Cmd::Clean(args)) => clean::run(&args, &rules()?),
         Some(Cmd::Diff(args)) => history::diff(&args),
@@ -415,7 +401,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         Some(Cmd::Dupes(args)) => dupes::run(&args),
         Some(Cmd::Export(args)) => transfer::export(&args),
         Some(Cmd::Import(args)) => transfer::import(&args),
-        Some(Cmd::Recover(args)) => Ok(recover::run(args)),
+        Some(Cmd::Recover(args)) => recover::run(args),
         Some(Cmd::Cache(cmd)) => cache::run(&cmd),
         Some(Cmd::Man { dir }) => Ok(man(&dir)),
         Some(Cmd::Agent { threads, protocols }) => Ok(remote::agent(threads, protocols)),
@@ -427,7 +413,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         // Piped: what `dfdu disks` or `dfdu scan PATH` prints.
         None if !std::io::stdout().is_terminal() => {
             if cli.disks {
-                return Ok(disks::run());
+                return disks::run();
             }
             scan::run(scan::ScanArgs {
                 path: cli.path.unwrap_or_else(|| PathBuf::from(".")),
@@ -447,6 +433,17 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_write_exits_1_and_a_closed_pipe_quietly() {
+        let fail = |kind: std::io::ErrorKind| written::<()>(Err(kind.into()));
+        assert_eq!(
+            fail(std::io::ErrorKind::StorageFull),
+            Err(ExitCode::from(1))
+        );
+        assert_eq!(fail(std::io::ErrorKind::BrokenPipe), Err(ExitCode::SUCCESS));
+        assert_eq!(written(Ok(7)), Ok(7));
+    }
 
     #[test]
     fn theme_and_color_flags_parse() {

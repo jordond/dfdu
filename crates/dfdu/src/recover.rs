@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 
-use crate::EXIT_DELETE_FAILED;
+use crate::{EXIT_DELETE_FAILED, print_out};
 
 #[derive(Args)]
 pub struct RecoverArgs {
@@ -27,16 +27,16 @@ pub struct RecoverArgs {
 
 /// `dfdu recover`: lists the unfinished items, numbered from 1, then does what was asked
 /// for each, highest number first so the numbers stay valid.
-pub fn run(args: RecoverArgs) -> ExitCode {
+pub fn run(args: RecoverArgs) -> Result<ExitCode, ExitCode> {
     let Some(dir) = args.journals.or_else(dfdu_sys::dirs::journal_dir) else {
         eprintln!("dfdu: no state directory for the deletion journal");
-        return ExitCode::from(1);
+        return Err(ExitCode::from(1));
     };
     let mut r = match dfdu_clean::recover::scan(&dir) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("dfdu: {}: {e}", dir.display());
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     for n in &r.notes {
@@ -50,18 +50,21 @@ pub fn run(args: RecoverArgs) -> ExitCode {
         .chain(args.dismiss.iter().map(|&n| (n, "dismiss")))
         .collect();
     if todo.is_empty() {
-        if r.items.is_empty() {
-            outln!("nothing unfinished");
-        }
-        for (i, u) in r.items.iter().enumerate() {
-            outln!("{:>3}  {}", i + 1, u.describe());
-        }
-        return ExitCode::SUCCESS;
+        print_out(|w| {
+            if r.items.is_empty() {
+                return writeln!(w, "nothing unfinished");
+            }
+            for (i, u) in r.items.iter().enumerate() {
+                writeln!(w, "{:>3}  {}", i + 1, u.describe())?;
+            }
+            Ok(())
+        })?;
+        return Ok(ExitCode::SUCCESS);
     }
     todo.sort_by_key(|&(n, _)| std::cmp::Reverse(n));
     if todo.windows(2).any(|w| w[0].0 == w[1].0) {
         eprintln!("dfdu: an item is named twice");
-        return ExitCode::from(2);
+        return Err(ExitCode::from(2));
     }
     let mut failed = false;
     for (n, what) in todo {
@@ -79,16 +82,16 @@ pub fn run(args: RecoverArgs) -> ExitCode {
             _ => r.dismiss(i).map(|()| format!("{path}: dismissed")),
         };
         match res {
-            Ok(msg) => outln!("{msg}"),
+            Ok(msg) => print_out(|w| writeln!(w, "{msg}"))?,
             Err(e) => {
                 eprintln!("dfdu: {path}: {e}");
                 failed = true;
             }
         }
     }
-    if failed {
+    Ok(if failed {
         ExitCode::from(EXIT_DELETE_FAILED)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }

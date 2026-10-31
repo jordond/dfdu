@@ -47,12 +47,15 @@ pub fn run(cmd: &CacheCmd) -> Result<ExitCode, ExitCode> {
         CacheCmd::List => list(&cache),
         CacheCmd::Clear => match cache.clear() {
             Ok(r) => {
-                outln!(
-                    "removed {} cached scan{} ({})",
-                    r.files,
-                    if r.files == 1 { "" } else { "s" },
-                    dfdu_engine::human(r.bytes)
-                );
+                print_out(|w| {
+                    writeln!(
+                        w,
+                        "removed {} cached scan{} ({})",
+                        r.files,
+                        if r.files == 1 { "" } else { "s" },
+                        dfdu_engine::human(r.bytes)
+                    )
+                })?;
                 Ok(ExitCode::SUCCESS)
             }
             Err(e) => {

@@ -1,33 +1,38 @@
 //! `dfdu disks`: the mounted filesystems with their size and free space.
 
 use std::fmt::Write as _;
+use std::io;
 use std::process::ExitCode;
 
+use crate::print_out;
+
 /// `dfdu disks`: one line per filesystem, like `df -h`.
-pub fn run() -> ExitCode {
+pub fn run() -> Result<ExitCode, ExitCode> {
     let list = match dfdu_sys::disks(dfdu_sys::DISK_TIMEOUT) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("dfdu: cannot list disks: {e}");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
+    print_out(|w| table(w, &list))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Writes `list` to `w`, a header and one line per filesystem.
+fn table(w: &mut dyn io::Write, list: &[dfdu_sys::Disk]) -> io::Result<()> {
     let width = list
         .iter()
         .map(|d| d.mount_point.as_os_str().len())
         .max()
         .unwrap_or(0)
         .clamp(10, 40);
-    outln!(
+    writeln!(
+        w,
         "{:<width$}  {:<8} {:>10} {:>10} {:>10}  {:>4}",
-        "MOUNTED ON",
-        "TYPE",
-        "SIZE",
-        "USED",
-        "FREE",
-        "USE%"
-    );
-    for d in &list {
+        "MOUNTED ON", "TYPE", "SIZE", "USED", "FREE", "USE%"
+    )?;
+    for d in list {
         let mut line = format!("{:<width$}  {:<8}", d.mount_point.display(), d.fstype);
         match d.space {
             Some(s) => {
@@ -64,7 +69,7 @@ pub fn run() -> ExitCode {
                 .collect();
             let _ = write!(line, "  shares space with {}", others.join(", "));
         }
-        outln!("{line}");
+        writeln!(w, "{line}")?;
     }
-    ExitCode::SUCCESS
+    Ok(())
 }

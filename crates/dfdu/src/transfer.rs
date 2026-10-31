@@ -11,7 +11,7 @@ use dfdu_tree::filetype::TypeFilter;
 
 use crate::launch::{self, Local};
 use crate::table::{print_by_type, print_tree, shown_total};
-use crate::{EXIT_PARTIAL, MountArgs, remote, written_to};
+use crate::{EXIT_PARTIAL, MountArgs, print_out, remote, written_to};
 
 #[derive(Args)]
 pub struct ExportArgs {
@@ -112,19 +112,19 @@ pub fn import(args: &ImportArgs) -> Result<ExitCode, ExitCode> {
     };
     let total = m.tree.total(im.root);
     let filter = args.types.as_ref();
-    if args.bytes {
-        outln!("{}", mode.of(&shown_total(&m.tree, im.root, filter)));
-    } else {
-        print_tree(&m, im.root, args.depth, args.top, mode, filter);
-        if args.by_type {
-            print_by_type(&m.tree, im.root, mode, filter);
+    print_out(|w| {
+        if args.bytes {
+            return writeln!(w, "{}", mode.of(&shown_total(&m.tree, im.root, filter)));
         }
-        let by = im
-            .written_by
-            .map(|w| format!(", written by {w}"))
+        print_tree(w, &m, im.root, args.depth, args.top, mode, filter)?;
+        if args.by_type {
+            print_by_type(w, &m.tree, im.root, mode, filter)?;
+        }
+        let by = (im.written_by.as_ref())
+            .map(|by| format!(", written by {by}"))
             .unwrap_or_default();
-        outln!("{} entries{by}", im.entries);
-    }
+        writeln!(w, "{} entries{by}", im.entries)
+    })?;
     Ok(if total.errors > 0 {
         ExitCode::from(EXIT_PARTIAL)
     } else {
