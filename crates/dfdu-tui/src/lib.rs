@@ -7,8 +7,9 @@
 //! feature has its own module with its state, keys and drawing: the views and panels beside the
 //! list in `features`, and the overlays drawn over it in `overlay`. The state of the list's rows
 //! is in `state`, the text input, the mouse and fuzzy matching in `input`, and what is read from
-//! outside the UI (the engine model, the scan history and cache, this machine) in `model`. Each
-//! of these lists its modules.
+//! outside the UI (the engine model, the scan history and cache, the mounts outside the scan) in
+//! `model`; only the duplicates comparison and the disk picker read files and disks themselves.
+//! Each of these lists its modules.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
