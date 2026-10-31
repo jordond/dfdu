@@ -17,7 +17,7 @@
 mod draw;
 mod fill;
 mod glyph;
-pub mod layout;
+pub(crate) mod layout;
 mod paint;
 mod place;
 mod tile;
@@ -473,7 +473,7 @@ pub fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     select_top(app, top);
     if again {
         app.treemap.last_click = None;
-        return Some(keys::run(app, Action::Enter, now));
+        return Some(keys::run(app, Action::Enter));
     }
     app.treemap.last_click = Some((now, node));
     Some(Vec::new())

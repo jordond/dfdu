@@ -112,7 +112,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 
 /// Scrolls the pane by `delta` lines, focused or not (the mouse wheel over it). False when the
 /// pane is not shown, so the caller can move the list instead.
-pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
+pub fn scroll(app: &mut App, delta: i32) -> bool {
     if marks_pane::is_open(app) {
         return marks_pane::scroll(app, delta);
     }

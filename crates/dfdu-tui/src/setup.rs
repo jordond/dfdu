@@ -120,6 +120,21 @@ pub(crate) fn restore_terminal(mouse: bool) {
     let _ = execute!(io::stdout(), cursor::Show);
 }
 
+/// Restores the terminal ([`restore_terminal`]) when dropped, so that every way out of the
+/// browser leaves it as it was. On a panic the hook has restored it already.
+pub(crate) struct Restore {
+    /// Mouse capture was turned on, or tried.
+    pub(crate) mouse: bool,
+}
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            restore_terminal(self.mouse);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;

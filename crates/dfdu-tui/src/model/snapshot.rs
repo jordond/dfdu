@@ -290,8 +290,8 @@ pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
 
 /// `build` counting only the files `types` matches (none left out when it is empty), and with
 /// the directory's [`Breakdown`] when `breakdown` is set. Both walk the directory's subtree.
-/// With `tree` set (tree mode), the rows of the expanded directories follow the directory's
-/// own entries ([`tree::expand`]).
+/// With `tree_state` set (tree mode), the rows of the expanded directories follow the
+/// directory's own entries ([`tree::expand`]).
 pub fn build_view(
     m: &Model,
     target: &mut Target,

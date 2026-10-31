@@ -197,7 +197,7 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
                     && !app.snap.entries[only].pseudo
                 {
                     app.select(0);
-                    return crate::app::keys::run(app, crate::app::keys::Action::Enter, now);
+                    return crate::app::keys::run(app, crate::app::keys::Action::Enter);
                 }
             }
             Edit::Cancel => {

@@ -69,7 +69,7 @@ pub fn list(args: HistoryArgs) -> Result<ExitCode, ExitCode> {
             writeln!(
                 w,
                 "{}  {:>10}  {:>9} entries{}  {}",
-                history::date_time(s.finished_at),
+                dfdu_tree::date_time(s.finished_at),
                 dfdu_engine::human(s.total.disk),
                 s.total.entries,
                 if s.complete { "" } else { " (partial)" },
@@ -260,7 +260,7 @@ fn shown_path(root: &Path, rel: &[u8]) -> String {
 
 fn label(s: &Side) -> String {
     match s.at {
-        Some(at) => format!("{} of {}", s.source, history::date_time(at)),
+        Some(at) => format!("{} of {}", s.source, dfdu_tree::date_time(at)),
         None => s.source.clone(),
     }
 }

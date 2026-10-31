@@ -4,8 +4,8 @@
 //! feature's module), and last lets motion effects work on the finished buffer. `empty` draws
 //! the box a view shows when it has nothing to show.
 
-pub mod columns;
-pub mod empty;
+pub(crate) mod columns;
+pub(crate) mod empty;
 mod footer;
 mod header;
 mod list;

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dfdu_scan::JobOptions;
-use dfdu_tree::{Ix, Totals, Tree, civil_from_days};
+use dfdu_tree::{Ix, Totals, Tree};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 mod diff;
@@ -165,25 +165,6 @@ pub fn options_key(job: &JobOptions, measured: bool) -> String {
         ..
     } = job;
     format!("cross_mounts={cross_mounts} network={network} measured={measured}")
-}
-
-/// Seconds since the Unix epoch as a UTC date ("2026-10-18").
-#[must_use]
-pub fn day(secs: i64) -> String {
-    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// Seconds since the Unix epoch as a UTC date and time ("2026-10-24 09:42 UTC").
-#[must_use]
-pub fn date_time(secs: i64) -> String {
-    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
-    let rem = secs.rem_euclid(86_400);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02} UTC",
-        rem / 3600,
-        rem % 3600 / 60
-    )
 }
 
 /// An earlier scan's directory sizes, to show what grew since.

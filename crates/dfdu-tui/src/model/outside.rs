@@ -66,6 +66,15 @@ impl Outside {
             || self.linked.as_ref().is_some_and(|l| l.get().is_none())
     }
 
+    /// Holds the lookup of the links out of the scan, run on a thread when `started`. Without
+    /// one nothing is looked up, so none are found.
+    fn look_up_linked(&mut self, lock: Arc<OnceLock<Vec<Linked>>>, started: bool) {
+        if !started {
+            let _ = lock.set(Vec::new());
+        }
+        self.linked = Some(lock);
+    }
+
     /// Records `info` for the mount at `path`, as a lookup would.
     #[cfg(test)]
     pub fn set_mount(&mut self, path: HostPath, info: Option<MountInfo>) {
@@ -120,12 +129,12 @@ pub fn request(app: &mut App) {
         let (rules, root) = (rules.clone(), app.snap.root_path.to_local());
         let lock: Arc<OnceLock<Vec<Linked>>> = Arc::default();
         let set = lock.clone();
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("dfdu-links".into())
             .spawn(move || {
                 let _ = set.set(dfdu_rules::linked_outside(&rules, &root));
             });
-        o.linked = Some(lock);
+        o.look_up_linked(lock, spawned.is_ok());
     }
 }
 

@@ -4,12 +4,11 @@
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
 //! `view`, with the styles in `theme` and the text for sizes, counts and bars in `format`. Each
-//! feature has its own module with its state, keys and drawing: the views and panels in
-//! `features` (`treemap`, `cleanup`, `dupes`, `details`, `debug` and the disk `picker`); the
-//! overlays in `overlay` (`help`, `error_list`, `confirm`, `palette` and `type_filter`); and the
-//! rows' `marks`, `filter`, `order` and `motion` in `state`. `input` holds the text input, the
-//! mouse and fuzzy matching; `model` what is read from outside the UI: the engine model, the
-//! scan history (`history_link`, `growth`) and this machine (`outside`).
+//! feature has its own module with its state, keys and drawing: the views and panels beside the
+//! list in `features`, and the overlays drawn over it in `overlay`. The state of the list's rows
+//! is in `state`, the text input, the mouse and fuzzy matching in `input`, and what is read from
+//! outside the UI (the engine model, the scan history and cache, this machine) in `model`. Each
+//! of these lists its modules.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -188,10 +187,10 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     }
     let mut terminal = ratatui::try_init()?;
     let mouse = ui.mouse;
+    let restore = setup::Restore { mouse };
     restore_on_panic(mouse);
-    if mouse && let Err(e) = execute!(io::stdout(), EnableMouseCapture) {
-        setup::restore_terminal(mouse);
-        return Err(e);
+    if mouse {
+        execute!(io::stdout(), EnableMouseCapture)?;
     }
     let read_only = opts.engine.read_only;
     let ui_opts = |theme: Theme, history: Option<HistoryLink>, local: bool| UiOptions {
@@ -224,11 +223,11 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                 home: dfdu_engine::home_dir(),
                 ..ui_opts(theme, None, false)
             };
-            return browse(&mut terminal, engine, ui);
+            return browse(&mut terminal, restore, engine, ui);
         }
         Source::Remote { engine, path, job } => {
             engine.send(Command::Scan { path, opts: job });
-            return browse(&mut terminal, engine, ui_opts(theme, None, false));
+            return browse(&mut terminal, restore, engine, ui_opts(theme, None, false));
         }
         Source::Resumed {
             tree,
@@ -236,14 +235,18 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             start,
         } => {
             let Some((engine, path, job)) = resume(tree, journal, start, &opts.engine) else {
-                setup::restore_terminal(mouse);
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "the scan read from the file has no root",
                 ));
             };
             let history = link(&path, &job, &opts.engine);
-            return browse(&mut terminal, engine, ui_opts(theme, history, true));
+            return browse(
+                &mut terminal,
+                restore,
+                engine,
+                ui_opts(theme, history, true),
+            );
         }
         Source::Cached { path, slot, start } => {
             let root = slot.key.root().to_path_buf();
@@ -259,7 +262,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                 cache: Some(cache),
                 ..ui_opts(theme, history, true)
             };
-            return browse(&mut terminal, engine, ui);
+            return browse(&mut terminal, restore, engine, ui);
         }
         Source::Local { path, start } => (path, start),
     };
@@ -267,14 +270,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         Some(p) => p,
         None => match features::picker::pick(&mut terminal, &theme) {
             Ok(Picked::Scan(p)) => p,
-            Ok(Picked::Quit) => {
-                setup::restore_terminal(mouse);
-                return Ok(());
-            }
-            Err(e) => {
-                setup::restore_terminal(mouse);
-                return Err(e);
-            }
+            Ok(Picked::Quit) => return Ok(()),
+            Err(e) => return Err(e),
         },
     };
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
@@ -284,7 +281,12 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         path: path.into(),
         opts: job,
     });
-    browse(&mut terminal, engine, ui_opts(theme, history, true))
+    browse(
+        &mut terminal,
+        restore,
+        engine,
+        ui_opts(theme, history, true),
+    )
 }
 
 /// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
@@ -323,14 +325,15 @@ fn resume(
     Some((engine, path, job))
 }
 
-/// Runs the loop on `engine` until the user quits, then restores the terminal and stops the
-/// engine.
+/// Runs the loop on `engine` until the user quits, then restores the terminal (`restore`) and
+/// stops the engine.
 fn browse<B: dfdu_scan::Backend>(
     terminal: &mut ratatui::DefaultTerminal,
+    restore: setup::Restore,
     engine: Engine<B>,
     ui: UiOptions,
 ) -> io::Result<()> {
-    let (mouse, debug_stats) = (ui.mouse, ui.debug);
+    let debug_stats = ui.debug;
     let (tx, input) = unbounded();
     let spawned = thread::Builder::new()
         .name("dfdu-input".into())
@@ -345,7 +348,7 @@ fn browse<B: dfdu_scan::Backend>(
         Ok(_) => event_loop_with(terminal, &engine, input, ui),
         Err(e) => Err(e),
     };
-    setup::restore_terminal(mouse);
+    drop(restore);
     if debug_stats {
         let summary = debug_summary(&engine);
         if !summary.is_empty() {

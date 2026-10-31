@@ -33,7 +33,7 @@ fn on_terminal(home: &Path, args: &[&str], answer: &str) -> (bool, String) {
     let out = Arc::new(Mutex::new(Vec::new()));
     let mut reader = std::fs::File::from(master.try_clone().unwrap());
     let o = out.clone();
-    std::thread::spawn(move || {
+    let reading = std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         while let Ok(n) = reader.read(&mut buf) {
             if n == 0 {
@@ -51,8 +51,9 @@ fn on_terminal(home: &Path, args: &[&str], answer: &str) -> (bool, String) {
         .write_all(format!("{answer}\n").as_bytes())
         .unwrap();
     let ok = child.wait().unwrap().success();
-    // The reader ends at the slave's last close, which was the child's.
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    // The reader ends at the slave's last close, which was the child's, once it has read
+    // everything written before.
+    reading.join().unwrap();
     let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
     (ok, text)
 }

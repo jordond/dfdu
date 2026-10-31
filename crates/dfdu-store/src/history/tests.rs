@@ -132,18 +132,6 @@ fn growth_finds_sizes_by_path() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(day(86_400 * 3), "1970-01-04");
-    assert_eq!(day(1_793_157_288), "2026-10-28");
-}
-
-#[test]
-fn dates_and_times_are_utc() {
-    assert_eq!(date_time(0), "1970-01-01 00:00 UTC");
-    assert_eq!(date_time(1_793_157_288), "2026-10-28 03:14 UTC");
-    assert_eq!(date_time(951_782_400), "2000-02-29 00:00 UTC");
-    assert_eq!(date_time(-86_400), "1969-12-31 00:00 UTC");
-    assert_eq!(date_time(-1), "1969-12-31 23:59 UTC");
-    assert_eq!(day(-1), "1969-12-31");
 }
 
 #[test]

@@ -176,7 +176,7 @@ fn the_day_of_the_last_scan_matches_the_column_and_the_selection_line() {
     let wide = second_line(&mut app, t0, 120);
     // The column of changes is titled the same way, and the selection line names the day.
     assert!(narrow.ends_with(&growth::column_title(&app)), "{narrow}");
-    let day = history::day(BASELINE);
+    let day = dfdu_tree::day(BASELINE);
     assert!(wide.ends_with(&format!("Δ since {day}")), "{wide}");
     assert_eq!(
         growth::describe(1 << 30, BASELINE),

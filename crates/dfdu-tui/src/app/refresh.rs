@@ -60,6 +60,80 @@ struct Folded {
     changed: bool,
 }
 
+/// When the rows are sorted again: before the next frame when asked, otherwise automatically
+/// once the user has been idle for [`IDLE_BEFORE_SORT`], at most every [`MIN_SORT_INTERVAL`].
+#[derive(Debug)]
+pub struct SortSchedule {
+    last_input: Instant,
+    last_sort: Instant,
+    /// An exact sort is asked for.
+    requested: bool,
+    /// The filter changed: its rows are needed before the next frame.
+    refilter: bool,
+    /// A snapshot that changed came in since the last sort.
+    changed: bool,
+}
+
+impl SortSchedule {
+    /// The schedule of a browser opened at `now`: idle, with an exact sort asked for.
+    pub fn new(now: Instant) -> Self {
+        SortSchedule {
+            // No key pressed yet counts as idle.
+            last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
+            last_sort: now,
+            requested: true,
+            refilter: false,
+            changed: false,
+        }
+    }
+
+    pub fn request_sort(&mut self) {
+        self.requested = true;
+    }
+
+    pub fn request_refilter(&mut self) {
+        self.refilter = true;
+    }
+
+    pub fn note_input(&mut self, now: Instant) {
+        self.last_input = now;
+    }
+
+    /// A snapshot that changed came in since the last sort.
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
+
+    /// When an automatic sort is due, if one is pending.
+    pub fn due_at(&self) -> Instant {
+        (self.last_input + IDLE_BEFORE_SORT).max(self.last_sort + MIN_SORT_INTERVAL)
+    }
+
+    fn idle(&self, now: Instant) -> bool {
+        now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
+    }
+
+    /// An automatic sort is due at `now`: one is `pending` and the user has been idle, long
+    /// enough after the last sort or right after the scan `finished`.
+    fn auto_due(&self, pending: bool, finished: bool, now: Instant) -> bool {
+        let interval = now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL;
+        self.idle(now) && ((pending && interval) || finished)
+    }
+
+    /// Takes the requests: an exact sort, and the rows of a changed filter.
+    fn take_requests(&mut self) -> (bool, bool) {
+        (
+            std::mem::take(&mut self.requested),
+            std::mem::take(&mut self.refilter),
+        )
+    }
+
+    fn sorted(&mut self, now: Instant) {
+        self.last_sort = now;
+        self.changed = false;
+    }
+}
+
 /// How [`App::update_order`] brings the rows up to date.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Reorder {
@@ -81,12 +155,6 @@ impl App {
     /// Deleted rows kept as placeholders hold still until the next re-sort.
     fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
         (!self.moved || index == Some(0)) && !self.motion.has_ghosts()
-    }
-
-    fn auto_sort_due(&self, now: Instant) -> bool {
-        self.sort_pending()
-            && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
-            && now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
@@ -121,7 +189,7 @@ impl App {
         };
         let changed = snap.version != self.snap.version;
         if changed {
-            self.changed_since_sort = true;
+            self.sort_schedule.changed = true;
         }
         // A scan that just finished gets one more automatic sort right away (if the user is
         // idle), so the final order does not wait for the minimum interval.
@@ -176,12 +244,12 @@ impl App {
             finished,
             changed,
         } = folded.unwrap_or_default();
-        let requested = std::mem::take(&mut self.sort_requested);
-        let refilter = std::mem::take(&mut self.refilter_requested);
+        let (requested, refilter) = self.sort_schedule.take_requests();
         let mode = if dir_changed || requested || refilter {
             Reorder::Exact
-        } else if self.auto_sort_due(now)
-            || (finished && now.duration_since(self.last_input) >= IDLE_BEFORE_SORT)
+        } else if self
+            .sort_schedule
+            .auto_due(self.sort_pending(), finished, now)
         {
             Reorder::Auto
         } else if fresh && changed && self.keeps_top_sorted(old_index) {
@@ -241,8 +309,7 @@ impl App {
         let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
         if resorted {
             self.sort_gen += 1;
-            self.last_sort = now;
-            self.changed_since_sort = false;
+            self.sort_schedule.sorted(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
