@@ -123,7 +123,7 @@ pub struct App {
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
-    /// The view shown (`1`-`5`); [`views::switch`] changes it.
+    /// The view shown (`1`-`5`); `views::switch` changes it.
     pub view: views::View,
     pub treemap: treemap::Treemap,
     pub cleanup: crate::features::cleanup::Cleanup,
