@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 
 use super::{BAR, Facts, Largest, Matched};
 use crate::app::App;
-use crate::format::{bar, count, human, ratio};
+use crate::format::{bar, count, human, plural, ratio};
 use crate::model::snapshot::Mark;
 use crate::theme::Theme;
 
@@ -121,7 +121,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
     }
     if f.is_dir {
         disk.push_str(" · ");
-        disk.push_str(&plural(f.total.items, "item", "items"));
+        disk.push_str(&counted(f.total.items, "item"));
     }
     out.add(&disk, plain);
     let other = format!(
@@ -154,7 +154,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
         out.add(p, t.status_error);
     }
     if f.errors_below > 0 {
-        let s = format!("{} below", plural(f.errors_below, "error", "errors"));
+        let s = format!("{} below", counted(f.errors_below, "error"));
         out.add(&s, t.status_error);
     }
 }
@@ -240,10 +240,10 @@ fn identity(out: &mut Text, t: &Theme, f: &Facts) {
     if mounts + ro > 0 {
         let mut parts = Vec::new();
         if mounts > 0 {
-            parts.push(plural(mounts, "mount", "mounts"));
+            parts.push(counted(mounts, "mount"));
         }
         if ro > 0 {
-            parts.push(plural(ro, "read-only subvolume", "read-only subvolumes"));
+            parts.push(counted(ro, "read-only subvolume"));
         }
         let s = format!("inside: {}; deletion stops at them", parts.join(", "));
         out.add(&s, t.status_warn);
@@ -277,8 +277,9 @@ fn kind_name(kind: Kind) -> &'static str {
     }
 }
 
-fn plural(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", count(n), if n == 1 { one } else { many })
+/// `n` and `noun`, in the plural unless `n` is one: `1 item`, `1.2k items`.
+fn counted(n: u64, noun: &str) -> String {
+    format!("{} {noun}{}", count(n), plural(n))
 }
 
 /// `text` in lines of at most `width` characters, broken at spaces; a word longer than a line

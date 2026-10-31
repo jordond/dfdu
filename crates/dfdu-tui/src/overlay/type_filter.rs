@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Effect, Overlay};
-use crate::format::{count, human};
+use crate::format::{count, human, plural};
 use crate::input::line::{Edit, LineInput};
 
 /// Why a directory cannot be marked or deleted while the filter is on.
@@ -232,10 +232,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     let numbers: Vec<(String, String)> = rows
         .iter()
         .map(|(_, tot)| {
-            let files = match tot.items {
-                1 => "1 file".to_string(),
-                n => format!("{} files", count(n)),
-            };
+            let files = format!("{} file{}", count(tot.items), plural(tot.items));
             (human(app.size_mode.of(tot)), files)
         })
         .collect();

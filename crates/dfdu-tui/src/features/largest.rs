@@ -229,7 +229,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         return Some(Vec::new());
     }
     match action {
-        Action::Open | Action::Enter => go(app),
+        Action::Open | Action::Enter => show_in_files(app),
         Action::ToggleMark => toggle(app),
         _ => return None,
     }
@@ -242,7 +242,7 @@ pub fn listed(app: &App) -> HashSet<NodeRef> {
 }
 
 /// Goes to the selected file: closes the view, opens the file's directory and selects it there.
-fn go(app: &mut App) {
+fn show_in_files(app: &mut App) {
     let Some((path, _)) = selected(app) else {
         return;
     };

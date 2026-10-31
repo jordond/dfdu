@@ -36,6 +36,13 @@ pub fn count(n: u64) -> String {
     }
 }
 
+/// The ending of a noun counted `n`: `s`, or nothing for one. Irregular plurals (`entries`,
+/// `matches`, `them`) are written where they are used.
+#[must_use]
+pub fn plural(n: u64) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
 /// How bars are drawn: `--bars` and the theme key `bars`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Bars {
@@ -204,6 +211,13 @@ fn head(s: &str, room: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_is_singular() {
+        assert_eq!(format!("0 file{}", plural(0)), "0 files");
+        assert_eq!(format!("1 file{}", plural(1)), "1 file");
+        assert_eq!(format!("2 file{}", plural(2)), "2 files");
+    }
 
     #[test]
     fn bars_have_fixed_width() {

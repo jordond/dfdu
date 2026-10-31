@@ -283,3 +283,21 @@ fn a_cached_scan_says_so_until_it_is_refreshed() {
     let after = first_line(&render_buffer(&mut app, t0, 100, 8));
     assert!(after.ends_with("scanning 00:00"), "{after}");
 }
+
+#[test]
+fn the_whole_scan_scope_drops_the_note_then_the_root() {
+    let app = App::new(Theme::no_color(), Instant::now());
+    let scope = |root: &str, room| -> String {
+        whole_scan_scope(&app, View::Duplicates, root, room)
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
+    };
+    let note = views::scope_note(View::Duplicates).unwrap_or_default();
+    let full = format!("{WHOLE_SCAN}/srv/data · {note}");
+    let room = Span::raw(&full).width();
+    assert_eq!(scope("/srv/data", room), full);
+    assert_eq!(scope("/srv/data", room - 1), "whole scan: /srv/data");
+    assert_eq!(scope("/srv/data", WHOLE_SCAN.len() + 4), "whole scan");
+    assert_eq!(scope("", 40), "whole scan");
+}
