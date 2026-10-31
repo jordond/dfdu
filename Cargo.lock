@@ -836,7 +836,6 @@ name = "dfdu-rules"
 version = "0.1.0"
 dependencies = [
  "dfdu-tree",
- "etcetera",
  "serde",
  "tempfile",
  "toml",
@@ -880,6 +879,7 @@ dependencies = [
  "dfdu-engine",
  "dfdu-rules",
  "dfdu-scan",
+ "dfdu-sys",
  "dfdu-tree",
  "dunce",
  "rusqlite",
@@ -893,6 +893,7 @@ name = "dfdu-sys"
 version = "0.1.0"
 dependencies = [
  "dfdu-tree",
+ "etcetera",
  "libc",
  "rustix",
  "sysinfo",

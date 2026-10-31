@@ -1,7 +1,7 @@
 //! The scan cache: the browser's last complete scan of a directory, kept as a snapshot so the
 //! next `dfdu PATH` opens it at once and brings it up to date in the background, as
 //! `--resume-from` does with a file. One file per directory and set of scan options, named by
-//! a hash of them ([`Key`]), in [`dfdu_rules::dirs::cache_dir`].
+//! a hash of them ([`Key`]), in [`dfdu_sys::dirs::cache_dir`].
 //!
 //! What is read is the user's own: the directory is created `0700` and the files `0600`, and a
 //! file or directory of another user (a `sudo dfdu` that kept `HOME`) is never read nor
@@ -251,14 +251,14 @@ struct File {
 }
 
 impl Cache {
-    /// The cache in [`dfdu_rules::dirs::cache_dir`]; `None` when [`off_by_env`] or without a
+    /// The cache in [`dfdu_sys::dirs::cache_dir`]; `None` when [`off_by_env`] or without a
     /// cache directory, and why it is not used when [`Cache::at`] refuses it.
     #[must_use]
     pub fn open_default() -> Option<io::Result<Cache>> {
         if off_by_env() {
             return None;
         }
-        Some(Cache::at(dfdu_rules::dirs::cache_dir()?))
+        Some(Cache::at(dfdu_sys::dirs::cache_dir()?))
     }
 
     /// The cache in `dir`, which need not exist yet: it is then created when a scan is saved.

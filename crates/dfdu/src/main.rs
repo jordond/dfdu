@@ -324,7 +324,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_rules::dirs::rules_dir();
+        let dir = dfdu_sys::dirs::rules_dir();
         let (set, errors) = dfdu_rules::load(&dfdu_rules::Env::current(), dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");
@@ -338,7 +338,7 @@ impl RuleArgs {
         if self.no_rules {
             return None;
         }
-        let dir = dfdu_rules::dirs::rules_dir();
+        let dir = dfdu_sys::dirs::rules_dir();
         let (files, errors) = dfdu_rules::sources(dir.as_deref());
         for e in errors {
             eprintln!("dfdu: {e}");

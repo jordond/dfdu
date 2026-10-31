@@ -8,9 +8,9 @@
 //! - [`cache_dir`] (`scans`, the scan cache) and [`agent_cache_dir`] (`agents`, the agents
 //!   downloaded for `--remote` hosts), in the platform's own cache directory.
 //!
-//! The layout lives here because dfdu-rules is the lowest crate that every user of these
-//! paths (dfdu-store, dfdu-clean, dfdu-engine, dfdu-tui, dfdu) already depends on, and the rule
-//! directory is its own concern.
+//! The layout lives in dfdu-sys because every user of these paths (dfdu-store, dfdu-clean,
+//! dfdu-engine, dfdu-tui, dfdu) depends on it, and none of them should need the rules crate
+//! only to find a directory.
 //!
 //! XDG directories on Linux and macOS, Known Folders on Windows (which has no state directory,
 //! so the data directory is used there); the caches are in `~/Library/Caches` on macOS. Every

@@ -7,7 +7,11 @@
 //! On other systems the functions report "not available": `Ok(None)` for lookups (`mount_id`,
 //! `subvol_info`), `Ok(false)` for yes/no questions (`is_btrfs`, `shares_extents`), and
 //! `Unsupported` where no answer can be given (`mount_table`).
+//!
+//! [`dirs`] owns where dfdu keeps its files: the config, state, cache, crash and rule
+//! directories every other crate asks for.
 
+pub mod dirs;
 mod disks;
 mod mounted;
 mod profile;

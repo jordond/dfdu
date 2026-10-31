@@ -230,10 +230,10 @@ impl Growth {
     }
 }
 
-/// `history.sqlite3` in the state directory ([`dfdu_rules::dirs`]).
+/// `history.sqlite3` in the state directory ([`dfdu_sys::dirs`]).
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    dfdu_rules::dirs::history_path()
+    dfdu_sys::dirs::history_path()
 }
 
 impl History {

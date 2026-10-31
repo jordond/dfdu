@@ -111,7 +111,7 @@ impl Agents {
         Agents {
             agent_dir: std::env::var_os(AGENT_DIR_VAR).map(PathBuf::from),
             this: std::env::current_exe().ok().zip(own()),
-            cache: dfdu_rules::dirs::agent_cache_dir(),
+            cache: dfdu_sys::dirs::agent_cache_dir(),
             release_url: std::env::var(RELEASE_URL_VAR).unwrap_or_else(|_| RELEASE_URL.into()),
         }
     }
