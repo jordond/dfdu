@@ -3,7 +3,6 @@
 //! way first when the line is short.
 
 use dfdu_engine::SizeMode;
-use dfdu_store::history;
 use ratatui::text::Span;
 
 use crate::app::App;
@@ -100,7 +99,7 @@ fn flags(app: &App) -> Vec<Flag> {
         && app.size_mode != SizeMode::Referenced
     {
         out.push(Flag::new(
-            format!("Δ since {}", history::day(g.at)),
+            format!("Δ since {}", dfdu_tree::day(g.at)),
             growth::column_title(app),
         ));
     }

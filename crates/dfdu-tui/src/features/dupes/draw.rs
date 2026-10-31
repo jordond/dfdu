@@ -407,7 +407,7 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
     if let Row::File(_, i) = row {
         let c = &group.files[i];
         out.push(Line::styled(name(c), t.title));
-        let modified = dfdu_store::history::date_time(c.mtime);
+        let modified = dfdu_tree::date_time(c.mtime);
         out.push(Line::styled(
             format!("{} · modified {modified}", human(c.size)),
             t.fg_dim,

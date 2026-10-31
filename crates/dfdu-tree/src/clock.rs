@@ -1,5 +1,5 @@
-//! The wall clock in the unit the tree stores times in, and days counted in that unit as
-//! calendar dates.
+//! The wall clock in the unit the tree stores times in, days counted in that unit as calendar
+//! dates, and those times written out as UTC dates.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -40,6 +40,25 @@ pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
+/// Seconds since the Unix epoch as a UTC date ("2026-10-18").
+#[must_use]
+pub fn day(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Seconds since the Unix epoch as a UTC date and time ("2026-10-24 09:42 UTC").
+#[must_use]
+pub fn date_time(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02} UTC",
+        rem / 3600,
+        rem % 3600 / 60
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +78,18 @@ mod tests {
     #[test]
     fn days_past_the_end_of_a_month_run_into_the_next() {
         assert_eq!(civil_from_days(days_from_civil(2026, 2, 31)), (2026, 3, 3));
+    }
+
+    #[test]
+    fn dates_and_times_are_utc() {
+        assert_eq!(day(86_400 * 3), "1970-01-04");
+        assert_eq!(day(1_793_157_288), "2026-10-28");
+        assert_eq!(day(-1), "1969-12-31");
+        assert_eq!(date_time(0), "1970-01-01 00:00 UTC");
+        assert_eq!(date_time(1_793_157_288), "2026-10-28 03:14 UTC");
+        assert_eq!(date_time(951_782_400), "2000-02-29 00:00 UTC");
+        assert_eq!(date_time(-86_400), "1969-12-31 00:00 UTC");
+        assert_eq!(date_time(-1), "1969-12-31 23:59 UTC");
     }
 
     #[test]

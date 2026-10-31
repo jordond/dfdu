@@ -263,7 +263,7 @@ fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
             }
             Col::Items => spans.push(right(count(e.items), w, t.fg_dim)),
             Col::Mtime => {
-                let day = (e.mtime > 0 && !e.pseudo).then(|| dfdu_store::history::day(e.mtime));
+                let day = (e.mtime > 0 && !e.pseudo).then(|| dfdu_tree::day(e.mtime));
                 spans.push(left(day.unwrap_or_default(), w, t.fg_dim));
             }
             Col::Delta => spans.push(match row.change {
