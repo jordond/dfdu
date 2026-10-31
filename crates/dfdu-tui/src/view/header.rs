@@ -240,7 +240,7 @@ fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
         least_width(&segs).min(SCOPE_KEPT)
     };
     let info = totals(app);
-    let room = |right: &[Span]| w.saturating_sub(lead + width(right) + 1);
+    let scope_room_beside = |right: &[Span]| w.saturating_sub(lead + width(right) + 1);
     let rights: Vec<Vec<Span>> = mode_forms(app)
         .into_iter()
         .skip(usize::from(area.width < WIDE_FROM))
@@ -252,7 +252,7 @@ fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
         })
         .collect();
     let right = (rights.iter())
-        .find(|right| room(right) >= least)
+        .find(|right| scope_room_beside(right) >= least)
         .or_else(|| rights.last().filter(|r| lead + width(r) < w))
         .cloned()
         .unwrap_or_else(|| {
@@ -260,7 +260,7 @@ fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
             right.push(Span::raw(" "));
             right
         });
-    let scope_room = room(&right);
+    let scope_room = scope_room_beside(&right);
     let mut scope = vec![Span::raw(" ")];
     let mut hits = Vec::new();
     if whole_scan {
@@ -281,14 +281,14 @@ fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
     (spread(scope, right, area.width), crumbs)
 }
 
-/// The scope of a view that covers the whole scan, in `room` cells: [`WHOLE_SCAN`], the scan
+/// The scope of a view that covers the whole scan, in `space` cells: [`WHOLE_SCAN`], the scan
 /// root, and what the view covers of it when that fits whole. Without room for a few cells of
 /// the root, only that it is the whole scan.
-fn whole_scan_scope(app: &App, view: View, root: &str, room: usize) -> Vec<Span<'static>> {
+fn whole_scan_scope(app: &App, view: View, root: &str, space: usize) -> Vec<Span<'static>> {
     let t = &app.theme;
-    let rest = room.saturating_sub(Span::raw(WHOLE_SCAN).width());
+    let rest = space.saturating_sub(Span::raw(WHOLE_SCAN).width());
     if root.is_empty() || rest < Span::raw(root).width().min(WHOLE_SCAN_ROOT_MIN) {
-        let short = truncate_middle(WHOLE_SCAN.trim_end_matches([':', ' ']), room);
+        let short = truncate_middle(WHOLE_SCAN.trim_end_matches([':', ' ']), space);
         return vec![Span::styled(short, t.fg_dim)];
     }
     let mut scope = vec![

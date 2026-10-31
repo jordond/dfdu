@@ -225,7 +225,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let (sum, groups) = tally(app, found);
-    let mut extra = format!(" · {} group{}", count(groups as u64), plural(groups as u64),);
+    let mut extra = format!(" · {} group{}", count(groups as u64), plural(groups as u64));
     if found.skipped > 0 {
         extra.push_str(&format!(" · {} skipped", count(found.skipped)));
     }
