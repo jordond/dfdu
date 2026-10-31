@@ -333,7 +333,7 @@ fn errors_are_listed_and_lead_to_the_entry() {
     assert!(out.contains("1 error inside"), "{out}");
     assert!(out.contains("! errors"), "{out}");
     let fx = app.key(press(KeyCode::Char('!')), t0);
-    assert!(matches!(fx[..], [crate::Effect::ShowErrors]));
+    assert!(matches!(fx[..], [crate::app::Effect::ShowErrors]));
     app.show_errors(list);
     let out = render(&mut app, t0, 100, 12);
     assert!(out.contains("2 not read"), "{out}");
@@ -364,7 +364,7 @@ fn disk_picker() {
         role: None,
         shares_space_with: vec![],
     };
-    let mut p = crate::Picker::new(vec![
+    let mut p = crate::features::picker::Picker::new(vec![
         Disk {
             also_at: vec!["/home".into()],
             ..disk(
@@ -375,6 +375,7 @@ fn disk_picker() {
                     total: 500 * gib,
                     used: 400 * gib,
                     available: 90 * gib,
+                    purgeable: None,
                 }),
             )
         },
@@ -387,6 +388,7 @@ fn disk_picker() {
                 total: 64 * gib,
                 used: 0,
                 available: 64 * gib,
+                purgeable: None,
             }),
         ),
     ]);
@@ -406,11 +408,13 @@ fn disk_picker() {
     assert!(p.key(KeyCode::Down).is_none());
     assert!(p.key(KeyCode::Down).is_none());
     match p.key(KeyCode::Enter) {
-        Some(crate::Picked::Scan(path)) => assert_eq!(path, std::path::Path::new("/mnt/usb")),
+        Some(crate::features::picker::Picked::Scan(path)) => {
+            assert_eq!(path, std::path::Path::new("/mnt/usb"))
+        }
         _ => panic!("expected a scan of /mnt/usb"),
     }
     assert!(matches!(
         p.key(KeyCode::Char('q')),
-        Some(crate::Picked::Quit)
+        Some(crate::features::picker::Picked::Quit)
     ));
 }

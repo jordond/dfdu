@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 
 use super::spread;
 use crate::app::App;
-use crate::format::{count, cut_end, human, percent, truncate_middle};
+use crate::format::{count, cut_end, human, percent, plural, truncate_middle};
 use crate::model::growth;
 use crate::model::outside::{rel_text, tilde};
 use crate::state::{marks, tree};
@@ -36,8 +36,10 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     let size = Span::raw(format!("  {}", human(e.size)));
     let share = in_tree.then(|| share_of_parent(app, index));
     let items = (e.is_dir && e.items > 0).then(|| {
-        let s = if e.items == 1 { "" } else { "s" };
-        Span::styled(format!("{} item{s}", count(e.items)), t.fg_dim)
+        Span::styled(
+            format!("{} item{}", count(e.items), plural(e.items)),
+            t.fg_dim,
+        )
     });
     let mut rest = Vec::new();
     if e.shared_out > 0 {

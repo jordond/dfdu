@@ -12,7 +12,7 @@ pub mod classify;
 mod gate;
 pub mod journal;
 pub mod late;
-mod mounts;
+mod overlap;
 mod proto;
 pub mod runtime;
 mod shared;
@@ -28,7 +28,7 @@ pub use backend::{MacBackend, MacStream};
 pub use backend::{WinLoc, WindowsBackend, WindowsStream, check_mft};
 pub use budget::Budget;
 pub use gate::GateStats;
-pub use mounts::duplicate_mounts;
+pub use overlap::duplicate_mounts;
 
 /// The fastest backend for this platform; the portable one where there is no native one.
 #[cfg(target_os = "linux")]

@@ -233,7 +233,7 @@ fn details_follow_the_cleanup_selection() {
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char('i')), t0);
     sync(&mut app, &fx.m, t0);
-    let want = selected_item(&app).unwrap().path.clone();
+    let want = selected(&app).unwrap().path.clone();
     let facts = app.extras.details.facts.as_ref().expect("details read");
     assert_eq!(facts.path, want);
     // On a group row there is nothing to describe.

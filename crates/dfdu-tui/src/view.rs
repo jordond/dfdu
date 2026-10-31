@@ -27,11 +27,8 @@ use crate::state::{filter, motion};
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Areas {
-    pub header: Rect,
     pub list: Rect,
     pub details: Option<Rect>,
-    pub status: Rect,
-    pub footer: Rect,
     /// The open overlay.
     pub overlay: Option<Rect>,
     /// The debug panel, over the list.
@@ -75,11 +72,8 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let [column_names, list] =
         Layout::vertical([Constraint::Length(names), Constraint::Min(0)]).areas(list);
     app.areas = Areas {
-        header,
         list,
         details: pane,
-        status,
-        footer,
         overlay: None,
         debug: None,
     };

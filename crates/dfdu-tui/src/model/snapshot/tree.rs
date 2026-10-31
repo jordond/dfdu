@@ -217,7 +217,6 @@ fn fold_row(r: &Read<'_>, folded: &[(u64, Ix, Totals)]) -> Option<EntryData> {
         mtime,
         dev_ino: (0, 0),
         mark,
-        error: None,
         problem: None,
         errors_inside: sum.errors,
         label: None,

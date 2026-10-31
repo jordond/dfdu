@@ -1,6 +1,7 @@
 //! The value parsers of the command-line flags the commands share, and the output format of
 //! those that print a table or JSON.
 
+use dfdu_rules::CategoryIx;
 use dfdu_tree::Safety;
 use dfdu_tree::filetype::TypeFilter;
 use dfdu_tui::{Bars, ColorLevel};
@@ -46,16 +47,24 @@ pub fn safety_arg(s: &str) -> Result<Safety, String> {
     })
 }
 
-pub fn category_arg(s: &str) -> Result<String, String> {
-    let known = dfdu_rules::CATEGORIES.iter().skip(1);
-    if known
-        .clone()
-        .any(|c| c.id == s || c.id.split('.').next() == Some(s))
-    {
-        Ok(s.to_owned())
-    } else {
-        let ids: Vec<&str> = known.map(|c| c.id).collect();
+/// The categories one `--category` value names: an id, or every id of a family.
+#[derive(Clone, Debug)]
+pub struct Categories(Vec<CategoryIx>);
+
+impl Categories {
+    #[must_use]
+    pub fn has(&self, c: CategoryIx) -> bool {
+        self.0.contains(&c)
+    }
+}
+
+pub fn category_arg(s: &str) -> Result<Categories, String> {
+    let named = CategoryIx::named(s);
+    if named.is_empty() {
+        let ids: Vec<&str> = CategoryIx::all().map(|c| c.get().id).collect();
         Err(format!("`{s}` is not a category ({})", ids.join(", ")))
+    } else {
+        Ok(Categories(named))
     }
 }
 

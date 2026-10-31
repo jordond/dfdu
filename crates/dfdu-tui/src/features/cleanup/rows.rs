@@ -1,6 +1,7 @@
 //! The view's rows: a section per safety level, the categories in it and their items, and
 //! which sections and categories are open.
 
+use dfdu_rules::CategoryIx;
 use dfdu_tree::Safety;
 
 use super::Item;
@@ -12,7 +13,7 @@ pub(super) enum Row {
     Section(Safety),
     /// One category at one level.
     Group {
-        cat: u16,
+        cat: CategoryIx,
         safety: Safety,
     },
     Item(usize),
@@ -25,7 +26,7 @@ pub(super) fn rows(app: &App) -> Vec<Row> {
         return vec![];
     };
     let items = &app.extras.cleanup.items;
-    let mut groups: Vec<((u16, Safety), u64)> = vec![];
+    let mut groups: Vec<((CategoryIx, Safety), u64)> = vec![];
     for it in items {
         if app.cleanup.filter.is_some_and(|f| it.class.safety > f) {
             continue;
@@ -71,7 +72,7 @@ pub(super) fn section_items(app: &App, safety: Safety) -> Vec<usize> {
         .collect()
 }
 
-pub(super) fn group_items(app: &App, cat: u16, safety: Safety) -> Vec<usize> {
+pub(super) fn group_items(app: &App, cat: CategoryIx, safety: Safety) -> Vec<usize> {
     let Some(rules) = &app.snap.rules else {
         return vec![];
     };
@@ -90,7 +91,7 @@ pub fn enter_does(app: &App) -> &'static str {
     }
 }
 
-pub(crate) fn selected_item(app: &App) -> Option<&Item> {
+pub(crate) fn selected(app: &App) -> Option<&Item> {
     match rows(app).get(app.cleanup.cursor)? {
         Row::Item(i) => app.extras.cleanup.items.get(*i),
         Row::Section(_) | Row::Group { .. } => None,
@@ -170,14 +171,14 @@ mod tests {
         );
         app.cleanup.cursor = 4;
         assert_eq!(enter_does(&app), "show in Files");
-        let item = selected_item(&app).expect("the item selected");
+        let item = selected(&app).expect("the item selected");
         assert!(item.path.to_local().ends_with("big"));
         // A closed section hides its categories.
         set_open(&mut app, Row::Section(Safety::Safe), false);
         assert_eq!(shown(&app)[..2], ["Safe", "Regenerable"]);
         app.cleanup.cursor = 0;
         assert_eq!(enter_does(&app), "open");
-        assert!(selected_item(&app).is_none());
+        assert!(selected(&app).is_none());
     }
 
     #[test]

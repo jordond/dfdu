@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use dfdu_engine::{DeleteSummary, JobKind, JobPhase, Model, SizeMode, subvol_label};
 use dfdu_tree::filetype::{self, Breakdown, TypeFilter};
 use dfdu_tree::{
-    DirId, DirState, ErrKind, HostPath, Ix, JobId, Kind, NodeRef, Target, Totals, Tree, find_path,
+    DirId, DirState, HostPath, Ix, JobId, Kind, NodeRef, Target, Totals, Tree, find_path,
 };
 
 mod tree;
@@ -158,7 +158,6 @@ pub struct EntryData {
     pub mtime: i64,
     pub dev_ino: (u64, u64),
     pub mark: Mark,
-    pub error: Option<ErrKind>,
     /// What went wrong reading it ([`dfdu_engine::problem`]).
     pub problem: Option<String>,
     /// Errors below it, not counting its own.
@@ -217,8 +216,6 @@ pub struct Snapshot {
     /// What [`Command::Undo`](dfdu_engine::Command::Undo) would put back.
     pub undo: Option<dfdu_engine::UndoInfo>,
     pub undoing: bool,
-    /// Items staged and not deleted yet, and their size.
-    pub staged: dfdu_engine::Count,
     /// The latest estimate of what a delete would free.
     pub estimate: Option<dfdu_engine::Estimate>,
     pub last_delete: Option<DeleteSummary>,
@@ -389,7 +386,6 @@ fn status_of(m: &Model, types: &TypeFilter) -> Snapshot {
         deleting: m.status.deleting.as_ref().map(|d| (d.done, d.total)),
         undo: m.status.undo.clone(),
         undoing: m.status.undoing.is_some(),
-        staged: m.status.staged,
         estimate: m.status.estimate.clone(),
         last_delete: m.status.last_delete.clone(),
         measuring: m.status.measuring.as_ref().map(|p| (p.done, p.requested)),
@@ -424,7 +420,6 @@ fn entry_of(
         mtime: tree.mtime(c),
         dev_ino: tree.dev_ino(c),
         mark: mark_of(tree, c, rescanning),
-        error,
         problem: error.and_then(|_| dfdu_engine::problem(tree, c)),
         errors_inside: t.errors - u64::from(error.is_some()),
         label: if m.subvols.is_empty() {
@@ -455,7 +450,6 @@ fn shared_row(tree: &Tree, dir: Ix, home: u64) -> EntryData {
         mtime: 0,
         dev_ino: (0, 0),
         mark: Mark::None,
-        error: None,
         problem: None,
         errors_inside: 0,
         label: None,
@@ -517,7 +511,6 @@ pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
         mtime: 0,
         dev_ino: (1, u64::from(i) + 10),
         mark: Mark::None,
-        error: None,
         problem: None,
         errors_inside: 0,
         label: None,

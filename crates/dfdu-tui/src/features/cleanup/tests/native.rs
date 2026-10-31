@@ -50,7 +50,6 @@ fn native_commands_start_with_their_dry_run() {
     let id = app.cleanup.pane.as_ref().unwrap().id;
     app.extras.cleanup.native = Some(NativeView {
         id,
-        command: "cargo clean --dry-run".into(),
         lines: vec!["Summary 3 files".into()],
         done: Some(Ok(())),
     });
@@ -102,7 +101,6 @@ fn read_only_runs_only_the_dry_run() {
     let id = app.cleanup.pane.as_ref().unwrap().id;
     app.extras.cleanup.native = Some(NativeView {
         id,
-        command: "cargo clean --dry-run".into(),
         lines: vec!["Summary 3 files".into()],
         done: Some(Ok(())),
     });

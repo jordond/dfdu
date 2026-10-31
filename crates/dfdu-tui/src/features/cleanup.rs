@@ -16,6 +16,7 @@
 use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
+use dfdu_rules::CategoryIx;
 use dfdu_tree::{
     Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Safety, Target, Totals, now_secs,
 };
@@ -24,7 +25,7 @@ use ratatui::crossterm::event::KeyEvent;
 use crate::app::keys::{self, Action};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::format::human;
+use crate::format::{human, plural};
 use crate::state::marks;
 
 mod draw;
@@ -32,7 +33,7 @@ mod pane;
 mod rows;
 
 pub use rows::enter_does;
-pub(crate) use rows::selected_item;
+pub(crate) use rows::selected;
 use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;
@@ -47,7 +48,7 @@ pub struct Cleanup {
     cursor: usize,
     scroll: usize,
     /// Categories shown with their items, by (category, safety); closed by default.
-    open: HashSet<(u16, Safety)>,
+    open: HashSet<(CategoryIx, Safety)>,
     /// Safety sections closed by the user; open by default.
     closed: HashSet<Safety>,
     /// Only items this safe or safer; `None` shows all.
@@ -89,7 +90,6 @@ pub struct Item {
 #[derive(Clone, Debug, Default)]
 pub struct NativeView {
     pub id: u64,
-    pub command: String,
     pub lines: Vec<String>,
     pub done: Option<Result<(), String>>,
 }
@@ -151,12 +151,14 @@ pub fn stale(app: &App) -> bool {
 /// The listed matches ([`dfdu_engine::listed`]), under the read lock. Matches are few: one per
 /// matched directory, and below it only those a rule that does not stop the descent lets in.
 pub fn read(m: &Model, app: &App) -> Info {
+    // Without the rules there is nothing to list or count, and the view is not shown
+    // ([`views::current`]).
+    let Some(rules) = &m.rules else {
+        return Info::default();
+    };
     if !active(app) {
         // Closed, only the total for the tab, when the tree changed since it was counted.
         let at = count_key(m);
-        let Some(rules) = &m.rules else {
-            return Info::default();
-        };
         if app.snap.busy || app.cleanup.counted_at == Some(at) {
             return Info::default();
         }
@@ -183,11 +185,7 @@ pub fn read(m: &Model, app: &App) -> Info {
         scanning,
         rest: Vec::new(),
     };
-    let listed = match &m.rules {
-        Some(rules) => dfdu_engine::listed(t, rules),
-        None => Vec::new(),
-    };
-    let items: Vec<Item> = listed
+    let items: Vec<Item> = dfdu_engine::listed(t, rules)
         .into_iter()
         .map(|l| {
             let rest = (l.rest.iter())
@@ -204,7 +202,6 @@ pub fn read(m: &Model, app: &App) -> Info {
         .collect();
     let native = m.status.native.as_ref().map(|n| NativeView {
         id: n.id,
-        command: n.command.clone(),
         lines: n
             .lines
             .iter()
@@ -213,14 +210,9 @@ pub fn read(m: &Model, app: &App) -> Info {
             .collect(),
         done: n.done.clone(),
     });
-    let mut native_sizes: Vec<(String, Result<u64, String>)> = match &m.rules {
-        Some(rules) => m
-            .native_sizes
-            .iter()
-            .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
-            .collect(),
-        None => vec![],
-    };
+    let mut native_sizes: Vec<(String, Result<u64, String>)> = (m.native_sizes.iter())
+        .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
+        .collect();
     native_sizes.sort_by(|a, b| a.0.cmp(&b.0));
     let total = items
         .iter()
@@ -257,15 +249,11 @@ pub fn apply(app: &mut App) {
     }
 }
 
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
-
 /// The status line after `n` suggested items of `size` in all were ticked.
 fn marked_status(n: usize, size: u64) -> String {
     format!(
         "Ticked {n} suggested item{} ({}) · {} untick all",
-        plural(n),
+        plural(n as u64),
         human(size),
         crate::app::keys::first_key(crate::app::keys::Action::ClearMarks)
     )

@@ -16,7 +16,7 @@ use dfdu_engine::{Engine, WaitIdle};
 use dfdu_store::history::{self, Growth, Scanned};
 use dfdu_tree::now_secs;
 
-use crate::App;
+use crate::app::App;
 
 /// How long quitting waits for the record to be written. It cannot be cancelled, and another
 /// dfdu writing the history can hold it up for seconds.

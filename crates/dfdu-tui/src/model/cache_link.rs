@@ -21,7 +21,7 @@ use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
 use dfdu_store::snapshot::Header;
 use dfdu_tree::DirState;
 
-use crate::App;
+use crate::app::App;
 
 /// How long the tree must stay the same after it changed (a delete, a rescan) before it is
 /// saved again.
