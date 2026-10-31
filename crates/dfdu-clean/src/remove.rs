@@ -5,7 +5,9 @@
 //! relative to its parent without following symlinks, checks that it is still on the item's
 //! mount before reading it, and stops with an error at the first that is not. btrfs subvolumes
 //! are on the same mount; they are removed with the destroy ioctl when allowed (instant), else
-//! emptied and removed with `rmdir`.
+//! emptied and removed with `rmdir`. Neither acts on a name alone: the destroy names the
+//! subvolume by the id of the directory opened, and the `rmdir` runs only while the name still
+//! is the directory just emptied.
 
 use std::io;
 use std::path::Path;
@@ -40,7 +42,7 @@ mod imp {
         io::Error::from_raw_os_error(e.raw_os_error())
     }
 
-    fn open_dir(dir: impl AsFd, name: &OsStr) -> io::Result<OwnedFd> {
+    pub(super) fn open_dir(dir: impl AsFd, name: &OsStr) -> io::Result<OwnedFd> {
         rustix::fs::openat(
             dir,
             name,
@@ -53,7 +55,7 @@ mod imp {
     /// What identifies the filesystem a directory is on: the mount id where the system has
     /// one (btrfs subvolumes share it), else the device.
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct Fs {
+    pub(super) struct Fs {
         mount: Option<u64>,
         dev: u64,
     }
@@ -68,7 +70,7 @@ mod imp {
     }
 
     /// The filesystem and inode number of an open directory.
-    fn fs_of(dir: BorrowedFd<'_>) -> io::Result<(Fs, u64)> {
+    pub(super) fn fs_of(dir: BorrowedFd<'_>) -> io::Result<(Fs, u64)> {
         let st = rustix::fs::fstat(dir).map_err(errno)?;
         #[cfg(target_os = "linux")]
         let mount = dfdu_sys::mount_id_fd(dir)?;
@@ -135,7 +137,7 @@ mod imp {
     }
 
     /// Empties the directory open as `dfd` (`name` in `parent`) and removes it.
-    fn empty_and_remove(
+    pub(super) fn empty_and_remove(
         parent: BorrowedFd<'_>,
         name: &OsStr,
         dfd: OwnedFd,
@@ -154,12 +156,10 @@ mod imp {
         if ino == dfdu_sys::BTRFS_SUBVOL_ROOT_INO && dfdu_sys::is_btrfs_fd(&dfd)? {
             // Root, or `user_subvol_rm_allowed` for the owner. Otherwise (or with nested
             // subvolumes inside) the subvolume is emptied below and removed with rmdir.
-            if dfdu_sys::destroy_subvolume_at(parent, name).is_ok() {
+            if dfdu_sys::destroy_subvolume(parent, &dfd).is_ok() {
                 return Ok(());
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = ino;
         // Collected first: the directory is not modified while it is being read.
         let mut entries: Vec<(OsString, FileType)> = Vec::new();
         for e in Dir::read_from(&dfd).map_err(errno)? {
@@ -186,7 +186,13 @@ mod imp {
                 rustix::fs::unlinkat(&dfd, n.as_os_str(), AtFlags::empty()).map_err(errno)?;
             }
         }
-        drop(dfd);
+        // The name still names the directory emptied: a directory swapped in meanwhile is
+        // not removed. `dfd` stays open until after the rmdir, so its inode number cannot be
+        // reused by another directory in between.
+        let st = rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(errno)?;
+        if (dev_of(&st), st.st_ino as u64) != (here.dev, ino) {
+            return Err(changed(path));
+        }
         rustix::fs::unlinkat(parent, name, AtFlags::REMOVEDIR).map_err(errno)
     }
 }

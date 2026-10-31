@@ -61,6 +61,29 @@ fn a_swapped_path_deletes_nothing() {
     assert!(!moved.join("item").exists() && !moved.join("file").exists());
 }
 
+/// The directory renamed away and another put at its name while it is being emptied: the
+/// final rmdir leaves the newcomer.
+#[cfg(unix)]
+#[test]
+fn a_directory_swapped_in_while_emptying_is_not_removed() {
+    use std::os::fd::AsFd;
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("d");
+    std::fs::create_dir(&d).unwrap();
+    std::fs::write(d.join("f"), b"x").unwrap();
+    let parent = imp::open_dir(rustix::fs::CWD, tmp.path().as_os_str()).unwrap();
+    let dfd = imp::open_dir(&parent, std::ffi::OsStr::new("d")).unwrap();
+    let (root, _) = imp::fs_of(dfd.as_fd()).unwrap();
+    std::fs::rename(&d, tmp.path().join("moved")).unwrap();
+    std::fs::create_dir(&d).unwrap();
+    let e = imp::empty_and_remove(parent.as_fd(), std::ffi::OsStr::new("d"), dfd, root, &d)
+        .unwrap_err();
+    assert!(e.to_string().contains("no longer the item"), "{e}");
+    assert!(d.is_dir(), "removed the directory swapped in");
+    // The directory opened was emptied; it is where it was moved to.
+    assert!(!tmp.path().join("moved/f").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_item_is_an_error() {

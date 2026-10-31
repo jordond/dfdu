@@ -165,3 +165,49 @@ fn dup_profile() {
     assert_eq!((p, devices), (dfdu_sys::Profile::Dup, 1));
     assert_eq!(p.raw_ratio(devices), 2.0);
 }
+
+/// As root: the destroy names the subvolume by the id of the directory opened, so with that
+/// subvolume renamed away and another put at its name, the one opened goes and the newcomer
+/// stays.
+#[test]
+fn destroy_takes_the_subvolume_opened_not_the_name() {
+    use std::fs::File;
+    use std::process::Command;
+    let Some(d) = fixture() else { return };
+    if !dfdu_sys::is_privileged() {
+        return;
+    }
+    let btrfs = |args: &[&std::ffi::OsStr]| {
+        let ok = Command::new("btrfs").arg("-q").args(args).status().unwrap();
+        assert!(ok.success(), "btrfs {args:?}");
+    };
+    let w = d.join("work-sys-destroy");
+    let _ = std::fs::remove_dir_all(&w);
+    std::fs::create_dir(&w).unwrap();
+    let (opened, moved, newcomer) = (w.join("sv"), w.join("moved"), w.join("sv"));
+    btrfs(&["subvolume".as_ref(), "create".as_ref(), opened.as_os_str()]);
+    let parent = File::open(&w).unwrap();
+    let sv = File::open(&opened).unwrap();
+    std::fs::rename(&opened, &moved).unwrap();
+    btrfs(&[
+        "subvolume".as_ref(),
+        "create".as_ref(),
+        newcomer.as_os_str(),
+    ]);
+
+    dfdu_sys::destroy_subvolume(&parent, &sv).unwrap();
+    assert!(!moved.exists(), "the subvolume opened is still there");
+    assert!(
+        dfdu_sys::subvol_info(&newcomer).unwrap().is_some(),
+        "destroyed the subvolume at the name"
+    );
+    let e = dfdu_sys::destroy_subvolume(&parent, &parent).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+
+    btrfs(&[
+        "subvolume".as_ref(),
+        "delete".as_ref(),
+        newcomer.as_os_str(),
+    ]);
+    std::fs::remove_dir(&w).unwrap();
+}

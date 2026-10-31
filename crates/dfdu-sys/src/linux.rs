@@ -2,10 +2,8 @@
 //! info, qgroup usage, the data profile) and FIEMAP extents, each ioctl argument struct checked
 //! against the kernel's size at compile time; and the mount table from `/proc`.
 
-use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use rustix::fs::{AtFlags, CWD, Mode, OFlags, StatxFlags};
@@ -196,38 +194,56 @@ pub fn subvol_info(path: &Path) -> io::Result<Option<SubvolInfo>> {
     subvol_info_fd(&fd).map(Some)
 }
 
-/// `struct btrfs_ioctl_vol_args`.
+/// `struct btrfs_ioctl_vol_args_v2`, with the union at its end holding the subvolume id.
 #[repr(C)]
-struct VolArgs {
+struct VolArgsV2 {
     fd: i64,
-    name: [u8; 4088],
+    transid: u64,
+    flags: u64,
+    unused: [u64; 4],
+    subvolid: u64,
+    name_rest: [u8; 4032],
 }
-const _: () = assert!(std::mem::size_of::<VolArgs>() == 4096);
+const _: () = assert!(std::mem::size_of::<VolArgsV2>() == 4096);
 
-const SNAP_DESTROY: rustix::ioctl::Opcode = opcode::write::<VolArgs>(BTRFS_IOCTL_MAGIC, 15);
+const SNAP_DESTROY_V2: rustix::ioctl::Opcode = opcode::write::<VolArgsV2>(BTRFS_IOCTL_MAGIC, 63);
+/// `BTRFS_SUBVOL_SPEC_BY_ID`: the subvolume is named by its id, not by a name in the directory.
+const SUBVOL_SPEC_BY_ID: u64 = 1 << 4;
 
-/// Deletes the subvolume `name` in the directory `parent` (`BTRFS_IOC_SNAP_DESTROY`). Root may
-/// delete any subvolume; other users only read-write subvolumes they own, and only on
-/// filesystems mounted with `user_subvol_rm_allowed`. The space is freed later by the cleaner.
+/// Deletes the subvolume whose root directory is open as `subvol`, from the directory `parent`
+/// holding it (`BTRFS_IOC_SNAP_DESTROY_V2` by subvolume id, Linux 5.7), so a name swapped in
+/// `parent` since `subvol` was opened cannot make it delete another subvolume. Root may delete
+/// any subvolume; other users only read-write subvolumes they own, and only on filesystems
+/// mounted with `user_subvol_rm_allowed`. The space is freed later by the cleaner.
 ///
 /// # Errors
 ///
-/// `InvalidInput` when `name` is empty, too long or holds `/` or NUL, else the error the ioctl
-/// reports (`EPERM` without the right to delete it, `ENOTTY` off btrfs).
+/// `InvalidInput` when `subvol` is not a subvolume root, else the error the ioctls report
+/// (`EPERM` without the right to delete it, `ENOTTY` off btrfs, `EOPNOTSUPP` or `EINVAL`
+/// before Linux 5.7).
 #[allow(unsafe_code)]
-pub fn destroy_subvolume_at(parent: impl AsFd, name: &OsStr) -> io::Result<()> {
-    let bytes = name.as_bytes();
-    if bytes.is_empty() || bytes.len() >= 4088 || bytes.contains(&b'/') || bytes.contains(&0) {
+pub fn destroy_subvolume(parent: impl AsFd, subvol: impl AsFd) -> io::Result<()> {
+    if rustix::fs::fstat(subvol.as_fd()).map_err(errno)?.st_ino != BTRFS_SUBVOL_ROOT_INO {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    let mut args = VolArgs {
+    let id = subvol_args(subvol)?.treeid;
+    let args = VolArgsV2 {
         fd: 0,
-        name: [0; 4088],
+        transid: 0,
+        flags: SUBVOL_SPEC_BY_ID,
+        unused: [0; 4],
+        subvolid: id,
+        name_rest: [0; 4032],
     };
-    args.name[..bytes.len()].copy_from_slice(bytes);
-    // SAFETY: SNAP_DESTROY is `_IOW(0x94, 15, struct btrfs_ioctl_vol_args)`; `VolArgs` has that
-    // layout (size checked above) and the name is NUL-terminated within it.
-    unsafe { ioctl(parent.as_fd(), Setter::<SNAP_DESTROY, VolArgs>::new(args)) }.map_err(errno)
+    // SAFETY: SNAP_DESTROY_V2 is `_IOW(0x94, 63, struct btrfs_ioctl_vol_args_v2)`; `VolArgsV2`
+    // has that layout (size checked above), the id in the union's first eight bytes.
+    unsafe {
+        ioctl(
+            parent.as_fd(),
+            Setter::<SNAP_DESTROY_V2, VolArgsV2>::new(args),
+        )
+    }
+    .map_err(errno)
 }
 
 const XFS_SUPER_MAGIC: i64 = 0x5846_5342;

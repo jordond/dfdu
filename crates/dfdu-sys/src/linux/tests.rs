@@ -30,12 +30,14 @@ fn mount_id_is_shared_within_a_filesystem() {
     assert_ne!(mount_id(Path::new("/proc")).unwrap(), a);
 }
 
+/// Only a subvolume root is destroyed: a plain directory is refused before any ioctl.
 #[test]
-fn destroy_rejects_bad_names() {
+fn destroy_refuses_a_plain_directory() {
     let d = tempfile::tempdir().unwrap();
-    let dir = open_dir(CWD, d.path()).unwrap();
-    for bad in ["", "a/b", "a\0b"] {
-        let e = destroy_subvolume_at(&dir, OsStr::new(bad)).unwrap_err();
-        assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
-    }
+    std::fs::create_dir(d.path().join("sub")).unwrap();
+    let parent = open_dir(CWD, d.path()).unwrap();
+    let sub = open_dir(&parent, Path::new("sub")).unwrap();
+    let e = destroy_subvolume(&parent, &sub).unwrap_err();
+    assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+    assert!(d.path().join("sub").exists());
 }
