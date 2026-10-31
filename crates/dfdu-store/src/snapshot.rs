@@ -20,6 +20,8 @@
 //! Not kept: classes and protection (the rescan decides them again), btrfs subvolume records
 //! and measured extents (likewise), errors' OS codes beyond the kind.
 
+use std::time::Instant;
+
 use dfdu_scan::journal::JournalPosition;
 use dfdu_tree::{Ix, NodeFlags, Tree};
 
@@ -69,7 +71,60 @@ pub struct Header {
     pub scan_ms: u64,
 }
 
+/// When a tree was last scanned in full, and how long that took.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanTiming {
+    /// Seconds since the Unix epoch when it started.
+    pub last_full_scan: u64,
+    /// In milliseconds.
+    pub scan_ms: u64,
+}
+
+impl ScanTiming {
+    /// A full scan that started at `started`, `started_secs` seconds since the Unix epoch, and
+    /// ended now.
+    #[must_use]
+    pub fn ended_now(started: Instant, started_secs: u64) -> ScanTiming {
+        ScanTiming {
+            last_full_scan: started_secs,
+            scan_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        }
+    }
+}
+
 impl Header {
+    /// The header of a scan this dfdu writes at `written` (seconds since the Unix epoch): with
+    /// its options, where the change journal stood before it started, and its last full scan.
+    #[must_use]
+    pub fn new(
+        written: u64,
+        cross_mounts: bool,
+        network: bool,
+        journal: Option<JournalPosition>,
+        full_scan: ScanTiming,
+    ) -> Header {
+        Header {
+            tool_version: env!("CARGO_PKG_VERSION").into(),
+            written,
+            cross_mounts,
+            network,
+            journal,
+            last_full_scan: full_scan.last_full_scan,
+            scan_ms: full_scan.scan_ms,
+        }
+    }
+
+    /// The last full scan that a resume of this scan keeps: a resume from the change journal
+    /// position only adds what changed since, while one without a position rescans the whole
+    /// tree, which is a full scan of its own.
+    #[must_use]
+    pub fn resumed_timing(&self) -> Option<ScanTiming> {
+        self.journal.is_some().then(|| ScanTiming {
+            last_full_scan: self.full_scan_at(),
+            scan_ms: self.scan_ms,
+        })
+    }
+
     /// When the last full scan started: [`Header::last_full_scan`], or when the snapshot was
     /// written when that is not known.
     #[must_use]

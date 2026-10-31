@@ -18,7 +18,7 @@ use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model, WaitIdle};
 use dfdu_scan::JobOptions;
 use dfdu_store::ImportError;
 use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
-use dfdu_store::snapshot::Header;
+use dfdu_store::snapshot::{Header, ScanTiming};
 use dfdu_tree::DirState;
 
 use crate::App;
@@ -102,14 +102,6 @@ struct Run {
     /// Where the change journal stood before it started.
     journal: Option<JournalPosition>,
     saved_as: SavedAs,
-}
-
-/// When the cached tree was last scanned in full, and how long that took.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScanTiming {
-    /// Seconds since the epoch.
-    last_full_scan: u64,
-    scan_ms: u64,
 }
 
 /// What a run is saved as.
@@ -262,10 +254,7 @@ impl Cacher {
                 // Rescanned whole when the last full scan is old: asking the journal would
                 // keep what it missed.
                 let journal = h.journal.filter(|_| !hit.full_rescan);
-                let kept = journal.map(|_| ScanTiming {
-                    last_full_scan: h.full_scan_at(),
-                    scan_ms: h.scan_ms,
-                });
+                let kept = h.resumed_timing().filter(|_| !hit.full_rescan);
                 app.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
                 engine.resume_with(
@@ -303,11 +292,9 @@ impl Cacher {
         let Some((complete, version)) = ended(engine) else {
             return false;
         };
-        let ms = u64::try_from(run.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let timing = run.kept.unwrap_or(ScanTiming {
-            last_full_scan: run.started_secs,
-            scan_ms: ms,
-        });
+        let timing = run
+            .kept
+            .unwrap_or_else(|| ScanTiming::ended_now(run.started, run.started_secs));
         let worth = complete && link.save && timing.scan_ms >= self.min_scan_ms;
         run.saved_as = if worth {
             SavedAs::Save(timing)
@@ -326,23 +313,17 @@ impl Cacher {
         let Some(run) = &self.run else {
             return;
         };
-        let SavedAs::Save(ScanTiming {
-            last_full_scan,
-            scan_ms,
-        }) = run.saved_as
-        else {
+        let SavedAs::Save(full_scan) = run.saved_as else {
             return;
         };
         let now = cache::now();
-        let header = Header {
-            tool_version: env!("CARGO_PKG_VERSION").into(),
-            written: now,
-            cross_mounts: link.slot.key.cross_mounts,
-            network: link.slot.key.network,
-            journal: run.journal,
-            last_full_scan,
-            scan_ms,
-        };
+        let header = Header::new(
+            now,
+            link.slot.key.cross_mounts,
+            link.slot.key.network,
+            run.journal,
+            full_scan,
+        );
         let read = engine.reader();
         let cancel = Arc::new(AtomicBool::new(false));
         let (slot, stop) = (link.slot.clone(), cancel.clone());

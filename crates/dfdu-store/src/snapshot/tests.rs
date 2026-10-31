@@ -30,6 +30,49 @@ pub(super) fn bytes(t: &Tree, r: Ix) -> Vec<u8> {
     out
 }
 
+/// A resume from a journal position keeps the last full scan, whose time defaults to when the
+/// snapshot was written; one without a position keeps nothing.
+#[test]
+fn a_resume_keeps_the_full_scan_only_from_a_journal_position() {
+    let h = header();
+    let timing = ScanTiming {
+        last_full_scan: h.last_full_scan,
+        scan_ms: h.scan_ms,
+    };
+    assert_eq!(h.resumed_timing(), Some(timing));
+    let unknown = Header {
+        last_full_scan: 0,
+        ..header()
+    };
+    assert_eq!(
+        unknown.resumed_timing().map(|t| t.last_full_scan),
+        Some(unknown.written)
+    );
+    let no_position = Header {
+        journal: None,
+        ..header()
+    };
+    assert_eq!(no_position.resumed_timing(), None);
+    let made = Header::new(h.written, h.cross_mounts, h.network, h.journal, timing);
+    assert_eq!(made.tool_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        made,
+        Header {
+            tool_version: made.tool_version.clone(),
+            ..header()
+        }
+    );
+}
+
+/// A full scan that ends now took the time since it started.
+#[test]
+fn a_full_scan_ended_now_took_its_time() {
+    let started = Instant::now() - std::time::Duration::from_millis(1_500);
+    let t = ScanTiming::ended_now(started, 1_000);
+    assert_eq!(t.last_full_scan, 1_000);
+    assert!((1_500..60_000).contains(&t.scan_ms), "{t:?}");
+}
+
 #[test]
 fn round_trip() {
     let (t, r) = sample();
