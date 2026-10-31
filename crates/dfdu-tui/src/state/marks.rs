@@ -136,7 +136,7 @@ pub fn toggle(app: &mut App) {
         app.status = Some(crate::app::keys::READ_ONLY.into());
         return;
     }
-    let Some(index) = app.selected_index().map(|row| app.rows[row]) else {
+    let Some(index) = app.selected_index().map(|row| app.list.rows[row]) else {
         return;
     };
     let e = &app.snap.entries[index];
@@ -426,7 +426,7 @@ pub fn invert(app: &mut App) {
         return;
     }
     let folders = !crate::overlay::type_filter::active(app);
-    let rows: Vec<Item> = (app.rows.iter())
+    let rows: Vec<Item> = (app.list.rows.iter())
         .filter(|&&i| {
             let e = &app.snap.entries[i];
             !e.pseudo && e.depth == 0 && (folders || !e.is_dir)

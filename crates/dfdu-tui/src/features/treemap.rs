@@ -6,7 +6,7 @@
 //! the top are read from the engine model ([`read`]) for the largest directories only, one
 //! level even at depth 1, for the selected tile. A directory without a match of its own is
 //! coloured by the category most of what is matched inside it is in, however deep
-//! ([`dominant`]). The layout is recomputed when the list re-sorts (`App::sort_gen`), when the
+//! ([`dominant`]). The layout is recomputed when the list re-sorts (`List::sort_gen`), when the
 //! area or the depth changes, when the tree's matches change (a scan classifies as it goes),
 //! and otherwise kept, so tiles do not jump while sizes stream in; the labels of top-level
 //! tiles show live sizes.
@@ -116,7 +116,7 @@ struct Key {
 fn key_of(app: &App) -> Key {
     Key {
         dir: app.snap.dir_node,
-        sort_gen: app.sort_gen,
+        sort_gen: app.list.sort_gen,
         depth: app.treemap.depth,
         mode: app.size_mode,
         hide_hidden: app.hide_hidden,
@@ -191,6 +191,7 @@ pub fn read(m: &Model, app: &App) -> Info {
     };
     let entries = &app.snap.entries;
     let mut dirs: Vec<(u64, usize)> = app
+        .list
         .rows
         .iter()
         .filter(|&&i| entries[i].is_dir && !entries[i].pseudo)
@@ -398,7 +399,7 @@ fn select_top(app: &mut App, top: usize) {
         return;
     };
     let entries = &app.snap.entries;
-    if let Some(row) = app.rows.iter().position(|&i| entries[i].node == node) {
+    if let Some(row) = app.list.rows.iter().position(|&i| entries[i].node == node) {
         app.move_to(row);
     }
 }

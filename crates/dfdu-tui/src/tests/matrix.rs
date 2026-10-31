@@ -156,7 +156,7 @@ fn frame(state: State, theme: Theme) -> Buffer {
         State::Delete => {
             app.marks.items().len() == 2 && matches!(app.overlay, Overlay::ConfirmDelete(_))
         }
-        State::Filter => filter::editing(&app) && app.rows.len() == 2,
+        State::Filter => filter::editing(&app) && app.list.rows.len() == 2,
         State::Help => matches!(app.overlay, Overlay::Help(_)),
         State::Palette => matches!(app.overlay, Overlay::Palette(_)),
         State::Errors => matches!(app.overlay, Overlay::Errors { .. }),
@@ -350,11 +350,11 @@ fn every_mark_has_a_glyph() {
     assert_eq!(cue(Mark::Scanning).0, &spinners[..]);
 
     let reversed = |s: Style| s.add_modifier.contains(Modifier::REVERSED);
-    let first = format!("entry-{:02}", app.rows[0]);
+    let first = format!("entry-{:02}", app.list.rows[0]);
     assert_cue(&buf, &first, reversed);
     assert!(!reversed(style_at(
         &buf,
-        &format!("entry-{:02}", app.rows[1])
+        &format!("entry-{:02}", app.list.rows[1])
     )));
 
     // A marked row starts with `●`, and so does the count of marks.

@@ -96,7 +96,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
     app.refresh(snap_with_alloc(es, 2), t1);
     let mut buf = render_buffer(&mut app, t1, 120, 65);
     assert_eq!(app.motion.markers.len(), 60);
-    let visible: Vec<usize> = app.rows[app.scroll..app.scroll + 60].to_vec();
+    let visible: Vec<usize> = app.list.rows[app.list.scroll..app.list.scroll + 60].to_vec();
     let mut costs = Vec::new();
     for n in 1..=12 {
         let now = t1 + FRAME * n;

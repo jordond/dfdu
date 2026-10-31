@@ -69,7 +69,7 @@ pub fn follow(app: &mut App, before: Option<usize>) {
 /// and directories are left out while a type filter shows only some of their files.
 fn mark_rows(app: &mut App, from: usize, to: usize) {
     let folders = !crate::overlay::type_filter::active(app);
-    let items = (app.rows.get(from..=to).unwrap_or_default().iter())
+    let items = (app.list.rows.get(from..=to).unwrap_or_default().iter())
         .filter(|&&i| {
             let e = &app.snap.entries[i];
             !e.pseudo && (folders || !e.is_dir)

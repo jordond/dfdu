@@ -155,7 +155,7 @@ impl App {
     /// the cursor in this directory, or it is on the first row (`index`, before the snapshot).
     /// Deleted rows kept as placeholders hold still until the next re-sort.
     fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
-        (!self.moved || index == Some(0)) && !self.motion.has_ghosts()
+        (!self.list.moved || index == Some(0)) && !self.motion.has_ghosts()
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
@@ -213,7 +213,7 @@ impl App {
                 .enumerate()
                 .map(|(i, e)| (e.node, i))
                 .collect();
-            self.order.remap(|i| {
+            self.list.order.remap(|i| {
                 let node = old.entries[i].node;
                 pos.get(swapped.get(&node).unwrap_or(&node)).copied()
             });
@@ -276,7 +276,7 @@ impl App {
             && refilter
             && !requested
             && !fresh
-            && self.order.refilter(entries, visible, self.sort);
+            && self.list.order.refilter(entries, visible, self.sort);
         match mode {
             _ if tree => {
                 let how = match mode {
@@ -287,53 +287,58 @@ impl App {
                 // Between sorts a deleted row keeps its place, as the list keeps its row.
                 let keep = how == Siblings::Keep;
                 let visible = |i: usize, e: &EntryData| visible(i, e) || (keep && e.ghost);
-                self.order.sort_tree(entries, visible, self.sort, how);
+                self.list.order.sort_tree(entries, visible, self.sort, how);
             }
             Reorder::Exact if refiltered => {}
             Reorder::Exact => {
-                self.order = Order::default();
+                self.list.order = Order::default();
                 if filter.active() {
-                    self.order.sort_exact(entries, visible, self.sort);
+                    self.list.order.sort_exact(entries, visible, self.sort);
                 } else {
-                    self.order
+                    self.list
+                        .order
                         .sort_exact_unfiltered(entries, visible, self.sort);
                 }
             }
-            Reorder::Auto => self.order.sort_auto(entries, visible, self.sort),
-            Reorder::Sync => self.order.sync(entries, visible, self.sort),
+            Reorder::Auto => self.list.order.sort_auto(entries, visible, self.sort),
+            Reorder::Sync => self.list.order.sync(entries, visible, self.sort),
             Reorder::Top => {
-                self.order
+                self.list
+                    .order
                     .sort_top(entries, visible, self.sort, self.list_height);
             }
         }
         // Sorting the first screen leaves the rows below it waiting for the automatic sort.
         let resorted = !matches!(mode, Reorder::Sync | Reorder::Top);
         if resorted {
-            self.sort_gen += 1;
+            self.list.sort_gen += 1;
             self.sort_schedule.record_sort(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
         let old_rows = if resorted && !dir_changed {
-            std::mem::take(&mut self.rows)
+            std::mem::take(&mut self.list.rows)
         } else {
-            self.rows.clear();
+            self.list.rows.clear();
             Vec::new()
         };
-        self.rows.extend_from_slice(self.order.rows());
+        self.list.rows.extend_from_slice(self.list.order.rows());
         if resorted && !dir_changed {
             let auto = mode == Reorder::Auto;
-            self.motion.resorted(&old_rows, &self.rows, entries, auto);
+            self.motion
+                .resorted(&old_rows, &self.list.rows, entries, auto);
         }
-        self.new_count = self.order.new_entries().len();
-        self.new_largest = self
+        self.list.new_count = self.list.order.new_entries().len();
+        self.list.new_largest = self
+            .list
             .order
             .new_entries()
             .iter()
             .map(|&i| entries[i].size)
             .max()
             .unwrap_or(0);
-        self.rows_largest = self
+        self.list.rows_largest = self
+            .list
             .rows
             .iter()
             .map(|&i| entries[i].size)
@@ -341,21 +346,21 @@ impl App {
             .unwrap_or(0);
 
         self.fix_selection(old_index);
-        if mode == Reorder::Top && !self.moved {
+        if mode == Reorder::Top && !self.list.moved {
             self.select(0);
-            self.scroll = 0;
+            self.list.scroll = 0;
         }
         if resorted && !dir_changed {
-            if self.moved {
+            if self.list.moved {
                 // Keep the selected row on the same screen line.
                 if let (Some(old), Some(new)) = (old_index, self.selected_index()) {
-                    let line = old.saturating_sub(self.scroll);
-                    self.scroll = new.saturating_sub(line);
+                    let line = old.saturating_sub(self.list.scroll);
+                    self.list.scroll = new.saturating_sub(line);
                 }
             } else {
                 // The user has not moved the cursor here: stay at the top.
                 self.select(0);
-                self.scroll = 0;
+                self.list.scroll = 0;
             }
         }
     }
@@ -399,7 +404,7 @@ impl App {
             return;
         }
         if let Some(sel) = &self.selected {
-            let found = self.rows.iter().find(|&&i| {
+            let found = self.list.rows.iter().find(|&&i| {
                 let e = &self.snap.entries[i];
                 e.name[..] == sel.name[..] && (sel.dev_ino == (0, 0) || e.dev_ino == sel.dev_ino)
             });
@@ -408,11 +413,11 @@ impl App {
                 return;
             }
         }
-        if self.rows.is_empty() {
+        if self.list.rows.is_empty() {
             self.selected = None;
             return;
         }
-        let i = old_index.unwrap_or(0).min(self.rows.len() - 1);
-        self.selected = Some(Selection::of(&self.snap.entries[self.rows[i]]));
+        let i = old_index.unwrap_or(0).min(self.list.rows.len() - 1);
+        self.selected = Some(Selection::of(&self.snap.entries[self.list.rows[i]]));
     }
 }

@@ -261,7 +261,8 @@ pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
 
 /// The names of the list rows, in display order.
 pub(crate) fn row_names(app: &App) -> Vec<String> {
-    app.rows
+    app.list
+        .rows
         .iter()
         .map(|&i| String::from_utf8_lossy(&app.snap.entries[i].name).into_owned())
         .collect()

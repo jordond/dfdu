@@ -172,6 +172,7 @@ fn every_view_has_its_tab_and_scope_at_each_width() {
     let t0 = Instant::now();
     let (fx, mut app) = classified_app(t0);
     let mid = app
+        .list
         .rows
         .iter()
         .position(|&i| &*app.snap.entries[i].name == b"mid");

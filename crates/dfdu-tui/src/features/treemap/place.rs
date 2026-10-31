@@ -224,6 +224,7 @@ pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
     let entries = &app.snap.entries;
     let below = &app.extras.treemap.below;
     let items = app
+        .list
         .rows
         .iter()
         .map(|&i| {

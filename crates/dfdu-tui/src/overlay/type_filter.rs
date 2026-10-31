@@ -388,7 +388,11 @@ mod tests {
         assert!(out.contains("only video: 130 B in 2 files here"), "{out}");
 
         // Folders cannot be marked or deleted; files can.
-        let films = app.rows.iter().position(|&i| app.snap.entries[i].is_dir);
+        let films = app
+            .list
+            .rows
+            .iter()
+            .position(|&i| app.snap.entries[i].is_dir);
         app.move_to(films.unwrap());
         app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.marks.is_empty());

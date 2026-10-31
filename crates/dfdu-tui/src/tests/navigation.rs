@@ -196,7 +196,7 @@ fn filter_enter_opens_the_only_match() {
     // Two matches: Enter keeps the filter and stays.
     app.key(press(KeyCode::Char('/')), t0);
     typed(&mut app, "i", t0);
-    assert_eq!(app.rows.len(), 2);
+    assert_eq!(app.list.rows.len(), 2);
     app.key(press(KeyCode::Enter), t0);
     assert!(!app.target.path.to_local().ends_with("Library"));
     // One file: stays too.
@@ -209,7 +209,7 @@ fn filter_enter_opens_the_only_match() {
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "libr", t0);
-    assert_eq!(app.rows.len(), 1);
+    assert_eq!(app.list.rows.len(), 1);
     app.key(press(KeyCode::Enter), t0);
     assert_eq!(app.target.path, below("/r", "Library"));
 }

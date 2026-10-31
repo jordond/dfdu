@@ -34,7 +34,7 @@ fn selected(app: &App) -> Option<(HostPath, bool)> {
         }
         View::Files | View::Map => {}
     }
-    let index = app.rows[app.selected_index()?];
+    let index = app.list.rows[app.selected_index()?];
     let e = &app.snap.entries[index];
     if e.pseudo {
         return None;

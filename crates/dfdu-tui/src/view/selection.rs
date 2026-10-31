@@ -19,7 +19,7 @@ use crate::state::{marks, tree};
 pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     let t = &app.theme;
     let sel = app.selected_index()?;
-    let index = app.rows[sel];
+    let index = app.list.rows[sel];
     let e = &app.snap.entries[index];
     let in_tree = app.tree_shown().is_some();
     let mut right = Vec::new();
@@ -28,7 +28,7 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
         right.push(Span::raw("  "));
     }
     right.push(Span::styled(
-        format!("{}/{} ", sel + 1, app.rows.len()),
+        format!("{}/{} ", sel + 1, app.list.rows.len()),
         t.fg_dim,
     ));
 

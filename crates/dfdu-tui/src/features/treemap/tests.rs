@@ -645,6 +645,7 @@ fn depth_one_peeks_into_the_selected_tile() {
     assert_eq!(selected(&app), "big");
     assert!(frame.contains(" a/") && !frame.contains(" m0"), "{frame}");
     let mid = app
+        .list
         .rows
         .iter()
         .position(|&i| &*app.snap.entries[i].name == b"mid");
