@@ -6,17 +6,17 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::Args;
-use dfdu_engine::{Command, Engine, EngineOptions, SizeMode};
+use dfdu_engine::{Command, Engine, EngineOptions, Model, SizeMode};
 use dfdu_scan::{Backend, JobOptions, PortableBackend};
-use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
+use dfdu_tree::{HostPath, Ix};
 
 use crate::launch::{self, Local};
 use crate::table::{
     notes, print_by_type, print_debug_stats, print_errors, print_footer, print_tree, shown_total,
 };
 use crate::{
-    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, outside, remote, transfer, written,
+    EXIT_PARTIAL, MountArgs, RuleArgs, history, inject, json, outside, print_out, remote, transfer,
 };
 
 #[derive(Args)]
@@ -187,6 +187,26 @@ pub fn run(args: ScanArgs) -> ExitCode {
     }
 }
 
+/// What `dfdu scan` prints, from its arguments.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent switches of the output, from the command-line flags"
+)]
+struct Output<'a> {
+    format: Format,
+    /// Only the root total in bytes, whatever the format.
+    bytes: bool,
+    depth: Option<usize>,
+    top: Option<usize>,
+    mode: SizeMode,
+    types: Option<&'a TypeFilter>,
+    by_type: bool,
+    /// List every entry that could not be read.
+    errors: bool,
+    /// The scan is of this host's files, so what it did not enter is looked up here.
+    local: bool,
+}
+
 /// Runs the scan of `root` (`args.path`, or where the agent resolved it) with `engine` and
 /// `job`, prints it, and records it in the history under `key`.
 fn scan_with<B: Backend>(
@@ -196,23 +216,26 @@ fn scan_with<B: Backend>(
     key: &str,
     args: ScanArgs,
 ) -> ExitCode {
-    let ScanArgs {
-        format,
-        depth,
-        top,
-        apparent,
-        like_du,
-        bytes,
-        types,
-        by_type,
-        errors: list_errors,
-        no_history,
-        debug_stats,
-        remote,
-        ..
-    } = args;
+    let mode = if args.apparent {
+        SizeMode::Apparent
+    } else if args.like_du {
+        SizeMode::Referenced
+    } else {
+        SizeMode::Disk
+    };
+    let out = Output {
+        format: args.format,
+        bytes: args.bytes,
+        depth: args.depth,
+        top: args.top,
+        mode,
+        types: args.types.as_ref(),
+        by_type: args.by_type,
+        errors: args.errors,
+        local: args.remote.is_none(),
+    };
     // The history is about this host's files.
-    let no_history = no_history || remote.is_some();
+    let record = !args.no_history && out.local;
     let t0 = Instant::now();
     let started = dfdu_tree::now_secs();
     let engine = match launch::run_scan(
@@ -226,71 +249,26 @@ fn scan_with<B: Backend>(
         Err(code) => return code,
     };
     let elapsed = t0.elapsed();
-    let mode = if apparent {
-        SizeMode::Apparent
-    } else if like_du {
-        SizeMode::Referenced
-    } else {
-        SizeMode::Disk
-    };
     let code = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
             return ExitCode::from(1);
         };
-        let total = m.tree.total(root);
-        let filter = types.as_ref();
-        if bytes {
-            outln!("{}", mode.of(&shown_total(&m.tree, root, filter)));
-        } else if format != Format::Table {
-            let left_out = match format {
-                Format::Json | Format::Ndjson => Some(outside::gather(m, root, remote.is_none())),
-                _ => None,
-            };
-            let out = json::ScanOut {
-                mode,
-                depth,
-                top,
-                elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                note: &|ix| notes(m, ix),
-                outside: left_out.as_ref(),
-            };
-            let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
-            let r = match format {
-                Format::Json => json::scan(w, m, root, &out),
-                Format::Ndjson => json::scan_ndjson(w, m, root, &out),
-                _ => dfdu_store::ncdu::export(&m.tree, root, &mut *w, &transfer::ncdu_meta())
-                    .map(|_| ()),
-            };
-            if let Err(code) = written(r.and_then(|()| std::io::Write::flush(w))) {
-                return code;
-            }
-            if list_errors {
-                print_errors(m, root);
-            }
-        } else {
-            print_tree(m, root, depth.unwrap_or(1), top.unwrap_or(10), mode, filter);
-            if by_type {
-                print_by_type(&m.tree, root, mode, filter);
-            }
-            if list_errors {
-                print_errors(m, root);
-            }
-            print_footer(m, root, elapsed, list_errors);
-            outside::footer(m, root, remote.is_none());
+        if let Err(code) = print_scan(m, root, &out, elapsed) {
+            return code;
         }
-        if debug_stats {
+        if args.debug_stats {
             print_debug_stats(m);
         }
-        if !no_history {
+        if record {
             history::record(m, root, key, started);
         }
-        if total.errors > 0 || m.status.incomplete {
+        if m.tree.total(root).errors > 0 || m.status.incomplete {
             ExitCode::from(EXIT_PARTIAL)
         } else {
             ExitCode::SUCCESS
         }
     });
-    if debug_stats {
+    if args.debug_stats {
         let gates = engine.local_scanner().map(|s| s.gate_stats());
         for g in gates.unwrap_or_default() {
             eprintln!(
@@ -302,6 +280,55 @@ fn scan_with<B: Backend>(
     }
     engine.shutdown(launch::SHUTDOWN);
     code
+}
+
+/// Prints the scan of `root` as `o` says: the root total, the table with its footer, JSON,
+/// NDJSON or an ncdu export, and after those the entries that could not be read when asked.
+fn print_scan(m: &Model, root: Ix, o: &Output, elapsed: Duration) -> Result<(), ExitCode> {
+    match (o.bytes, o.format) {
+        (true, _) => outln!("{}", o.mode.of(&shown_total(&m.tree, root, o.types))),
+        (false, Format::Table) => {
+            let (depth, top) = (o.depth.unwrap_or(1), o.top.unwrap_or(10));
+            print_tree(m, root, depth, top, o.mode, o.types);
+            if o.by_type {
+                print_by_type(&m.tree, root, o.mode, o.types);
+            }
+            if o.errors {
+                print_errors(m, root);
+            }
+            print_footer(m, root, elapsed, o.errors);
+            outside::footer(m, root, o.local);
+        }
+        (false, Format::Json | Format::Ndjson) => {
+            let left_out = outside::gather(m, root, o.local);
+            let out = json::ScanOut {
+                mode: o.mode,
+                depth: o.depth,
+                top: o.top,
+                elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                note: &|ix| notes(m, ix),
+                outside: Some(&left_out),
+            };
+            print_out(|w| {
+                if o.format == Format::Ndjson {
+                    json::scan_ndjson(w, m, root, &out)
+                } else {
+                    json::scan(w, m, root, &out)
+                }
+            })?;
+            if o.errors {
+                print_errors(m, root);
+            }
+        }
+        (false, Format::Ncdu) => {
+            let meta = transfer::ncdu_meta();
+            print_out(|w| dfdu_store::ncdu::export(&m.tree, root, w, &meta).map(|_| ()))?;
+            if o.errors {
+                print_errors(m, root);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
