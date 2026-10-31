@@ -2,15 +2,10 @@
 //! each match and the summary in the JSON document (schema/report.v1.json).
 
 use dfdu_rules::{Action, RuleSet};
-use dfdu_tree::{Class, Kind, Safety};
+use dfdu_tree::{Class, Safety};
 use serde_json::{Map, Value, json};
 
-use super::{Item, reclaimable};
-use crate::json as js;
-
-fn age_days(now: i64, mtime: i64) -> i64 {
-    (now - mtime).max(0) / 86_400
-}
+use crate::matches::{Item, age_days, reclaimable};
 
 /// How a match is cleaned up, in words for the table.
 fn how(rules: &RuleSet, it: &Item) -> String {
@@ -24,51 +19,6 @@ fn how(rules: &RuleSet, it: &Item) -> String {
         Action::Report => "report only".into(),
         Action::Delete | Action::Trash => "delete".into(),
     }
-}
-
-/// One item in JSON (`schema/report.v1.json`, `$defs/item`).
-pub fn item_json(rules: &RuleSet, it: &Item, now: i64) -> Value {
-    let r = rules.rule(it.class.rule);
-    let c = &it.class;
-    let mut o = Map::new();
-    js::put_host_path(&mut o, "path", &it.path);
-    o.insert(
-        "type".into(),
-        if it.kind == Kind::Dir { "dir" } else { "file" }.into(),
-    );
-    o.insert("rule".into(), r.id.clone().into());
-    o.insert("rule_name".into(), r.name.clone().into());
-    o.insert("category".into(), r.category().id.into());
-    o.insert("category_name".into(), r.category().name.into());
-    o.insert("safety".into(), it.safety().as_str().into());
-    o.insert("action".into(), r.action.as_str().into());
-    if let Some(n) = r.action.native() {
-        let argv = dfdu_engine::native_argv(&n.command, &it.path);
-        o.insert("native_command".into(), argv.into());
-    }
-    o.insert("disk".into(), it.disk.into());
-    o.insert("apparent".into(), it.apparent.into());
-    o.insert("entries".into(), it.entries.into());
-    o.insert("shared_outside".into(), it.shared_out.into());
-    o.insert("mtime".into(), it.mtime.into());
-    o.insert("age_days".into(), age_days(now, it.mtime).into());
-    o.insert("recommended".into(), it.recommended.into());
-    o.insert("checked".into(), c.has(Class::CHECKED).into());
-    o.insert("in_use".into(), c.has(Class::IN_USE).into());
-    o.insert("vcs_tracked".into(), c.has(Class::VCS_TRACKED).into());
-    o.insert("scanning".into(), it.scanning.into());
-    if it.matches_inside > 0 {
-        o.insert("matches_inside".into(), it.matches_inside.into());
-    }
-    if let Some(d) = c.degraded {
-        o.insert(
-            "degraded".into(),
-            r.degrade[d as usize].reason.clone().into(),
-        );
-    }
-    o.insert("explanation".into(), r.explanation.clone().into());
-    o.insert("lost".into(), r.lost.clone().into());
-    Value::Object(o)
 }
 
 /// Disk usage by safety level, and of the recommended items, protected ones left out of the

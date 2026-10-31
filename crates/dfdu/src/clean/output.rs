@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{CleanArgs, ModeArg, Outcome};
 use crate::json as js;
-use crate::report::{self, Item};
+use crate::matches::{Item, item_json};
 
 fn verb(mode: ModeArg) -> &'static str {
     match mode {
@@ -125,7 +125,7 @@ pub(super) fn print_json(rules: &RuleSet, args: &CleanArgs, r: &Results) -> std:
         .iter()
         .zip(outcomes)
         .map(|(it, o)| {
-            let mut v = report::item_json(rules, it, now);
+            let mut v = item_json(rules, it, now);
             v["outcome"] = o.name().into();
             if let Some(r) = o.reason() {
                 v["reason"] = r.into();

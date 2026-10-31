@@ -7,7 +7,9 @@ use clap::{Args, Parser, Subcommand};
 use dfdu_rules::RuleSet;
 use dfdu_scan::JobOptions;
 use dfdu_tree::filetype::TypeFilter;
-use dfdu_tui::{Bars, ColorLevel};
+use dfdu_tui::Bars;
+
+use crate::args::{ColorFlag, bars_flag, color_flag, type_filter};
 
 /// What writing the output on stdout ends the command with: nothing when it was written, a
 /// quiet success when stdout was closed (`dfdu ... | head`), and exit code 1 with the error
@@ -37,6 +39,7 @@ fn written_to<T>(what: &dyn std::fmt::Display, r: std::io::Result<T>) -> Result<
     }
 }
 
+mod args;
 mod browse;
 mod cache;
 mod clean;
@@ -46,6 +49,7 @@ mod history;
 mod inject;
 mod json;
 mod launch;
+mod matches;
 mod outside;
 mod recover;
 mod remote;
@@ -151,18 +155,6 @@ struct Cli {
     /// Start with the debug panel open, and print its numbers when the browser exits.
     #[arg(long, hide = true)]
     debug_stats: bool,
-}
-
-/// A `--color` value; `None` detects the level.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ColorFlag(Option<ColorLevel>);
-
-fn color_flag(s: &str) -> Result<ColorFlag, String> {
-    dfdu_tui::parse_color_flag(s).map(ColorFlag)
-}
-
-fn bars_flag(s: &str) -> Result<Bars, String> {
-    Bars::parse(s).ok_or_else(|| format!("expected {}", Bars::NAMES.join(" or ")))
 }
 
 #[derive(Subcommand)]
@@ -345,22 +337,6 @@ impl RuleArgs {
     }
 }
 
-/// A non-negative number of seconds, at most a year.
-fn seconds(s: &str) -> Result<f64, String> {
-    match s.parse::<f64>() {
-        Ok(v) if (0.0..=31_536_000.0).contains(&v) => Ok(v),
-        _ => Err(format!("`{s}` is not a number of seconds")),
-    }
-}
-
-fn type_filter(s: &str) -> Result<TypeFilter, String> {
-    let f = TypeFilter::parse(s).map_err(|e| e.to_string())?;
-    if f.is_empty() {
-        return Err("name at least one type or extension".into());
-    }
-    Ok(f)
-}
-
 /// Exit code when an entry could not be read or the scan is incomplete.
 const EXIT_PARTIAL: u8 = 3;
 /// Exit code when some deletions failed or were refused.
@@ -444,6 +420,8 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
 
 #[cfg(test)]
 mod tests {
+    use dfdu_tui::ColorLevel;
+
     use super::*;
 
     #[test]

@@ -11,7 +11,7 @@ use dfdu_store::history::{self, Change, History, Scanned, SizeMap, Sizes};
 use dfdu_tree::{HostPath, Ix, now_secs};
 use serde_json::{Map, Value, json};
 
-use crate::report::{ReportFormat, age_arg, size_arg};
+use crate::args::{ReportFormat, age_arg, size_arg};
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
 
 /// Records the scan below `root` in the history database. Problems are reported, never fatal.

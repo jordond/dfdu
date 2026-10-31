@@ -11,14 +11,14 @@ use clap::Args;
 use dfdu_dupes::{Found, Options, Progress};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, report};
+use crate::{EXIT_PARTIAL, MountArgs, args, json as js, launch, print_out};
 
 #[derive(Args)]
 pub struct DupesArgs {
     #[arg(default_value = ".")]
     path: PathBuf,
     /// Compare only files of at least this size (`1MiB`, `100KB`).
-    #[arg(long, value_name = "SIZE", default_value = "1MiB", value_parser = report::size_arg)]
+    #[arg(long, value_name = "SIZE", default_value = "1MiB", value_parser = args::size_arg)]
     min_size: u64,
     /// Output: table or json (schema/dupes.v1.json).
     #[arg(long, value_enum, default_value_t = Format::Table)]

@@ -68,7 +68,7 @@ pub struct ImportArgs {
     /// Count only files of these types or extensions, comma-separated: `video,audio,.iso`.
     /// Types: video, audio, image, document, archive, disk-image, code, executable, font, data,
     /// other. Folders show the size of the matching files inside them.
-    #[arg(long = "type", value_name = "TYPES", value_parser = crate::type_filter)]
+    #[arg(long = "type", value_name = "TYPES", value_parser = crate::args::type_filter)]
     pub types: Option<TypeFilter>,
     /// After the tree, print disk usage by file type and the largest extensions.
     #[arg(long)]
