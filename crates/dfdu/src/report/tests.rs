@@ -85,6 +85,6 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
     let list = items(&m, &rules, &sys, 0);
     assert_eq!(list.len(), 1);
     assert_eq!(reclaimable(&list), 1000);
-    let json = item_json(&m, &rules, &list[0], 0);
+    let json = item_json(&rules, &list[0], 0);
     assert_eq!(json["matches_inside"], 1);
 }

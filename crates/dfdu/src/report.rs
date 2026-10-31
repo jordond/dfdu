@@ -252,7 +252,7 @@ fn how(rules: &RuleSet, it: &Item) -> String {
 }
 
 /// One item in JSON (`schema/report.v1.json`, `$defs/item`).
-pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
+pub fn item_json(rules: &RuleSet, it: &Item, now: i64) -> Value {
     let r = rules.rule(it.class.rule);
     let c = &it.class;
     let mut o = Map::new();
@@ -293,7 +293,6 @@ pub fn item_json(m: &Model, rules: &RuleSet, it: &Item, now: i64) -> Value {
     }
     o.insert("explanation".into(), r.explanation.clone().into());
     o.insert("lost".into(), r.lost.clone().into());
-    let _ = m;
     Value::Object(o)
 }
 
@@ -354,7 +353,7 @@ pub fn run(args: &ReportArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode
             doc.insert(
                 "items".into(),
                 list.iter()
-                    .map(|i| item_json(m, rules, i, now))
+                    .map(|i| item_json(rules, i, now))
                     .collect::<Vec<_>>()
                     .into(),
             );

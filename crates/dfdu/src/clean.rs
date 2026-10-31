@@ -244,35 +244,31 @@ pub fn run(args: &CleanArgs, rules: &Arc<RuleSet>) -> Result<ExitCode, ExitCode>
     if args.yes {
         execute(&engine, rules, &items, &mut outcomes, args.mode.mode());
     }
-    let code = engine.read(|m| {
-        if args.format == report::ReportFormat::Json {
-            written(print_json(
-                m,
-                rules,
-                args,
-                &Results {
-                    root: &root,
-                    items: &items,
-                    outcomes: &outcomes,
-                    complete,
-                    now,
-                },
-            ))?;
-        } else {
-            print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
-        }
-        Ok(
-            if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
-                ExitCode::from(EXIT_DELETE_FAILED)
-            } else if !complete {
-                ExitCode::from(EXIT_PARTIAL)
-            } else {
-                ExitCode::SUCCESS
-            },
-        )
-    });
     engine.shutdown(launch::SHUTDOWN);
-    code
+    if args.format == report::ReportFormat::Json {
+        written(print_json(
+            rules,
+            args,
+            &Results {
+                root: &root,
+                items: &items,
+                outcomes: &outcomes,
+                complete,
+                now,
+            },
+        ))?;
+    } else {
+        print_out(|w| print_table(w, rules, args, &items, &outcomes))?;
+    }
+    Ok(
+        if earlier_failed || outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))) {
+            ExitCode::from(EXIT_DELETE_FAILED)
+        } else if !complete {
+            ExitCode::from(EXIT_PARTIAL)
+        } else {
+            ExitCode::SUCCESS
+        },
+    )
 }
 
 /// Deletes the planned items in one plan, then runs the native commands one at a time.

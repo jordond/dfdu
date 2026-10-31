@@ -3,7 +3,6 @@
 
 use std::io::Write;
 
-use dfdu_engine::Model;
 use dfdu_rules::{Action, RuleSet};
 use dfdu_tree::HostPath;
 use serde_json::{Value, json};
@@ -104,12 +103,7 @@ pub(super) struct Results<'a> {
     pub(super) now: i64,
 }
 
-pub(super) fn print_json(
-    m: &Model,
-    rules: &RuleSet,
-    args: &CleanArgs,
-    r: &Results,
-) -> std::io::Result<()> {
+pub(super) fn print_json(rules: &RuleSet, args: &CleanArgs, r: &Results) -> std::io::Result<()> {
     let &Results {
         root,
         items,
@@ -131,7 +125,7 @@ pub(super) fn print_json(
         .iter()
         .zip(outcomes)
         .map(|(it, o)| {
-            let mut v = report::item_json(m, rules, it, now);
+            let mut v = report::item_json(rules, it, now);
             v["outcome"] = o.name().into();
             if let Some(r) = o.reason() {
                 v["reason"] = r.into();
