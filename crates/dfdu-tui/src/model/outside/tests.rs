@@ -86,7 +86,7 @@ fn rows_of_mounts_left_out_show_their_use_and_m_enters_them() {
 fn the_cleanup_view_lists_links_out_of_the_scan() {
     use ratatui::crossterm::event::KeyCode;
 
-    use crate::features::treemap::tests::{classified, sync};
+    use crate::tests::{classified, sync};
     use crate::tests::{press, render};
     let fx = classified();
     let t0 = std::time::Instant::now();

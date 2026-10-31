@@ -224,6 +224,7 @@ pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
     let entries = &app.snap.entries;
     let below = &app.extras.treemap.below;
     let items = app
+        .list
         .rows
         .iter()
         .map(|&i| {
@@ -324,8 +325,9 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::features::treemap::tests::{map_of, nested_app, tree, treemap_app};
+    use crate::features::treemap::tests::{map_of, nested_app, treemap_app};
     use crate::model::snapshot::test_entry;
+    use crate::tests::tree;
 
     const AREA: Rect = Rect::new(0, 2, 80, 20);
 

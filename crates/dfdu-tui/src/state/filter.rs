@@ -192,7 +192,7 @@ pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
                 app.filter.editing = false;
                 if app.filter.input.text().trim().is_empty() {
                     clear(app);
-                } else if let [only] = app.rows[..]
+                } else if let [only] = app.list.rows[..]
                     && app.snap.entries[only].is_dir
                     && !app.snap.entries[only].pseudo
                 {
@@ -217,7 +217,8 @@ fn refilter(app: &mut App, now: Instant) {
     app.reorder(now);
     let after = selected_node(app);
     let row_of = |app: &App, node| {
-        app.rows
+        app.list
+            .rows
             .iter()
             .position(|&i| app.snap.entries[i].node == node)
     };

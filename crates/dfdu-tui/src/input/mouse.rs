@@ -80,7 +80,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     {
         return Some(Vec::new());
     }
-    if app.rows.is_empty() {
+    if app.list.rows.is_empty() {
         return None;
     }
     app.status = None;
@@ -134,15 +134,16 @@ fn click_list(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> 
     // The rows as the list drew them: entries from `scroll`, then the "new entries" row.
     let list = app.areas.list;
     let line = (at.y - list.y) as usize;
-    let new_row = app.new_count > 0;
+    let new_row = app.list.new_count > 0;
     let entries = app
+        .list
         .rows
         .len()
-        .saturating_sub(app.scroll)
+        .saturating_sub(app.list.scroll)
         .min((list.height as usize).saturating_sub(usize::from(new_row)));
     app.status = None;
     if line < entries {
-        return Some(click_row(app, app.scroll + line, at.x, now));
+        return Some(click_row(app, app.list.scroll + line, at.x, now));
     }
     if line == entries && new_row {
         app.mouse.last_click = None;
@@ -159,7 +160,7 @@ fn click_row(app: &mut App, row: usize, x: u16, now: Instant) -> Vec<Effect> {
         crate::state::tree::act::toggle_row(app, row);
         return Vec::new();
     }
-    let node = app.snap.entries[app.rows[row]].node;
+    let node = app.snap.entries[app.list.rows[row]].node;
     let again = app
         .mouse
         .last_click
@@ -181,7 +182,7 @@ fn on_glyph(app: &App, row: usize, x: u16) -> bool {
     if app.tree_shown().is_none() {
         return false;
     }
-    let e = &app.snap.entries[app.rows[row]];
+    let e = &app.snap.entries[app.list.rows[row]];
     if !e.is_dir || e.pseudo {
         return false;
     }

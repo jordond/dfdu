@@ -133,7 +133,7 @@ mod tests {
 
     use super::*;
     use crate::features::cleanup::tests::opened;
-    use crate::features::treemap::tests::classified;
+    use crate::tests::classified;
 
     /// The safety of each section and group row, and `Item` with the item's path for the rest.
     fn shown(app: &App) -> Vec<String> {

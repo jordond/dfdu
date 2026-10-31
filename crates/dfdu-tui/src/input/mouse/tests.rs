@@ -78,11 +78,11 @@ fn click_on_new_entries_row_sorts() {
     entries.push(dir(1, "b", 99));
     app.refresh(snap_without_totals(entries, 2), t0);
     render(&mut app, t0, 80, 12);
-    assert_eq!(app.new_count, 1);
+    assert_eq!(app.list.new_count, 1);
     event(&mut app, left(10, TOP + 1), t0).expect("redraw");
     app.reorder(t0);
-    assert_eq!(app.new_count, 0);
-    assert_eq!(app.rows.len(), 2);
+    assert_eq!(app.list.new_count, 0);
+    assert_eq!(app.list.rows.len(), 2);
 }
 
 #[test]

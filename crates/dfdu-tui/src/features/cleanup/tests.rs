@@ -3,7 +3,7 @@ use std::time::Instant;
 use ratatui::crossterm::event::KeyCode;
 
 use super::*;
-use crate::features::treemap::tests::{classified, classified_app, sync};
+use crate::tests::{classified, classified_app, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
 
@@ -93,7 +93,7 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
 
 /// [`classified`] with `/r/old-cache`, a file of 1 GiB unchanged for years under a safe rule:
 /// the one recommended item.
-fn with_recommended() -> crate::features::treemap::tests::Fixture {
+fn with_recommended() -> crate::tests::Fixture {
     let mut fx = classified();
     let t = &mut fx.m.tree;
     let root = t.roots().next().unwrap();
@@ -245,7 +245,7 @@ fn details_follow_the_cleanup_selection() {
 /// With rules but nothing they match, the view says what it looks for and how to go back.
 #[test]
 fn no_matches_have_an_empty_state() {
-    let mut fx = crate::features::treemap::tests::tree();
+    let mut fx = crate::tests::tree();
     let env = dfdu_rules::Env::with(dfdu_rules::Platform::Linux, &[("HOME", "/home/u")]);
     fx.m.rules = Some(std::sync::Arc::new(dfdu_rules::builtin(&env).0));
     let t0 = Instant::now();

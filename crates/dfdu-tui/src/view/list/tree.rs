@@ -23,7 +23,7 @@ pub(super) struct TreeRow {
 pub(super) fn rows(app: &App, visible: &[usize]) -> Option<Vec<TreeRow>> {
     app.tree_shown()?;
     let entries = &app.snap.entries;
-    let last = tree::last_children(entries, &app.rows);
+    let last = tree::last_children(entries, &app.list.rows);
     Some(
         visible
             .iter()

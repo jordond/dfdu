@@ -271,6 +271,7 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
     let out = render(&mut app, t0, 90, 8);
     assert!(out.contains("(shared between entries)"), "{out}");
     let at = app
+        .list
         .rows
         .iter()
         .position(|&i| app.snap.entries[i].pseudo)
