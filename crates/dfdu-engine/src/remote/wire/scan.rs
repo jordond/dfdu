@@ -1,7 +1,6 @@
 //! Scanner messages on the wire: metadata, errors, classes, and the messages; their chunks
 //! are in `chunk`.
 
-use dfdu_rules::protected::State;
 use dfdu_rules::{Hit, Inside, RuleSet};
 use dfdu_tree::{Class, ErrKind, Meta};
 
@@ -100,7 +99,7 @@ pub(super) fn enc_wclass(e: &mut Enc, c: &WireClass) {
     for &r in &c.inside {
         e.rule(r);
     }
-    e.u8(c.protection as u8);
+    e.protection(c.protection);
     e.var(c.chain.len() as u64);
     for h in &c.chain {
         e.rule(h.rule);
@@ -125,12 +124,7 @@ pub(super) fn dec_wclass(d: &mut Dec, rules: Option<&RuleSet>) -> R<WireClass> {
     for _ in 0..n {
         inside.push(d.rule()?);
     }
-    let protection = match d.u8()? {
-        0 => State::Off,
-        1 => State::On,
-        2 => State::Sticky,
-        _ => return bad("protection"),
-    };
+    let protection = d.protection()?;
     let n = d.count(5)?;
     let mut chain = Vec::with_capacity(n);
     for _ in 0..n {

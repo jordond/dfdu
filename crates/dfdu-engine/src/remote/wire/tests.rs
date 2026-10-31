@@ -497,6 +497,25 @@ fn kind_layout() {
     ));
 }
 
+/// Protection states go as one byte each; an unknown byte is an error.
+#[test]
+fn protection_layout() {
+    let states = [State::Off, State::On, State::Sticky];
+    let mut e = Enc::default();
+    for s in states {
+        e.protection(s);
+    }
+    assert_eq!(e.0, [0, 1, 2]);
+    let mut d = Dec::new(&e.0);
+    for s in states {
+        assert_eq!(d.protection().unwrap(), s);
+    }
+    assert!(matches!(
+        Dec::new(&[3]).protection(),
+        Err(WireError::Malformed("protection"))
+    ));
+}
+
 /// Frames carry their payload; a flipped bit is a checksum error, a cut frame an error,
 /// and an empty stream the end.
 #[test]

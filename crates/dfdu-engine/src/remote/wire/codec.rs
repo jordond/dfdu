@@ -1,6 +1,7 @@
 //! The payload encoding: LEB128 varints (signed ones zigzag-encoded), byte strings as a
 //! varint length and the bytes.
 
+use dfdu_rules::protected::State;
 use dfdu_tree::{Host, Kind, RuleIx, Safety};
 
 use super::WireError;
@@ -42,6 +43,13 @@ impl Enc {
             Kind::Dir => 1,
             Kind::Symlink => 2,
             Kind::Other => 3,
+        });
+    }
+    pub(super) fn protection(&mut self, s: State) {
+        self.u8(match s {
+            State::Off => 0,
+            State::On => 1,
+            State::Sticky => 2,
         });
     }
 }
@@ -113,6 +121,14 @@ impl<'a> Dec<'a> {
             2 => Kind::Symlink,
             3 => Kind::Other,
             _ => return bad("kind"),
+        })
+    }
+    pub(super) fn protection(&mut self) -> R<State> {
+        Ok(match self.u8()? {
+            0 => State::Off,
+            1 => State::On,
+            2 => State::Sticky,
+            _ => return bad("protection"),
         })
     }
     pub(super) fn zig(&mut self) -> R<i64> {
