@@ -54,7 +54,7 @@ fn caches_inside_the_user_caches_are_listed_on_their_own() {
             rule: rules.index(id).expect(id),
             safety: Safety::Safe,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         };
         t.set_class(ix, Some(class));
     }
@@ -125,12 +125,14 @@ fn guarded_matches_wait_for_their_checks() {
         degraded: None,
         flags,
     };
-    m.tree.set_class(a, Some(class(guarded(false), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(false), ClassFlags::NONE)));
     assert!(guards_checked(&m));
-    m.tree.set_class(a, Some(class(guarded(true), 0)));
+    m.tree
+        .set_class(a, Some(class(guarded(true), ClassFlags::NONE)));
     assert!(!guards_checked(&m));
     m.tree
-        .set_class(a, Some(class(guarded(true), Class::CHECKED)));
+        .set_class(a, Some(class(guarded(true), ClassFlags::CHECKED)));
     assert!(guards_checked(&m));
     let msg = checks_cut_short(CHECK_WAIT);
     assert!(msg.contains("did not finish in 60 s"), "{msg}");

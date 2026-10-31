@@ -1,5 +1,5 @@
 use dfdu_rules::{Env, Platform};
-use dfdu_tree::{HostPath, NodeRef, RuleIx};
+use dfdu_tree::{Class, ClassFlags, HostPath, NodeRef, RuleIx};
 
 use super::*;
 
@@ -32,7 +32,7 @@ fn item(rule: RuleIx, safety: Safety, disk: u64) -> Item {
             rule,
             safety,
             degraded: None,
-            flags: 0,
+            flags: dfdu_tree::ClassFlags::NONE,
         },
         disk,
         apparent: disk / 2,
@@ -130,10 +130,10 @@ fn the_table_lists_each_match_with_its_flags_and_the_totals() {
     let rule = rule_with(&rules, "delete");
     let mut a = item(rule, Safety::Safe, 2048);
     a.recommended = true;
-    a.class.flags = Class::IN_USE | Class::VCS_TRACKED;
+    a.class.flags = ClassFlags::IN_USE | ClassFlags::VCS_TRACKED;
     a.matches_inside = 1;
     let mut b = item(rule, Safety::Review, 1024);
-    b.class.flags = Class::VCS_UNKNOWN;
+    b.class.flags = ClassFlags::VCS_UNKNOWN;
     b.matches_inside = 2;
     b.mtime = 3 * DAY;
     let out = printed(&rules, &[a, b], Some(1024), true);
@@ -189,7 +189,7 @@ fn an_item_in_json_names_its_rule_its_sizes_and_its_flags() {
     let rules = rules();
     let rule = rule_with(&rules, "delete");
     let mut it = item(rule, Safety::Regenerable, 4096);
-    it.class.flags = Class::CHECKED | Class::IN_USE;
+    it.class.flags = ClassFlags::CHECKED | ClassFlags::IN_USE;
     it.mtime = 3 * DAY;
     let j = item_json(&rules, &it, 10 * DAY);
     let r = rules.rule(rule);

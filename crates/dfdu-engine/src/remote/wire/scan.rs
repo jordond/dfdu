@@ -2,7 +2,7 @@
 //! are in `chunk`.
 
 use dfdu_rules::{Hit, Inside, RuleSet};
-use dfdu_tree::{Class, ErrKind, Meta};
+use dfdu_tree::{Class, ClassFlags, ErrKind, Meta};
 
 use dfdu_scan::{DirId, JobId, ListingStatus, ScanMsg};
 
@@ -64,7 +64,7 @@ pub(super) fn enc_class(e: &mut Enc, c: Class) {
     e.rule(c.rule);
     e.safety(c.safety);
     e.opt(c.degraded, |e, r| e.var(r.into()));
-    e.u8(c.flags);
+    e.u8(c.flags.bits());
 }
 
 /// A class naming one of `rules` rules; none are known without rules.
@@ -79,7 +79,7 @@ pub(super) fn dec_class(d: &mut Dec, rules: Option<&RuleSet>) -> R<Class> {
         rule,
         safety,
         degraded,
-        flags: d.u8()?,
+        flags: ClassFlags::from_bits(d.u8()?),
     })
 }
 

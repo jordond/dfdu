@@ -15,7 +15,7 @@ mod pages;
 mod tree;
 
 pub use check::Violation;
-pub use class::{Class, RuleIx, Safety};
+pub use class::{Class, ClassFlags, RuleIx, Safety};
 pub use clock::{civil_from_days, date_time, day, days_from_civil, now_secs};
 pub use host::{Host, HostPath};
 pub use ids::{DirId, JobId};

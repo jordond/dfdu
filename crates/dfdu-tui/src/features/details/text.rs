@@ -178,19 +178,19 @@ fn rule_match(out: &mut Text, t: &Theme, c: &Matched) {
     }
     for (flag, note) in [
         (
-            dfdu_tree::Class::VCS_TRACKED,
+            dfdu_tree::ClassFlags::VCS_TRACKED,
             "version control tracks files in it: protected",
         ),
         (
-            dfdu_tree::Class::IN_USE,
+            dfdu_tree::ClassFlags::IN_USE,
             "a program that uses it was running",
         ),
         (
-            dfdu_tree::Class::VCS_UNKNOWN,
+            dfdu_tree::ClassFlags::VCS_UNKNOWN,
             "git could not tell whether it tracks files in it: not recommended",
         ),
     ] {
-        if c.flags & flag != 0 {
+        if c.flags.has(flag) {
             out.add(note, t.status_warn);
         }
     }

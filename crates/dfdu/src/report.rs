@@ -13,7 +13,7 @@ use clap::Args;
 use dfdu_engine::{Engine, Model};
 use dfdu_rules::RuleSet;
 use dfdu_scan::{Backend, NativeBackend};
-use dfdu_tree::{Class, HostPath, Kind, NodeRef, Safety, now_secs};
+use dfdu_tree::{Class, ClassFlags, HostPath, Kind, NodeRef, Safety, now_secs};
 use serde_json::json;
 
 use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, written};
@@ -241,7 +241,7 @@ fn guards_checked(m: &Model) -> bool {
     let Some(rules) = &m.rules else { return true };
     m.tree.classes().all(|(ix, c)| {
         let g = &rules.rule(c.rule).guard;
-        c.has(Class::CHECKED)
+        c.has(ClassFlags::CHECKED)
             || (!g.not_vcs_tracked && g.not_running.is_empty())
             || !m.tree.is_visible(ix)
     })

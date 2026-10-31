@@ -2,7 +2,7 @@
 //! each match and the summary in the JSON document (schema/report.v1.json).
 
 use dfdu_rules::{Action, RuleSet};
-use dfdu_tree::{Class, Kind, Safety};
+use dfdu_tree::{ClassFlags, Kind, Safety};
 use serde_json::{Map, Value, json};
 
 use super::{Item, reclaimable};
@@ -53,9 +53,9 @@ pub fn item_json(rules: &RuleSet, it: &Item, now: i64) -> Value {
     o.insert("mtime".into(), it.mtime.into());
     o.insert("age_days".into(), age_days(now, it.mtime).into());
     o.insert("recommended".into(), it.recommended.into());
-    o.insert("checked".into(), c.has(Class::CHECKED).into());
-    o.insert("in_use".into(), c.has(Class::IN_USE).into());
-    o.insert("vcs_tracked".into(), c.has(Class::VCS_TRACKED).into());
+    o.insert("checked".into(), c.has(ClassFlags::CHECKED).into());
+    o.insert("in_use".into(), c.has(ClassFlags::IN_USE).into());
+    o.insert("vcs_tracked".into(), c.has(ClassFlags::VCS_TRACKED).into());
     o.insert("scanning".into(), it.scanning.into());
     if it.matches_inside > 0 {
         o.insert("matches_inside".into(), it.matches_inside.into());
@@ -114,13 +114,13 @@ pub(super) fn table(
         if it.recommended {
             flags.push("recommended".to_string());
         }
-        if it.class.has(Class::IN_USE) {
+        if it.class.has(ClassFlags::IN_USE) {
             flags.push("in use".into());
         }
-        if it.class.has(Class::VCS_TRACKED) {
+        if it.class.has(ClassFlags::VCS_TRACKED) {
             flags.push("tracked by git".into());
         }
-        if it.class.has(Class::VCS_UNKNOWN) {
+        if it.class.has(ClassFlags::VCS_UNKNOWN) {
             flags.push("git tracking unknown".into());
         }
         if let Some(d) = it.class.degraded {

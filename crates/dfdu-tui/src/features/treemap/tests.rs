@@ -337,7 +337,7 @@ fn category_colour_follows_matches_found_later_and_deep_inside() {
         rule,
         safety: dfdu_tree::Safety::Regenerable,
         degraded: None,
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     };
     fx.m.tree.set_class(deps, Some(class));
     sync(&mut app, &fx.m, t0);
@@ -556,7 +556,7 @@ pub(crate) fn classified() -> Fixture {
         rule,
         safety: dfdu_tree::Safety::Regenerable,
         degraded: None,
-        flags: 0,
+        flags: dfdu_tree::ClassFlags::NONE,
     };
     fx.m.tree.set_class(big, Some(class));
     let mid =

@@ -22,7 +22,7 @@ use clap::Args;
 use dfdu_engine::{Command, Engine, Mode};
 use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, NodeRef, Safety};
+use dfdu_tree::{ClassFlags, NodeRef, Safety};
 
 use crate::report::{self, Filter, Item};
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};
@@ -143,13 +143,14 @@ fn skip_reason(rules: &RuleSet, it: &Item, args: &CleanArgs) -> Option<String> {
             it.safety().as_str(),
             args.safety.as_str()
         )
-    } else if c.has(Class::VCS_TRACKED) {
+    } else if c.has(ClassFlags::VCS_TRACKED) {
         "tracked by version control".into()
-    } else if c.has(Class::VCS_UNKNOWN) {
+    } else if c.has(ClassFlags::VCS_UNKNOWN) {
         "git could not tell whether it tracks files in it".into()
-    } else if c.has(Class::IN_USE) {
+    } else if c.has(ClassFlags::IN_USE) {
         "in use: a process it belongs to is running".into()
-    } else if !c.has(Class::CHECKED) && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
+    } else if !c.has(ClassFlags::CHECKED)
+        && (r.guard.not_vcs_tracked || !r.guard.not_running.is_empty())
     {
         "its checks (git tracking, running processes) did not finish".into()
     } else if it.scanning {

@@ -1,7 +1,7 @@
 //! Guard checks and native size commands, answered by the classifier pool.
 
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, Ix, RuleIx, Safety};
+use dfdu_tree::{Class, ClassFlags, Ix, RuleIx, Safety};
 
 use super::{Applier, Model};
 use crate::classifier::{CheckMsg, CheckReq};
@@ -21,7 +21,9 @@ impl<B: Backend> Applier<B> {
         let todo: Vec<(Ix, Class)> = m
             .tree
             .classes()
-            .filter(|(ix, c)| !c.has(Class::QUEUED | Class::CHECKED) && m.tree.is_visible(*ix))
+            .filter(|(ix, c)| {
+                !c.has(ClassFlags::QUEUED | ClassFlags::CHECKED) && m.tree.is_visible(*ix)
+            })
             .collect();
         for (ix, mut c) in todo {
             let g = &rules.rule(c.rule).guard;
@@ -35,7 +37,7 @@ impl<B: Backend> Applier<B> {
                 vcs: g.not_vcs_tracked,
                 processes: g.not_running.clone(),
             });
-            c.flags |= Class::QUEUED;
+            c.flags.set(ClassFlags::QUEUED, true);
             m.tree.set_class(ix, Some(c));
         }
     }
@@ -76,17 +78,18 @@ impl<B: Backend> Applier<B> {
                 let Some(mut c) = m.tree.class(ix).filter(|c| c.rule == rule) else {
                     return;
                 };
-                c.flags = (c.flags & !Class::QUEUED) | Class::CHECKED;
+                c.flags.set(ClassFlags::QUEUED, false);
+                c.flags.set(ClassFlags::CHECKED, true);
                 match tracked {
                     Some(true) => {
-                        c.flags |= Class::VCS_TRACKED;
+                        c.flags.set(ClassFlags::VCS_TRACKED, true);
                         c.safety = Safety::Protected;
                     }
                     Some(false) => {}
-                    None => c.flags |= Class::VCS_UNKNOWN,
+                    None => c.flags.set(ClassFlags::VCS_UNKNOWN, true),
                 }
                 if running.is_some() {
-                    c.flags |= Class::IN_USE;
+                    c.flags.set(ClassFlags::IN_USE, true);
                 }
                 m.tree.set_class(ix, Some(c));
                 m.tree.touch(ix);
