@@ -125,6 +125,21 @@ fn store_leaves_nothing_behind_on_failure() {
     assert_eq!(left, ["dfdu"]);
 }
 
+#[test]
+fn store_sweeps_the_temp_of_a_writer_that_died() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("d/dfdu");
+    std::fs::create_dir_all(tmp.path().join("d")).unwrap();
+    std::fs::write(tmp.path().join("d/.dfdu.4294967295.tmp"), b"cut sh").unwrap();
+    store(&path, b"bin").unwrap();
+    let left: Vec<_> = std::fs::read_dir(tmp.path().join("d"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["dfdu"]);
+    assert_eq!(std::fs::read(&path).unwrap(), b"bin");
+}
+
 #[cfg(feature = "agent-download")]
 #[test]
 fn a_downloaded_release_is_kept_and_a_bad_one_is_not() {

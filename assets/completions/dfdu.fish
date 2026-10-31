@@ -174,6 +174,7 @@ complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l finish -d 'Delete 
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l restore -d 'Put these staged items back at their paths (next to them as NAME.restored-N if something is there now), or take these items found in the trash back out of it' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l dismiss -d 'Close these interrupted items: nothing is done on disk' -r
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l journals -d 'The journal directory (the default is dfdu\'s state directory)' -r -F
+complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -l yes -d 'Finish and restore. Without it nothing is changed: what would be done is printed'
 complete -c dfdu -n "__fish_dfdu_using_subcommand recover" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -s h -l help -d 'Print help'
 complete -c dfdu -n "__fish_dfdu_using_subcommand cache; and not __fish_seen_subcommand_from list clear help" -f -a "list" -d 'List the cached scans, newest first: when each was written, its size, its entries and its directory, and where the cache is'

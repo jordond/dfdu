@@ -1,63 +1,11 @@
-use dfdu_rules::{Env, Platform};
-use dfdu_tree::{HostPath, NodeRef, RuleIx};
-
 use super::*;
-
-const DAY: i64 = 86_400;
-
-/// The built-in rules of Linux, the last of them made to report its matches only (none of the
-/// built-in rules does).
-fn rules() -> RuleSet {
-    let env = Env::with(Platform::Linux, &[("HOME", "/home/u")]);
-    let mut rules = dfdu_rules::builtin(&env).0.rules().to_vec();
-    rules.last_mut().expect("a rule").action = Action::Report;
-    RuleSet::new(rules, &env)
-}
-
-/// The first rule whose action is `action` (by its name in rule files).
-fn rule_with(rules: &RuleSet, action: &str) -> RuleIx {
-    let r = rules.rules().iter().find(|r| r.action.as_str() == action);
-    rules
-        .index(&r.unwrap_or_else(|| panic!("a {action} rule")).id)
-        .expect("its index")
-}
-
-/// A directory matched by `rule` at `safety`, of `disk` bytes on disk.
-fn item(rule: RuleIx, safety: Safety, disk: u64) -> Item {
-    Item {
-        node: NodeRef::from_bits(1),
-        path: HostPath::from("/home/u/x"),
-        kind: Kind::Dir,
-        class: Class {
-            rule,
-            safety,
-            degraded: None,
-            flags: 0,
-        },
-        disk,
-        apparent: disk / 2,
-        entries: 3,
-        shared_out: 0,
-        mtime: 0,
-        scanning: false,
-        recommended: false,
-        matches_inside: 0,
-        rest: vec![],
-    }
-}
+use crate::matches::tests::{DAY, item, rule_with, rules};
 
 /// The table of `list` as `dfdu report` prints it.
 fn printed(rules: &RuleSet, list: &[Item], fail_above: Option<u64>, exceeded: bool) -> String {
     let mut out = Vec::new();
     table(&mut out, rules, list, 10 * DAY, fail_above, exceeded).unwrap();
     String::from_utf8(out).unwrap()
-}
-
-#[test]
-fn ages_are_whole_days_and_never_negative() {
-    assert_eq!(age_days(10 * DAY, 10 * DAY), 0);
-    assert_eq!(age_days(10 * DAY, 7 * DAY + 1), 2);
-    assert_eq!(age_days(DAY, 5 * DAY), 0, "a match from the future is new");
 }
 
 #[test]
@@ -180,59 +128,4 @@ fn the_table_lists_each_match_with_its_flags_and_the_totals() {
         no_limit.ends_with("0 items (dfdu clean deletes these)\n"),
         "{no_limit}"
     );
-}
-
-/// An item's JSON names its rule and action, its sizes and flags; the native command and the
-/// matches inside it only when there are.
-#[test]
-fn an_item_in_json_names_its_rule_its_sizes_and_its_flags() {
-    let rules = rules();
-    let rule = rule_with(&rules, "delete");
-    let mut it = item(rule, Safety::Regenerable, 4096);
-    it.class.flags = Class::CHECKED | Class::IN_USE;
-    it.mtime = 3 * DAY;
-    let j = item_json(&rules, &it, 10 * DAY);
-    let r = rules.rule(rule);
-    assert_eq!(j["path"], "/home/u/x");
-    assert_eq!(
-        (j["type"].as_str(), j["rule"].as_str()),
-        (Some("dir"), Some(r.id.as_str()))
-    );
-    assert_eq!(
-        (j["safety"].as_str(), j["action"].as_str()),
-        (Some("regenerable"), Some("delete"))
-    );
-    assert_eq!(
-        (j["disk"].as_u64(), j["apparent"].as_u64()),
-        (Some(4096), Some(2048))
-    );
-    assert_eq!(
-        (j["entries"].as_u64(), j["age_days"].as_i64()),
-        (Some(3), Some(7))
-    );
-    let flags = [
-        "checked",
-        "in_use",
-        "vcs_tracked",
-        "recommended",
-        "scanning",
-    ];
-    let flags = flags.map(|f| j[f].as_bool());
-    assert_eq!(flags, [true, true, false, false, false].map(Some));
-    assert!(j.get("native_command").is_none() && j.get("matches_inside").is_none());
-    assert!(j.get("degraded").is_none());
-
-    let native = rule_with(&rules, "native");
-    let mut it = item(native, Safety::Safe, 1);
-    it.kind = Kind::File;
-    it.matches_inside = 2;
-    let j = item_json(&rules, &it, 0);
-    assert_eq!(j["type"], "file");
-    assert!(
-        j["native_command"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty()),
-        "{j}"
-    );
-    assert_eq!(j["matches_inside"], 2);
 }

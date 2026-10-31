@@ -11,14 +11,15 @@ use clap::Args;
 use dfdu_dupes::{Found, Options, Progress};
 use serde_json::{Map, Value, json};
 
-use crate::{EXIT_PARTIAL, MountArgs, json as js, launch, print_out, report};
+use crate::output::{json as js, put_path};
+use crate::{EXIT_PARTIAL, MountArgs, args, launch, print_out};
 
 #[derive(Args)]
 pub struct DupesArgs {
     #[arg(default_value = ".")]
     path: PathBuf,
     /// Compare only files of at least this size (`1MiB`, `100KB`).
-    #[arg(long, value_name = "SIZE", default_value = "1MiB", value_parser = report::size_arg)]
+    #[arg(long, value_name = "SIZE", default_value = "1MiB", value_parser = args::size_arg)]
     min_size: u64,
     /// Output: table or json (schema/dupes.v1.json).
     #[arg(long, value_enum, default_value_t = Format::Table)]
@@ -180,7 +181,7 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
                 .iter()
                 .map(|f| {
                     let mut o = Map::new();
-                    js::put_path(&mut o, "path", &f.path);
+                    put_path(&mut o, "path", &f.path);
                     o.insert("disk".into(), f.alloc.into());
                     o.insert("mtime".into(), f.mtime.into());
                     o.insert("links".into(), f.links.into());
@@ -192,7 +193,7 @@ fn to_json(found: &Found, top: Option<usize>, min_size: u64) -> Value {
                 .collect();
             json!({
                 "size": g.size,
-                "sha256": dfdu_dupes::hex(&g.hash),
+                "sha256": hex::encode(g.hash),
                 "wasted": g.wasted(),
                 "clones": g.all_clones(),
                 "files": files,

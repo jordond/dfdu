@@ -114,8 +114,10 @@ fn an_interrupted_delete_is_dismissed() {
     );
     assert!(!list.contains("  2  "), "{list}");
     for refused in ["--finish", "--restore"] {
-        let o = recover_status(&journals, &[refused, "1"]);
-        assert_eq!(o.status.code(), Some(5), "{refused}");
+        for yes in [&[][..], &["--yes"]] {
+            let o = recover_status(&journals, &[&[refused, "1"][..], yes].concat());
+            assert_eq!(o.status.code(), Some(5), "{refused} {yes:?}");
+        }
     }
     assert_eq!(
         recover(&journals, &["--dismiss", "1"]).trim(),
@@ -157,7 +159,19 @@ fn staged_items_are_restored_or_finished() {
             && list.contains(&format!("{}: staged at", root.join("b").display())),
         "{list}"
     );
-    let done = recover(&journals, &["--restore", "1", "--finish", "2"]);
+    // Without --yes nothing is changed: what would be done is printed.
+    let o = recover_status(&journals, &["--restore", "1", "--finish", "2"]);
+    let dry = ok(o.clone());
+    assert!(dry.contains("a: would be restored"), "{dry}");
+    assert!(dry.contains("b: would be deleted"), "{dry}");
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("dry run: nothing was deleted or restored"),
+        "{o:?}"
+    );
+    assert!(!root.join("a").exists() && !root.join("b").exists());
+    assert_eq!(recover(&journals, &[]), list);
+
+    let done = recover(&journals, &["--restore", "1", "--finish", "2", "--yes"]);
     assert!(done.contains("a: restored at"), "{done}");
     assert!(done.contains("b: deleted"), "{done}");
     assert_eq!(fs::read(root.join("a/f")).unwrap(), b"x");
@@ -209,7 +223,7 @@ fn an_interrupted_trash_delete_is_found_in_the_trash() {
         list.contains("node_modules: interrupted (trash); it is in the trash"),
         "{list}"
     );
-    let done = run(&["recover", "--restore", "1"]);
+    let done = run(&["recover", "--restore", "1", "--yes"]);
     assert!(done.contains("restored at"), "{done}");
     assert!(root.join("web/node_modules/pkg/index.js").exists());
     assert_eq!(run(&["recover"]), "nothing unfinished\n");

@@ -425,7 +425,6 @@ version = "0.1.0"
 dependencies = [
  "dfdu-sys",
  "dfdu-tree",
- "hex",
  "rustix",
  "sha2",
  "twox-hash",
