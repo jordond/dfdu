@@ -18,8 +18,8 @@ use super::{
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, CHECK_WIDTH, Tally, Tick};
+use crate::format::{count, human};
 use crate::model::outside::tilde;
-use crate::theme::{count, human};
 use crate::view::cells;
 use crate::view::columns::cursor;
 use crate::view::empty::{self, Empty};

@@ -21,7 +21,7 @@ fn delete_summary(d: &dfdu_engine::DeleteSummary) -> String {
     let mut parts = vec![format!(
         "{done} {} ({})",
         d.deleted,
-        crate::theme::human(d.bytes)
+        crate::format::human(d.bytes)
     )];
     for (n, what) in [
         (d.stale, "changed since the scan"),

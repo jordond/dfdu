@@ -45,26 +45,23 @@ pub struct HistoryArgs {
 }
 
 /// `dfdu history`: the recorded scans, newest first.
-pub fn list(args: HistoryArgs) -> ExitCode {
-    let h = match open() {
-        Ok(h) => h,
-        Err(c) => return c,
-    };
+pub fn list(args: HistoryArgs) -> Result<ExitCode, ExitCode> {
+    let h = open()?;
     let root = match args.path.as_deref().map(dunce::canonicalize).transpose() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("dfdu: {}: {e}", args.path.unwrap_or_default().display());
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     let scans = match h.scans(root.as_deref()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("dfdu: history: {e}");
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
-    let r = print_out(|w| {
+    print_out(|w| {
         if scans.is_empty() {
             writeln!(w, "no scans recorded")?;
         }
@@ -80,11 +77,8 @@ pub fn list(args: HistoryArgs) -> ExitCode {
             )?;
         }
         Ok(())
-    });
-    match r {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(code) => code,
-    }
+    })?;
+    Ok(ExitCode::SUCCESS)
 }
 
 #[derive(Args)]
@@ -147,22 +141,13 @@ fn file_side(path: &Path, depth: usize) -> Result<(Side, PathBuf), ExitCode> {
     ))
 }
 
-pub fn diff(args: &DiffArgs) -> ExitCode {
+pub fn diff(args: &DiffArgs) -> Result<ExitCode, ExitCode> {
     let (old, new, root, complete, partial) = if args.paths.len() == 2 {
-        let (old, root) = match file_side(&args.paths[0], args.depth) {
-            Ok(s) => s,
-            Err(c) => return c,
-        };
-        let (new, _) = match file_side(&args.paths[1], args.depth) {
-            Ok(s) => s,
-            Err(c) => return c,
-        };
+        let (old, root) = file_side(&args.paths[0], args.depth)?;
+        let (new, _) = file_side(&args.paths[1], args.depth)?;
         (old, new, root, usize::MAX, false)
     } else {
-        match scan_and_base(args) {
-            Ok(v) => v,
-            Err(c) => return c,
-        }
+        scan_and_base(args)?
     };
     let changes: Vec<Change> = history::diff(&old.sizes, &new.sizes, complete)
         .into_iter()
@@ -174,19 +159,16 @@ pub fn diff(args: &DiffArgs) -> ExitCode {
         .filter(|c| !c.path.is_empty() && c.delta().unsigned_abs() >= u128::from(args.min_change))
         .take(args.top)
         .collect();
-    let r = if args.format == ReportFormat::Json {
-        written(print_json(&old, &new, &root, total.as_ref(), &shown))
+    if args.format == ReportFormat::Json {
+        written(print_json(&old, &new, &root, total.as_ref(), &shown))?;
     } else {
-        print_out(|w| print_table(w, &old, &new, &root, total.as_ref(), &shown))
-    };
-    if let Err(code) = r {
-        return code;
+        print_out(|w| print_table(w, &old, &new, &root, total.as_ref(), &shown))?;
     }
-    if partial {
+    Ok(if partial {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// Scans the directory now, finds the recorded scan to compare with, then records the new

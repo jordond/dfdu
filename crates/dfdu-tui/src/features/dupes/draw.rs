@@ -20,13 +20,14 @@ use super::{Keep, Row, kept, live, min_size, open, rows};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::features::review::{self, Tally, Tick};
+use crate::format::{count, human, truncate_middle};
 use crate::model::outside::tilde;
-use crate::theme::{Theme, count, human, truncate_middle};
+use crate::theme::Theme;
 use crate::view::columns::cursor;
 use crate::view::empty::{self, Empty};
 
 /// `path` relative to `root`, or whole when it is not below it.
-fn shown(path: &Path, root: &Path) -> PathBuf {
+fn relative_to_root(path: &Path, root: &Path) -> PathBuf {
     match path.strip_prefix(root) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.to_path_buf(),
         _ => path.to_path_buf(),
@@ -60,7 +61,7 @@ type GroupPaths = (PathBuf, Vec<(usize, PathBuf)>);
 fn group_paths(app: &App, group: &Group, root: &Path) -> GroupPaths {
     let paths: Vec<(usize, PathBuf)> = (group.files.iter().enumerate())
         .filter(|(_, c)| live(app, c).is_some())
-        .map(|(i, c)| (i, shown(&c.path, root)))
+        .map(|(i, c)| (i, relative_to_root(&c.path, root)))
         .collect();
     let all: Vec<PathBuf> = paths.iter().map(|(_, p)| p.clone()).collect();
     let dir = shared_dir(&all);
@@ -419,7 +420,7 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
         if live(app, c).is_none() {
             continue;
         }
-        let rel = shown(&c.path, root).display().to_string();
+        let rel = relative_to_root(&c.path, root).display().to_string();
         let (label, style) = if Some(i) == keep {
             ("kept", t.status_ok)
         } else {

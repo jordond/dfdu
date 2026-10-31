@@ -483,7 +483,10 @@ struct Remote {
 }
 
 /// `path` made absolute and canonical, as scan roots are: on Windows the plain `C:\` form
-/// where it is equivalent (dunce), instead of the `\\?\` verbatim form std returns.
+/// where it is equivalent (dunce), instead of the `\\?\` verbatim form std returns. Absolute
+/// but not canonical when it cannot be resolved (it does not exist), and `path` itself when
+/// it cannot be made absolute either (an empty path, or no current directory): the scan of
+/// such a root fails, and deletion, which requires absolute paths, refuses inside it.
 pub(crate) fn resolve_root(path: PathBuf) -> PathBuf {
     dunce::canonicalize(&path)
         .or_else(|_| std::path::absolute(&path))

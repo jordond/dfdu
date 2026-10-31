@@ -18,6 +18,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::app::views::{self, View};
 use crate::app::{App, Overlay};
 use crate::features::{debug, details, treemap};
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
@@ -63,10 +64,12 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     .areas(area);
     // The list view has its selection line, and a row naming its columns above the rows if a
     // row is left below it.
-    let list_view = !crate::features::dupes::active(app)
-        && !crate::features::cleanup::active(app)
-        && !crate::features::largest::active(app)
-        && !(app.treemap.on && treemap::fits(area));
+    let view = views::current(app);
+    let list_view = match view {
+        View::Files => true,
+        View::Map => !treemap::fits(area),
+        View::Cleanup | View::Duplicates | View::Largest => false,
+    };
     let (list, pane) = details::split(app, body, list_view);
     let names = u16::from(list_view && list.height >= 2);
     let [column_names, list] =
@@ -84,18 +87,14 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         u64::try_from(now.duration_since(app.started).as_millis() / 100).unwrap_or(u64::MAX);
 
     // The header names the treemap's colouring and depth while it is shown.
-    app.treemap.shown = app.treemap.on && treemap::fits(area);
+    app.treemap.shown = view == View::Map && treemap::fits(area);
     header::draw(f, app, header, now, frame);
-    if crate::features::largest::active(app) {
-        crate::features::largest::draw(f, app, list);
-    } else if crate::features::dupes::active(app) {
-        crate::features::dupes::draw(f, app, list);
-    } else if crate::features::cleanup::active(app) {
-        crate::features::cleanup::draw(f, app, list);
-    } else if app.treemap.shown {
-        treemap::draw(f, app, list, now);
-    } else {
-        list::draw(f, app, column_names, list, now, frame);
+    match view {
+        View::Largest => crate::features::largest::draw(f, app, list),
+        View::Duplicates => crate::features::dupes::draw(f, app, list),
+        View::Cleanup => crate::features::cleanup::draw(f, app, list),
+        View::Map if app.treemap.shown => treemap::draw(f, app, list, now),
+        View::Map | View::Files => list::draw(f, app, column_names, list, now, frame),
     }
     if stalled_line > 0 {
         footer::stalled(f, app, prompt);
@@ -107,7 +106,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     footer::hints(f, app, footer);
 
     if let Some(pane) = pane {
-        if crate::features::marks_pane::shown(app) {
+        if crate::features::marks_pane::is_open(app) {
             crate::features::marks_pane::draw(f, app, pane);
         } else {
             details::draw(f, app, pane);

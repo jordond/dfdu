@@ -22,6 +22,7 @@ use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::state::marks;
 
@@ -39,7 +40,6 @@ pub fn min_size() -> u64 {
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Dupes {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     run: Option<Run>,
@@ -156,13 +156,15 @@ struct Run {
     result: Arc<OnceLock<Found>>,
 }
 
+/// True when the view is shown, and so takes the keys it knows. Nothing is compared until the
+/// user asks (`Enter` or `R`): before that the view says how many files a comparison would read.
 pub fn active(app: &App) -> bool {
-    app.dupes.on
+    views::current(app) == View::Duplicates
 }
 
 /// A comparison is running: the view's progress line needs frames.
 pub fn running(app: &App) -> bool {
-    app.dupes.on
+    active(app)
         && app
             .dupes
             .run
@@ -195,18 +197,6 @@ pub fn groups(app: &App) -> Option<Groups> {
     ))
 }
 
-/// Switches the view on or off. Nothing is compared until the user asks (`Enter` or `R`):
-/// before that the view says how many files a comparison would read.
-pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
-    app.dupes.on = on;
-    if !on {
-        return Vec::new();
-    }
-    crate::features::treemap::show(app, false);
-    crate::features::cleanup::show(app, false);
-    Vec::new()
-}
-
 /// A comparison was asked for: it runs or it is done.
 pub fn compared(app: &App) -> bool {
     app.dupes.run.is_some()
@@ -214,7 +204,7 @@ pub fn compared(app: &App) -> bool {
 
 /// The view waits to be asked to compare this machine's files, and the scan is done.
 fn waits(app: &App) -> bool {
-    app.dupes.on && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
+    active(app) && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
 }
 
 /// The view waits, and the files to compare were never counted.
@@ -311,7 +301,7 @@ pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
 /// nodes yet.
 pub fn stale(app: &App) -> bool {
     wants_count(app)
-        || app.dupes.on
+        || active(app)
             && found(app).is_some_and(|f| {
                 f.groups
                     .iter()
@@ -323,7 +313,7 @@ pub fn stale(app: &App) -> bool {
 /// Under the read lock: the node of every file of the result, found once by path and then
 /// checked to still be in the tree. `None` once a file is gone from the tree (deleted).
 pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
-    let Some(f) = found(app).filter(|_| app.dupes.on) else {
+    let Some(f) = found(app).filter(|_| active(app)) else {
         return HashMap::new();
     };
     f.groups
@@ -399,7 +389,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                     f.groups[g].files[i].path.clone(),
                     app.dupes.run.as_ref()?.root.clone(),
                 );
-                app.dupes.on = false;
+                views::switch(app, View::Files);
                 app.go_to(&HostPath::local(&path), &HostPath::local(&root));
             }
             None => {}

@@ -99,11 +99,8 @@ pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
 }
 
 /// `dfdu import`: the summary `dfdu scan` prints, for a scan read from a file.
-pub fn import(args: &ImportArgs) -> ExitCode {
-    let im = match read_export(&args.file) {
-        Ok(im) => im,
-        Err(code) => return code,
-    };
+pub fn import(args: &ImportArgs) -> Result<ExitCode, ExitCode> {
+    let im = read_export(&args.file)?;
     let m = Model {
         tree: im.tree,
         ..Model::default()
@@ -128,11 +125,11 @@ pub fn import(args: &ImportArgs) -> ExitCode {
             .unwrap_or_default();
         outln!("{} entries{by}", im.entries);
     }
-    if total.errors > 0 {
+    Ok(if total.errors > 0 {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// The snapshot in `f`, read; reports a failure.
@@ -152,11 +149,8 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
 }
 
 /// `dfdu export`: scans `path` and writes it in ncdu's format.
-pub fn export(args: &ExportArgs) -> ExitCode {
-    let resumed = match args.resume_from.as_deref().map(read_snapshot).transpose() {
-        Ok(l) => l,
-        Err(code) => return code,
-    };
+pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
+    let resumed = args.resume_from.as_deref().map(read_snapshot).transpose()?;
     let mut job = args.mounts.job();
     let path = match &resumed {
         Some(l) => {
@@ -169,10 +163,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
     let opts = launch::headless(false);
     // A remote scan's root is the one the agent resolved on its host.
     let (engine, job, root) = if let Some(host) = &args.remote {
-        match remote::engine(host, opts, job, &path, None, args.remote_agent) {
-            Ok(started) => started,
-            Err(code) => return code,
-        }
+        remote::engine(host, opts, job, &path, None, args.remote_agent)?
     } else {
         let local = Local {
             mft: args.mounts.use_mft(&path),
@@ -212,10 +203,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
             None
         }
     };
-    let engine = match launch::wait_scan(engine) {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let engine = launch::wait_scan(engine)?;
     let (last_full_scan, scan_ms) = full_scan.unwrap_or_else(|| {
         let ms = u64::try_from(started.0.elapsed().as_millis()).unwrap_or(u64::MAX);
         (started.1, ms)
@@ -249,10 +237,7 @@ pub fn export(args: &ExportArgs) -> ExitCode {
         Ok::<_, std::io::Error>((stats, partial))
     });
     engine.shutdown(launch::SHUTDOWN);
-    let (stats, partial) = match written_to(&args.output.display(), result) {
-        Ok(r) => r,
-        Err(code) => return code,
-    };
+    let (stats, partial) = written_to(&args.output.display(), result)?;
     if stats.non_utf8 > 0 {
         eprintln!(
             "dfdu: {} names are not UTF-8 and were written as they are; ncdu reads them, most \
@@ -260,11 +245,11 @@ pub fn export(args: &ExportArgs) -> ExitCode {
             stats.non_utf8
         );
     }
-    if partial {
+    Ok(if partial {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 /// Writes the scan below `root` to `w`: as a snapshot with `header` when there is one, else in

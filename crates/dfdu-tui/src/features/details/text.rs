@@ -7,8 +7,9 @@ use ratatui::text::{Line, Span};
 
 use super::{BAR, Facts, Largest, Matched};
 use crate::app::App;
+use crate::format::{bar, count, human, ratio};
 use crate::model::snapshot::Mark;
-use crate::theme::{Theme, bar, count, human, ratio};
+use crate::theme::Theme;
 
 /// The pane's lines being built, each wrapped to the inner width.
 struct Text {

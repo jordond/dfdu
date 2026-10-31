@@ -5,12 +5,7 @@
 use super::{add, item_of};
 use crate::app::App;
 use crate::app::keys::{Action, READ_ONLY, first_key};
-use crate::features::{cleanup, dupes, largest, treemap};
-
-/// True when the list is the view shown, where the range mark works.
-fn list_shown(app: &App) -> bool {
-    !treemap::active(app) && !cleanup::active(app) && !dupes::active(app) && !largest::active(app)
-}
+use crate::app::views::list_shown;
 
 /// True while a range mark is on in the directory and view shown.
 pub fn on(app: &App) -> bool {
@@ -176,7 +171,7 @@ mod tests {
         assert!(!on(&app));
         assert_eq!(app.status.as_deref(), Some(READ_ONLY));
         app.read_only = false;
-        treemap::show(&mut app, true);
+        crate::app::views::switch(&mut app, crate::app::views::View::Map);
         // As a frame with room for the map sets it.
         app.treemap.shown = true;
         toggle(&mut app);

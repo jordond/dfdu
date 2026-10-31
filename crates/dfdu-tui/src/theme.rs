@@ -7,20 +7,16 @@ mod builtin;
 mod color;
 mod detect;
 mod file;
-mod format;
 
 use ratatui::style::{Modifier, Style};
 
+pub use crate::format::Bars;
 pub use builtin::BuiltinTheme;
 pub use color::{ColorLevel, ColorSpec, Rgb, color_rgb, contrast, lightness, rgb_color};
 pub use detect::{
     choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
 };
-pub use dfdu_engine::human;
 pub use file::{ThemeError, ThemeFile};
-pub use format::{
-    Bars, bar, bar_with_shadow, count, cut_end, percent, ratio, spinner, truncate_middle,
-};
 
 /// A themable style. [`Token::name`] is its key in a theme file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

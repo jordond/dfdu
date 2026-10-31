@@ -39,9 +39,9 @@ fn open() -> Option<Cache> {
     }
 }
 
-pub fn run(cmd: &CacheCmd) -> ExitCode {
+pub fn run(cmd: &CacheCmd) -> Result<ExitCode, ExitCode> {
     let Some(cache) = open() else {
-        return ExitCode::from(1);
+        return Err(ExitCode::from(1));
     };
     match cmd {
         CacheCmd::List => list(&cache),
@@ -53,11 +53,11 @@ pub fn run(cmd: &CacheCmd) -> ExitCode {
                     if r.files == 1 { "" } else { "s" },
                     dfdu_engine::human(r.bytes)
                 );
-                ExitCode::SUCCESS
+                Ok(ExitCode::SUCCESS)
             }
             Err(e) => {
                 eprintln!("dfdu: cache: {e}");
-                ExitCode::from(1)
+                Err(ExitCode::from(1))
             }
         },
     }
@@ -80,9 +80,9 @@ fn line(l: &Listed) -> String {
     }
 }
 
-fn list(cache: &Cache) -> ExitCode {
+fn list(cache: &Cache) -> Result<ExitCode, ExitCode> {
     let scans = cache.list();
-    let r = print_out(|w| {
+    print_out(|w| {
         if scans.is_empty() {
             return writeln!(w, "no cached scans in {}", cache.dir().display());
         }
@@ -95,11 +95,8 @@ fn list(cache: &Cache) -> ExitCode {
             dfdu_engine::human(total(&scans)),
             cache.dir().display()
         )
-    });
-    match r {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(code) => code,
-    }
+    })?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The bytes the cached scans take.

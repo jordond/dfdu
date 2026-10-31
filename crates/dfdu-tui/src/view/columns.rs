@@ -245,7 +245,7 @@ pub fn right(s: String, w: u16, style: Style) -> Span<'static> {
 
 /// `s` left-aligned in `w` cells, cut to fit.
 pub fn left(s: String, w: u16, style: Style) -> Span<'static> {
-    let s = crate::theme::cut_end(&s, w.into());
+    let s = crate::format::cut_end(&s, w.into());
     let pad = usize::from(w).saturating_sub(Span::raw(&s).width());
     Span::styled(format!("{s}{}", " ".repeat(pad)), style)
 }

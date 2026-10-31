@@ -17,8 +17,8 @@ use dfdu_tree::HostPath;
 use ratatui::text::Line;
 
 use crate::app::App;
+use crate::format::human;
 use crate::model::snapshot::{EntryData, Mark};
-use crate::theme::human;
 
 /// Most links out of the scan the cleanup view names.
 const VIEW_MAX: usize = 3;

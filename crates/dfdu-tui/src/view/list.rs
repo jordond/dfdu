@@ -16,10 +16,11 @@ use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarStat
 
 use super::columns::{self, CATEGORY_MAX, Col, ColSet, blank, cursor, gaps, left, right};
 use crate::app::App;
+use crate::format::{bar, count, human, percent, ratio, spinner};
 use crate::model::growth::{self, RowNote};
 use crate::model::snapshot::{EntryData, Mark};
 use crate::state::{marks, motion};
-use crate::theme::{Theme, bar, count, human, percent, ratio, spinner};
+use crate::theme::Theme;
 
 /// Draws the column header on `head` and the rows on `area`.
 pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, frame: u64) {

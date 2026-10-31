@@ -86,9 +86,9 @@ fn tab_cycles_the_list_the_details_and_the_marks() {
     render(&mut app, t0, 120, 24);
     app.key(press(KeyCode::Tab), t0);
     assert!(details::focused(&app));
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     let fx = app.key(press(KeyCode::Tab), t0);
-    assert!(shown(&app), "Tab from the details opens the marks");
+    assert!(is_open(&app), "Tab from the details opens the marks");
     assert!(!details::focused(&app));
     assert_eq!(asked(&fx).map(|a| a.1), Some(2), "{fx:?}");
     let out = render(&mut app, t0, 120, 24);
@@ -97,16 +97,19 @@ fn tab_cycles_the_list_the_details_and_the_marks() {
         "the marks take the details' place: {out}"
     );
     app.key(press(KeyCode::Tab), t0);
-    assert!(!shown(&app) && !details::focused(&app), "back to the list");
+    assert!(
+        !is_open(&app) && !details::focused(&app),
+        "back to the list"
+    );
     let out = render(&mut app, t0, 120, 24);
     assert!(!out.contains(" Marks "), "the details are back: {out}");
 
     // Without the details, Tab goes from the list to the marks, and Esc comes back.
     app.key(press(KeyCode::Char('i')), t0);
     app.key(press(KeyCode::Tab), t0);
-    assert!(shown(&app));
+    assert!(is_open(&app));
     app.key(press(KeyCode::Esc), t0);
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     assert_eq!(app.marks.items().len(), 2, "Esc keeps the marks");
 }
 
@@ -230,7 +233,7 @@ fn d_asks_to_delete_the_marks_as_the_list_does() {
     let (id, _) = asked(&fx).expect("asked");
     answer(&mut app, id, 4 * GIB);
     app.key(press(KeyCode::Esc), t0);
-    assert!(shown(&app), "cancelling keeps the pane open");
+    assert!(is_open(&app), "cancelling keeps the pane open");
     let out = render(&mut app, t0, 100, 24);
     assert!(out.contains("would free about 4.0 GiB"), "{out}");
 }
@@ -260,6 +263,6 @@ fn no_room_closes_the_pane_and_says_so() {
     mark(&mut app, 1, t0);
     app.key(press(KeyCode::Tab), t0);
     let out = render(&mut app, t0, 70, 12);
-    assert!(!shown(&app));
+    assert!(!is_open(&app));
     assert!(out.contains("no room for the marks pane"), "{out}");
 }

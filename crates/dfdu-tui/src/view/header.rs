@@ -16,10 +16,10 @@ use ratatui::widgets::Paragraph;
 use super::{cells, mmss, spread};
 use crate::app::App;
 use crate::app::views;
+use crate::format::{count, human, spinner, truncate_middle};
 use crate::input::mouse::{Crumb, Tab};
 use crate::model::cache_link::{Cached, ago};
 use crate::model::outside::tilde;
-use crate::theme::{count, human, spinner, truncate_middle};
 
 mod crumbs;
 mod modes;

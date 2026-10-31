@@ -1,6 +1,9 @@
-//! Text for numbers and names: compact counts, bars, the spinner, names shortened to fit.
+//! Text for numbers and names: sizes ([`human`]), compact counts, bars, the spinner, names
+//! shortened to fit.
 
 use unicode_width::UnicodeWidthChar;
+
+pub use dfdu_engine::human;
 
 /// `part` as a fraction of `whole`, for bars and percentages.
 #[must_use]

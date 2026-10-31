@@ -39,13 +39,10 @@ enum Format {
     Json,
 }
 
-pub fn run(args: &DupesArgs) -> ExitCode {
+pub fn run(args: &DupesArgs) -> Result<ExitCode, ExitCode> {
     let t0 = Instant::now();
     // Its own --threads are the threads reading files.
-    let engine = match launch::scan(&args.path, args.mounts, None, None, false) {
-        Ok(e) => e,
-        Err(code) => return code,
-    };
+    let engine = launch::scan(&args.path, args.mounts, None, None, false)?;
     let (cands, errors) = engine.read(|m| {
         let Some(root) = m.tree.roots().next() else {
             return (Vec::new(), 0);
@@ -84,7 +81,7 @@ pub fn run(args: &DupesArgs) -> ExitCode {
                 "dfdu: duplicate search failed: {}",
                 dfdu_scan::panic_message(&*p)
             );
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     let w = &mut std::io::BufWriter::new(std::io::stdout().lock());
@@ -100,9 +97,7 @@ pub fn run(args: &DupesArgs) -> ExitCode {
                 .and_then(|()| std::io::Write::write_all(w, b"\n"))
         }
     };
-    if let Err(code) = written(r.and_then(|()| std::io::Write::flush(w))) {
-        return code;
-    }
+    written(r.and_then(|()| std::io::Write::flush(w)))?;
     if args.format == Format::Table {
         eprintln!(
             "{} files compared, {}{:.2}s",
@@ -114,11 +109,11 @@ pub fn run(args: &DupesArgs) -> ExitCode {
             t0.elapsed().as_secs_f64()
         );
     }
-    if errors > 0 || found.skipped > 0 {
+    Ok(if errors > 0 || found.skipped > 0 {
         ExitCode::from(EXIT_PARTIAL)
     } else {
         ExitCode::SUCCESS
-    }
+    })
 }
 
 fn progress_line(p: &Progress) -> String {

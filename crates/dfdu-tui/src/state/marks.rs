@@ -13,8 +13,8 @@ use dfdu_tree::{DirState, HostPath, Ix, NodeRef};
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::format::human;
 use crate::model::snapshot::{EntryData, Ident, Mark, Target, find_path};
-use crate::theme::human;
 
 pub mod range;
 
@@ -410,12 +410,11 @@ pub fn apply(app: &mut App) {
 /// shows only some of their files. A read-only browser changes nothing, as [`add`] does, and
 /// the other views leave the list's rows alone, as the range mark does.
 pub fn invert(app: &mut App) {
-    use crate::features::{cleanup, dupes, largest, treemap};
     if app.read_only {
         app.status = Some(crate::app::keys::READ_ONLY.into());
         return;
     }
-    if treemap::active(app) || cleanup::active(app) || dupes::active(app) || largest::active(app) {
+    if !crate::app::views::list_shown(app) {
         let list = crate::app::keys::first_key(crate::app::keys::Action::ViewFiles);
         app.status = Some(format!("marks are inverted in Files ({list})"));
         return;

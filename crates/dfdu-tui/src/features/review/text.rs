@@ -4,7 +4,8 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::theme::{Theme, truncate_middle};
+use crate::format::truncate_middle;
+use crate::theme::Theme;
 
 /// Before this (1990-01-01) a modification time is taken as unknown: an archive's zero, or a
 /// clock that was never set.

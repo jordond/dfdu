@@ -15,7 +15,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::app::App;
-use crate::theme::{Theme, count, human};
+use crate::format::{count, human};
+use crate::theme::Theme;
 use crate::view::cells;
 
 /// Stalled directories listed by path.

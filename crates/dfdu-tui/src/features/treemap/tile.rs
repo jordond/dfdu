@@ -10,7 +10,8 @@ use ratatui::text::Span;
 use super::place::Tile;
 use super::{ColorBy, color_shown};
 use crate::app::App;
-use crate::theme::{Bars, Category, Rgb, color_rgb, count, human};
+use crate::format::{count, human};
+use crate::theme::{Bars, Category, Rgb, color_rgb};
 
 /// Age bands for [`ColorBy::Age`]: their upper bound in days and name.
 pub(super) const AGES: [(i64, &str); 4] = [
@@ -143,7 +144,7 @@ pub(super) fn fit_name(name: &str, w: usize) -> Option<String> {
     if Span::raw(name).width() <= w {
         Some(name.to_owned())
     } else if w >= CUT_NAME_MIN {
-        Some(crate::theme::truncate_middle(name, w))
+        Some(crate::format::truncate_middle(name, w))
     } else {
         None
     }

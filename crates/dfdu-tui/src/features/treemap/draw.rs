@@ -24,7 +24,8 @@ use super::tile::{AGES, age_style, base_style, hatch_glyph};
 use super::{ColorBy, color_shown, key_of, selected_top};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
-use crate::theme::{Category, count, human, percent};
+use crate::format::{count, human, percent};
+use crate::theme::Category;
 use crate::view::empty::{self, Empty};
 use crate::view::spread;
 
