@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use common::ok;
 use crossbeam_channel::unbounded;
-use dfdu_clean::{DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem};
+use dfdu_clean::{DeleterMsg, DeleterReq, Identity, Plan, PlanItem};
+use dfdu_engine::{DeleteResult, Mode};
 use dfdu_tree::{Meta, Tree};
 
 /// A plan item for `p`, with the identity a scan would record: on Windows what `dfdu-sys`
