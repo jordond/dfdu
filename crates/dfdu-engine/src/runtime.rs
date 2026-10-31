@@ -2,8 +2,8 @@
 
 mod applier_loop;
 mod inbox;
-mod journal;
-pub use journal::Query as JournalQuery;
+mod resume;
+pub use resume::Query as JournalQuery;
 mod options;
 
 pub(crate) use options::default_measurers;
@@ -56,7 +56,7 @@ pub struct Engine<B: Backend> {
     cmd_tx: Sender<Command>,
     commands_sent: Arc<AtomicU64>,
     /// The resumes waiting for the change journal's answer ([`Engine::resume`]).
-    asking: Mutex<Vec<journal::Asking>>,
+    asking: Mutex<Vec<resume::Asking>>,
     changes_rx: Receiver<()>,
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
@@ -415,8 +415,8 @@ impl<B: Backend> Engine<B> {
             l.close();
         }
         // The applier held the deleter's plan channel; with it gone the deleter finishes its
-        // current item, syncs and closes the journal, and exits. Wait for that, in what is left
-        // of `wait`.
+        // current item, syncs and closes the deletion journal, and exits. Wait for that, in
+        // what is left of `wait`.
         self.delete_abort.store(true, SeqCst);
         if let Some(d) = self.deleter.take() {
             while !d.is_finished() && Instant::now() < deadline {
