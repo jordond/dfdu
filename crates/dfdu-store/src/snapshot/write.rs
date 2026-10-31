@@ -4,9 +4,7 @@ use std::io::{self, Write};
 
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, NodeFlags, Tree};
 
-use super::{
-    CLOSE, DIR, DIR_FLAGS, ENTRY, FRAME_RAW, Header, MAGIC, OPT_JOURNAL, VERSION, VERSION_3,
-};
+use super::{CLOSE, DIR, DIR_FLAGS, ENTRY, FRAME_RAW, Header, MAGIC, OPT_JOURNAL, VERSION};
 
 /// The frames written so far: their count and CRCs, for the footer.
 #[derive(Default)]
@@ -96,19 +94,8 @@ fn state_code(s: DirState) -> u8 {
 ///
 /// When writing to `w` fails.
 pub fn write(tree: &Tree, root: Ix, w: impl Write, header: &Header) -> io::Result<u64> {
-    write_as(tree, root, w, header, VERSION)
-}
-
-/// [`write`] in format `version` (2 to 4; tests write older formats with it).
-pub(super) fn write_as(
-    tree: &Tree,
-    root: Ix,
-    w: impl Write,
-    header: &Header,
-    version: u32,
-) -> io::Result<u64> {
     let mut w = io::BufWriter::with_capacity(1 << 16, w);
-    let mut s = Writer::new_as(tree, root, header, version);
+    let mut s = Writer::new(tree, root, header);
     while !s.step(tree, usize::MAX) {
         s.flush(&mut w)?;
     }
@@ -120,7 +107,6 @@ pub(super) fn write_as(
 /// in memory, and writes them out with [`Writer::flush`] after letting go of it. The tree must
 /// not change between steps (its [`Tree::version`] stays the same); if it does, start again.
 pub struct Writer {
-    version: u32,
     /// The magic and version are written.
     started: bool,
     raw: Vec<u8>,
@@ -138,14 +124,9 @@ impl Writer {
     /// current format, with `header`.
     #[must_use]
     pub fn new(tree: &Tree, root: Ix, header: &Header) -> Writer {
-        Writer::new_as(tree, root, header, VERSION)
-    }
-
-    fn new_as(tree: &Tree, root: Ix, header: &Header, version: u32) -> Writer {
         let mut raw = Vec::with_capacity(FRAME_RAW + 4096);
-        put_header(&mut raw, &tree.path_buf(root), header, version);
+        put_header(&mut raw, &tree.path_buf(root), header);
         Writer {
-            version,
             started: false,
             raw,
             frames: Frames::default(),
@@ -240,7 +221,7 @@ impl Writer {
     fn start(&mut self, w: &mut impl Write) -> io::Result<()> {
         if !self.started {
             w.write_all(MAGIC)?;
-            w.write_all(&self.version.to_le_bytes())?;
+            w.write_all(&VERSION.to_le_bytes())?;
             self.started = true;
         }
         Ok(())
@@ -284,8 +265,9 @@ impl Writer {
     }
 }
 
-/// The scan's header records: root path, tool version, time, options and journal position.
-fn put_header(r: &mut Vec<u8>, path: &std::path::Path, header: &Header, version: u32) {
+/// The scan's header records: root path, tool version, time, options, journal position and
+/// last full scan.
+fn put_header(r: &mut Vec<u8>, path: &std::path::Path, header: &Header) {
     put_bytes(r, &dfdu_tree::name_bytes(path.as_os_str()));
     put_bytes(r, header.tool_version.as_bytes());
     put_u(r, header.written);
@@ -302,14 +284,10 @@ fn put_header(r: &mut Vec<u8>, path: &std::path::Path, header: &Header, version:
     if let Some(j) = &header.journal {
         put_bytes(r, &j.volume);
         put_u(r, j.event_id);
-        if version >= VERSION_3 {
-            put_u(r, j.time);
-        }
+        put_u(r, j.time);
     }
-    if version >= VERSION {
-        put_u(r, header.last_full_scan);
-        put_u(r, header.scan_ms);
-    }
+    put_u(r, header.last_full_scan);
+    put_u(r, header.scan_ms);
 }
 
 #[cfg(test)]

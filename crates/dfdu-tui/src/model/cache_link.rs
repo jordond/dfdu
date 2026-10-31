@@ -10,15 +10,15 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::RecvTimeoutError;
 use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model, WaitIdle};
 use dfdu_scan::JobOptions;
 use dfdu_store::ImportError;
 use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
-use dfdu_store::snapshot::Header;
+use dfdu_store::snapshot::{Header, ScanTiming};
 use dfdu_tree::DirState;
 
 use crate::app::App;
@@ -104,14 +104,6 @@ struct Run {
     saved_as: SavedAs,
 }
 
-/// When the cached tree was last scanned in full, and how long that took.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScanTiming {
-    /// Seconds since the epoch.
-    last_full_scan: u64,
-    scan_ms: u64,
-}
-
 /// What a run is saved as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SavedAs {
@@ -128,7 +120,7 @@ struct Writer {
     thread: thread::JoinHandle<std::io::Result<Saved>>,
     cancel: Arc<AtomicBool>,
     /// Disconnected once the thread is done: it holds the other end until then.
-    done: mpsc::Receiver<()>,
+    done: crossbeam_channel::Receiver<()>,
 }
 
 /// Loads the cached scan, scans when there is none, and saves complete scans, on threads the
@@ -185,19 +177,14 @@ impl Cacher {
             return true;
         }
         let mut changed = false;
-        if self
-            .loader
-            .as_ref()
-            .is_some_and(thread::JoinHandle::is_finished)
-            && let Some(l) = self.loader.take()
-        {
+        if let Some(l) = self.loader.take_if(|l| l.is_finished()) {
             let loaded = l.join().unwrap_or(Err(LoadError::Panicked));
             self.loaded(&link, loaded, app, engine);
             changed = true;
         }
         changed |= self.run_ended(&link, app, engine);
         changed |= self.save_ended(&link, app);
-        self.resave(&link, engine);
+        changed |= self.resave(&link, app, engine);
         changed
     }
 
@@ -262,10 +249,7 @@ impl Cacher {
                 // Rescanned whole when the last full scan is old: asking the journal would
                 // keep what it missed.
                 let journal = h.journal.filter(|_| !hit.full_rescan);
-                let kept = journal.map(|_| ScanTiming {
-                    last_full_scan: h.full_scan_at(),
-                    scan_ms: h.scan_ms,
-                });
+                let kept = h.resumed_timing().filter(|_| !hit.full_rescan);
                 app.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
                 engine.resume_with(
@@ -303,11 +287,9 @@ impl Cacher {
         let Some((complete, version)) = ended(engine) else {
             return false;
         };
-        let ms = u64::try_from(run.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let timing = run.kept.unwrap_or(ScanTiming {
-            last_full_scan: run.started_secs,
-            scan_ms: ms,
-        });
+        let timing = run
+            .kept
+            .unwrap_or_else(|| ScanTiming::ended_now(run.started, run.started_secs));
         let worth = complete && link.save && timing.scan_ms >= self.min_scan_ms;
         run.saved_as = if worth {
             SavedAs::Save(timing)
@@ -316,65 +298,87 @@ impl Cacher {
         };
         let shown = app.cached.take().is_some();
         if worth {
-            self.save(link, engine, version);
+            return self.save(link, app, engine, version) | shown;
         }
         shown
     }
 
-    /// Saves the tree, at `version`, on a thread.
-    fn save<B: dfdu_scan::Backend>(&mut self, link: &CacheLink, engine: &Engine<B>, version: u64) {
+    /// Saves the tree, at `version`, on a thread. True when a thread could not be started,
+    /// which the status line says.
+    fn save<B: dfdu_scan::Backend>(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        engine: &Engine<B>,
+        version: u64,
+    ) -> bool {
         let Some(run) = &self.run else {
-            return;
+            return false;
         };
-        let SavedAs::Save(ScanTiming {
-            last_full_scan,
-            scan_ms,
-        }) = run.saved_as
-        else {
-            return;
+        let SavedAs::Save(full_scan) = run.saved_as else {
+            return false;
         };
         let now = cache::now();
-        let header = Header {
-            tool_version: env!("CARGO_PKG_VERSION").into(),
-            written: now,
-            cross_mounts: link.slot.key.cross_mounts,
-            network: link.slot.key.network,
-            journal: run.journal,
-            last_full_scan,
-            scan_ms,
-        };
+        let header = Header::new(
+            now,
+            link.slot.key.cross_mounts,
+            link.slot.key.network,
+            run.journal,
+            full_scan,
+        );
         let read = engine.reader();
         let cancel = Arc::new(AtomicBool::new(false));
         let (slot, stop) = (link.slot.clone(), cancel.clone());
-        let (running, done) = mpsc::channel();
+        let (running, done) = crossbeam_channel::bounded(0);
         let spawned = thread::Builder::new()
             .name("dfdu-cache".into())
             .spawn(move || {
-                let _running: mpsc::Sender<()> = running;
+                let _running: crossbeam_channel::Sender<()> = running;
                 let saved = slot.save(&header, |f| read(&mut |m| f(&m.tree)), &stop)?;
                 if matches!(saved, Saved::Written { .. }) {
                     slot.sweep(now);
                 }
                 Ok(saved)
             });
-        if let Ok(thread) = spawned {
-            self.writer = Some(Writer {
-                thread,
-                cancel,
-                done,
-            });
-            self.saved = Some(version);
-            self.changed = None;
+        let writer = spawned.map(|thread| Writer {
+            thread,
+            cancel,
+            done,
+        });
+        self.save_started(link, app, version, writer)
+    }
+
+    /// Takes in the start of a save of the tree at `version`. A thread that could not be
+    /// started goes in the status line, and that version is not tried again: only a change to
+    /// the tree is saved again. True when the status line changed.
+    fn save_started(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        version: u64,
+        writer: std::io::Result<Writer>,
+    ) -> bool {
+        self.saved = Some(version);
+        self.changed = None;
+        match writer {
+            Ok(w) => {
+                self.writer = Some(w);
+                false
+            }
+            Err(e) => {
+                app.status = Some(format!(
+                    "cache {}: cannot start a thread: {e}",
+                    link.slot.path.display()
+                ));
+                true
+            }
         }
     }
 
     /// Takes in the end of a save: a problem goes in the status line, and a tree that changed
     /// while it was written is saved again once it stays the same.
     fn save_ended(&mut self, link: &CacheLink, app: &mut App) -> bool {
-        if !self.writer.as_ref().is_some_and(|w| w.thread.is_finished()) {
-            return false;
-        }
-        let Some(w) = self.writer.take() else {
+        let Some(w) = self.writer.take_if(|w| w.thread.is_finished()) else {
             return false;
         };
         match w.thread.join() {
@@ -398,31 +402,37 @@ impl Cacher {
     }
 
     /// Saves again a tree that changed since it was saved, once it has stayed the same for
-    /// [`RESAVE_QUIET`] and is still complete.
-    fn resave<B: dfdu_scan::Backend>(&mut self, link: &CacheLink, engine: &Engine<B>) {
+    /// [`RESAVE_QUIET`] and is still complete. True when the status line changed.
+    fn resave<B: dfdu_scan::Backend>(
+        &mut self,
+        link: &CacheLink,
+        app: &mut App,
+        engine: &Engine<B>,
+    ) -> bool {
         let worth = self
             .run
             .as_ref()
             .is_some_and(|r| matches!(r.saved_as, SavedAs::Save(_)));
         if !worth || self.writer.is_some() {
-            return;
+            return false;
         }
         let Some((true, version)) = ended(engine) else {
             self.changed = None;
-            return;
+            return false;
         };
         if self.saved == Some(version) {
             self.changed = None;
-            return;
+            return false;
         }
         match self.changed {
             Some((v, since)) if v == version => {
                 if since.elapsed() >= RESAVE_QUIET {
-                    self.save(link, engine, version);
+                    return self.save(link, app, engine, version);
                 }
             }
             _ => self.changed = Some((version, Instant::now())),
         }
+        false
     }
 
     /// Something is being loaded, saved or waited for, so [`Cacher::poll`] has more to take

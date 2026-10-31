@@ -59,7 +59,7 @@ fn only_the_caches_own_names_are_its_files() {
     ] {
         assert!(!is_scan_name(n), "{n}");
     }
-    assert!(is_temp_name(".0123456789abcdef.snap.42.tmp"));
+    assert!(is_temp_name(b".0123456789abcdef.snap.42.tmp"));
     for n in [
         ".0123456789abcdef.snap..tmp",
         ".0123456789abcdef.snap.4x.tmp",
@@ -67,7 +67,7 @@ fn only_the_caches_own_names_are_its_files() {
         "0123456789abcdef.snap.1.tmp",
         ".0123456789abcdef.snap.1",
     ] {
-        assert!(!is_temp_name(n), "{n}");
+        assert!(!is_temp_name(n.as_bytes()), "{n}");
     }
 }
 
@@ -79,7 +79,7 @@ fn the_list_says_what_each_file_holds() {
     let (t, _) = tree_of(slot.key.root(), 4);
     save(&slot, &t, &header(now, now));
     fs::write(cache.dir().join("0123456789abcdef.snap"), b"DFDUSNAP").unwrap();
-    let list = cache.list();
+    let list = cache.list().unwrap();
     assert_eq!(list.len(), 2);
     let ok = list.iter().find(|l| l.path == slot.path).unwrap();
     let (root, h) = ok.scan.as_ref().unwrap();

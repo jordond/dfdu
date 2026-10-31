@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 use dfdu_engine::{Command, Model, SizeMode};
+use dfdu_store::snapshot::{Header, ScanTiming};
 use dfdu_tree::HostPath;
 use dfdu_tree::filetype::TypeFilter;
 
@@ -179,14 +180,12 @@ pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
         std::time::Instant::now(),
         dfdu_tree::now_secs().max(0).cast_unsigned(),
     );
-    // A resume from the journal keeps the last full scan's time; anything else is one.
+    // A resume from the journal keeps the last full scan's time; anything else is one. Unlike
+    // the browser's cache (`dfdu_store::cache::FULL_RESCAN_AFTER`), `--resume-from` asks the
+    // journal however old that full scan is: resuming is what it was asked to do.
     let full_scan = match resumed {
         Some(l) => {
-            let kept = l
-                .header
-                .journal
-                .is_some()
-                .then(|| (l.header.full_scan_at(), l.header.scan_ms));
+            let kept = l.header.resumed_timing();
             engine.resume(l.tree, l.header.journal, job.clone());
             kept
         }
@@ -199,10 +198,7 @@ pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
         }
     };
     let engine = launch::wait_scan(engine)?;
-    let (last_full_scan, scan_ms) = full_scan.unwrap_or_else(|| {
-        let ms = u64::try_from(started.0.elapsed().as_millis()).unwrap_or(u64::MAX);
-        (started.1, ms)
-    });
+    let full_scan = full_scan.unwrap_or_else(|| ScanTiming::ended_now(started.0, started.1));
     let meta = ncdu_meta();
     let to_stdout = args.output == Path::new("-");
     let result = engine.read(|m| {
@@ -213,14 +209,14 @@ pub fn export(args: &ExportArgs) -> Result<ExitCode, ExitCode> {
             .ok_or_else(|| std::io::Error::other("no scan"))?;
         let partial = m.tree.total(root).errors > 0 || m.status.incomplete;
         let write = |w: &mut dyn std::io::Write| {
-            let header = args.snapshot.then(|| dfdu_store::snapshot::Header {
-                tool_version: env!("CARGO_PKG_VERSION").into(),
-                written: meta.timestamp.unwrap_or(0),
-                cross_mounts: job.cross_mounts,
-                network: job.network,
-                journal,
-                last_full_scan,
-                scan_ms,
+            let header = args.snapshot.then(|| {
+                Header::new(
+                    meta.timestamp.unwrap_or(0),
+                    job.cross_mounts,
+                    job.network,
+                    journal,
+                    full_scan,
+                )
             });
             write_export(w, &m.tree, root, header.as_ref(), args.compress, &meta)
         };

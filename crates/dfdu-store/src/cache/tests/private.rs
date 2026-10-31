@@ -49,3 +49,31 @@ fn another_users_directory_is_not_used() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(Cache::at(tmp.path().join("a/b")).is_ok());
 }
+
+/// A directory the user cannot read is an error, not an empty cache; one that is not there yet
+/// holds no scans.
+#[test]
+fn an_unreadable_directory_is_not_an_empty_cache() {
+    if euid() == 0 {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = Cache::at(tmp.path().join("scans")).unwrap();
+    assert!(missing.list().unwrap().is_empty());
+    assert_eq!(missing.clear().unwrap(), Removed::default());
+    let dir = tmp.path().join("locked");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("0123456789abcdef.snap"), b"DFDUSNAP").unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let cache = Cache::at(dir.clone()).unwrap();
+    let list = cache.list().map(|l| l.len());
+    let clear = cache.clear().map(|r| r.files);
+    let swept = cache.sweep(now(), 0, None);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(list.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    let e = clear.unwrap_err();
+    assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+    assert!(e.to_string().starts_with(&dir.display().to_string()), "{e}");
+    assert_eq!(swept, Removed::default());
+    assert!(dir.join("0123456789abcdef.snap").exists());
+}

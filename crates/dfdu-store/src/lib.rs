@@ -1,5 +1,5 @@
-//! Persistence: ncdu JSON import and export, native
-//! snapshots, scan history, zstd streams and atomic file writes.
+//! Persistence: ncdu JSON import and export, native snapshots, the scan cache, scan history,
+//! zstd streams and atomic file writes.
 
 pub mod cache;
 pub mod history;
@@ -214,13 +214,8 @@ fn replace_file<T>(
         _ => std::path::Path::new("."),
     };
     let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let mut prefix = std::ffi::OsString::from(".");
-    prefix.push(name);
-    prefix.push(".");
-    remove_stale_temps(dir, prefix.as_encoded_bytes());
-    let mut tmp_name = prefix;
-    tmp_name.push(format!("{}.tmp", std::process::id()));
-    let tmp = dir.join(tmp_name);
+    remove_stale_temps(dir, |t| temp_target(t) == Some(name.as_encoded_bytes()));
+    let tmp = dir.join(temp_name(name, std::process::id()));
     let mut file = std::fs::File::create(&tmp)?;
     // Held until the file is closed, by this process or by its death.
     let _ = file.try_lock();
@@ -250,19 +245,31 @@ fn replace_file<T>(
     Ok(v)
 }
 
-/// Removes the temporary files `<prefix><pid>.tmp` in `dir` that no writer holds locked: those
-/// of writers killed before they renamed them.
-fn remove_stale_temps(dir: &std::path::Path, prefix: &[u8]) {
+/// The name of the temporary file process `pid` writes `name` into: `.<name>.<pid>.tmp`.
+fn temp_name(name: &std::ffi::OsStr, pid: u32) -> std::ffi::OsString {
+    let mut t = std::ffi::OsString::from(".");
+    t.push(name);
+    t.push(format!(".{pid}.tmp"));
+    t
+}
+
+/// The name of the file that `name` is the temporary file of ([`temp_name`]), when it is one.
+pub(crate) fn temp_target(name: &[u8]) -> Option<&[u8]> {
+    let rest = name.strip_prefix(b".")?.strip_suffix(b".tmp")?;
+    let dot = rest.iter().rposition(|&b| b == b'.')?;
+    let (target, pid) = (&rest[..dot], &rest[dot + 1..]);
+    let is_pid = !pid.is_empty() && pid.iter().all(u8::is_ascii_digit);
+    (is_pid && !target.is_empty()).then_some(target)
+}
+
+/// Removes the temporary files in `dir` that `is_temp` accepts by name ([`temp_target`]) and
+/// that no writer holds locked: those of writers killed before they renamed them.
+pub(crate) fn remove_stale_temps(dir: &std::path::Path, is_temp: impl Fn(&[u8]) -> bool) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
     for e in rd.flatten() {
-        let n = e.file_name();
-        let b = n.as_encoded_bytes();
-        let Some(pid) = b.strip_prefix(prefix).and_then(|r| r.strip_suffix(b".tmp")) else {
-            continue;
-        };
-        if pid.is_empty() || !pid.iter().all(u8::is_ascii_digit) {
+        if !is_temp(e.file_name().as_encoded_bytes()) {
             continue;
         }
         let Ok(f) = std::fs::OpenOptions::new().write(true).open(e.path()) else {

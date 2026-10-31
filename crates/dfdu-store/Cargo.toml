@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-store"
-description = "Persistence: ncdu JSON import and export, snapshots, scan history, zstd, atomic writes"
+description = "Persistence: ncdu JSON import and export, snapshots, the scan cache, scan history, zstd, atomic writes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
