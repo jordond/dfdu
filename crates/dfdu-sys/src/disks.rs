@@ -192,10 +192,10 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
     let deadline = Instant::now() + timeout;
     let pending = listed(&volumes)
         .map(|v| {
-            let at = v.at.clone();
+            let at = v.mount_point.clone();
             let rx = on_thread(move || crate::macos::statfs_space(&at).map(container_space));
             let disk = Disk {
-                mount_point: v.at.clone(),
+                mount_point: v.mount_point.clone(),
                 also_at: vec![],
                 fstype: v.fstype.clone(),
                 source: v.from.clone(),
@@ -234,7 +234,9 @@ fn container_space(s: Space) -> Space {
 #[cfg(any(target_os = "macos", test))]
 fn listed(volumes: &[Volume]) -> impl Iterator<Item = &Volume> {
     volumes.iter().enumerate().filter_map(|(i, v)| {
-        let hidden = volumes[i + 1..].iter().any(|later| later.at == v.at);
+        let hidden = volumes[i + 1..]
+            .iter()
+            .any(|later| later.mount_point == v.mount_point);
         let shown = v.local && (v.browsable || v.role == Some(Role::Data));
         (shown && !hidden && crate::classify_fs(&v.fstype) != FsClass::Kernel).then_some(v)
     })
@@ -290,7 +292,7 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
 /// A mounted volume as it describes itself: where it is mounted, what from, and its role.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) struct Volume {
-    pub at: PathBuf,
+    pub mount_point: PathBuf,
     /// The device (`/dev/disk3s5`; `/dev/disk3s1s1` for a snapshot of `disk3s1`).
     pub from: String,
     /// Filesystem type (`apfs`, `hfs`, `smbfs`).
@@ -314,7 +316,12 @@ fn container(dev: &str) -> Option<&str> {
 /// Sets each disk's role, and the other disks on the same APFS container, from `volumes`.
 #[cfg(any(target_os = "macos", test))]
 fn describe_volumes(disks: &mut [Disk], volumes: &[Volume]) {
-    let of = |d: &Disk| volumes.iter().rev().find(|v| v.at == d.mount_point);
+    let of = |d: &Disk| {
+        volumes
+            .iter()
+            .rev()
+            .find(|v| v.mount_point == d.mount_point)
+    };
     let containers: Vec<Option<&str>> = disks
         .iter()
         .map(|d| {
@@ -353,7 +360,7 @@ mod tests {
 
     fn volume(at: &str, from: &str, role: Option<Role>) -> Volume {
         Volume {
-            at: at.into(),
+            mount_point: at.into(),
             from: from.into(),
             fstype: "apfs".into(),
             role,
@@ -398,7 +405,7 @@ mod tests {
             },
         ];
         let got: Vec<(&str, &str)> = listed(&volumes)
-            .map(|v| (v.at.to_str().unwrap(), v.from.as_str()))
+            .map(|v| (v.mount_point.to_str().unwrap(), v.from.as_str()))
             .collect();
         assert_eq!(
             got,

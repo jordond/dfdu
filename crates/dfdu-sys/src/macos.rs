@@ -315,7 +315,7 @@ pub(crate) fn volumes() -> io::Result<Vec<crate::disks::Volume>> {
     Ok(fsstat()?
         .iter()
         .map(|s| crate::disks::Volume {
-            at: std::ffi::OsStr::from_bytes(&field(&s.f_mntonname))
+            mount_point: std::ffi::OsStr::from_bytes(&field(&s.f_mntonname))
                 .to_owned()
                 .into(),
             from: String::from_utf8_lossy(&field(&s.f_mntfromname)).into_owned(),
