@@ -8,8 +8,8 @@ use dfdu_scan::{Backend, JobId, JobOptions};
 use dfdu_tree::{HostPath, Meta, NodeRef};
 
 use super::jobs::JobStart;
+use super::links::VISIBLE;
 use super::{Applier, JobKind, Model, empty_dir_meta};
-use crate::links::VISIBLE;
 use crate::recent::Event;
 
 #[derive(Clone, Debug)]

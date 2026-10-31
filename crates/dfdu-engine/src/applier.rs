@@ -9,6 +9,7 @@ mod estimate;
 mod guards;
 mod invariants;
 mod jobs;
+mod links;
 mod measure;
 mod messages;
 mod model;
@@ -39,9 +40,9 @@ pub(crate) use native::native_req;
 
 use crate::classifier::CheckReq;
 use crate::extents::{ExtentTable, Inode};
-use crate::links::{LinkTable, Scope};
 use crate::measure::MeasureReq;
 use delete::ActivePlan;
+use links::{LinkTable, Scope};
 use measure::MeasureAt;
 use resume::Kept;
 pub use resume::unrefreshed;

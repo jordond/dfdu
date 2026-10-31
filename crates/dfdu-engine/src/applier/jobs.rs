@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use dfdu_scan::{Backend, DirId, JobId, JobOptions};
 use dfdu_tree::{DirState, ErrKind, HostPath, Ix, NodeRef, Pages, Tree};
 
+use super::links::Scope;
 use super::work::Work;
 use super::{Applier, Job, JobKind, JobPhase, Kept, Model};
-use crate::links::Scope;
 
 #[cfg(test)]
 mod tests;

@@ -4,10 +4,10 @@
 use dfdu_scan::Backend;
 use dfdu_tree::{Ix, Kind, NodeFlags, NodeRef, Tree};
 
+use super::links::VISIBLE;
 use super::work::STEP_UNITS;
 use super::{Applier, JobKind, JobPhase, Model};
 use crate::extents::Inode;
-use crate::links::VISIBLE;
 use crate::measure::{MeasureFile, MeasureMsg, MeasureReq, MeasureResult};
 
 #[cfg(test)]

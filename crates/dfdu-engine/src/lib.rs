@@ -7,7 +7,6 @@ mod applier;
 mod classifier;
 mod crash;
 mod extents;
-mod links;
 mod listed;
 mod measure;
 mod nanos;

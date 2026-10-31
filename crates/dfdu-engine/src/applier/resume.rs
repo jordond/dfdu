@@ -23,9 +23,9 @@ use dfdu_scan::journal::Keep;
 use dfdu_scan::{Backend, JobId, JobOptions};
 use dfdu_tree::{Ix, Meta, NodeRef, Pages, Tree};
 
+use super::links::VISIBLE;
 use super::work::Work;
 use super::{Applier, Command, Job, JobKind, JobPhase, Model};
-use crate::links::VISIBLE;
 use crate::reclassify::ClassifyLoaded;
 pub(in crate::applier) use graft::Grafted;
 use verify::Verify;
