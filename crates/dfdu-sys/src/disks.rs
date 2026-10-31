@@ -133,6 +133,18 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
         };
         pending.push((disk, rx));
     }
+    Ok(gather(pending, deadline))
+}
+
+/// A disk whose size is being asked for on its own thread ([`on_thread`]).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+type Pending = (Disk, Option<mpsc::Receiver<io::Result<Space>>>);
+
+/// The disks of `pending` with the sizes that arrived by `deadline`, sorted by mount point.
+/// A disk that did not answer is listed without a size; one that failed or has no blocks is
+/// left out.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn gather(pending: Vec<Pending>, deadline: Instant) -> Vec<Disk> {
     let mut out = vec![];
     for (mut disk, rx) in pending {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -149,7 +161,7 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
         out.push(disk);
     }
     out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
-    Ok(out)
+    out
 }
 
 #[cfg(target_os = "linux")]
@@ -167,6 +179,67 @@ pub(crate) fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
     })
 }
 
+/// The mounted volumes the Finder shows, sorted by mount point, from the kernel's mount table
+/// (`getfsstat`). Each gets `timeout` to report its size; those that do not answer are listed
+/// without one.
+///
+/// # Errors
+///
+/// When the mount table cannot be read.
+#[cfg(target_os = "macos")]
+pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
+    let volumes = crate::macos::volumes()?;
+    let deadline = Instant::now() + timeout;
+    let pending = listed(&volumes)
+        .map(|v| {
+            let at = v.at.clone();
+            let rx = on_thread(move || crate::macos::statfs_space(&at).map(container_space));
+            let disk = Disk {
+                mount_point: v.at.clone(),
+                also_at: vec![],
+                fstype: v.fstype.clone(),
+                source: v.from.clone(),
+                class: crate::classify_fs(&v.fstype),
+                space: None,
+                role: None,
+                shares_space_with: vec![],
+            };
+            (disk, rx)
+        })
+        .collect();
+    let mut out = gather(pending, deadline);
+    describe_volumes(&mut out, &volumes);
+    Ok(out)
+}
+
+/// The space of a volume as the disk list shows it: what `statfs` reports, with the used part
+/// being all that is not available. For an APFS volume that is the whole container's use, the
+/// same on each of its volumes ([`Disk::shares_space_with`]); `statfs` counts only the
+/// volume's own blocks as used.
+///
+/// The free space is `f_bavail`, as `df` shows it. The Finder shows more: it counts purgeable
+/// data (caches, local snapshots, iCloud files it can evict) as available, which the system
+/// frees only when it needs the room.
+#[cfg(target_os = "macos")]
+fn container_space(s: Space) -> Space {
+    Space {
+        used: s.total.saturating_sub(s.available),
+        ..s
+    }
+}
+
+/// The volumes the disk list shows: those the Finder lists (local, not mounted `nobrowse`
+/// except the system's data volume, which the Finder reaches through the system volume) and
+/// not kernel filesystems, each mount point once (the last mount there hides the others).
+#[cfg(any(target_os = "macos", test))]
+fn listed(volumes: &[Volume]) -> impl Iterator<Item = &Volume> {
+    volumes.iter().enumerate().filter_map(|(i, v)| {
+        let hidden = volumes[i + 1..].iter().any(|later| later.at == v.at);
+        let shown = v.local && (v.browsable || v.role == Some(Role::Data));
+        (shown && !hidden && crate::classify_fs(&v.fstype) != FsClass::Kernel).then_some(v)
+    })
+}
+
 /// The mounted filesystems, sorted by mount point, from `sysinfo`. The whole listing gets
 /// `timeout`.
 ///
@@ -174,7 +247,7 @@ pub(crate) fn statvfs_space(path: &std::path::Path) -> io::Result<Space> {
 ///
 /// When no thread can be started for the listing, or `TimedOut` when it takes longer than
 /// `timeout`.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
     let deadline = Instant::now() + timeout;
     let rx = on_thread(|| {
@@ -207,10 +280,6 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the disk list did not answer"))?;
     out.retain(|d| d.class != FsClass::Kernel && d.space.is_some_and(|s| s.total > 0));
     out.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
-    #[cfg(target_os = "macos")]
-    if let Ok(volumes) = crate::macos::volumes() {
-        describe_volumes(&mut out, &volumes);
-    }
     Ok(out)
 }
 
@@ -220,7 +289,13 @@ pub(crate) struct Volume {
     pub at: PathBuf,
     /// The device (`/dev/disk3s5`; `/dev/disk3s1s1` for a snapshot of `disk3s1`).
     pub from: String,
+    /// Filesystem type (`apfs`, `hfs`, `smbfs`).
+    pub fstype: String,
     pub role: Option<Role>,
+    /// Not mounted `nobrowse`: the Finder shows it.
+    pub browsable: bool,
+    /// On a device of this machine, not over the network.
+    pub local: bool,
 }
 
 /// The APFS container a volume's device is part of: `disk3` for `/dev/disk3s5`.
@@ -235,7 +310,7 @@ fn container(dev: &str) -> Option<&str> {
 /// Sets each disk's role, and the other disks on the same APFS container, from `volumes`.
 #[cfg(any(target_os = "macos", test))]
 fn describe_volumes(disks: &mut [Disk], volumes: &[Volume]) {
-    let of = |d: &Disk| volumes.iter().find(|v| v.at == d.mount_point);
+    let of = |d: &Disk| volumes.iter().rev().find(|v| v.at == d.mount_point);
     let containers: Vec<Option<&str>> = disks
         .iter()
         .map(|d| {
@@ -276,8 +351,59 @@ mod tests {
         Volume {
             at: at.into(),
             from: from.into(),
+            fstype: "apfs".into(),
             role,
+            browsable: true,
+            local: true,
         }
+    }
+
+    /// The Finder's volumes are listed: the hidden system volumes are not, except the data
+    /// volume; nor network or kernel filesystems, nor a mount hidden by a later one.
+    #[test]
+    fn lists_the_volumes_the_finder_shows() {
+        let hidden = |v: Volume| Volume {
+            browsable: false,
+            ..v
+        };
+        let volumes = [
+            volume("/", "/dev/disk3s1s1", Some(Role::System)),
+            Volume {
+                fstype: "devfs".into(),
+                ..hidden(volume("/dev", "devfs", None))
+            },
+            hidden(volume("/System/Volumes/VM", "/dev/disk3s6", None)),
+            hidden(volume(
+                "/System/Volumes/Data",
+                "/dev/disk3s5",
+                Some(Role::Data),
+            )),
+            Volume {
+                fstype: "autofs".into(),
+                ..hidden(volume("/System/Volumes/Data/home", "map auto_home", None))
+            },
+            Volume {
+                fstype: "smbfs".into(),
+                local: false,
+                ..volume("/Volumes/share", "//me@nas/share", None)
+            },
+            volume("/Volumes/USB", "/dev/disk6s1", None),
+            Volume {
+                fstype: "msdos".into(),
+                ..volume("/Volumes/USB", "/dev/disk7s1", None)
+            },
+        ];
+        let got: Vec<(&str, &str)> = listed(&volumes)
+            .map(|v| (v.at.to_str().unwrap(), v.from.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("/", "/dev/disk3s1s1"),
+                ("/System/Volumes/Data", "/dev/disk3s5"),
+                ("/Volumes/USB", "/dev/disk7s1"),
+            ]
+        );
     }
 
     #[test]
@@ -331,5 +457,39 @@ mod tests {
         for d in disks.iter().filter_map(|d| d.space) {
             assert!(d.used <= d.total && d.available <= d.total, "{d:?}");
         }
+    }
+
+    /// The system volume and its data volume are listed with their roles and the space of
+    /// their container, which they share.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lists_the_system_and_data_volumes_with_their_container() {
+        let disks = disks(Duration::from_secs(5)).expect("disks");
+        let find = |at: &str| {
+            disks
+                .iter()
+                .find(|d| d.mount_point == std::path::Path::new(at))
+                .unwrap_or_else(|| panic!("{at} not listed: {disks:#?}"))
+        };
+        let (system, data) = (find("/"), find("/System/Volumes/Data"));
+        assert_eq!(
+            (system.role, data.role),
+            (Some(Role::System), Some(Role::Data))
+        );
+        assert_eq!(system.fstype, "apfs");
+        assert!(system.source.starts_with("/dev/disk"), "{system:?}");
+        assert!(
+            system.shares_space_with.contains(&data.mount_point),
+            "{system:?}"
+        );
+        assert!(
+            data.shares_space_with.contains(&system.mount_point),
+            "{data:?}"
+        );
+        for s in [system.space, data.space] {
+            let s = s.expect("answered");
+            assert_eq!(s.used + s.available, s.total, "{s:?}");
+        }
+        assert_eq!(system.space.map(|s| s.total), data.space.map(|s| s.total));
     }
 }
