@@ -226,6 +226,23 @@ impl App {
         }
     }
 
+    /// The browser `ui` describes: its theme, colour level and background, `~`, starting file
+    /// type filter, whether this machine is looked up and whether anything can be deleted. The
+    /// run loop keeps the rest (mouse, debug panel, history, cache).
+    #[must_use]
+    pub fn with_options(ui: &crate::UiOptions, now: Instant) -> Self {
+        let mut app = App {
+            color_level: ui.color_level,
+            background: ui.background,
+            home: ui.home.clone(),
+            types: ui.types.clone(),
+            read_only: ui.read_only,
+            ..App::new(ui.theme.clone(), now)
+        };
+        app.outside.local = ui.local;
+        app
+    }
+
     /// True when an automatic re-sort is waiting for the user to be idle.
     pub fn sort_pending(&self) -> bool {
         self.new_count > 0 || self.changed_since_sort
