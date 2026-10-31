@@ -27,8 +27,9 @@ pub(super) struct Pane {
     pub(super) armed: bool,
 }
 
-/// Opens the selected item's native command, starting with its dry run if it has one.
-pub(super) fn open_pane(app: &mut App) -> Vec<Effect> {
+/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
+/// native command, starting with its dry run if it has one.
+pub fn command(app: &mut App) -> Vec<Effect> {
     let Some(it) = selected_item(app).cloned() else {
         return Vec::new();
     };

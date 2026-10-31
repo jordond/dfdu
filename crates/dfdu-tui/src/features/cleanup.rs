@@ -35,6 +35,7 @@ pub(crate) use rows::selected_item;
 use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;
+pub use pane::command;
 
 /// Output lines the native pane keeps.
 const PANE_LINES: usize = 200;
@@ -453,12 +454,6 @@ pub fn tick_suggested(app: &mut App) {
     } else {
         marked_status(n, size)
     });
-}
-
-/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
-/// native command, with its dry run.
-pub fn command(app: &mut App) -> Vec<Effect> {
-    pane::open_pane(app)
 }
 
 fn toggle(app: &mut App, row: Option<Row>) {
