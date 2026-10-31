@@ -111,7 +111,7 @@ impl<B: Backend> Applier<B> {
     /// Ends a remote scan whose link ended, once everything that arrived before is applied:
     /// running jobs stop where they are, which leaves the scan incomplete.
     pub(crate) fn check_link(&mut self, m: &mut Model) {
-        let Some(why) = self.remote.as_ref().and_then(|l| l.take_lost()) else {
+        let Some(why) = self.settings.remote.as_ref().and_then(|l| l.take_lost()) else {
             return;
         };
         let running: Vec<u32> = self

@@ -111,16 +111,51 @@ impl Job {
     }
 }
 
+/// What an applier is set to for its session, fixed when it starts. The defaults are a local
+/// scan that measures every file, with no classifier pool, run as an ordinary user.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "independent settings of the session, not the states of one machine"
 )]
-pub struct Applier<B: Backend> {
-    /// The local scanner. Its backend serves local reads; its jobs run only when `remote` is
-    /// unset, and are steered through the `scanner_*` methods, which pick one of the two.
-    pub scan: Arc<Shared<B>>,
+pub struct ApplierSettings {
     /// Set for a remote scan: the agent that runs its jobs.
     pub(crate) remote: Option<Arc<crate::remote::Link>>,
+    /// Refuse every delete request and native command (dry runs aside).
+    pub read_only: bool,
+    /// The tree was loaded from a file: refuse everything that would touch the filesystem.
+    pub(crate) imported: bool,
+    /// Measure extents: each directory of a scan as its listing closes, and what is left of a
+    /// job's tree when it ends.
+    pub measure: bool,
+    /// Files allocating less are not measured (`MEASURE_MIN` in the engine).
+    pub measure_min: u64,
+    /// Whoever deletes runs as root (the agent, for a remote engine), so read-only btrfs
+    /// snapshots can be deleted.
+    pub privileged: bool,
+    /// A classifier pool answers guard checks; without one none are queued.
+    pub checks: bool,
+}
+
+impl Default for ApplierSettings {
+    fn default() -> Self {
+        ApplierSettings {
+            remote: None,
+            read_only: false,
+            imported: false,
+            measure: true,
+            measure_min: 1,
+            privileged: false,
+            checks: false,
+        }
+    }
+}
+
+pub struct Applier<B: Backend> {
+    /// The local scanner. Its backend serves local reads; its jobs run only when
+    /// `settings.remote` is unset, and are steered through the `scanner_*` methods, which pick
+    /// one of the two.
+    pub scan: Arc<Shared<B>>,
+    pub settings: ApplierSettings,
     jobs: BTreeMap<u32, Job>,
     /// Options of finished jobs dropped from `jobs`, for rescans of what they scanned.
     retired: HashMap<u32, JobOptions>,
@@ -150,17 +185,6 @@ pub struct Applier<B: Backend> {
     /// a directory's class can depend on its siblings, which a listing still being read does
     /// not have yet.
     rescans_after_listing: Vec<(NodeRef, bool)>,
-    /// Refuse every delete request and native command (dry runs aside).
-    pub read_only: bool,
-    /// The tree was loaded from a file: refuse everything that would touch the filesystem.
-    pub(crate) imported: bool,
-    /// Measure extents: each directory of a scan as its listing closes, and what is left of a
-    /// job's tree when it ends.
-    pub measure: bool,
-    /// Files allocating less are not measured (`MEASURE_MIN` in the engine).
-    pub measure_min: u64,
-    /// The deleter runs as root, so read-only btrfs snapshots can be deleted.
-    pub privileged: bool,
     extents: ExtentTable,
     /// Devices whose filesystem can share extents, from the scanner's probes.
     extent_devs: HashSet<u64>,
@@ -168,10 +192,9 @@ pub struct Applier<B: Backend> {
     /// The node each inode with a measurement in flight was requested for.
     measure_awaited: HashMap<Inode, NodeRef>,
     outgoing_measure: Vec<MeasureReq>,
-    /// Requests for the classifier pool, taken by the runtime after each slice.
+    /// Requests for the classifier pool, taken by the runtime after each slice
+    /// (`settings.checks`).
     outgoing_checks: Vec<CheckReq>,
-    /// A classifier pool answers them; without one nothing is queued.
-    pub checks: bool,
     measure_inflight: usize,
     /// Results of earlier rounds (abandoned after a timeout) are ignored.
     measure_round: u64,
@@ -207,13 +230,13 @@ fn empty_dir_meta() -> Meta {
 }
 
 impl<B: Backend> Applier<B> {
-    pub fn new(scan: Arc<Shared<B>>) -> Self {
+    pub fn new(scan: Arc<Shared<B>>, settings: ApplierSettings) -> Self {
         Applier {
             scan,
+            settings,
             jobs: BTreeMap::new(),
             retired: HashMap::new(),
             entered: Vec::new(),
-            remote: None,
             next_job: 1,
             links: LinkTable::default(),
             work: VecDeque::new(),
@@ -228,18 +251,12 @@ impl<B: Backend> Applier<B> {
             deferred_rescans: Vec::new(),
             rescans_after_listing: Vec::new(),
             resume: resume::Resumes::default(),
-            read_only: false,
-            imported: false,
-            measure: true,
-            measure_min: 1,
-            privileged: dfdu_sys::is_privileged(),
             extents: ExtentTable::default(),
             extent_devs: HashSet::new(),
             measure_stack: Vec::new(),
             measure_awaited: HashMap::new(),
             outgoing_measure: Vec::new(),
             outgoing_checks: Vec::new(),
-            checks: false,
             measure_inflight: 0,
             measure_round: 0,
             measure_last: 0,

@@ -39,7 +39,7 @@ pub(super) enum MeasureAt {
 impl<B: Backend> Applier<B> {
     /// Queues what is left to measure below `root`, whose job ended.
     pub(super) fn start_measure(&mut self, m: &mut Model, root: NodeRef) {
-        if !self.measure || self.extent_devs.is_empty() {
+        if !self.settings.measure || self.extent_devs.is_empty() {
             return;
         }
         m.status.measuring.get_or_insert_with(Default::default);
@@ -50,7 +50,7 @@ impl<B: Backend> Applier<B> {
     /// share extents: they are measured while the scan goes on. Only for initial scans, whose
     /// tree is visible; a rescan's shadow is measured when it swaps in.
     pub(super) fn measure_listing(&mut self, m: &mut Model, job: u32, ix: Ix) {
-        if !self.measure
+        if !self.settings.measure
             || self.extent_devs.is_empty()
             || !self.extent_devs.contains(&m.tree.dev_ino(ix).0)
         {
@@ -133,7 +133,7 @@ impl<B: Backend> Applier<B> {
                 let inode = tree.dev_ino(c);
                 if tree.kind(c) != Kind::File
                     || f.has(NodeFlags::MEASURED)
-                    || tree.raw_size(c).1 < self.measure_min.max(1)
+                    || tree.raw_size(c).1 < self.settings.measure_min.max(1)
                     || !self.extent_devs.contains(&inode.0)
                     || (f.has(NodeFlags::HARDLINK) && !f.has(NodeFlags::CHARGED))
                     || self
@@ -259,7 +259,7 @@ impl<B: Backend> Applier<B> {
     pub(super) fn sync_extents(&mut self, m: &mut Model, key: Inode, moved: bool) {
         let Some(at) = self.extents.counted_at(key) else {
             if moved
-                && self.measure
+                && self.settings.measure
                 && self.extent_devs.contains(&key.0)
                 && !self.awaited(&m.tree, key)
                 && let Some(c) = self.links.charged(key, VISIBLE)

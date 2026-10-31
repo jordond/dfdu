@@ -9,14 +9,14 @@ use super::Applier;
 impl<B: Backend> Applier<B> {
     /// Starts job `job` scanning `path`; returns the sequence number of its submission.
     pub(super) fn scanner_start_job(&self, job: JobId, path: &HostPath, opts: JobOptions) -> u64 {
-        match &self.remote {
+        match &self.settings.remote {
             Some(l) => l.start_job(job, path, &opts),
             None => self.scan.start_job(job, &path.to_local(), opts),
         }
     }
 
     pub(super) fn scanner_end_job(&self, job: JobId) {
-        match &self.remote {
+        match &self.settings.remote {
             Some(l) => l.end_job(job),
             None => self.scan.end_job(job),
         }
@@ -24,7 +24,7 @@ impl<B: Backend> Applier<B> {
 
     /// Workers skip these directories of `job`.
     pub(super) fn scanner_stop_dirs(&self, job: JobId, dirs: impl IntoIterator<Item = DirId>) {
-        match &self.remote {
+        match &self.settings.remote {
             Some(l) => l.stop_dirs(job, dirs),
             None => self.scan.stop_dirs(job, dirs),
         }
@@ -40,7 +40,7 @@ impl<B: Backend> Applier<B> {
 
     /// Whether the abandon is complete.
     pub(super) fn scanner_try_abandon(&self, job: JobId, dir: DirId) -> bool {
-        match &self.remote {
+        match &self.settings.remote {
             Some(l) => l.abandon(job, dir),
             None => self.scan.abandon(job, dir),
         }

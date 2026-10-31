@@ -174,7 +174,7 @@ impl<B: Backend> Applier<B> {
             return self.rescan(m, node, Some(opts), false);
         };
         let mut wanted = changed_dirs(&m.tree, root, changed);
-        if self.remote.is_none() {
+        if self.settings.remote.is_none() {
             let before = i64::try_from(since).unwrap_or(i64::MAX);
             match now {
                 Some(now) if (now.dev, now.ino) != m.tree.dev_ino(root) => {
@@ -217,6 +217,7 @@ impl<B: Backend> Applier<B> {
             },
         );
         let verify = self
+            .settings
             .remote
             .is_none()
             .then(|| Verify::new(&m.tree, root, &wanted, since));

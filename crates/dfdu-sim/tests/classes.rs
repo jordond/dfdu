@@ -219,7 +219,7 @@ fn class_for_a_freed_and_reused_slot() {
 #[test]
 fn classifier_answer_for_a_freed_and_reused_slot() {
     for_seeds(small_project, cfg_rules(), |sim| {
-        sim.applier.checks = true;
+        sim.applier.settings.checks = true;
         finish_jobs(sim);
         let reqs = sim.applier.take_check_requests();
         let old = find(sim, "p/target");
@@ -259,7 +259,7 @@ fn classifier_answer_for_a_freed_and_reused_slot() {
             "an answer for the freed slot was applied"
         );
         sim.applier.take_check_requests();
-        sim.applier.checks = false;
+        sim.applier.settings.checks = false;
     });
 }
 

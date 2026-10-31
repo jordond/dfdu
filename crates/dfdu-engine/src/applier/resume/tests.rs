@@ -5,6 +5,7 @@ use dfdu_tree::{DirState, Kind};
 
 use super::rescans::kept_by_target;
 use super::*;
+use crate::applier::ApplierSettings;
 use crate::test_util::meta;
 
 mod cancel;
@@ -51,7 +52,7 @@ pub(super) fn resumed(
     root: Option<Meta>,
 ) -> (Applier<PortableBackend>, Model) {
     let shared = Arc::new(Shared::new(PortableBackend::default(), Limits::default()));
-    let mut ap = Applier::new(shared);
+    let mut ap = Applier::new(shared, ApplierSettings::default());
     let mut m = Model::default();
     let node = t.node_ref(r);
     m.tree = t;

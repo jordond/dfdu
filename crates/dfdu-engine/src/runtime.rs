@@ -22,7 +22,7 @@ use dfdu_scan::{Backend, Batch, Budget, PortableBackend, ScanMsg, Shared, Sink};
 use dfdu_tree::{Host, HostPath, Tree};
 use parking_lot::{Mutex, RwLock};
 
-use crate::applier::{Command, Model};
+use crate::applier::{ApplierSettings, Command, Model};
 use crate::classifier::{CheckMsg, spawn_classifiers};
 use crate::crash::{CRASH_MODEL, record_applier_panic};
 use crate::measure::{MeasureMsg, spawn_measurers};
@@ -281,7 +281,16 @@ impl<B: Backend> Engine<B> {
                 },
             );
         }
-        let (m, sh, st, ln) = (model.clone(), shared.clone(), stop.clone(), link.clone());
+        let settings = ApplierSettings {
+            remote: link.clone(),
+            read_only: opts.read_only,
+            imported,
+            measure: measurers.is_some(),
+            measure_min,
+            privileged,
+            checks: classifiers.is_some(),
+        };
+        let (m, sh, st) = (model.clone(), shared.clone(), stop.clone());
         let chans = Channels {
             cmd_rx,
             inbox_rx,
@@ -289,9 +298,6 @@ impl<B: Backend> Engine<B> {
             plans: deleter.reqs,
             meas_rx,
             measure: measurers,
-            measure_min,
-            privileged,
-            imported,
             chk_rx,
             classify: classifiers,
             wake_tx,
@@ -301,7 +307,7 @@ impl<B: Backend> Engine<B> {
             let crash_dir = opts.crash_dir.clone();
             let model = m.clone();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                applier_loop(&m, sh, ln, chans, &budget, &st, &opts);
+                applier_loop(&m, sh, settings, chans, &budget, &st, &opts);
             }));
             if let Err(p) = r {
                 // An applier panic is a bug. Record it where readers will see it, write a

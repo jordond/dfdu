@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 
 use dfdu_clean::{DeleterMsg, Plan};
-use dfdu_engine::{Applier, CheckReq, Command, MeasureReq, Model};
+use dfdu_engine::{Applier, ApplierSettings, CheckReq, Command, MeasureReq, Model};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
     Backend, Budget, Clock, JobOptions, Limits, ScanMsg, Shared, Sink, StepResult, Worker,
@@ -155,8 +155,9 @@ impl Sim {
         let workers = (0..cfg.workers)
             .map(|_| Worker::new(&shared, false))
             .collect();
-        let mut applier = Applier::new(shared.clone());
-        applier.checks = cfg.checks;
+        let mut settings = ApplierSettings::default();
+        settings.checks = cfg.checks;
+        let applier = Applier::new(shared.clone(), settings);
         Sim {
             seed,
             rng,

@@ -201,7 +201,7 @@ impl<B: Backend> Applier<B> {
                 | Command::Enter { .. }
                 | Command::Resume { .. }
         );
-        if self.imported
+        if self.settings.imported
             && (scans
                 || matches!(
                     cmd,
@@ -211,7 +211,7 @@ impl<B: Backend> Applier<B> {
             // A native command's dry run is refused too: it would run on this host.
             return Some("an imported scan is read-only: nothing is scanned or deleted");
         }
-        if self.read_only {
+        if self.settings.read_only {
             match cmd {
                 Command::Delete { .. } => return Some("delete: read-only mode"),
                 Command::RunNative { dry_run: false, .. } => {

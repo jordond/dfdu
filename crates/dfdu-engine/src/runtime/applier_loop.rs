@@ -13,7 +13,7 @@ use dfdu_scan::{Backend, Batch, Budget, Clock, ScanMsg, Shared};
 use parking_lot::{RwLock, RwLockWriteGuard};
 
 use super::EngineOptions;
-use crate::applier::{Applier, Command, Model};
+use crate::applier::{Applier, ApplierSettings, Command, Model};
 use crate::classifier::{CheckMsg, CheckReq};
 use crate::measure::{MeasureMsg, MeasureReq};
 use crate::nanos::nanos;
@@ -39,12 +39,6 @@ pub(super) struct Channels {
     pub(super) meas_rx: Receiver<Vec<MeasureMsg>>,
     /// `None` when measurement is off. Dropping it ends the measurer threads.
     pub(super) measure: Option<Sender<MeasureReq>>,
-    /// Files allocating less are not measured.
-    pub(super) measure_min: u64,
-    /// Whoever deletes runs as root (the agent, for a remote engine).
-    pub(super) privileged: bool,
-    /// The tree was loaded from a file ([`Engine::start_imported`](super::Engine::start_imported)).
-    pub(super) imported: bool,
     pub(super) chk_rx: Receiver<Vec<CheckMsg>>,
     /// `None` when the classifier pool is off.
     pub(super) classify: Option<Sender<Vec<CheckReq>>>,
@@ -132,14 +126,10 @@ fn apply_inbox<B: Backend>(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one write-lock slice of the applier per iteration, its steps in order"
-)]
 pub(super) fn applier_loop<B: Backend>(
     model: &RwLock<Model>,
     shared: Arc<Shared<B>>,
-    remote: Option<Arc<crate::remote::Link>>,
+    settings: ApplierSettings,
     ch: Channels,
     budget: &Budget,
     stop: &AtomicBool,
@@ -152,22 +142,12 @@ pub(super) fn applier_loop<B: Backend>(
         plans,
         meas_rx,
         measure,
-        measure_min,
-        privileged,
-        imported,
         chk_rx,
         classify,
         wake_tx,
     } = ch;
     let clock = RealClock::new();
-    let mut applier = Applier::new(shared);
-    applier.remote = remote;
-    applier.read_only = opts.read_only;
-    applier.imported = imported;
-    applier.measure = measure.is_some();
-    applier.measure_min = measure_min;
-    applier.privileged = privileged;
-    applier.checks = classify.is_some();
+    let mut applier = Applier::new(shared, settings);
     let mut chks: VecDeque<CheckMsg> = VecDeque::new();
     let mut dels: VecDeque<DeleterMsg> = VecDeque::new();
     let mut meas: VecDeque<MeasureMsg> = VecDeque::new();

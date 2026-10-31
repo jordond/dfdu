@@ -25,9 +25,9 @@ mod test_util;
 mod threads;
 
 pub use applier::{
-    Applier, Command, Count, DeleteProgress, DeleteSummary, Estimate, JobInfo, JobKind, JobPhase,
-    MeasureProgress, Model, NATIVE_LINES, NativeRun, StalledInfo, Stats, Status, Timing, UndoInfo,
-    native_argv,
+    Applier, ApplierSettings, Command, Count, DeleteProgress, DeleteSummary, Estimate, JobInfo,
+    JobKind, JobPhase, MeasureProgress, Model, NATIVE_LINES, NativeRun, StalledInfo, Stats, Status,
+    Timing, UndoInfo, native_argv,
 };
 pub use classifier::{
     CheckMsg, CheckReq, check_batch, git_tracked, parse_reclaimable, spawn_classifiers,

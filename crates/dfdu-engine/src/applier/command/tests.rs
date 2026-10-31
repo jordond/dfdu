@@ -59,12 +59,12 @@ fn refused(r: &Rig) -> Vec<bool> {
 fn refusals_follow_the_mode() {
     let mut r = rig();
     assert_eq!(refused(&r), [false; 7]);
-    r.a.imported = true;
+    r.a.settings.imported = true;
     assert_eq!(refused(&r), [true, true, true, true, true, true, false]);
-    r.a.imported = false;
-    r.a.read_only = true;
+    r.a.settings.imported = false;
+    r.a.settings.read_only = true;
     assert_eq!(refused(&r), [false, false, true, true, false, false, false]);
-    r.a.read_only = false;
+    r.a.settings.read_only = false;
     r.m.status.disconnected = Some("eof".into());
     assert_eq!(refused(&r), [true, true, false, false, false, false, false]);
 }
@@ -73,7 +73,7 @@ fn refusals_follow_the_mode() {
 #[test]
 fn a_refused_command_is_counted_and_said_why() {
     let mut r = rig();
-    r.a.read_only = true;
+    r.a.settings.read_only = true;
     let (applied, recorded) = (r.m.status.commands_applied, r.m.recent.total());
     let f = r.m.tree.node_ref(r.at("f"));
     r.command(Command::Delete {
