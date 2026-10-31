@@ -5,6 +5,9 @@
 //! mode, where both show at once, a directory and something inside it are never both marked:
 //! marking one unmarks the other ([`exclusive`]), as marking a container in the cleanup view
 //! marks only its rest.
+//!
+//! A read-only browser marks nothing, as nothing marked could be deleted: every way of marking
+//! says so on the status line instead.
 
 use std::collections::{HashMap, HashSet};
 
@@ -129,6 +132,10 @@ struct Found {
 /// Marks or unmarks the selected entry and moves the cursor down a row. The "shared between
 /// entries" row, fold rows and deleted rows are not entries and cannot be marked.
 pub fn toggle(app: &mut App) {
+    if app.read_only {
+        app.status = Some(crate::app::keys::READ_ONLY.into());
+        return;
+    }
     let Some(index) = app.selected_index().map(|row| app.rows[row]) else {
         return;
     };
@@ -199,8 +206,7 @@ pub(crate) fn item_of(app: &App, index: usize) -> Item {
 }
 
 /// Marks `item` or unmarks it (found by its node or path), as the cleanup view does for whole
-/// groups. A read-only browser marks nothing this way, as nothing marked could be deleted: the
-/// status line says so instead.
+/// groups. A read-only browser marks nothing this way.
 pub fn set(app: &mut App, item: Item, on: bool) {
     if on && app.read_only {
         app.status = Some(crate::app::keys::READ_ONLY.into());

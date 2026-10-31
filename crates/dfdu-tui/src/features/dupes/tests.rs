@@ -407,6 +407,29 @@ fn deleting_every_copy_of_a_group_is_refused() {
     assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
 }
 
+/// A read-only browser ticks nothing, a copy or a whole group, and says why.
+#[test]
+fn space_ticks_nothing_read_only() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    found_in(
+        &mut app,
+        &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
+    );
+    app.read_only = true;
+    for cursor in [0, 1] {
+        app.dupes.cursor = cursor;
+        app.status = None;
+        app.key(press(KeyCode::Char(' ')), t0);
+        assert!(app.marks.is_empty(), "row {cursor}");
+        assert_eq!(
+            app.status.as_deref(),
+            Some(crate::app::keys::READ_ONLY),
+            "row {cursor}"
+        );
+    }
+}
+
 /// The footer keeps every key of the view at 120 columns, and at 80 lets `q quit` go before
 /// `[ ] views` and the arrows.
 #[test]
