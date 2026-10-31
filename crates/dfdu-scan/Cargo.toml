@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-scan"
-description = "Scanner: workers, outboxes, backends, byte budget, watchdog"
+description = "Scanner: workers, outboxes, backends, byte budget, watchdog, classification on the workers, and the change journals (FSEvents, USN, btrfs)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

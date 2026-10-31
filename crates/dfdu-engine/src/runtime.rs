@@ -2,8 +2,8 @@
 
 mod applier_loop;
 mod inbox;
-mod journal;
-pub use journal::Query as JournalQuery;
+mod resume;
+pub use resume::Query as JournalQuery;
 mod options;
 
 pub(crate) use options::default_measurers;
@@ -56,7 +56,7 @@ pub struct Engine<B: Backend> {
     cmd_tx: Sender<Command>,
     commands_sent: Arc<AtomicU64>,
     /// The resumes waiting for the change journal's answer ([`Engine::resume`]).
-    asking: Mutex<Vec<journal::Asking>>,
+    asking: Mutex<Vec<resume::Asking>>,
     changes_rx: Receiver<()>,
     stop: Arc<AtomicBool>,
     applier: Option<JoinHandle<()>>,
@@ -238,6 +238,7 @@ impl<B: Backend> Engine<B> {
         let chans = Channels {
             cmd_rx,
             inbox_rx,
+            budget,
             del_rx,
             plans: deleter.reqs,
             meas_rx,
@@ -251,7 +252,15 @@ impl<B: Backend> Engine<B> {
             let crash_dir = opts.crash_dir.clone();
             let model = m.clone();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                applier_loop(&m, sh, settings, chans, &budget, &st, &opts);
+                applier_loop(
+                    &m,
+                    sh,
+                    settings,
+                    chans,
+                    &st,
+                    opts.auto_abandon,
+                    opts.check_invariants,
+                );
             }));
             if let Err(p) = r {
                 // An applier panic is a bug. Record it where readers will see it, write a
@@ -313,8 +322,17 @@ impl<B: Backend> Engine<B> {
     /// Replaces the tree with one read from a file, before anything is scanned, to bring it up
     /// to date with [`Command::Resume`]. A tree that is only browsed is started with
     /// [`Engine::start_imported`] instead.
+    ///
+    /// # Panics
+    ///
+    /// When the tree already holds nodes (something was scanned, or the engine was started on
+    /// a tree): the applier's jobs and the model's state would point into the tree replaced.
     pub fn load(&self, tree: Tree) {
         let mut m = self.model.write();
+        assert!(
+            m.tree.live_nodes() == 0,
+            "Engine::load after something was scanned"
+        );
         m.tree = tree;
         m.tree.bump_version();
     }
@@ -397,8 +415,8 @@ impl<B: Backend> Engine<B> {
             l.close();
         }
         // The applier held the deleter's plan channel; with it gone the deleter finishes its
-        // current item, syncs and closes the journal, and exits. Wait for that, in what is left
-        // of `wait`.
+        // current item, syncs and closes the deletion journal, and exits. Wait for that, in
+        // what is left of `wait`.
         self.delete_abort.store(true, SeqCst);
         if let Some(d) = self.deleter.take() {
             while !d.is_finished() && Instant::now() < deadline {

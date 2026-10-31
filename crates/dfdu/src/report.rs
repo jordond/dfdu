@@ -173,13 +173,14 @@ fn item(m: &Model, rules: &RuleSet, l: dfdu_engine::Listed, now: i64) -> Item {
         shared_out: tot.shared_out,
         mtime,
         scanning,
-        recommended: dfdu_engine::recommends(
+        recommended: dfdu_engine::verdict(
             rules.rule(class.rule),
             class,
             tot.alloc,
             now.saturating_sub(mtime),
             scanning,
-        ),
+        )
+        .recommended(),
         matches_inside: l.inner.len(),
         rest: l.rest.iter().map(|&r| t.node_ref(r)).collect(),
     }

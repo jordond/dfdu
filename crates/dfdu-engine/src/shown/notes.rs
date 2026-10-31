@@ -7,8 +7,8 @@ use std::fmt::Write as _;
 
 use dfdu_tree::{DirState, ErrKind, HostPath, Ix, NodeRef, Tree};
 
+use super::sizes::human;
 use crate::Model;
-use crate::sizes::human;
 
 /// What went wrong reading this entry, if anything ("permission denied", "partly read:
 /// input/output error").

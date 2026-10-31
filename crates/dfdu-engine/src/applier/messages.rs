@@ -65,7 +65,7 @@ impl<B: Backend> Applier<B> {
                     }
                     // Nothing wants this directory any more (job ended, subtree cut or gone):
                     // give the stuck task up so it stops counting as outstanding work.
-                    None => self.scanner_abandon(JobId(job.0), dir),
+                    None => self.scanner_abandon(job, dir),
                 }
             }
             ScanMsg::Quiescent { submitted_seq } => {

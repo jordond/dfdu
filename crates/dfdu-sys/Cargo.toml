@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-sys"
-description = "The OS calls no safe crate provides: btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration, behind safe wrappers, and where dfdu keeps its files (dirs)"
+description = "The OS calls no safe crate provides (btrfs ioctls, FIEMAP, getattrlistbulk and Windows enumeration) behind safe wrappers, the disk list, what storage a directory is on, the usage of mounts the scan did not enter, and where dfdu keeps its files (dirs)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
