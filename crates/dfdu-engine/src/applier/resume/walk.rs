@@ -85,7 +85,7 @@ fn own(
     for c in linked {
         links.add_scanned(tree.dev_ino(c), 0, VISIBLE, |charged| {
             tree.set_charged(c, charged);
-            tree.node_ref(c)
+            (tree.node_ref(c), ())
         });
     }
     // Mounts below keep journals of their own, or none, and so do btrfs subvolumes below
