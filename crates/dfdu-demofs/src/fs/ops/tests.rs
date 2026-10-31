@@ -1,6 +1,6 @@
 use super::*;
 use crate::Fault;
-use crate::test_support::small;
+use crate::test_util::small;
 
 #[test]
 fn set_attr_changes_only_what_it_is_given() {

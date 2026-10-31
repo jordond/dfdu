@@ -1,6 +1,6 @@
 use super::*;
 use crate::Tree;
-use crate::test_support::{SMALL, names, read_all, small};
+use crate::test_util::{SMALL, names, read_all, small};
 
 #[test]
 fn parses_the_keys_and_defaults_the_rest() {

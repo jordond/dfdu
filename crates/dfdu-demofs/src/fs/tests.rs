@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::small;
+use crate::test_util::small;
 
 mod disk;
 mod listing;

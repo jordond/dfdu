@@ -73,7 +73,7 @@ pub fn spawn_deleter(
 ) -> DeleterHandle {
     let (tx, rx) = unbounded::<DeleterReq>();
     let abort = Arc::new(AtomicBool::new(false));
-    let ab = abort.clone();
+    let handle_abort = abort.clone();
     let thread = thread::Builder::new()
         .name("dfdu-deleter".into())
         .spawn(move || {
@@ -119,13 +119,13 @@ pub fn spawn_deleter(
                 match req {
                     None => st.commit(Some(Instant::now())),
                     Some(DeleterReq::Plan(plan)) => {
-                        ab.store(false, SeqCst);
-                        st.run_plan(&plan, &ab);
+                        abort.store(false, SeqCst);
+                        st.run_plan(&plan, &abort);
                     }
                     Some(DeleterReq::Undo { plan }) => st.undo(plan),
                     Some(DeleterReq::Native(req)) => {
-                        ab.store(false, SeqCst);
-                        st.run_native(&req, &ab);
+                        abort.store(false, SeqCst);
+                        st.run_native(&req, &abort);
                     }
                     Some(DeleterReq::Commit) => st.commit(None),
                 }
@@ -140,7 +140,7 @@ pub fn spawn_deleter(
         .expect("spawn deleter");
     DeleterHandle {
         reqs: tx,
-        abort,
+        abort: handle_abort,
         thread,
     }
 }
@@ -192,12 +192,12 @@ impl State {
         }
     }
 
-    fn run_plan(&mut self, plan: &Plan, ab: &AtomicBool) {
+    fn run_plan(&mut self, plan: &Plan, abort: &AtomicBool) {
         self.open_journal();
         let mut btrfs = false;
         let mut notes = Vec::new();
         for item in &plan.items {
-            let result = if ab.load(SeqCst) {
+            let result = if abort.load(SeqCst) {
                 DeleteResult::Aborted
             } else {
                 match (self.journal.as_mut(), self.stager.as_mut()) {
@@ -240,10 +240,10 @@ impl State {
 
     /// Runs a native command. The real one is journalled like a delete: nothing runs without
     /// its record.
-    fn run_native(&mut self, req: &crate::NativeReq, ab: &AtomicBool) {
+    fn run_native(&mut self, req: &crate::NativeReq, abort: &AtomicBool) {
         let mut notes = Vec::new();
         let result = if req.dry_run {
-            crate::native::run(req, ab, &self.out)
+            crate::native::run(req, abort, &self.out)
         } else {
             self.open_journal();
             match self.journal.as_mut() {
@@ -252,7 +252,7 @@ impl State {
                     if let Err(e) = j.native(req) {
                         Err(format!("journal: {e}"))
                     } else {
-                        let r = crate::native::run(req, ab, &self.out);
+                        let r = crate::native::run(req, abort, &self.out);
                         // The command ran either way; recovery lists it as unfinished.
                         if let Err(e) = j.native_done(req.id, &r) {
                             notes.push(format!(

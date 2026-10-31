@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::small;
+use crate::test_util::small;
 
 fn of(style: Style, files: usize, size: u64) -> Fill {
     Fill {

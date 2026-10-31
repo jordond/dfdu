@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{names, small};
+use crate::test_util::{names, small};
 
 mod rename;
 

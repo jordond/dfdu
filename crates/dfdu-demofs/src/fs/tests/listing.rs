@@ -1,7 +1,7 @@
 //! Directory listings and where a resumed one starts.
 
 use super::super::*;
-use crate::test_support::small;
+use crate::test_util::small;
 
 #[test]
 fn a_listing_resumes_after_its_offset() {

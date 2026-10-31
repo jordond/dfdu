@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::tiny;
-use crate::test_support::small;
+use crate::test_util::small;
 
 #[test]
 fn rename_moves_replaces_and_refuses_as_rename2_does() {

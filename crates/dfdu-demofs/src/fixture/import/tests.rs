@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(unix)]
-use crate::test_support::{names, read_all};
+use crate::test_util::{names, read_all};
 #[cfg(unix)]
 use crate::{Fixture, Kind};
 
