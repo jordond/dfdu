@@ -27,7 +27,7 @@ lines=$(awk '/^TOTAL/ {print $10}' <<<"$table")
     # Fully covered files, the source excerpts and the per-file table stay in the job summary:
     # on a large pull request they push the comment past GitHub's size limit.
     sed '/^## Diff:/d; /^- .* (100%)$/d; s/^# Diff Coverage/### Changed lines/; s/^## /#### /' diff-cover.md |
-        awk '/^#### / && !/^#### Summary/ {exit} {print}'
+        awk '/^#### / && !/^#### Summary/ {done = 1} !done'
     echo
     echo 'The job summary has the rest: fully covered files, the uncovered lines and the per-file table.'
 } >coverage.md
