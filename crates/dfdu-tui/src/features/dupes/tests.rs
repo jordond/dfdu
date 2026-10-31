@@ -128,8 +128,8 @@ pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
             ..Found::default()
         })
         .unwrap();
+    app.view = View::Duplicates;
     app.dupes = Dupes {
-        on: true,
         run: Some(Run {
             root: "/r".into(),
             progress: Arc::default(),

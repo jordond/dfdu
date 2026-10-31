@@ -123,6 +123,8 @@ pub struct App {
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
+    /// The view shown (`1`-`5`); [`views::switch`] changes it.
+    pub view: views::View,
     pub treemap: treemap::Treemap,
     pub cleanup: crate::features::cleanup::Cleanup,
     pub dupes: crate::features::dupes::Dupes,
@@ -202,6 +204,7 @@ impl App {
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
+            view: views::View::default(),
             treemap: treemap::Treemap::default(),
             cleanup: crate::features::cleanup::Cleanup::default(),
             dupes: crate::features::dupes::Dupes::default(),
@@ -269,7 +272,7 @@ impl App {
     /// The tree mode state while the rows are a tree: tree mode is on and the treemap, whose
     /// tiles are the rows of one directory, is off.
     pub fn tree_shown(&self) -> Option<&crate::state::tree::TreeState> {
-        self.tree.as_ref().filter(|_| !self.treemap.on)
+        self.tree.as_ref().filter(|_| self.view != views::View::Map)
     }
 
     /// Asks for an exact sort before the next frame.
@@ -301,8 +304,9 @@ impl App {
     }
 
     /// Handles a key: the open overlay takes it first, then the filter input while it is
-    /// edited, then the marks pane while it is open, then the details pane while it has the focus, then the treemap's moves between
-    /// tiles, and otherwise the action bound to it in `keys::ACTIONS`.
+    /// edited, then the marks pane while it is open, then the details pane while it has the
+    /// focus, then the view shown (the treemap's moves between tiles once it is drawn), and
+    /// otherwise the action bound to it in `keys::ACTIONS`.
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
         if k.kind == KeyEventKind::Release {
             return Vec::new();
@@ -334,24 +338,14 @@ impl App {
         {
             return fx;
         }
-        if crate::features::largest::active(self)
-            && let Some(fx) = crate::features::largest::key(self, &k)
-        {
-            return fx;
-        }
-        if crate::features::dupes::active(self)
-            && let Some(fx) = crate::features::dupes::key(self, &k)
-        {
-            return fx;
-        }
-        if crate::features::cleanup::active(self)
-            && let Some(fx) = crate::features::cleanup::key(self, &k)
-        {
-            return fx;
-        }
-        if treemap::active(self)
-            && let Some(fx) = treemap::key(self, &k)
-        {
+        let fx = match views::current(self) {
+            views::View::Largest => crate::features::largest::key(self, &k),
+            views::View::Duplicates => crate::features::dupes::key(self, &k),
+            views::View::Cleanup => crate::features::cleanup::key(self, &k),
+            views::View::Map if treemap::active(self) => treemap::key(self, &k),
+            views::View::Map | views::View::Files => None,
+        };
+        if let Some(fx) = fx {
             return fx;
         }
         self.status = None;

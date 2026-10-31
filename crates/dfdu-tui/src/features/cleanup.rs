@@ -21,6 +21,7 @@ use dfdu_tree::{Class, DirState, HostPath, Ix, Kind, NodeRef, Totals, now_secs};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::format::human;
 use crate::model::snapshot::{Ident, Target};
@@ -43,7 +44,6 @@ const PANE_LINES: usize = 200;
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Cleanup {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     /// Categories shown with their items, by (category, safety); closed by default.
@@ -115,25 +115,19 @@ pub struct Reclaim {
 
 /// True when the view is shown, and so takes the keys it knows.
 pub fn active(app: &App) -> bool {
-    app.cleanup.on && app.snap.rules.is_some()
+    views::current(app) == View::Cleanup
 }
 
-/// Switches the view on or off. On, it asks the rules' native size commands for their
-/// numbers, and the first time also marks the recommended items ([`apply`]).
-pub fn show(app: &mut App, on: bool) -> Vec<Effect> {
-    if on && app.snap.rules.is_none() {
-        app.status = Some("no rules: the cleanup view needs classification".into());
+/// The view was opened ([`views::switch`]), or opened `again` while shown: it reads its matches
+/// again, and until it once did, marks the recommended items ([`apply`]). Opened from another
+/// view, it also asks the rules' native size commands for their numbers.
+pub fn on_open(app: &mut App, again: bool) -> Vec<Effect> {
+    app.cleanup.fresh = false;
+    app.cleanup.premark = !app.cleanup.preselected && !app.read_only;
+    if again {
         return Vec::new();
     }
-    let was = app.cleanup.on;
-    app.cleanup.on = on;
-    app.cleanup.fresh = false;
-    app.cleanup.premark = on && !app.cleanup.preselected && !app.read_only;
-    if on && !was {
-        crate::features::treemap::show(app, false);
-        return vec![Effect::Send(Command::NativeSizes)];
-    }
-    Vec::new()
+    vec![Effect::Send(Command::NativeSizes)]
 }
 
 /// What the matches that can be ticked add up to: the summary bar's total, kept current while
@@ -151,13 +145,13 @@ fn count_key(m: &Model) -> (u64, usize) {
 
 /// The view needs a read: it was just switched on.
 pub fn stale(app: &App) -> bool {
-    app.cleanup.on && !app.cleanup.fresh
+    active(app) && !app.cleanup.fresh
 }
 
 /// The listed matches ([`dfdu_engine::listed`]), under the read lock. Matches are few: one per
 /// matched directory, and below it only those a rule that does not stop the descent lets in.
 pub fn read(m: &Model, app: &App) -> Info {
-    if !app.cleanup.on {
+    if !active(app) {
         // Closed, only the total for the tab, when the tree changed since it was counted.
         let at = count_key(m);
         let Some(rules) = &m.rules else {
@@ -244,7 +238,7 @@ pub fn read(m: &Model, app: &App) -> Info {
     }
 }
 
-/// Takes in a read. The first read after the user opened the view ([`show`]) marks the
+/// Takes in a read. The first read after the user opened the view ([`on_open`]) marks the
 /// recommended items, unless it found no matches yet: then the next opening tries again.
 pub fn apply(app: &mut App) {
     app.cleanup.fresh = true;
@@ -253,7 +247,7 @@ pub fn apply(app: &mut App) {
         app.cleanup.counted_at = Some(at);
     }
     let premark = std::mem::take(&mut app.cleanup.premark);
-    if !app.cleanup.on || !premark || app.extras.cleanup.items.is_empty() {
+    if !active(app) || !premark || app.extras.cleanup.items.is_empty() {
         return;
     }
     app.cleanup.preselected = true;
@@ -419,7 +413,7 @@ fn show_in_files(app: &mut App, i: usize) {
         return;
     };
     let root = app.snap.root_path.clone();
-    app.cleanup.on = false;
+    views::switch(app, View::Files);
     app.go_to(&path, &root);
 }
 

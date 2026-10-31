@@ -18,6 +18,7 @@ use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
+use crate::app::views::{self, View};
 use crate::app::{App, Effect};
 use crate::model::snapshot::{Ident, Target};
 use crate::state::marks;
@@ -34,7 +35,6 @@ const MIN_INTERVAL: Duration = Duration::from_secs(1);
 /// What the view keeps between frames.
 #[derive(Clone, Debug, Default)]
 pub struct Largest {
-    pub on: bool,
     cursor: usize,
     scroll: usize,
     /// The files the last walk found, largest first.
@@ -79,25 +79,19 @@ pub struct Info {
 
 /// True when the view is shown, and so takes the keys it knows.
 pub fn active(app: &App) -> bool {
-    app.largest.on
+    views::current(app) == View::Largest
 }
 
-/// Switches the view on, the other views off, or the view off. On, it walks again before the
-/// next frame, so what it shows is never older than the opening.
-pub fn show(app: &mut App, on: bool) {
-    app.largest.on = on;
-    if on {
-        app.largest.walked = None;
-        crate::features::dupes::show(app, false);
-        crate::features::cleanup::show(app, false);
-        crate::features::treemap::show(app, false);
-    }
+/// The view was opened ([`views::switch`]): it walks again before the next frame, so what it
+/// shows is never older than the opening.
+pub fn on_open(app: &mut App) {
+    app.largest.walked = None;
 }
 
 /// The view needs a walk at once: it was just opened, or shows another directory, size mode
 /// or choice of hidden files than the last walk was for.
 pub fn stale(app: &App) -> bool {
-    app.largest.on
+    active(app)
         && !app.largest.walked.as_ref().is_some_and(|w| {
             w.dir == app.snap.dir_path
                 && w.mode == app.size_mode
@@ -108,7 +102,7 @@ pub fn stale(app: &App) -> bool {
 /// Under the read lock, while the view is open and a walk is due: the largest [`TOP`] files
 /// below the current directory. `None` keeps what the last walk found.
 pub fn read(m: &Model, app: &App) -> Option<Info> {
-    if !app.largest.on {
+    if !active(app) {
         return None;
     }
     let fingerprint = m.fingerprint();
@@ -254,7 +248,7 @@ fn go(app: &mut App) {
         return;
     };
     let dir = app.snap.dir_path.clone();
-    app.largest.on = false;
+    views::switch(app, View::Files);
     app.go_to(&path, &dir);
 }
 

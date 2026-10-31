@@ -1,7 +1,7 @@
 //! The five views (`1`-`5`) as one list: which one is shown, switching between them, and what
-//! the header's tab bar says of each. The views keep their own on/off state in their feature
-//! modules; this module is the one place that turns one on and the others off, so `1`-`5`,
-//! `[`/`]`, `Esc` and a click on a tab switch the same way.
+//! the header's tab bar says of each. The view shown is one field, [`App::view`], and
+//! [`switch`] is the one place that changes it, so `1`-`5`, `[`/`]`, `Esc` and a click on a tab
+//! switch the same way.
 //!
 //! Files, Map and Largest show the current directory; Cleanup and Duplicates cover the whole
 //! scan ([`View::whole_scan`]), which the header's scope line says.
@@ -12,8 +12,9 @@ use crate::features::{cleanup, dupes, largest, treemap};
 use crate::format::human;
 use crate::state::tree;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum View {
+    #[default]
     Files,
     Map,
     Cleanup,
@@ -64,51 +65,48 @@ impl View {
 }
 
 /// The view shown. The map counts while it is on, also when the terminal is too small for it
-/// and the list is drawn in its place.
+/// and the list is drawn in its place. Cleanup needs the rules: without them it is Files.
 pub fn current(app: &App) -> View {
-    if largest::active(app) {
-        View::Largest
-    } else if dupes::active(app) {
-        View::Duplicates
-    } else if cleanup::active(app) {
-        View::Cleanup
-    } else if app.treemap.on {
-        View::Map
-    } else {
-        View::Files
+    match app.view {
+        View::Cleanup if app.snap.rules.is_none() => View::Files,
+        view => view,
     }
 }
 
-/// Switches to `view`, turning the others off. Cleanup without rules says so and changes
-/// nothing else.
+/// The list's rows are drawn, where the range mark and inverting the marks work: in Files, and
+/// in Map while the last frame had no room for the map.
+pub fn list_shown(app: &App) -> bool {
+    match current(app) {
+        View::Files => true,
+        View::Map => !treemap::active(app),
+        View::Cleanup | View::Duplicates | View::Largest => false,
+    }
+}
+
+/// Switches to `view`, and opens it: Largest walks again, Cleanup reads its matches again (and,
+/// switched to from another view, asks for the native sizes), and the map switched to from the
+/// tree opens on the directory the selected row is in. Cleanup without rules says so and
+/// changes nothing else.
 pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
     if view == View::Cleanup && app.snap.rules.is_none() {
-        return cleanup::show(app, true);
+        app.status = Some("no rules: the cleanup view needs classification".into());
+        return Vec::new();
     }
-    if view != View::Largest {
-        largest::show(app, false);
+    if view == View::Map {
+        // Before the switch, while the rows are still the tree's.
+        tree::act::treemap_dir(app);
     }
+    let again = app.view == view;
+    app.view = view;
     match view {
-        View::Files => {
-            dupes::show(app, false);
-            cleanup::show(app, false);
-            treemap::show(app, false);
-            Vec::new()
-        }
+        View::Files | View::Duplicates => Vec::new(),
         View::Map => {
-            dupes::show(app, false);
-            cleanup::show(app, false);
-            tree::act::treemap_dir(app);
-            treemap::show(app, true);
+            treemap::on_open(app);
             Vec::new()
         }
-        View::Cleanup => {
-            dupes::show(app, false);
-            cleanup::show(app, true)
-        }
-        View::Duplicates => dupes::show(app, true),
+        View::Cleanup => cleanup::on_open(app, again),
         View::Largest => {
-            largest::show(app, true);
+            largest::on_open(app);
             Vec::new()
         }
     }
@@ -233,6 +231,22 @@ mod tests {
         assert!(!app.filter.active());
         assert_eq!(current(&app), View::Map);
         app.key(press(KeyCode::Esc), t0);
+        assert_eq!(current(&app), View::Files);
+    }
+
+    #[test]
+    fn cleanup_without_rules_is_neither_switched_to_nor_shown() {
+        let t0 = Instant::now();
+        let mut app = App::new(Theme::no_color(), t0);
+        app.refresh(library_snap(), t0);
+        assert!(switch(&mut app, View::Cleanup).is_empty());
+        assert_eq!(app.view, View::Files);
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("no rules"))
+        );
+        app.view = View::Cleanup;
         assert_eq!(current(&app), View::Files);
     }
 
