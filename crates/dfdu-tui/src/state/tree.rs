@@ -254,7 +254,7 @@ pub fn guide(entries: &[EntryData], last: &[bool], i: usize) -> String {
     parts.iter().rev().copied().collect()
 }
 
-pub mod act;
+pub(crate) mod act;
 
 #[cfg(test)]
 pub(crate) mod tests;

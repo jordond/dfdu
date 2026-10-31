@@ -17,7 +17,7 @@
 mod draw;
 mod fill;
 mod glyph;
-pub mod layout;
+pub(crate) mod layout;
 mod paint;
 mod place;
 mod tile;

@@ -333,7 +333,7 @@ pub fn read(m: &Model, app: &App) -> HashMap<PathBuf, Option<NodeRef>> {
 }
 
 /// The path of the selected file, for `y` and `o`; `None` on a group's row.
-pub(crate) fn selected_path(app: &App) -> Option<PathBuf> {
+pub fn selected_path(app: &App) -> Option<PathBuf> {
     match rows(app).get(app.dupes.cursor)? {
         &Row::File(g, i) => Some(found(app)?.groups[g].files[i].path.clone()),
         Row::Group(_) => None,

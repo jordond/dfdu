@@ -105,7 +105,7 @@ fn page(app: &App) -> usize {
 
 /// Moves the cursor by `delta` items. False when the pane is not shown, so the caller can move
 /// the list instead.
-pub(crate) fn scroll(app: &mut App, delta: i32) -> bool {
+pub fn scroll(app: &mut App, delta: i32) -> bool {
     if !is_open(app) {
         return false;
     }

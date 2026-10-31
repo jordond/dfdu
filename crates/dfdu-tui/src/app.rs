@@ -8,9 +8,9 @@
 //! [`App::extras`].
 
 mod cursor;
-pub mod keys;
+pub(crate) mod keys;
 mod refresh;
-pub mod views;
+pub(crate) mod views;
 
 use std::cell::Cell;
 use std::collections::HashMap;

@@ -16,7 +16,7 @@ use crate::app::App;
 use crate::format::human;
 use crate::model::snapshot::{EntryData, Mark};
 
-pub mod range;
+pub(crate) mod range;
 
 /// One marked entry: how to find it again, and its sizes as the last read found them.
 #[derive(Clone, Debug)]

@@ -213,7 +213,7 @@ pub fn apply(app: &mut App) {
 }
 
 /// The selected file, its path joined to the directory shown.
-pub(crate) fn selected(app: &App) -> Option<(HostPath, &File)> {
+pub fn selected(app: &App) -> Option<(HostPath, &File)> {
     let f = app.largest.files.get(app.largest.cursor)?;
     Some((app.snap.dir_path.join(f.path.as_bytes()), f))
 }
