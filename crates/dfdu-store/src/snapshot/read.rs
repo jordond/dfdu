@@ -11,7 +11,7 @@ use super::{
     VERSION_1, VERSION_2, VERSION_3,
 };
 use crate::ImportError;
-use crate::ncdu::Limits;
+use crate::Limits;
 
 /// The little-endian `u32` at byte `i` of `b`.
 fn le_u32(b: &[u8], i: usize) -> u32 {

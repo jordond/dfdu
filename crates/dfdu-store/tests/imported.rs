@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions, Mode};
 use dfdu_scan::JobOptions;
-use dfdu_store::ncdu::{self, Limits};
+use dfdu_store::Limits;
+use dfdu_store::ncdu;
 
 const EXPORT: &[u8] = br#"[1,2,{},[{"name":"/nowhere"},[{"name":"d","dsize":4096},{"name":"f","asize":5,"dsize":4096}]]]"#;
 

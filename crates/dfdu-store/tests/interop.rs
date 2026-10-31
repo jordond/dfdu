@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_store::ncdu::{self, Limits, Metadata};
+use dfdu_store::Limits;
+use dfdu_store::ncdu::{self, Metadata};
 use dfdu_tree::Totals;
 
 fn have_ncdu() -> bool {

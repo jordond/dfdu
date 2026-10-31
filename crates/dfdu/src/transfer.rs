@@ -80,7 +80,7 @@ pub struct ImportArgs {
 
 /// Reads a snapshot or an ncdu export from `file` (`-` for stdin), reporting a failure.
 pub fn read_export(file: &Path) -> Result<dfdu_store::Opened, ExitCode> {
-    let limits = dfdu_store::ncdu::Limits::default();
+    let limits = dfdu_store::Limits::default();
     let r = if file == Path::new("-") {
         dfdu_store::open(std::io::stdin().lock(), &limits)
     } else {
@@ -142,7 +142,7 @@ fn read_snapshot(f: &Path) -> Result<dfdu_store::snapshot::Loaded, ExitCode> {
         .and_then(|r| {
             dfdu_store::snapshot::read(
                 std::io::BufReader::new(r),
-                &dfdu_store::ncdu::Limits::default(),
+                &dfdu_store::Limits::default(),
             )
         })
         .map_err(|e| {

@@ -46,6 +46,27 @@ impl fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
+/// Limits on what an import accepts, so a hostile or broken file cannot use unbounded memory
+/// or stack.
+#[derive(Clone, Debug)]
+pub struct Limits {
+    /// Directory nesting below the root.
+    pub max_depth: usize,
+    /// Bytes in a name (the default is ncdu's own limit).
+    pub max_name: usize,
+    pub max_entries: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_depth: 4096,
+            max_name: 32_768,
+            max_entries: 200_000_000,
+        }
+    }
+}
+
 /// Compresses what is written to it with zstd, as a series of frames of at most [`ZSTD_FRAME`]
 /// bytes each (zstd readers read concatenated frames as one stream). Encoding into memory frame
 /// by frame keeps write errors as errors: the encoder panics on them. `flush` ends the current
@@ -273,7 +294,7 @@ pub struct Opened {
 /// # Errors
 ///
 /// When `r` fails, the data is in neither format or malformed, or it exceeds `limits`.
-pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open(r: impl io::Read, limits: &Limits) -> Result<Opened, ImportError> {
     let mut r = io::BufReader::with_capacity(1 << 16, r);
     let head = io::BufRead::fill_buf(&mut r)?;
     if ncdu::binary::is_binary(head) {
@@ -313,7 +334,7 @@ pub fn open(r: impl io::Read, limits: &ncdu::Limits) -> Result<Opened, ImportErr
 /// # Errors
 ///
 /// As [`open`], and when the file cannot be read or rewound.
-pub fn open_file(mut f: std::fs::File, limits: &ncdu::Limits) -> Result<Opened, ImportError> {
+pub fn open_file(mut f: std::fs::File, limits: &Limits) -> Result<Opened, ImportError> {
     let mut head = [0u8; 8];
     let n = io::Read::read(&mut f, &mut head)?;
     io::Seek::rewind(&mut f)?;

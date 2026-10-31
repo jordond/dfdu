@@ -23,7 +23,7 @@ use std::time::UNIX_EPOCH;
 
 use dfdu_scan::Backend;
 
-use crate::ncdu::Limits;
+use crate::Limits;
 use crate::snapshot::{self, Header};
 
 mod slot;

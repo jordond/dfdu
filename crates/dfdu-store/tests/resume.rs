@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{Backend, JobOptions, PortableBackend};
-use dfdu_store::ncdu::Limits;
+use dfdu_store::Limits;
 use dfdu_store::snapshot::{self, Header};
 use dfdu_tree::Totals;
 

@@ -4,7 +4,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let limits = dfdu_store::ncdu::Limits {
+    let limits = dfdu_store::Limits {
         max_entries: 200_000,
         ..Default::default()
     };

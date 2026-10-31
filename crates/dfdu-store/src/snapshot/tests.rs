@@ -1,6 +1,6 @@
 use super::*;
 use crate::ImportError;
-use crate::ncdu::Limits;
+use crate::Limits;
 use crate::ncdu::tests::{NCDU, dump};
 
 pub(super) fn sample() -> (Tree, Ix) {

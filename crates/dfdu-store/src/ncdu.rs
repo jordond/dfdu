@@ -28,29 +28,8 @@ pub use write::{ExportStats, export};
 
 use dfdu_tree::{DirState, ErrKind, Ix, Kind, Meta, NodeFlags, Tree};
 
-use crate::ImportError;
 use crate::json::{Num, Reader};
-
-/// Limits on what an import accepts, so a hostile or broken file cannot use unbounded memory
-/// or stack.
-#[derive(Clone, Debug)]
-pub struct Limits {
-    /// Directory nesting below the root.
-    pub max_depth: usize,
-    /// Bytes in a name (ncdu's own limit is 32,768).
-    pub max_name: usize,
-    pub max_entries: u64,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Limits {
-            max_depth: 4096,
-            max_name: 32_768,
-            max_entries: 200_000_000,
-        }
-    }
-}
+use crate::{ImportError, Limits};
 
 /// The metadata block.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
