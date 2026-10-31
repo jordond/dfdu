@@ -251,7 +251,7 @@ fn a_silent_agent_is_given_up() {
 type ClassRow = (
     std::path::PathBuf,
     String,
-    Option<dfdu_rules::Safety>,
+    Option<dfdu_tree::Safety>,
     u8,
     u8,
 );

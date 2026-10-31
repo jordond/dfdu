@@ -1,3 +1,7 @@
+//! What a scanner backend reports for one entry ([`Meta`], from `std` metadata or a Windows
+//! stat), the error kinds kept for entries that could not be read, and the size [`Totals`] a
+//! directory sums over its subtree.
+
 use std::io;
 
 /// File type of an entry, as reported without following symlinks.

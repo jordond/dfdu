@@ -41,10 +41,6 @@ enum Cmd {
     Check { fixture: PathBuf },
 }
 
-fn read(path: &std::path::Path) -> anyhow::Result<Fixture> {
-    Ok(Fixture::load(path)?)
-}
-
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Mount {
@@ -54,10 +50,10 @@ fn main() -> anyhow::Result<()> {
             root,
             at,
         } => {
-            let fixture = read(&fixture)?;
+            let fixture = Fixture::load(&fixture)?;
             let tree = match (root, at) {
                 (Some(root), Some(at)) => {
-                    let mut tree = read(&root)?.build()?;
+                    let mut tree = Fixture::load(&root)?.build()?;
                     fixture
                         .build_at(&mut tree, &at)
                         .with_context(|| format!("at {at:?}"))?;
@@ -68,11 +64,11 @@ fn main() -> anyhow::Result<()> {
             mount(&fixture, tree, &dir, ready)
         }
         Cmd::Now { fixture, minus } => {
-            println!("{}", faketime(&read(&fixture)?, minus.as_deref())?);
+            println!("{}", faketime(&Fixture::load(&fixture)?, minus.as_deref())?);
             Ok(())
         }
         Cmd::Check { fixture } => {
-            println!("{}", summary(&read(&fixture)?.build()?));
+            println!("{}", summary(&Fixture::load(&fixture)?.build()?));
             Ok(())
         }
     }
@@ -151,14 +147,5 @@ mod tests {
     fn summary_counts_entries_below_the_root() {
         let tree = Fixture::parse(FIXTURE).unwrap().build().unwrap();
         assert_eq!(summary(&tree), "entries 2\napparent 4106\nalloc 12288");
-    }
-
-    #[test]
-    fn a_fixture_is_read_from_its_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("f.toml");
-        std::fs::write(&path, FIXTURE).unwrap();
-        assert_eq!(read(&path).unwrap().now, "2026-10-01T09:00:00Z");
-        assert!(read(&dir.path().join("missing.toml")).is_err());
     }
 }

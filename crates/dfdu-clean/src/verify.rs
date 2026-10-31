@@ -1,3 +1,7 @@
+//! The check every item passes just before it is deleted: still inside the scan root, not
+//! protected, on the scanned filesystem, reached without a swapped directory above it, and
+//! unchanged since the scan.
+
 use std::fs;
 use std::io;
 use std::path::{Component, Path};

@@ -257,12 +257,13 @@ impl Recovery {
         Ok(u)
     }
 
-    /// Deletes what is left of a staged item.
+    /// Deletes what is left of a staged item, if its stage path still names the item the scan
+    /// saw.
     ///
     /// # Errors
     ///
-    /// There is no item `i`, it is not staged, its journal could not be written, or the delete
-    /// failed.
+    /// There is no item `i`, it is not staged, its journal could not be written, the stage path
+    /// now names something else, or the delete failed.
     pub fn finish(&mut self, i: usize) -> io::Result<()> {
         let u = self.checked(i)?.clone();
         let stage = match &u.state {
@@ -281,7 +282,9 @@ impl Recovery {
                 },
             )?;
         }
-        match crate::remove(stage, u.kind) {
+        // Only what was staged: a path swapped since then deletes nothing.
+        let id = identity(&u.rec);
+        match crate::remove_verified(stage, id.kind, id.dev, id.ino) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => {

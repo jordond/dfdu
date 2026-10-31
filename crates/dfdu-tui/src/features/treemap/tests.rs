@@ -349,7 +349,7 @@ fn category_colour_follows_matches_found_later_and_deep_inside() {
     // The scan decides the match.
     let class = dfdu_tree::Class {
         rule,
-        safety: dfdu_rules::Safety::Regenerable,
+        safety: dfdu_tree::Safety::Regenerable,
         degraded: None,
         flags: 0,
     };
@@ -568,7 +568,7 @@ pub(crate) fn classified() -> Fixture {
             .unwrap();
     let class = dfdu_tree::Class {
         rule,
-        safety: dfdu_rules::Safety::Regenerable,
+        safety: dfdu_tree::Safety::Regenerable,
         degraded: None,
         flags: 0,
     };
@@ -586,7 +586,7 @@ pub(crate) fn classified() -> Fixture {
     let rules = fx.m.rules.as_ref().unwrap();
     let class = dfdu_tree::Class {
         rule: rules.index("generic.cachedir-tag").unwrap(),
-        safety: dfdu_rules::Safety::Safe,
+        safety: dfdu_tree::Safety::Safe,
         ..class
     };
     fx.m.tree.set_class(m0, Some(class));

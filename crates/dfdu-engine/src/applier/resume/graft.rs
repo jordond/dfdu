@@ -6,10 +6,11 @@
 
 use std::collections::HashSet;
 
-use dfdu_rules::{Hit, RuleIx, Safety};
+use dfdu_rules::Hit;
+
 use dfdu_scan::Backend;
 use dfdu_scan::classify::ClassOpts;
-use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, Tree};
+use dfdu_tree::{Class, DirState, Ix, NodeFlags, NodeRef, RuleIx, Safety, Tree};
 
 use super::Kept;
 use crate::applier::work::Work;

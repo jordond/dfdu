@@ -26,8 +26,7 @@ pub(super) fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
                 Mode::Permanent => 2,
             });
             enc_path(e, &p.scan_root);
-            e.var(p.items.len() as u64);
-            for it in &p.items {
+            e.list(&p.items, |e, it| {
                 e.var(it.node.to_bits());
                 enc_path(e, &it.path);
                 let id = &it.identity;
@@ -40,18 +39,16 @@ pub(super) fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
                 // Sorted, so a plan always encodes alike.
                 let mut dirs: Vec<_> = it.inside.iter().collect();
                 dirs.sort_by(|a, b| a.0.cmp(b.0));
-                e.var(dirs.len() as u64);
-                for (rel, l) in dirs {
+                e.list(&dirs, |e, (rel, l)| {
                     enc_path(e, rel);
                     e.var(l.ino);
-                    e.var(l.entries.len() as u64);
-                    for &(h, ino, k) in &l.entries {
+                    e.list(&l.entries, |e, &(h, ino, k)| {
                         e.0.extend_from_slice(&h.to_le_bytes());
                         e.var(ino);
                         e.kind(k);
-                    }
-                }
-            }
+                    });
+                });
+            });
         }
         DeleterReq::Undo { plan } => {
             e.u8(1);
@@ -64,13 +61,7 @@ pub(super) fn enc_del_req(e: &mut Enc, r: &DeleterReq) {
                 e.u8(3);
                 e.var(n.id);
                 e.rule(r.rule);
-                match r.variant {
-                    None => e.u8(0),
-                    Some(v) => {
-                        e.u8(1);
-                        e.var(v.into());
-                    }
-                }
+                e.opt(r.variant, |e, v| e.var(v.into()));
                 enc_path(e, &r.path);
                 e.bool(n.dry_run);
             }
@@ -90,9 +81,7 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
                 _ => return bad("delete mode"),
             };
             let scan_root = dec_path(d)?;
-            let n = d.count(8)?;
-            let mut items = Vec::with_capacity(n);
-            for _ in 0..n {
+            let items = d.list(8, |d| {
                 let node = NodeRef::from_bits(d.var()?);
                 let path = dec_path(d)?;
                 let identity = Identity {
@@ -108,24 +97,19 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
                 for _ in 0..dirs {
                     let rel = dec_path(d)?;
                     let ino = d.var()?;
-                    let m = d.count(10)?;
-                    let mut entries = Vec::with_capacity(m);
-                    for _ in 0..m {
-                        let h = d.u64_le()?;
-                        entries.push((h, d.var()?, d.kind()?));
-                    }
+                    let entries = d.list(10, |d| Ok((d.u64_le()?, d.var()?, d.kind()?)))?;
                     if inside.insert(rel, Listing { ino, entries }).is_some() {
                         return bad("a directory listed twice");
                     }
                 }
-                items.push(PlanItem {
+                Ok(PlanItem {
                     node,
                     path,
                     identity,
                     bytes,
                     inside: Arc::new(inside),
-                });
-            }
+                })
+            })?;
             DeleterReq::Plan(Plan {
                 id,
                 mode,
@@ -139,11 +123,7 @@ pub(super) fn dec_del_req(d: &mut Dec, rules: Option<&RuleSet>) -> R<DeleterReq>
         3 => {
             let id = d.var()?;
             let rule = d.rule()?;
-            let variant = match d.u8()? {
-                0 => None,
-                1 => Some(d.u16()?),
-                _ => return bad("native variant"),
-            };
+            let variant = d.opt("native variant", Dec::u16)?;
             let path = dec_path(d)?;
             if !path.is_absolute() {
                 return bad("a native command for a relative path");
@@ -195,12 +175,7 @@ fn dec_refusal(d: &mut Dec) -> R<Refusal> {
 }
 
 pub(super) fn enc_del_msg(e: &mut Enc, m: &DeleterMsg) {
-    let texts = |e: &mut Enc, v: &[String]| {
-        e.var(v.len() as u64);
-        for s in v {
-            e.bytes(s.as_bytes());
-        }
-    };
+    let texts = |e: &mut Enc, v: &[String]| e.list(v, |e, s| e.bytes(s.as_bytes()));
     match m {
         DeleterMsg::Item {
             plan,
@@ -283,14 +258,6 @@ pub(super) fn enc_del_msg(e: &mut Enc, m: &DeleterMsg) {
 }
 
 pub(super) fn dec_del_msg(d: &mut Dec) -> R<DeleterMsg> {
-    let texts = |d: &mut Dec| -> R<Vec<String>> {
-        let n = d.count(1)?;
-        let mut v = Vec::with_capacity(n);
-        for _ in 0..n {
-            v.push(d.lossy()?);
-        }
-        Ok(v)
-    };
     Ok(match d.u8()? {
         0 => DeleterMsg::Item {
             plan: d.var()?,
@@ -335,8 +302,8 @@ pub(super) fn dec_del_msg(d: &mut Dec) -> R<DeleterMsg> {
             result: dec_result(d, |_| Ok(()))?,
         },
         7 => DeleterMsg::Unfinished {
-            items: texts(d)?,
-            notes: texts(d)?,
+            items: d.list(1, Dec::lossy)?,
+            notes: d.list(1, Dec::lossy)?,
         },
         _ => return bad("deleter message"),
     })

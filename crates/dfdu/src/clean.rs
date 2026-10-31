@@ -20,9 +20,9 @@ use std::time::Duration;
 
 use clap::Args;
 use dfdu_engine::{Command, Engine, Mode};
-use dfdu_rules::{Action, RuleSet, Safety};
+use dfdu_rules::{Action, RuleSet};
 use dfdu_scan::Backend;
-use dfdu_tree::{Class, NodeRef};
+use dfdu_tree::{Class, NodeRef, Safety};
 
 use crate::report::{self, Filter, Item};
 use crate::{EXIT_DELETE_FAILED, EXIT_PARTIAL, MountArgs, launch, print_out, written};

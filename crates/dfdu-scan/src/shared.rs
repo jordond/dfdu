@@ -27,7 +27,7 @@ mod test_util;
 pub use slot::{Outbox, WorkerSlot};
 pub use verify::VerifyDir;
 pub use watchdog::WatchdogReport;
-pub use worker::{StepResult, Worker};
+pub use worker::{RunningPart, StepResult, Worker};
 
 /// Monotonic time in nanoseconds; never returns 0 (0 means "not set" in the slot fields).
 pub trait Clock: Sync {
@@ -120,12 +120,8 @@ pub struct Task<L> {
     mount: u64,
     /// Ask the backend for a subvolume record when opening (`dev` changed from the parent).
     probe_subvol: bool,
-    /// Set for a chunk task: one block of the directory to stat. Otherwise this is the
-    /// directory's listing task.
-    chunk: Option<Box<ChunkWork<L>>>,
-    /// Set for a batch of a resume's check of the directories it keeps ([`Shared::verify`]):
-    /// no directory is listed, each of the batch's is stat'ed.
-    verify: Option<Box<verify::VerifyWork>>,
+    /// What the task does in its directory.
+    kind: TaskKind<L>,
     /// The limit of the directory's mount, if it has one. Set for a job root once it is opened;
     /// the root task itself runs without a permit.
     gate: Option<Arc<TaskGate<L>>>,
@@ -134,6 +130,47 @@ pub struct Task<L> {
     storage: dfdu_sys::Storage,
     /// What the directory's entries are classified against, when the job classifies.
     class: Option<Box<TaskClass>>,
+}
+
+/// What a [`Task`] does in its directory.
+enum TaskKind<L> {
+    /// The directory's listing task.
+    Listing,
+    /// A chunk task: one block of the directory to stat.
+    Chunk(Box<ChunkWork<L>>),
+    /// A batch of a resume's check of the directories it keeps ([`Shared::verify`]): no
+    /// directory is listed, each of the batch's is stat'ed.
+    Verify(Box<verify::VerifyWork>),
+}
+
+impl<L> TaskKind<L> {
+    /// The block of a chunk task.
+    fn chunk(&self) -> Option<&ChunkWork<L>> {
+        match self {
+            TaskKind::Chunk(work) => Some(work),
+            TaskKind::Listing | TaskKind::Verify(_) => None,
+        }
+    }
+
+    fn chunk_mut(&mut self) -> Option<&mut ChunkWork<L>> {
+        match self {
+            TaskKind::Chunk(work) => Some(work),
+            TaskKind::Listing | TaskKind::Verify(_) => None,
+        }
+    }
+
+    /// The directories of a batch task and what it found so far.
+    fn verify_mut(&mut self) -> Option<&mut verify::VerifyWork> {
+        match self {
+            TaskKind::Verify(work) => Some(work),
+            TaskKind::Listing | TaskKind::Chunk(_) => None,
+        }
+    }
+
+    /// Takes the work out of a task that is ending, leaving a listing task's kind.
+    fn take(&mut self) -> TaskKind<L> {
+        std::mem::replace(self, TaskKind::Listing)
+    }
 }
 
 /// A mount's concurrency limit, holding the tasks that wait for a permit.
@@ -149,7 +186,7 @@ impl<L: std::fmt::Debug> std::fmt::Debug for Task<L> {
             .field("job", &self.job)
             .field("dir", &self.dir)
             .field("loc", &self.loc)
-            .field("chunk", &self.chunk.as_ref().map(|c| c.seq))
+            .field("chunk", &self.kind.chunk().map(|c| c.seq))
             .finish_non_exhaustive()
     }
 }
@@ -444,6 +481,8 @@ impl<B: Backend> Shared<B> {
         !self.priority.is_empty() || !self.injector.is_empty()
     }
 
+    /// Tasks not yet done (queued or running), and how many of those are parts the applier
+    /// abandoned: `(outstanding, abandoned)`.
     pub fn outstanding(&self) -> (u64, u64) {
         (
             self.outstanding.load(SeqCst),

@@ -25,7 +25,7 @@ fn a_job_starts_with_its_root_task_first() {
     assert_eq!((t.job, t.dir), (JobId(1), DirId::ROOT));
     assert_eq!(t.loc, sh.backend.loc_from_path(tmp.path()));
     assert!(t.is_root && t.probe_subvol);
-    assert!(t.verify.is_none() && t.chunk.is_none() && t.class.is_none());
+    assert!(matches!(t.kind, TaskKind::Listing) && t.class.is_none());
     assert!(sh.job(JobId(1)).is_some() && sh.job(JobId(2)).is_some());
 }
 

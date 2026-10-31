@@ -4,8 +4,7 @@
 //! them.
 
 use dfdu_engine::Verdict;
-use dfdu_rules::Safety;
-use dfdu_tree::{Class, now_secs};
+use dfdu_tree::{Class, Safety, now_secs};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;

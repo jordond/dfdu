@@ -1,8 +1,8 @@
 //! The payload encoding: LEB128 varints (signed ones zigzag-encoded), byte strings as a
 //! varint length and the bytes.
 
-use dfdu_rules::{RuleIx, Safety};
-use dfdu_tree::{Host, Kind};
+use dfdu_rules::protected::State;
+use dfdu_tree::{Host, Kind, RuleIx, Safety};
 
 use super::WireError;
 
@@ -44,6 +44,30 @@ impl Enc {
             Kind::Symlink => 2,
             Kind::Other => 3,
         });
+    }
+    pub(super) fn protection(&mut self, s: State) {
+        self.u8(match s {
+            State::Off => 0,
+            State::On => 1,
+            State::Sticky => 2,
+        });
+    }
+    /// An option: tag 0, or tag 1 and the value.
+    pub(super) fn opt<T>(&mut self, v: Option<T>, f: impl FnOnce(&mut Self, T)) {
+        match v {
+            Some(x) => {
+                self.u8(1);
+                f(self, x);
+            }
+            None => self.u8(0),
+        }
+    }
+    /// A list: its length, then each item.
+    pub(super) fn list<T>(&mut self, xs: &[T], mut f: impl FnMut(&mut Self, &T)) {
+        self.var(xs.len() as u64);
+        for x in xs {
+            f(self, x);
+        }
     }
 }
 
@@ -116,6 +140,14 @@ impl<'a> Dec<'a> {
             _ => return bad("kind"),
         })
     }
+    pub(super) fn protection(&mut self) -> R<State> {
+        Ok(match self.u8()? {
+            0 => State::Off,
+            1 => State::On,
+            2 => State::Sticky,
+            _ => return bad("protection"),
+        })
+    }
     pub(super) fn zig(&mut self) -> R<i64> {
         let v = self.var()?;
         Ok((v >> 1).cast_signed() ^ -(v & 1).cast_signed())
@@ -165,6 +197,32 @@ impl<'a> Dec<'a> {
             Ok(n) if n.saturating_mul(min.max(1)) <= self.buf.len() - self.pos => Ok(n),
             _ => bad("count larger than the payload"),
         }
+    }
+    /// An option written by [`Enc::opt`]; any other tag is a malformed `what`.
+    pub(super) fn opt<T>(
+        &mut self,
+        what: &'static str,
+        f: impl FnOnce(&mut Self) -> R<T>,
+    ) -> R<Option<T>> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => f(self).map(Some),
+            _ => bad(what),
+        }
+    }
+    /// A list written by [`Enc::list`], of items each taking at least `min` bytes (see
+    /// [`Dec::count`]).
+    pub(super) fn list<T>(
+        &mut self,
+        min: usize,
+        mut f: impl FnMut(&mut Self) -> R<T>,
+    ) -> R<Vec<T>> {
+        let n = self.count(min)?;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            out.push(f(self)?);
+        }
+        Ok(out)
     }
     pub(super) fn end(&self) -> R<()> {
         if self.pos == self.buf.len() {

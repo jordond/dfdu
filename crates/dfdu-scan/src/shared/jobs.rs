@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 
-use super::{JobOptions, JobState, Shared, Task, pack};
+use super::{JobOptions, JobState, Shared, Task, TaskKind, pack};
 use crate::backend::Backend;
 use crate::classify::TaskClass;
 use crate::proto::{DirId, JobId};
@@ -42,8 +42,7 @@ impl<B: Backend> Shared<B> {
             dev: 0,
             mount: 0,
             probe_subvol: true,
-            chunk: None,
-            verify: None,
+            kind: TaskKind::Listing,
             gate: None,
             storage: dfdu_sys::Storage::Unknown,
             class,

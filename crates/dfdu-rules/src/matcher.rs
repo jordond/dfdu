@@ -16,12 +16,12 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use dfdu_tree::{Class, Ix, Tree};
+use dfdu_tree::{Class, Ix, RuleIx, Safety, Tree};
 
 use crate::hash::{FastMap, FastSet};
 use crate::protected::{self, Protected};
 use crate::vars::Env;
-use crate::{Action, Glob, Kind, Rule, RuleIx, Safety, glob};
+use crate::{Action, Glob, Kind, Rule, glob};
 
 mod dir;
 

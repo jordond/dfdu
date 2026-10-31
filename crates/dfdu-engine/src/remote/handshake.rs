@@ -266,7 +266,7 @@ mod tests {
             lfp
         );
         let unknown = WireClass {
-            inside: vec![dfdu_rules::RuleIx(u16::MAX)],
+            inside: vec![dfdu_tree::RuleIx(u16::MAX)],
             ..root
         };
         assert!(agree(&files, &on("linux"), fp, &unknown).is_err());

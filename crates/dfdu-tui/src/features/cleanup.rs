@@ -16,8 +16,9 @@
 use std::collections::HashSet;
 
 use dfdu_engine::{Command, Model, Verdict, verdict};
-use dfdu_rules::Safety;
-use dfdu_tree::{Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Target, Totals, now_secs};
+use dfdu_tree::{
+    Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Safety, Target, Totals, now_secs,
+};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};

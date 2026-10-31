@@ -14,7 +14,8 @@ use dfdu_clean::{DeleterMsg, Plan};
 use dfdu_engine::{Applier, ApplierSettings, CheckReq, Command, MeasureReq, Model};
 use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{
-    Backend, Budget, Clock, JobOptions, Limits, ScanMsg, Shared, Sink, StepResult, Worker,
+    Backend, Budget, Clock, JobOptions, Limits, RunningPart, ScanMsg, Shared, Sink, StepResult,
+    Worker,
 };
 use dfdu_sys::Storage;
 use parking_lot::Mutex;
@@ -259,13 +260,18 @@ impl Sim {
                     .entry(mount_key(&self.spec.nodes[loc as usize].meta))
                     .or_default() += 1;
             }
-            let Some((loc, root, permit)) = w.running_part() else {
+            let Some(RunningPart {
+                loc,
+                is_root,
+                has_permit,
+            }) = w.running_part()
+            else {
                 continue;
             };
             let key = mount_key(&self.spec.nodes[loc as usize].meta);
-            if permit {
+            if has_permit {
                 *held.entry(key).or_default() += 1;
-            } else if gates.contains_key(&key) && !root {
+            } else if gates.contains_key(&key) && !is_root {
                 let (job, dir, part) = w.slot.current().ok_or_else(|| {
                     self.fail(format!("worker {i} runs {loc} with no current part"))
                 })?;
@@ -314,11 +320,15 @@ impl Sim {
         let before: Vec<bool> = self
             .workers
             .iter()
-            .map(|w| w.running_part().is_some_and(|p| p.2))
+            .map(|w| w.running_part().is_some_and(|p| p.has_permit))
             .collect();
         let rep = self.shared.watchdog_round(&*self.sink, self.clock.now());
         for (i, had) in before.into_iter().enumerate() {
-            if had && self.workers[i].running_part().is_some_and(|p| !p.2) {
+            if had
+                && self.workers[i]
+                    .running_part()
+                    .is_some_and(|p| !p.has_permit)
+            {
                 let (job, dir, part) = self.workers[i].slot.current().expect("running");
                 self.revoked.insert((i, job.0, dir.0, part));
             }

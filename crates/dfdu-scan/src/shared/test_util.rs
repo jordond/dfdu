@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use dfdu_sys::{FsClass, Storage};
 use dfdu_tree::{DirId, Meta};
 
-use super::{Clock, Shared, Sink, StepResult, Task, Worker};
+use super::{Clock, Shared, Sink, StepResult, Task, TaskKind, Worker};
 use crate::backend::{Backend, PortableBackend};
 use crate::proto::{Batch, ScanMsg};
 use crate::sync::{AtomicU64, Injector, Mutex, Steal};
@@ -118,8 +118,7 @@ pub(crate) fn task<L>(dir: DirId, loc: L, dev: u64, mount: u64) -> Task<L> {
         dev,
         mount,
         probe_subvol: false,
-        chunk: None,
-        verify: None,
+        kind: TaskKind::Listing,
         gate: None,
         storage: Storage::Unknown,
         class: None,

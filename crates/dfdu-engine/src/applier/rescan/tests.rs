@@ -1,4 +1,5 @@
 use dfdu_rules::protected::State;
+use dfdu_tree::Protection;
 
 use super::*;
 use crate::applier::Command;
@@ -19,7 +20,7 @@ fn a_rescan_classifies_where_the_job_saw_the_directory() {
     assert_eq!(rescan_class(&t, p, Some(r), &job).path, b"/home/u/r/p");
 
     let (mut t, [r, _, nm]) = project(false);
-    t.set_protection(nm, true, false);
+    t.set_protection(nm, Protection::Protected);
     let c = rescan_class(&t, nm, Some(r), &job);
     assert!(
         c.chain.iter().all(|h| h.rule != rule),

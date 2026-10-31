@@ -171,7 +171,7 @@ impl Category {
 }
 
 /// The style of a cleanup candidate by how safe it is to delete; indexes [`Theme::safety`].
-/// Three buckets for colour, not the rules' [`dfdu_rules::Safety`].
+/// Three buckets for colour, not the rules' [`dfdu_tree::Safety`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SafetyStyle {
     Safe,

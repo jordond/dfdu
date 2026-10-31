@@ -191,7 +191,7 @@ impl<B: Backend> Applier<B> {
         self.next_job += 1;
         if let Some(c) = &opts.class {
             m.rules = Some(c.rules.clone());
-            m.tree.set_protection(root, c.protection.protected(), false);
+            m.tree.set_protection(root, c.protection.root_mark());
         }
         let class = opts
             .class

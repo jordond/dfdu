@@ -37,7 +37,7 @@ pub(super) struct Tile {
     pub is_dir: bool,
     pub size: u64,
     /// Size of the directory the tile is in, for its share.
-    pub parent: u64,
+    pub parent_size: u64,
     pub mtime: i64,
     pub tag: Option<Tag>,
     /// The theme's category colour slot of most of what is matched inside, for a directory
@@ -196,7 +196,7 @@ impl Placer<'_> {
                 name: item.name,
                 is_dir: item.is_dir,
                 size: item.size,
-                parent: total,
+                parent_size: total,
                 mtime: item.mtime,
                 tag: item.tag,
                 dominant,
@@ -309,7 +309,7 @@ impl Tile {
             name: name.into(),
             is_dir: false,
             size,
-            parent: size,
+            parent_size: size,
             mtime: 0,
             tag: None,
             dominant: None,
@@ -380,7 +380,7 @@ mod tests {
             assert_eq!(t.top, 0);
             // Framed: inside the frame and below the label line.
             assert!(t.rect.y >= frame.y + 2 && t.rect.x > frame.x, "{t:?}");
-            assert_eq!(t.parent, l.tiles[big].size);
+            assert_eq!(t.parent_size, l.tiles[big].size);
         }
     }
 

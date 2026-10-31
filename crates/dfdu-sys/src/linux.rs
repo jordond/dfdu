@@ -1,3 +1,7 @@
+//! The Linux calls: `statx` mount ids, the btrfs ioctls (subvolume info and destroy, filesystem
+//! info, qgroup usage, the data profile) and FIEMAP extents, each ioctl argument struct checked
+//! against the kernel's size at compile time; and the mount table from `/proc`.
+
 use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};

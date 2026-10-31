@@ -105,7 +105,7 @@ pub(super) fn texts(app: &App, tile: &Tile) -> (String, Sizes) {
     // Top-level tiles show live sizes, so their share is of the directory's live total.
     let parent = match tile.level {
         0 => app.size_mode.of(&app.snap.dir_total),
-        _ => tile.parent,
+        _ => tile.parent_size,
     };
     let share = (size.saturating_mul(100))
         .checked_div(parent)
@@ -242,7 +242,7 @@ mod tests {
         let tile = Tile {
             level: 1,
             is_dir: true,
-            parent: 200,
+            parent_size: 200,
             ..Tile::of(Rect::new(0, 0, 10, 4), "photos", 50)
         };
         let (name, sizes) = texts(&app, &tile);
