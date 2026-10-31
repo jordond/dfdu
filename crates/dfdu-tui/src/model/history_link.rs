@@ -7,16 +7,16 @@
 
 use std::io;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+use crossbeam_channel::RecvTimeoutError;
 use dfdu_engine::{Engine, WaitIdle};
 use dfdu_store::history::{self, Growth, Scanned};
 use dfdu_tree::now_secs;
 
-use crate::App;
+use crate::app::App;
 
 /// How long quitting waits for the record to be written. It cannot be cancelled, and another
 /// dfdu writing the history can hold it up for seconds.
@@ -76,7 +76,7 @@ fn thread_error(e: &io::Error) -> io::Error {
 struct Writer {
     thread: thread::JoinHandle<io::Result<()>>,
     /// Disconnected once the thread is done: it holds the other end until then.
-    done: mpsc::Receiver<()>,
+    done: crossbeam_channel::Receiver<()>,
 }
 
 impl Writer {
@@ -185,11 +185,11 @@ impl Recorder {
         };
         self.started = true;
         let link = link.clone();
-        let (running, done) = mpsc::channel();
+        let (running, done) = crossbeam_channel::bounded(0);
         let spawned = thread::Builder::new()
             .name("dfdu-history".into())
             .spawn(move || {
-                let _running: mpsc::Sender<()> = running;
+                let _running: crossbeam_channel::Sender<()> = running;
                 let mut h = history::History::open(&link.db)?;
                 h.record(&scan.record(&link.options, link.started_at, now_secs()))
                     .map(drop)
@@ -290,9 +290,9 @@ mod tests {
     }
 
     fn writer(f: impl FnOnce() + Send + 'static) -> Writer {
-        let (running, done) = mpsc::channel();
+        let (running, done) = crossbeam_channel::bounded(0);
         let thread = thread::spawn(move || {
-            let _running: mpsc::Sender<()> = running;
+            let _running: crossbeam_channel::Sender<()> = running;
             f();
             Ok(())
         });
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn the_writer_is_waited_for_a_bounded_time() {
         let wait = Duration::from_millis(50);
-        let (release, held) = mpsc::channel::<()>();
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
         let t0 = std::time::Instant::now();
         writer(move || {
             let _ = held.recv();
@@ -314,7 +314,7 @@ mod tests {
         assert!(waited < Duration::from_secs(5), "{waited:?}");
         drop(release);
 
-        let (ended, end) = mpsc::channel();
+        let (ended, end) = crossbeam_channel::bounded(1);
         writer(move || {
             let _ = ended.send(());
         })

@@ -10,10 +10,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::RecvTimeoutError;
 use dfdu_engine::{Command, Engine, JobPhase, JournalPosition, Model, WaitIdle};
 use dfdu_scan::JobOptions;
 use dfdu_store::ImportError;
@@ -21,7 +21,7 @@ use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Saved, Slot};
 use dfdu_store::snapshot::{Header, ScanTiming};
 use dfdu_tree::DirState;
 
-use crate::App;
+use crate::app::App;
 
 /// How long the tree must stay the same after it changed (a delete, a rescan) before it is
 /// saved again.
@@ -120,7 +120,7 @@ struct Writer {
     thread: thread::JoinHandle<std::io::Result<Saved>>,
     cancel: Arc<AtomicBool>,
     /// Disconnected once the thread is done: it holds the other end until then.
-    done: mpsc::Receiver<()>,
+    done: crossbeam_channel::Receiver<()>,
 }
 
 /// Loads the cached scan, scans when there is none, and saves complete scans, on threads the
@@ -329,11 +329,11 @@ impl Cacher {
         let read = engine.reader();
         let cancel = Arc::new(AtomicBool::new(false));
         let (slot, stop) = (link.slot.clone(), cancel.clone());
-        let (running, done) = mpsc::channel();
+        let (running, done) = crossbeam_channel::bounded(0);
         let spawned = thread::Builder::new()
             .name("dfdu-cache".into())
             .spawn(move || {
-                let _running: mpsc::Sender<()> = running;
+                let _running: crossbeam_channel::Sender<()> = running;
                 let saved = slot.save(&header, |f| read(&mut |m| f(&m.tree)), &stop)?;
                 if matches!(saved, Saved::Written { .. }) {
                     slot.sweep(now);
