@@ -56,7 +56,7 @@ pub(crate) fn sync(s: &mut SessionState, m: &Model) {
     }
     for _ in 0..3 {
         let x = crate::extras::read(m, s);
-        crate::extras::apply(s, x);
+        let _ = crate::extras::apply(s, x);
         if !crate::extras::stale(s) {
             return;
         }

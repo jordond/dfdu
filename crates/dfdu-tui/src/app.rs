@@ -142,7 +142,6 @@ impl App {
     /// again at once.
     pub fn extras_stale(&self) -> bool {
         dfdu_session::extras::stale(&self.session)
-            || details::stale(self)
             || crate::features::dupes::stale(self)
             || crate::features::largest::stale(self)
     }

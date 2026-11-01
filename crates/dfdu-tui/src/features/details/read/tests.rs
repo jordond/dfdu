@@ -78,11 +78,11 @@ fn the_selected_entrys_facts_are_read() {
 fn a_closed_pane_or_no_selection_reads_nothing() {
     let m = model();
     let mut app = app_on(&m);
-    app.details.open = false;
+    app.session.details.open = false;
     let info = read(&m, &app);
     assert!(info.node.is_none() && info.facts.is_none());
     let mut empty = App::new(Theme::no_color(), Instant::now());
-    empty.details.open = true;
+    empty.session.details.open = true;
     let info = read(&m, &empty);
     assert!(info.node.is_none() && info.facts.is_none());
 }

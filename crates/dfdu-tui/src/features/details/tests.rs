@@ -348,7 +348,7 @@ fn tab_focuses_and_scrolls_the_pane() {
     );
     app.key(press(KeyCode::Tab), t0);
     app.key(press(KeyCode::Char('i')), t0);
-    assert!(!app.details.open && !focused(&app));
+    assert!(!app.session.details.open && !focused(&app));
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn largest_children_skipped_for_huge_directories() {
         info.facts.as_ref().map(|f| &f.largest),
         Some(Largest::Skipped(9))
     ));
-    app.extras.details = info;
+    app.session.extras.details = info;
     let out = render(&mut app, t0, 150, 30);
     assert!(
         out.contains("largest children: not computed for 9 entries"),

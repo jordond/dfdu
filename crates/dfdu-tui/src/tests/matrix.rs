@@ -127,7 +127,7 @@ fn frame(state: State, theme: Theme) -> Buffer {
         render_buffer(&mut app, now, WIDTH, HEIGHT);
         press_all(&mut app, now, &[KeyCode::Tab]);
         assert!(details::focused(&app), "the pane has the focus");
-        assert!(!app.session.snap.busy && app.extras.details.facts.is_some());
+        assert!(!app.session.snap.busy && app.session.extras.details.facts.is_some());
         return render_buffer(&mut app, now, WIDTH, HEIGHT);
     }
     let (mut app, now) = mid_scan_app(theme);

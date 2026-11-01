@@ -1,11 +1,13 @@
 //! The details pane (`i`): everything the tree knows about the selected entry. On the right at
 //! 100 columns or more, as a sheet below the list when narrower. `Tab` gives it the focus, and
 //! the arrow and page keys then scroll it; `Tab` again opens the marks pane in its place.
+//! Whether it is open and what it reads are the session's (`dfdu_session::details`); the focus,
+//! the scroll and the summary in the status line stay here.
 
 mod read;
 mod text;
 
-use dfdu_tree::{Kind, NodeRef};
+use dfdu_tree::Kind;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -17,8 +19,7 @@ use crate::features::marks_pane;
 use crate::format::{count, human};
 use crate::view::cells;
 
-use read::subject;
-pub use read::{Facts, Info, Largest, Matched, read};
+pub use read::{Facts, Largest, Matched};
 use text::lines;
 #[cfg(test)]
 use text::{state, wrap};
@@ -33,46 +34,36 @@ const SHEET_HEIGHT: u16 = 10;
 const LIST_MIN: u16 = 6;
 const BAR: usize = 8;
 
+/// What only the terminal keeps of the pane: the focus, the scroll and the summary.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
-    pub open: bool,
     focused: bool,
     /// First line shown.
-    scroll: usize,
-    /// What `app.extras.details` was read for.
-    read_for: ReadFor,
+    pub(crate) scroll: usize,
     /// The summary [`split`] put in the status line in place of a pane that does not fit, to
     /// replace as the selection moves.
     summary: Option<String>,
 }
 
-/// What the details were last read for.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ReadFor {
-    /// Nothing read since the pane opened.
-    #[default]
-    Unread,
-    /// The selected entry, or no entry.
-    Entry(Option<NodeRef>),
+/// Opens or closes the pane, which then starts without the focus, at its top.
+pub fn toggle(app: &mut App) {
+    dfdu_session::details::toggle(&mut app.session);
+    app.details = Details::default();
 }
 
-/// Opens or closes the pane.
-pub fn toggle(app: &mut App) {
-    let d = &mut app.details;
-    *d = Details {
-        open: !d.open,
-        ..Details::default()
-    };
+/// True while the pane is open.
+fn open(app: &App) -> bool {
+    app.session.details.open
 }
 
 /// `Tab`: moves the focus from the list to this pane when it is shown, from here to the marks
 /// pane, and from there back to the list. While the last frame had no room for this pane, it
 /// has none for the marks pane either, and the focus stays on the list.
 pub fn focus(app: &mut App) -> Vec<Effect> {
-    if marks_pane::close(app) || (app.details.open && app.areas.details.is_none()) {
+    if marks_pane::close(app) || (open(app) && app.areas.details.is_none()) {
         return Vec::new();
     }
-    if app.details.open && !app.details.focused {
+    if open(app) && !app.details.focused {
         app.details.focused = true;
         return Vec::new();
     }
@@ -82,7 +73,7 @@ pub fn focus(app: &mut App) -> Vec<Effect> {
 
 /// True while the pane has the focus.
 pub fn focused(app: &App) -> bool {
-    app.details.open && app.details.focused
+    open(app) && app.details.focused
 }
 
 /// Handles a key while the pane has the focus; `None` passes it on to the list.
@@ -116,7 +107,7 @@ pub fn scroll(app: &mut App, delta: i32) -> bool {
     if marks_pane::is_open(app) {
         return marks_pane::scroll(app, delta);
     }
-    let Some(r) = app.areas.details.filter(|_| app.details.open) else {
+    let Some(r) = app.areas.details.filter(|_| open(app)) else {
         return false;
     };
     let inner = Block::bordered().inner(r);
@@ -161,7 +152,7 @@ fn summary(app: &App) -> Option<String> {
 /// When it does not fit, the list view's selection line already sums up the selected row; the
 /// other views show a summary in the status line instead, unless it has another message to show.
 pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>) {
-    if !app.details.open && !marks_pane::is_open(app) {
+    if !open(app) && !marks_pane::is_open(app) {
         return (area, None);
     }
     let parts = if area.width >= RIGHT_FROM {
@@ -184,7 +175,7 @@ pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>)
         if marks_pane::close(app) {
             app.session.status =
                 Some("no room for the marks pane: make the terminal larger".into());
-            if !app.details.open {
+            if !open(app) {
                 return (area, None);
             }
         }
@@ -205,7 +196,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     } else {
         (BorderType::Rounded, t.border)
     };
-    let title = match &app.extras.details.facts {
+    let title = match &app.session.extras.details.facts {
         Some(f) => format!(" {}{} ", f.name, if f.is_dir { "/" } else { "" }),
         None => " Details ".into(),
     };
@@ -228,31 +219,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// True when the pane shows something other than what [`read`] last read. A read ([`read`],
-/// then [`apply`]) must make it false: while it is true, the run loop reads again at once.
-pub fn stale(app: &App) -> bool {
-    app.details.open && app.details.read_for != ReadFor::Entry(subject(app).map(|e| e.node))
-}
-
-/// Takes in what [`read`] found, now in `app.extras.details`, after every read (with a new
-/// snapshot or without). Another entry starts at the top.
-///
-/// [`read`] runs before [`App::refresh`] takes in the snapshot read with it, so it saw the
-/// previous snapshot's row: the mark and the compressed flag are taken again from the row the
-/// list now draws for the same entry.
-pub fn apply(app: &mut App) {
-    let node = app.extras.details.node;
-    if app.details.read_for != ReadFor::Entry(node) {
-        app.details.scroll = 0;
-    }
-    app.details.read_for = ReadFor::Entry(node);
-    let row = subject(app)
-        .filter(|e| Some(e.node) == node)
-        .map(|e| (e.mark, e.compressed));
-    if let (Some((mark, compressed)), Some(f)) = (row, &mut app.extras.details.facts) {
-        f.mark = mark;
-        f.compressed = compressed;
-    }
+/// True when the pane shows something other than what was last read
+/// ([`dfdu_session::details::stale`]).
+#[cfg(test)]
+fn stale(app: &App) -> bool {
+    dfdu_session::details::stale(&app.session)
 }
 
 #[cfg(test)]

@@ -62,3 +62,35 @@ fn categories_sum_the_matches_no_other_covers() {
         .collect();
     assert_eq!(at_pip, [(pip_cat, size(pip))]);
 }
+
+/// The pane reads the list's selected entry, and the cleanup view's item while that view is
+/// shown; a read takes it in, and another entry says so.
+#[test]
+fn the_pane_reads_what_the_view_shown_selects() {
+    use crate::cleanup::{self, Intent};
+    use crate::state::tests::{opened, sync};
+    use crate::view::View;
+
+    let fx = crate::test_support::classified();
+    let (mut s, _) = opened(&fx.m, View::Files);
+    assert!(!stale(&s), "closed, nothing to read");
+    toggle(&mut s);
+    assert!(stale(&s));
+    sync(&mut s, &fx.m);
+    let listed = s.selected_entry().map(|e| e.node);
+    assert_eq!(s.extras.details.node, listed);
+    // The cleanup view's item, while that view is shown; nothing on a section row.
+    s.view = View::Cleanup;
+    let _ = cleanup::on_open(&mut s, false);
+    sync(&mut s, &fx.m);
+    assert!(s.extras.details.facts.is_none(), "on a section");
+    let _ = cleanup::act(&mut s, Intent::Select(1));
+    let _ = cleanup::act(&mut s, Intent::Activate);
+    let _ = cleanup::act(&mut s, Intent::Select(2));
+    assert!(stale(&s));
+    let x = crate::extras::read(&fx.m, &s);
+    assert!(crate::extras::apply(&mut s, x).details_moved);
+    let item = cleanup::selected(&s).map(|it| it.path.clone());
+    assert!(item.is_some());
+    assert_eq!(s.extras.details.facts.map(|f| f.path), item);
+}

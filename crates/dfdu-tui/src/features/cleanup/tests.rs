@@ -226,12 +226,18 @@ fn details_follow_the_cleanup_selection() {
     app.key(press(KeyCode::Char('i')), t0);
     sync(&mut app, &fx.m, t0);
     let want = selected(&app).unwrap().path.clone();
-    let facts = app.extras.details.facts.as_ref().expect("details read");
+    let facts = app
+        .session
+        .extras
+        .details
+        .facts
+        .as_ref()
+        .expect("details read");
     assert_eq!(facts.path, want);
     // On a group row there is nothing to describe.
     app.key(press(KeyCode::Up), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.extras.details.facts.is_none());
+    assert!(app.session.extras.details.facts.is_none());
 }
 
 /// With rules but nothing they match, the view says what it looks for and how to go back.

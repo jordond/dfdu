@@ -1,10 +1,13 @@
 //! What the details pane shows of the selected entry, read under the read lock ([`facts`]): its
 //! facts, its largest children, and the rule it matched or the matches below it by category.
+//! While the pane is open ([`Details`]) each read reads it for the entry selected ([`subject`]):
+//! the cleanup view's item while that view is shown, else the list's entry ([`read`]).
 
 use dfdu_engine::{Model, SizeMode, subvol_label};
 use dfdu_tree::{HostPath, Ix, Kind, NodeFlags, NodeRef, RuleIx, Safety, Totals, Tree};
 
 use crate::snapshot::Mark;
+use crate::state::SessionState;
 
 /// Children listed as the largest.
 const LARGEST: usize = 5;
@@ -218,6 +221,103 @@ pub fn largest<const MAX: usize>(tree: &Tree, ix: Ix, mode: SizeMode) -> Largest
             })
             .collect(),
     )
+}
+
+/// Whether the pane is open, and what it was last read for.
+#[derive(Clone, Debug, Default)]
+pub struct Details {
+    pub open: bool,
+    /// What `s.extras.details` was read for.
+    read_for: ReadFor,
+}
+
+/// What the details were last read for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ReadFor {
+    /// Nothing read since the pane opened.
+    #[default]
+    Unread,
+    /// The selected entry, or no entry.
+    Entry(Option<NodeRef>),
+}
+
+/// Opens or closes the pane.
+pub fn toggle(s: &mut SessionState) {
+    s.details = Details {
+        open: !s.details.open,
+        ..Details::default()
+    };
+}
+
+/// The cleanup view's selected item while that view is shown, else the list's selected entry.
+pub fn subject(s: &SessionState) -> Option<Subject> {
+    if crate::cleanup::active(s) {
+        let it = crate::cleanup::selected(s)?;
+        return Some(Subject {
+            node: it.node,
+            pseudo: false,
+            compressed: false,
+            mark: if it.scanning {
+                Mark::Scanning
+            } else {
+                Mark::None
+            },
+        });
+    }
+    s.selected_entry().map(|e| Subject {
+        node: e.node,
+        pseudo: e.pseudo,
+        compressed: e.compressed,
+        mark: e.mark,
+    })
+}
+
+/// Reads the selected entry's details; runs under the read lock. Costs a walk up to the root
+/// for the path and, for a directory of at most [`LARGEST_MAX_CHILDREN`] children, a look at
+/// each child; never a walk of the subtree.
+pub fn read(m: &Model, s: &SessionState) -> Info {
+    read_within::<LARGEST_MAX_CHILDREN>(m, s)
+}
+
+/// [`read`], listing the largest children only of directories with at most `MAX` children.
+pub fn read_within<const MAX: usize>(m: &Model, s: &SessionState) -> Info {
+    if !s.details.open {
+        return Info::default();
+    }
+    let Some(e) = subject(s) else {
+        return Info::default();
+    };
+    Info {
+        node: Some(e.node),
+        facts: facts::<MAX>(m, &e, s.size_mode),
+    }
+}
+
+/// True when the pane shows something other than what [`read`] last read. A read ([`read`],
+/// then [`apply`]) must make it false: while it is true, the front end reads again at once.
+pub fn stale(s: &SessionState) -> bool {
+    s.details.open && s.details.read_for != ReadFor::Entry(subject(s).map(|e| e.node))
+}
+
+/// Takes in what [`read`] found, now in `s.extras.details`, after every read (with a new
+/// snapshot or without); true when it is of another entry than the last, which the pane shows
+/// from its top.
+///
+/// [`read`] runs before the refresh takes in the snapshot read with it, so it saw the previous
+/// snapshot's row: the mark and the compressed flag are taken again from the row the list now
+/// draws for the same entry.
+pub fn apply(s: &mut SessionState) -> bool {
+    let node = s.extras.details.node;
+    let other = s.details.read_for != ReadFor::Entry(node);
+    s.details.read_for = ReadFor::Entry(node);
+    let row = subject(s)
+        .filter(|e| Some(e.node) == node)
+        .map(|e| (e.mark, e.compressed));
+    if let (Some((mark, compressed)), Some(f)) = (row, &mut s.extras.details.facts) {
+        f.mark = mark;
+        f.compressed = compressed;
+    }
+    other
 }
 
 #[cfg(test)]

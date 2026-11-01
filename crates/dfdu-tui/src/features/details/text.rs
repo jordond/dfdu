@@ -37,7 +37,7 @@ pub(super) fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out: Vec::new(),
         width,
     };
-    let Some(f) = &app.extras.details.facts else {
+    let Some(f) = &app.session.extras.details.facts else {
         out.add(&unread_note(app), t.fg_dim);
         return out.out;
     };

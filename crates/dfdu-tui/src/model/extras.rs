@@ -1,6 +1,6 @@
 //! What the features read from the engine model besides the directory snapshot: the session's
-//! (`dfdu_session::extras`: the marks, the treemap's lower levels, the cleanup matches), the
-//! details of the selected entry, the debug counters, the nodes of the duplicate files and the
+//! (`dfdu_session::extras`: the marks, the details of the selected entry, the treemap's lower
+//! levels, the cleanup matches), the debug counters, the nodes of the duplicate files and the
 //! largest files below. Read with every snapshot, and on its own (without copying the directory
 //! again) when a feature needs it sooner.
 
@@ -8,11 +8,10 @@ use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::features::{debug, details, largest};
+use crate::features::{debug, largest};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
-    pub details: details::Info,
     pub debug: debug::Info,
     /// The node of each file of the duplicates found, by path; `None` once a file is gone.
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
@@ -29,7 +28,6 @@ pub struct Extras {
 pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Found {
     let session = dfdu_session::extras::read(m, &app.session);
     let extras = Extras {
-        details: details::read(m, app),
         debug: debug::read(m, budget, counters),
         dupes: crate::features::dupes::read(m, app),
         largest: largest::read(m, app),
@@ -47,9 +45,11 @@ pub struct Found {
 /// Stores what [`read`] found in `app.extras` and lets the features take it in. Called after
 /// every read, after [`App::refresh`] when the read brought a new snapshot.
 pub fn apply(app: &mut App, Found { session, extras }: Found) {
-    dfdu_session::extras::apply(&mut app.session, session);
+    let applied = dfdu_session::extras::apply(&mut app.session, session);
+    if applied.details_moved {
+        app.details.scroll = 0;
+    }
     app.extras = extras;
-    details::apply(app);
     largest::apply(app);
     crate::features::dupes::apply(app);
 }

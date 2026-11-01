@@ -17,6 +17,7 @@ use dfdu_tree::Target;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::cleanup::Cleanup;
+use crate::details::Details;
 use crate::extras::Extras;
 use crate::filter::Filter;
 use crate::marks::Marks;
@@ -86,6 +87,8 @@ pub struct SessionState {
     pub map: MapState,
     /// The cleanup view's cursor, open rows, filter and what it marked.
     pub cleanup: Cleanup,
+    /// Whether the details pane is open, and what it was read for.
+    pub details: Details,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
 }
@@ -124,6 +127,7 @@ impl SessionState {
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
             cleanup: Cleanup::default(),
+            details: Details::default(),
             extras: Extras::default(),
         }
     }
