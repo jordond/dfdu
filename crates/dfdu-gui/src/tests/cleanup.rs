@@ -169,6 +169,15 @@ fn cleanup_ticks_the_suggested_items_on_its_first_opening_and_never_a_protected_
         shown(h, "Test cache") && shown(h, "You lose: Nothing the tests need.")
     });
     assert!(cleanup::selected(state(&h)).is_some());
+    // The status bar shows the item, not the Files selection; the tab what can be reclaimed.
+    let item = crate::status_bar::selection(state(&h)).expect("the item");
+    assert!(item.name.ends_with("cache"), "{}", item.name);
+    let reclaimable = cleanup::reclaimable(state(&h)).expect("counted");
+    let tab = match reclaimable {
+        0 => "Cleanup".to_owned(),
+        b => format!("Cleanup {}", dfdu_session::format::human(b)),
+    };
+    assert!(shown(&h, &tab), "{tab}");
     assert!(
         shown(&h, "Suggested: safe to delete.")
             || shown(&h, "Not suggested: changed in the last 7 days.")
@@ -226,6 +235,14 @@ fn cleanup_ticks_the_suggested_items_on_its_first_opening_and_never_a_protected_
         assert_eq!(state(&h).marks.items().len(), before);
         assert!(!ticked(&h, &["repo", "build"]));
     }
+
+    // An item's menu has the Files menu's items that apply, a tick for its mark.
+    h.get_by_label("recent").click_secondary();
+    until(&mut h, "the item's menu", |h| shown(h, "Copy path"));
+    assert!(shown(&h, "Show in file manager") && shown(&h, "Tick"));
+    // The action bar's button and the menu's item; the toolbar's Rescan only.
+    assert_eq!(h.query_all_by_label("Move to Trash…").count(), 2);
+    assert_eq!(h.query_all_by_label("Rescan").count(), 1);
     close(h);
 }
 

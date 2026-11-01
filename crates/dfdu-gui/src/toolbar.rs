@@ -1,16 +1,18 @@
 //! The toolbar: what the list shows (disk usage or apparent size, hidden files, tree mode), the
-//! filter, and the scan's state with a spinner on the first line; the tabs of the views and the
-//! breadcrumbs from the scan root to the current directory on the second.
+//! filter, and the scan's state with a spinner on the first line; the tabs of the views (with
+//! Cleanup's reclaimable total and the number of groups of duplicates) and the breadcrumbs from
+//! the scan root to the current directory on the second.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::SizeMode;
-use dfdu_session::SessionState;
 use dfdu_session::actions::{Action, first_key};
+use dfdu_session::format::{count, human};
 use dfdu_session::palette::Token;
 use dfdu_session::state::Cached;
 use dfdu_session::view::View;
+use dfdu_session::{SessionState, cleanup, dupes};
 use dfdu_tree::HostPath;
 use egui::{Id, Key, Sense, Shape, Stroke, TextEdit, Ui, vec2};
 
@@ -64,17 +66,36 @@ pub fn show(
     });
 }
 
-/// The tabs of the views, each switching to its view as its key does.
+/// The tabs of the views, each switching to its view as its key does, with what the view
+/// found after its name ([`badge`]).
 fn tabs(ui: &mut Ui, s: &SessionState, out: &mut Vec<Intent>) {
     let current = s.current_view();
     for &v in VIEWS {
-        let r = ui.selectable_label(current == v, v.name());
+        let name = match badge(s, v) {
+            Some(b) => format!("{} {b}", v.name()),
+            None => v.name().to_owned(),
+        };
+        let r = ui.selectable_label(current == v, name);
         if r.on_hover_text(format!("key {}", first_key(v.action())))
             .clicked()
             && current != v
         {
             out.push(Intent::Act(v.action()));
         }
+    }
+}
+
+/// What a tab says after its name, as the terminal's do: Cleanup's reclaimable total once its
+/// matches were counted, and the number of groups of duplicates once a comparison finished,
+/// `…` while one runs.
+pub fn badge(s: &SessionState, v: View) -> Option<String> {
+    match v {
+        View::Cleanup => cleanup::reclaimable(s).filter(|&b| b > 0).map(human),
+        View::Duplicates => dupes::groups(s).map(|g| match g {
+            dupes::Groups::Found(n) => count(n as u64),
+            dupes::Groups::Running => "…".into(),
+        }),
+        View::Files | View::Map | View::Largest => None,
     }
 }
 

@@ -8,7 +8,7 @@ use egui::{Color32, RichText, Visuals};
 
 mod file;
 
-pub use file::{named, preference, saved};
+pub use file::{listed, named, preference, saved};
 
 /// The palette of one of egui's themes, resolved to colours.
 #[derive(Clone, Debug)]

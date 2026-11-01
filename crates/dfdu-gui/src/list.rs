@@ -41,6 +41,7 @@ pub fn show(
         return visible;
     }
     let selected = s.selected_index();
+    whole_rows(ui);
     let mut table = TableBuilder::new(ui)
         .id_salt(("list", &s.snap.dir_path))
         .striped(true)
@@ -93,6 +94,12 @@ pub fn show(
             });
         });
     visible
+}
+
+/// Makes the labels added to `ui` from now on take no clicks, so that a click or a right click
+/// anywhere on a table's row reaches the row.
+pub fn whole_rows(ui: &mut Ui) {
+    ui.style_mut().interaction.selectable_labels = false;
 }
 
 /// The height of a row of the list and of the other views' tables.

@@ -63,6 +63,27 @@ pub fn named(
     Ok((ThemeChoice::File(name.to_owned()), Some(file)))
 }
 
+/// The names of the theme files in `themes` that [`named`] reads as theme files, sorted:
+/// `NAME.toml` for each `NAME` that is not a built-in theme's. None when the directory is not
+/// there or cannot be read.
+pub fn listed(themes: Option<&Path>) -> Vec<String> {
+    let Some(entries) = themes.and_then(|d| std::fs::read_dir(d).ok()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".toml")?;
+            let file = e.file_type().ok()?.is_file() || e.path().is_file();
+            let builtin = stem == "auto" || BuiltinTheme::parse(stem).is_some();
+            (file && !stem.is_empty() && !builtin).then(|| stem.to_owned())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// The theme file `choice` names, read from `themes`, when it names one. When it cannot be
 /// read (it was removed, or no longer reads), standard error says why and the choice goes back
 /// to the system's.
@@ -139,5 +160,19 @@ mod tests {
         let mut gone = ThemeChoice::File("gone".into());
         assert!(saved(&mut gone, Some(themes)).is_none());
         assert_eq!(gone, ThemeChoice::System);
+    }
+
+    #[test]
+    fn the_theme_files_listed_are_those_a_name_reads() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let themes = tmp.path();
+        for name in ["nord.toml", "dracula.toml", "dark.toml", "notes.txt"] {
+            fs::write(themes.join(name), "base = \"dark\"\n").expect("write");
+        }
+        fs::create_dir(themes.join("dir.toml")).expect("mkdir");
+        // A built-in theme's name chooses the built-in theme, not the file.
+        assert_eq!(listed(Some(themes)), ["dracula", "nord"]);
+        assert!(listed(Some(&themes.join("missing"))).is_empty());
+        assert!(listed(None).is_empty());
     }
 }

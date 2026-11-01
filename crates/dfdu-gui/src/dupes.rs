@@ -6,7 +6,8 @@
 //! and the directory its files are in, and opens to its files, each with its tick (or `kept` on
 //! the copy the keep rule keeps), size, day modified and path. The keep rule is picked above
 //! the table (`K` steps through them); `A` ticks every copy but the one kept in each group that
-//! frees something, and `R` compares again. Leaving the view stops a comparison that runs.
+//! frees something, and `R` compares again. Leaving the view stops a comparison that runs. A
+//! right click opens a row's menu (`menu::review`).
 //! Below the table, the selected copy, which one is kept and which go. What is compared,
 //! listed and ticked is the session's (`dfdu_session::dupes`): a click or a key here is one of
 //! its intents.
@@ -26,6 +27,7 @@ use egui_extras::{Column, TableBuilder, TableRow};
 
 use crate::browser::{Intent, ViewState};
 use crate::list::{self, Point};
+use crate::menu;
 use crate::review::{self, Tick};
 use crate::theme::Colors;
 
@@ -221,7 +223,7 @@ fn controls(ui: &mut Ui, s: &SessionState, colors: &Colors, found: &Found, out: 
 }
 
 /// `path` relative to `root`, or whole when it is not below it.
-fn relative_to_root(path: &Path, root: &Path) -> PathBuf {
+pub fn relative_to_root(path: &Path, root: &Path) -> PathBuf {
     match path.strip_prefix(root) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.to_path_buf(),
         _ => path.to_path_buf(),
@@ -263,6 +265,7 @@ fn table(
 ) {
     let row_h = list::row_height(ui);
     let cursor = s.dupes.cursor.min(rows.len() - 1);
+    list::whole_rows(ui);
     let mut table = TableBuilder::new(ui)
         .id_salt("dfdu-dupes")
         .striped(true)
@@ -289,27 +292,39 @@ fn table(
             body.rows(row_h, rows.len(), |mut row| {
                 let i = row.index();
                 row.set_selected(i == cursor);
-                match rows[i] {
+                let tick = match rows[i] {
                     Row::Group(g) => {
                         group(&mut row, s, colors, (g, &found.groups[g], root), i, out)
                     }
                     Row::File(g, f) => {
                         file(&mut row, s, colors, (&found.groups[g], f, root), i, out)
                     }
-                }
+                };
                 let r = row.response();
                 if r.double_clicked() {
                     out.push(Intent::Dupes(Ask::Select(i)));
                     out.push(Intent::Dupes(Ask::Activate));
-                } else if r.clicked() {
+                } else if r.clicked() || r.secondary_clicked() {
                     out.push(Intent::Dupes(Ask::Select(i)));
                 }
+                // A copy's tick keeps the cursor on it, as its tick does.
+                let path = matches!(rows[i], Row::File(..));
+                let mut asks = toggle(i).to_vec();
+                if path {
+                    asks.push(Intent::Dupes(Ask::Select(i)));
+                }
+                r.context_menu(|ui| menu::review(ui, s, path, (tick, &asks), out));
             });
         });
 }
 
+/// What ticking row `i` asks, as its tick does.
+fn toggle(i: usize) -> [Intent; 2] {
+    [Intent::Dupes(Ask::Select(i)), Intent::Dupes(Ask::Toggle)]
+}
+
 /// A group's row on row `i`: its triangle and tick (every copy but the one kept), then
-/// `3 copies of 1.0 MiB · frees 2.0 MiB · in photos/`; clones dimmed.
+/// `3 copies of 1.0 MiB · frees 2.0 MiB · in photos/`; clones dimmed. Returns its tick.
 fn group(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
@@ -317,10 +332,11 @@ fn group(
     (g, group, root): (usize, &Group, &Path),
     i: usize,
     out: &mut Vec<Intent>,
-) {
+) -> Tick {
     let nodes = &s.extras.dupes;
     let copies = dupes::copies(group, s.dupes.keep, nodes);
     let ticked = copies.iter().filter(|(_, n)| s.marks.contains(*n)).count();
+    let tick = review::tick_of(ticked, copies.len());
     row.col(|ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
@@ -334,10 +350,8 @@ fn group(
             out.push(Intent::Dupes(Ask::Select(i)));
             out.push(Intent::Dupes(Ask::Activate));
         }
-        if !s.read_only && review::tick(ui, colors, review::tick_of(ticked, copies.len())).clicked()
-        {
-            out.push(Intent::Dupes(Ask::Select(i)));
-            out.push(Intent::Dupes(Ask::Toggle));
+        if !s.read_only && review::tick(ui, colors, tick).clicked() {
+            out.extend(toggle(i));
         }
     });
     row.col(|ui| right(ui, colors.text(human(group.size), Token::Fg)));
@@ -378,10 +392,11 @@ fn group(
                 .truncate(),
         );
     });
+    tick
 }
 
 /// A copy's row on row `i`: its tick, or `kept` on the copy the keep rule keeps, its size, day
-/// modified and path below the scan root.
+/// modified and path below the scan root. Returns its tick, `Locked` on the copy kept.
 fn file(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
@@ -389,23 +404,24 @@ fn file(
     (group, f, root): (&Group, usize, &Path),
     i: usize,
     out: &mut Vec<Intent>,
-) {
+) -> Tick {
     let nodes = &s.extras.dupes;
     let c = &group.files[f];
     let ticked = dupes::live(nodes, c).is_some_and(|n| s.marks.contains(n));
     let kept = dupes::kept(group, s.dupes.keep, nodes) == Some(f);
+    let tick = match (kept, ticked) {
+        (true, false) => Tick::Locked,
+        (_, true) => Tick::On,
+        (false, false) => Tick::Off,
+    };
     row.col(|ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         ui.add_space(1.4 * h);
-        if kept && !ticked {
+        if tick == Tick::Locked {
             ui.label(colors.text("kept", Token::StatusOk));
-        } else if !s.read_only {
-            let tick = if ticked { Tick::On } else { Tick::Off };
-            if review::tick(ui, colors, tick).clicked() {
-                out.push(Intent::Dupes(Ask::Select(i)));
-                out.push(Intent::Dupes(Ask::Toggle));
-                out.push(Intent::Dupes(Ask::Select(i)));
-            }
+        } else if !s.read_only && review::tick(ui, colors, tick).clicked() {
+            out.extend(toggle(i));
+            out.push(Intent::Dupes(Ask::Select(i)));
         }
     });
     let token = if ticked { Token::Mark } else { Token::Fg };
@@ -426,6 +442,7 @@ fn file(
                 .truncate(),
         );
     });
+    tick
 }
 
 /// `text` aligned to the right of its cell.

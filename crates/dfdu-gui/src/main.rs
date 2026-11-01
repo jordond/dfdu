@@ -119,14 +119,15 @@ fn run(
         Box::new(|cc| {
             let launch = pending.take().ok_or("the window was opened twice")?;
             let mut prefs = settings::Prefs::load(cc.storage);
+            let themes = dfdu_sys::dirs::theme_dir();
             let file = match theme.cloned() {
                 Some((choice, file)) => {
                     prefs.theme = choice;
                     file
                 }
-                None => theme::saved(&mut prefs.theme, dfdu_sys::dirs::theme_dir().as_deref()),
+                None => theme::saved(&mut prefs.theme, themes.as_deref()),
             };
-            let gui = Gui::new(launch, prefs, file, &cc.egui_ctx);
+            let gui = Gui::new(launch, prefs, file, themes, &cc.egui_ctx);
             Ok(match std::env::var_os(shot::VAR) {
                 Some(path) => Box::new(shot::Shot {
                     gui,

@@ -4,7 +4,8 @@
 //! it is suggested or not, and the path. The first opening ticks the suggested items (not in a
 //! read-only browser); `f` (or the level picked above the table) shows only the safer levels,
 //! `A` ticks the suggested items again and `N` opens the selected item's native command
-//! (`pane`). Below the table, the selected row's rule: what it is, what deleting it loses and
+//! (`pane`). A right click opens a row's menu (`menu::review`). Below the table, the selected
+//! row's rule: what it is, what deleting it loses and
 //! why it is suggested or not. What is listed, ticked and run is the session's
 //! (`dfdu_session::cleanup`): a click or a key here is one of its intents.
 
@@ -21,6 +22,7 @@ use egui_extras::{Column, TableBuilder, TableRow};
 
 use crate::browser::{Intent, ViewState};
 use crate::list::{self, Point};
+use crate::menu;
 use crate::review::{self, Tick};
 use crate::theme::Colors;
 
@@ -35,7 +37,7 @@ const LEVELS: [(Option<Safety>, &str); 4] = [
 ];
 
 /// A safety level as a section: its name and what it means for the user.
-fn section_name(s: Safety) -> (&'static str, &'static str) {
+pub fn section_name(s: Safety) -> (&'static str, &'static str) {
     match s {
         Safety::Safe => ("Safe to delete", "caches the owning program recreates"),
         Safety::Regenerable => ("Regenerable", "rebuilt or reinstalled when needed"),
@@ -204,6 +206,7 @@ fn table(
     out: &mut Vec<Intent>,
 ) {
     let row_h = list::row_height(ui);
+    list::whole_rows(ui);
     let mut table = TableBuilder::new(ui)
         .id_salt("dfdu-cleanup")
         .striped(true)
@@ -233,20 +236,33 @@ fn table(
             body.rows(row_h, rows.len(), |mut row| {
                 let i = row.index();
                 row.set_selected(i == cursor);
-                match rows[i] {
+                let tick = match rows[i] {
                     Row::Section(safety) => section(&mut row, s, colors, safety, i, out),
                     Row::Group { cat, safety } => group(&mut row, s, colors, cat, safety, i, out),
                     Row::Item(ix) => item(&mut row, s, colors, ix, i, now, out),
-                }
+                };
                 let r = row.response();
                 if r.double_clicked() {
                     out.push(Intent::Cleanup(Ask::Select(i)));
                     out.push(Intent::Cleanup(Ask::Activate));
-                } else if r.clicked() {
+                } else if r.clicked() || r.secondary_clicked() {
                     out.push(Intent::Cleanup(Ask::Select(i)));
                 }
+                let path = matches!(rows[i], Row::Item(_));
+                r.context_menu(|ui| {
+                    menu::review(ui, s, path, (tick, &toggle(i)), out);
+                });
             });
         });
+}
+
+/// What ticking row `i` asks, as its tick does: the cursor stays on the row.
+fn toggle(i: usize) -> [Intent; 3] {
+    [
+        Intent::Cleanup(Ask::Select(i)),
+        Intent::Cleanup(Ask::Toggle),
+        Intent::Cleanup(Ask::Select(i)),
+    ]
 }
 
 /// The tick of items `ix`: on when every one that can be ticked is.
@@ -263,14 +279,14 @@ fn tick_of_items(s: &SessionState, ix: &[usize]) -> Tick {
     review::tick_of(ticked, can.len())
 }
 
-/// The first cell of a section or category on row `i`, with items `ix`: its triangle, which
-/// opens or closes it, and its tick, which ticks every item in it; a category's indented.
+/// The first cell of a section or category on row `i`, ticked as `tick` says: its triangle,
+/// which opens or closes it, and its tick, which ticks every item in it; a category's indented.
 fn opener(
     ui: &mut Ui,
     s: &SessionState,
     colors: &Colors,
     row: Row,
-    ix: &[usize],
+    tick: Tick,
     i: usize,
     out: &mut Vec<Intent>,
 ) {
@@ -289,7 +305,7 @@ fn opener(
         out.push(Intent::Cleanup(Ask::Select(i)));
         out.push(Intent::Cleanup(Ask::Activate));
     }
-    if !s.read_only && review::tick(ui, colors, tick_of_items(s, ix)).clicked() {
+    if !s.read_only && review::tick(ui, colors, tick).clicked() {
         out.push(Intent::Cleanup(Ask::Select(i)));
         out.push(Intent::Cleanup(Ask::Toggle));
     }
@@ -309,7 +325,8 @@ fn right(ui: &mut Ui, text: RichText) {
     });
 }
 
-/// A safety level's row: `Safe to delete · caches the owning program recreates`.
+/// A safety level's row: `Safe to delete · caches the owning program recreates`; returns its
+/// tick.
 fn section(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
@@ -317,9 +334,10 @@ fn section(
     safety: Safety,
     i: usize,
     out: &mut Vec<Intent>,
-) {
+) -> Tick {
     let ix = cleanup::section_items(s, safety);
-    row.col(|ui| opener(ui, s, colors, Row::Section(safety), &ix, i, out));
+    let tick = tick_of_items(s, &ix);
+    row.col(|ui| opener(ui, s, colors, Row::Section(safety), tick, i, out));
     totals(row, s, colors, &ix);
     row.col(|_| {});
     row.col(|_| {});
@@ -328,9 +346,10 @@ fn section(
         ui.label(colors.text(name, Token::Title));
         ui.add(Label::new(colors.text(format!("· {meaning}"), Token::FgDim)).truncate());
     });
+    tick
 }
 
-/// A category's row in its section, in the category's colour.
+/// A category's row in its section, in the category's colour; returns its tick.
 fn group(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
@@ -339,10 +358,11 @@ fn group(
     safety: Safety,
     i: usize,
     out: &mut Vec<Intent>,
-) {
+) -> Tick {
     let ix = cleanup::group_items(s, cat, safety);
     let r = Row::Group { cat, safety };
-    row.col(|ui| opener(ui, s, colors, r, &ix, i, out));
+    let tick = tick_of_items(s, &ix);
+    row.col(|ui| opener(ui, s, colors, r, tick, i, out));
     totals(row, s, colors, &ix);
     row.col(|_| {});
     row.col(|_| {});
@@ -352,9 +372,11 @@ fn group(
             (Category::ALL.get(category.color as usize)).map_or(Token::CatOther, |c| c.token());
         ui.label(colors.text(category.name, token));
     });
+    tick
 }
 
-/// An item's row: its tick, size, entries, day modified, why it is suggested or not, and path.
+/// An item's row: its tick, size, entries, day modified, why it is suggested or not, and path;
+/// returns its tick.
 fn item(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
@@ -363,23 +385,21 @@ fn item(
     i: usize,
     now: i64,
     out: &mut Vec<Intent>,
-) {
+) -> Tick {
     let it = &s.extras.cleanup.items[ix];
     let marked = cleanup::is_marked(s, it);
+    let tick = if !cleanup::markable(it) {
+        Tick::Locked
+    } else if marked {
+        Tick::On
+    } else {
+        Tick::Off
+    };
     row.col(|ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         ui.add_space(2.6 * h);
-        let tick = if !cleanup::markable(it) {
-            Tick::Locked
-        } else if marked {
-            Tick::On
-        } else {
-            Tick::Off
-        };
         if !s.read_only && review::tick(ui, colors, tick).clicked() {
-            out.push(Intent::Cleanup(Ask::Select(i)));
-            out.push(Intent::Cleanup(Ask::Toggle));
-            out.push(Intent::Cleanup(Ask::Select(i)));
+            out.extend(toggle(i));
         }
     });
     let token = if marked { Token::Mark } else { Token::Fg };
@@ -408,6 +428,7 @@ fn item(
                 .truncate(),
         );
     });
+    tick
 }
 
 /// Below the table: the selected item's rule, what deleting it loses and why it is or is not

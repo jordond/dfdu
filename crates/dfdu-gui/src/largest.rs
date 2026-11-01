@@ -47,6 +47,7 @@ pub fn show(
     let largest = l.files[0].size.max(1);
     let total = s.size_mode.of(&s.snap.dir_total).max(1);
     let cursor = l.cursor.min(l.files.len() - 1);
+    list::whole_rows(ui);
     let mut table = TableBuilder::new(ui)
         .id_salt(("largest", &s.snap.dir_path))
         .striped(true)

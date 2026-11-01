@@ -1,8 +1,11 @@
 //! The Duplicates view (gate 10): nothing is compared until asked; then the copy the keep rule
-//! keeps is never ticked, by a group's tick, by the suggestion or when the rule changes; and
-//! groups of clones, which free nothing, are left alone by the suggestion.
+//! keeps is never ticked, by a group's tick, by the suggestion or when the rule changes; groups
+//! of clones, which free nothing, are left alone by the suggestion; and a comparison that runs
+//! is stopped by its Cancel button.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use dfdu_session::dupes;
 use dfdu_session::view::View;
@@ -10,7 +13,10 @@ use egui::Key;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 
-use super::{Window, age, close, harness, local, scan_done, shown, shown_part, state, until};
+use super::{
+    Window, age, close, files, harness, local, scan_done, shown, shown_part, state, state_mut,
+    until, window,
+};
 
 /// The size of the files compared: above the 1 MiB a comparison starts from.
 const SIZE: usize = (1 << 20) + 4096;
@@ -19,6 +25,11 @@ const SIZE: usize = (1 << 20) + 4096;
 fn write(p: &Path, fill: u8) {
     std::fs::create_dir_all(p.parent().expect("a parent")).expect("mkdir");
     std::fs::write(p, vec![fill; SIZE]).expect("write");
+}
+
+/// What the status bar says is selected.
+fn selected_name(h: &Harness<Window>) -> Option<String> {
+    crate::status_bar::selection(state(h)).map(|s| s.name)
 }
 
 /// Whether the file at `rel` below the scan root is ticked. The scan's root is the directory's
@@ -64,6 +75,13 @@ fn duplicates_never_tick_the_copy_kept() {
         dupes::rows(state(h)).len() == 7 && shown_part(h, "2 groups · ")
     });
     assert!(shown(&h, "kept"));
+    // The status bar and the tab say what the view has, not what Files has.
+    assert!(shown(&h, "Duplicates 2"));
+    assert_eq!(selected_name(&h).as_deref(), Some("3 copies"));
+    h.key_press(Key::ArrowDown);
+    h.step();
+    let file = selected_name(&h).expect("a copy");
+    assert!(file.ends_with(".bin"), "{file}");
 
     // The suggestion ticks every copy but the oldest (or, of equals, the first by path).
     h.get_by_label("Tick suggested").click();
@@ -99,6 +117,27 @@ fn duplicates_never_tick_the_copy_kept() {
     until(&mut h, "the groups again", |h| {
         dupes::rows(state(h)).len() == 7
     });
+
+    // A copy's menu shows and copies its path; a group's has no path, but ticks and deletes.
+    h.key_press(Key::Home);
+    h.get_by_label("b2.bin").click_secondary();
+    until(&mut h, "the copy's menu", |h| shown(h, "Copy path"));
+    assert!(shown(&h, "Show in file manager"));
+    assert_eq!(
+        h.query_all_by_label("Move to Trash…").count(),
+        2,
+        "the bar's and the menu's"
+    );
+    assert_eq!(selected_name(&h).as_deref(), Some("b2.bin"));
+    h.get_by_label("Copy path").click();
+    until(&mut h, "the copy", |h| shown_part(h, "copied "));
+    assert!(shown_part(&h, "b2.bin"));
+    h.get_by_label_contains("3 copies of ").click_secondary();
+    until(&mut h, "the group's menu", |h| {
+        shown(h, "Delete permanently…")
+    });
+    assert!(!shown(&h, "Copy path"));
+    assert!(shown(&h, "Tick") || shown(&h, "Untick"));
     close(h);
 }
 
@@ -136,5 +175,44 @@ fn the_suggestion_leaves_clones_alone() {
         (state(&h).marks.items().iter()).any(|m| m.target.path.to_local().ends_with(rel))
     };
     assert!(!marked(c1) && !marked(c2));
+    close(h);
+}
+
+/// A comparison that never finishes on its own: no thread reads the files, so it runs until it
+/// is cancelled, however slow the machine.
+#[test]
+fn cancel_stops_a_comparison_that_runs() {
+    let tmp = files();
+    let mut h = window(tmp.path());
+    until(&mut h, "the scan", scan_done);
+    h.event(egui::Event::Text("4".into()));
+    until(&mut h, "the view", |h| {
+        state(h).current_view() == View::Duplicates
+    });
+    let run = dupes::Run {
+        root: tmp.path().to_path_buf(),
+        progress: Arc::default(),
+        cancel: Arc::default(),
+        result: Arc::default(),
+    };
+    let cancel = run.cancel.clone();
+    state_mut(&mut h).dupes.run = Some(run);
+    until(&mut h, "the progress", |h| {
+        shown(h, "Cancel") && shown(h, "Duplicates …")
+    });
+    assert!(shown_part(
+        &h,
+        "Comparing the starts and ends of files: 0 of 0 files"
+    ));
+    h.get_by_label("Cancel").click();
+    until(&mut h, "the stop", |h| {
+        shown(h, "duplicates: the comparison was stopped")
+    });
+    assert!(
+        cancel.load(Ordering::Relaxed),
+        "the comparison was told to stop"
+    );
+    assert!(state(&h).dupes.run.is_none());
+    assert!(shown(&h, "Duplicates") && !shown(&h, "Cancel"));
     close(h);
 }

@@ -1,20 +1,24 @@
 //! The bars below the list. The action bar, left out of a read-only browser: what is marked and
 //! its total, what the last delete to the Trash or staging can put back (a staged delete with
 //! the time left to do it), and the buttons that delete. The status bar: the status line of the
-//! last action, what the engine is deleting or noticed, or the selected entry, on the left; the
+//! last action, what the engine is deleting or noticed, or what is selected in the view shown
+//! ([`selection`]), on the left; the
 //! scan's totals and what makes them partial on the right, its errors a link to their list.
 
 use std::time::Instant;
 
-use dfdu_engine::{Mode, STAGE_UNDO_WINDOW};
-use dfdu_session::SessionState;
+use dfdu_engine::{Mode, STAGE_UNDO_WINDOW, tilde};
 use dfdu_session::actions::Action;
 use dfdu_session::format::{count, human, plural};
 use dfdu_session::palette::Token;
+use dfdu_session::view::View;
+use dfdu_session::{SessionState, cleanup, dupes, largest};
+use dfdu_tree::Kind;
 use egui::{Align, Button, Layout, Ui};
 
 use crate::browser::{Intent, ViewState};
 use crate::theme::Colors;
+use crate::{cleanup as cleanup_view, dupes as dupes_view};
 
 pub fn show(
     ui: &mut Ui,
@@ -121,7 +125,7 @@ pub fn undo_note(s: &SessionState, view: &ViewState, now: Instant) -> Option<Str
 }
 
 /// The status line: a delete or an undo running, else the last action's message or the
-/// engine's last notice, else the selected entry.
+/// engine's last notice, else what is selected in the view shown.
 fn status(ui: &mut Ui, s: &SessionState, colors: &Colors) {
     let msg = match s.snap.deleting {
         Some((done, total)) => Some(format!("deleting {done}/{total}…")),
@@ -132,15 +136,125 @@ fn status(ui: &mut Ui, s: &SessionState, colors: &Colors) {
         ui.label(colors.text(msg, Token::StatusWarn));
         return;
     }
-    if let Some(e) = s.selected_entry() {
-        let name = String::from_utf8_lossy(&e.name);
-        ui.label(colors.text(name, Token::Fg));
-        ui.label(colors.text(human(e.size), Token::SizeBig));
-        if e.is_dir {
-            ui.label(colors.text(
-                format!("{} item{}", count(e.items), plural(e.items)),
-                Token::FgDim,
-            ));
+    if let Some(sel) = selection(s) {
+        ui.label(colors.text(sel.name, Token::Fg));
+        if let Some(size) = sel.size {
+            ui.label(colors.text(human(size), Token::SizeBig));
+        }
+        if let Some(note) = sel.note {
+            ui.label(colors.text(note, Token::FgDim));
+        }
+    }
+}
+
+/// What the status bar says of the selection.
+#[derive(Debug, PartialEq)]
+pub struct Selection {
+    pub name: String,
+    pub size: Option<u64>,
+    pub note: Option<String>,
+}
+
+/// What is selected in the view shown: the list's entry (the map's too), the largest file, the
+/// cleanup row or the duplicates row under the cursor; `None` when nothing is.
+pub fn selection(s: &SessionState) -> Option<Selection> {
+    match s.current_view() {
+        View::Files | View::Map => {
+            let e = s.selected_entry()?;
+            Some(Selection {
+                name: String::from_utf8_lossy(&e.name).into_owned(),
+                size: Some(e.size),
+                note: e.is_dir.then(|| items(e.items)),
+            })
+        }
+        View::Largest => {
+            let (_, f) = largest::selected(s)?;
+            Some(Selection {
+                name: f.path.display().to_string(),
+                size: Some(f.size),
+                note: None,
+            })
+        }
+        View::Cleanup => cleanup_selection(s),
+        View::Duplicates => dupes_selection(s),
+    }
+}
+
+/// `3 items`.
+fn items(n: u64) -> String {
+    format!("{} item{}", count(n), plural(n))
+}
+
+/// `2 matches`.
+fn matches(n: usize) -> String {
+    format!("{n} match{}", if n == 1 { "" } else { "es" })
+}
+
+/// The cleanup row under the cursor: an item by its path, a category or a level by its name,
+/// with what its items add up to.
+fn cleanup_selection(s: &SessionState) -> Option<Selection> {
+    let all = &s.extras.cleanup.items;
+    let total = |ix: &[usize]| ix.iter().map(|&i| all[i].size).sum();
+    match *cleanup::rows(s).get(s.cleanup.cursor)? {
+        cleanup::Row::Item(i) => {
+            let it = all.get(i)?;
+            Some(Selection {
+                name: tilde(&it.path, s.home.as_deref()),
+                size: Some(it.size),
+                note: (it.kind == Kind::Dir).then(|| items(it.items)),
+            })
+        }
+        cleanup::Row::Group { cat, safety } => {
+            let ix = cleanup::group_items(s, cat, safety);
+            Some(Selection {
+                name: cat.get().name.to_owned(),
+                size: Some(total(&ix)),
+                note: Some(matches(ix.len())),
+            })
+        }
+        cleanup::Row::Section(safety) => {
+            let ix = cleanup::section_items(s, safety);
+            Some(Selection {
+                name: cleanup_view::section_name(safety).0.to_owned(),
+                size: Some(total(&ix)),
+                note: Some(matches(ix.len())),
+            })
+        }
+    }
+}
+
+/// The duplicates row under the cursor: a copy by its path below the scan root, a group by how
+/// many copies it has and what deleting them frees; nothing before a comparison finished.
+fn dupes_selection(s: &SessionState) -> Option<Selection> {
+    let found = dupes::found(s)?;
+    let root = &s.dupes.run.as_ref()?.root;
+    match *dupes::rows(s).get(s.dupes.cursor)? {
+        dupes::Row::File(g, f) => {
+            let c = &found.groups.get(g)?.files.get(f)?;
+            Some(Selection {
+                name: dupes_view::relative_to_root(&c.path, root)
+                    .display()
+                    .to_string(),
+                size: Some(c.size),
+                note: None,
+            })
+        }
+        dupes::Row::Group(g) => {
+            let group = found.groups.get(g)?;
+            let n = group
+                .files
+                .iter()
+                .filter(|c| dupes::live(&s.extras.dupes, c).is_some())
+                .count();
+            Some(Selection {
+                name: format!("{n} copies"),
+                size: Some(group.size),
+                note: Some(if group.all_clones() {
+                    "clones: frees nothing".to_owned()
+                } else {
+                    format!("frees {}", human(group.wasted()))
+                }),
+            })
         }
     }
 }

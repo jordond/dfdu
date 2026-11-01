@@ -1,8 +1,10 @@
 //! The window's contents: a menu bar, then the start screen until a directory or an export is
 //! chosen, then the browser of its scan, or why it could not be opened. The browser is stopped when the
 //! window closes. The settings (`settings`) are applied when a browser opens and saved from it.
-//! The View menu chooses the theme: the system's dark or light one, either of them, or the
-//! theme file read at the start (`theme`).
+//! The View menu chooses the theme: the system's dark or light one, either of them, or a theme
+//! file of dfdu's theme directory (`theme`), read when it is chosen.
+
+use std::path::PathBuf;
 
 use dfdu_session::palette::{ThemeFile, Token};
 use dfdu_session::startup::{Source, StartLocal};
@@ -30,25 +32,38 @@ pub struct Gui {
     screen: Screen,
     settings: Settings,
     prefs: Prefs,
-    /// The theme file read at the start, by the name that chose it.
+    /// The theme file read last, by the name that chose it.
     file: Option<(String, ThemeFile)>,
+    /// dfdu's theme directory, where the theme files are.
+    theme_dir: Option<PathBuf>,
+    /// The names of the theme files in it, as they were when the window opened.
+    theme_files: Vec<String>,
 }
 
 impl Gui {
     /// The window for `launch` with the settings kept from the last run and the theme file
-    /// `file` read for them, if they choose one: the start screen for a local scan without a
-    /// path, otherwise the browser of what it opens.
-    pub fn new(launch: Launch, prefs: Prefs, file: Option<ThemeFile>, ctx: &egui::Context) -> Self {
+    /// `file` read for them, if they choose one, offering the theme files of `theme_dir`: the
+    /// start screen for a local scan without a path, otherwise the browser of what it opens.
+    pub fn new(
+        launch: Launch,
+        prefs: Prefs,
+        file: Option<ThemeFile>,
+        theme_dir: Option<PathBuf>,
+        ctx: &egui::Context,
+    ) -> Self {
         let file = match (&prefs.theme, file) {
             (ThemeChoice::File(name), Some(file)) => Some((name.clone(), file)),
             _ => None,
         };
         let Launch { source, settings } = launch;
+        let theme_files = theme::listed(theme_dir.as_deref());
         let mut gui = Gui {
             screen: Screen::Closed,
             settings,
             prefs,
             file,
+            theme_dir,
+            theme_files,
         };
         gui.choose(gui.prefs.theme.clone(), ctx);
         gui.screen = match source {
@@ -131,10 +146,17 @@ impl Gui {
         ctx.request_repaint();
     }
 
-    /// The themes the menu and the palette offer: the built-in ones, then the theme file read.
+    /// The themes the menu and the palette offer: the built-in ones, then the theme files of
+    /// the theme directory, with the one read at the start if it is no longer there.
     fn themes(&self) -> Vec<ThemeChoice> {
-        let file = (self.file.iter()).map(|(name, _)| ThemeChoice::File(name.clone()));
-        ThemeChoice::BUILTIN.into_iter().chain(file).collect()
+        let mut names = self.theme_files.clone();
+        if let Some((name, _)) = &self.file
+            && !names.contains(name)
+        {
+            names.push(name.clone());
+        }
+        let files = names.into_iter().map(ThemeChoice::File);
+        ThemeChoice::BUILTIN.into_iter().chain(files).collect()
     }
 
     /// The theme file the theme chosen is, if it is one.
@@ -145,8 +167,25 @@ impl Gui {
         }
     }
 
-    /// Draws with `choice` from now on, and keeps it.
+    /// Draws with `choice` from now on, and keeps it. A theme file not read yet is read first;
+    /// when it cannot be, the theme stays as it was and the status line says why.
     fn choose(&mut self, choice: ThemeChoice, ctx: &egui::Context) {
+        if let ThemeChoice::File(name) = &choice
+            && self.file.as_ref().is_none_or(|(read, _)| read != name)
+        {
+            match theme::named(name, self.theme_dir.as_deref()) {
+                Ok((_, Some(file))) => self.file = Some((name.clone(), file)),
+                Ok((_, None)) => {}
+                Err(e) => {
+                    let problem = format!("theme {name}: {e}");
+                    match &mut self.screen {
+                        Screen::Browse(b) => b.state_mut().status = Some(problem),
+                        _ => eprintln!("dfdu-gui: {problem}"),
+                    }
+                    return;
+                }
+            }
+        }
         self.prefs.theme = choice;
         let file = self.file_in_use();
         theme::apply(ctx, file);
@@ -183,6 +222,15 @@ impl Gui {
     pub fn browser(&self) -> Option<&dyn Browse> {
         match &self.screen {
             Screen::Browse(b) => Some(b.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// The browser shown, to change, if any.
+    #[cfg(test)]
+    pub fn browser_mut(&mut self) -> Option<&mut dyn Browse> {
+        match &mut self.screen {
+            Screen::Browse(b) => Some(b.as_mut()),
             _ => None,
         }
     }

@@ -37,7 +37,7 @@ const PATIENCE: Duration = Duration::from_secs(30);
 /// The window's state in the harness: the launch until the first frame creates the window with
 /// the harness's context.
 struct Window {
-    launch: Option<(Launch, Prefs, Option<ThemeFile>)>,
+    launch: Option<(Launch, Prefs, Option<ThemeFile>, Option<PathBuf>)>,
     gui: Option<Gui>,
 }
 
@@ -98,8 +98,19 @@ fn harness(launch: Launch) -> Harness<'static, Window> {
 
 /// The window of `launch` with the settings `prefs` and the theme file `file` read for them.
 fn harness_with(launch: Launch, prefs: Prefs, file: Option<ThemeFile>) -> Harness<'static, Window> {
+    harness_themed(launch, prefs, file, None)
+}
+
+/// The window of `launch` as [`harness_with`] makes it, offering the theme files of
+/// `theme_dir`.
+fn harness_themed(
+    launch: Launch,
+    prefs: Prefs,
+    file: Option<ThemeFile>,
+    theme_dir: Option<PathBuf>,
+) -> Harness<'static, Window> {
     let state = Window {
-        launch: Some((launch, prefs, file)),
+        launch: Some((launch, prefs, file, theme_dir)),
         gui: None,
     };
     Harness::builder()
@@ -111,8 +122,9 @@ fn harness_with(launch: Launch, prefs: Prefs, file: Option<ThemeFile>) -> Harnes
                 let gui = match &mut w.gui {
                     Some(gui) => gui,
                     None => {
-                        let (launch, prefs, file) = w.launch.take().expect("a launch");
-                        w.gui.insert(Gui::new(launch, prefs, file, ui.ctx()))
+                        let (launch, prefs, file, themes) = w.launch.take().expect("a launch");
+                        w.gui
+                            .insert(Gui::new(launch, prefs, file, themes, ui.ctx()))
                     }
                 };
                 gui.show(ui);
@@ -159,6 +171,12 @@ fn scan_done(h: &Harness<Window>) -> bool {
 fn state<'h>(h: &'h Harness<Window>) -> &'h SessionState {
     let gui = h.state().gui.as_ref().expect("the window");
     gui.browser().expect("a browser").state()
+}
+
+/// The browser's state, to change.
+fn state_mut<'h>(h: &'h mut Harness<'static, Window>) -> &'h mut SessionState {
+    let gui = h.state_mut().gui.as_mut().expect("the window");
+    gui.browser_mut().expect("a browser").state_mut()
 }
 
 /// The name of the selected entry.
