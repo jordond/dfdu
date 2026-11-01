@@ -9,14 +9,19 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use dfdu_session::cleanup::{self, Row};
+#[cfg(unix)]
 use dfdu_session::state::READ_ONLY;
 use dfdu_session::view::View;
 use dfdu_tree::Safety;
 use egui::Key;
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+#[cfg(unix)]
+use egui_kittest::kittest::NodeT;
+use egui_kittest::kittest::Queryable;
 
-use super::{Window, age, close, harness, scan_done, settle, shown, shown_part, state, until};
+#[cfg(unix)]
+use super::settle;
+use super::{Window, age, close, harness, scan_done, shown, shown_part, state, until};
 
 /// `cache` directories are safe to delete; `build` directories are regenerable, unless git
 /// tracks them, with a native command whose dry run lists them and whose further-reaching form
