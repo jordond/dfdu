@@ -5,6 +5,7 @@ Common tasks go through `cargo xtask` (`crates/xtask`), which runs the same comm
 ```sh
 cargo xtask lint                                  # fmt, clippy, docs, unused dependencies, cargo-deny, zizmor
 cargo xtask test                                  # every test (nextest when installed), then doc tests
+cargo xtask test --daemon                         # and, alone after them, the FSEvents tests (macOS; CI runs them)
 cargo xtask ci                                    # the local part of CI with a summary (--quick, --full)
 cargo xtask sim --seeds 20000                     # more simulation seeds
 cargo xtask sim --seed 1234                       # rerun one seed

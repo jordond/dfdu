@@ -295,6 +295,7 @@ mod tests {
     /// covers that), so the test asks again for a while; a daemon still behind then, which
     /// has not delivered even what changed before the position, ends the test early.
     #[test]
+    #[ignore = "waits on the FSEvents daemon, which a busy machine holds up: `cargo xtask test --daemon` runs it alone, CI too"]
     fn changes_come_back_relative_to_the_root() {
         let tmp = tempfile::tempdir().unwrap();
         // Not canonical on purpose (/var is a symlink): FSEvents names real paths.

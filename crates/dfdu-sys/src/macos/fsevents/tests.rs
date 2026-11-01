@@ -50,6 +50,7 @@ fn sync_dirs_left() -> bool {
 /// Writes below a directory after a position show up as changes of the directories they were
 /// made in.
 #[test]
+#[ignore = "waits on the FSEvents daemon, which a busy machine holds up: `cargo xtask test --daemon` runs it alone, CI too"]
 fn changes_after_an_id_are_reported() {
     let _one = one_at_a_time();
     let (_tmp, root) = temp_root();
@@ -74,6 +75,7 @@ fn changes_after_an_id_are_reported() {
 /// position was taken ([`position_event_id`]). A busy daemon can hold it past one call (the
 /// resume's verify pass covers that), so the call is repeated for a while.
 #[test]
+#[ignore = "waits on the FSEvents daemon, which a busy machine holds up: `cargo xtask test --daemon` runs it alone, CI too"]
 fn a_change_just_before_the_call_is_reported() {
     let _one = one_at_a_time();
     let (_tmp, root) = temp_root();

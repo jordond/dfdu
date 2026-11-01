@@ -113,6 +113,11 @@ struct TestArgs {
     /// Skip the doc tests.
     #[arg(long)]
     no_doc: bool,
+    /// Also the tests that wait on the FSEvents daemon ([`DAEMON_TESTS`]), one at a time after
+    /// the rest (macOS). They are ignored otherwise: a busy machine makes them fail. `--ci`
+    /// runs them.
+    #[arg(long)]
+    daemon: bool,
     /// Passed to the test runner.
     #[arg(last = true)]
     args: Vec<String>,
@@ -271,6 +276,15 @@ fn zizmor() -> anyhow::Result<()> {
     run(Command::new("zizmor").args([".github/workflows"]))
 }
 
+/// The ignored tests that wait on the FSEvents daemon, which falls behind while the machine
+/// is busy (several builds at once) and holds their changes past their patience. `--daemon`
+/// and CI run them alone, after the rest.
+const DAEMON_TESTS: [&str; 3] = [
+    "macos::fsevents::tests::changes_after_an_id_are_reported",
+    "macos::fsevents::tests::a_change_just_before_the_call_is_reported",
+    "journal::tests::changes_come_back_relative_to_the_root",
+];
+
 fn test(a: &TestArgs) -> anyhow::Result<()> {
     let packages = a.packages.iter().flat_map(|p| ["-p", p]);
     let scope: Vec<&str> = if a.packages.is_empty() {
@@ -299,6 +313,36 @@ fn test(a: &TestArgs) -> anyhow::Result<()> {
         c.arg("--").args(&a.args);
     }
     run(&mut c)?;
+    if (a.ci || a.daemon) && cfg!(target_os = "macos") {
+        let mut c = if nextest {
+            let mut c = cargo([
+                "nextest",
+                "run",
+                "--run-ignored",
+                "only",
+                "--no-tests",
+                "pass",
+            ]);
+            c.args(&scope);
+            if a.ci {
+                c.args(["--cargo-profile", "ci", "--profile", "ci", "--locked"]);
+            }
+            c.args(["--test-threads", "1", "-E"]);
+            let filter: Vec<String> = DAEMON_TESTS.iter().map(|t| format!("test(={t})")).collect();
+            c.arg(filter.join(" | "));
+            c
+        } else {
+            let mut c = cargo(["test"]);
+            c.args(&scope);
+            if a.ci {
+                c.args(["--profile", "ci", "--locked"]);
+            }
+            c.args(["--", "--ignored", "--exact", "--test-threads", "1"]);
+            c.args(DAEMON_TESTS);
+            c
+        };
+        run(&mut c)?;
+    }
     // nextest does not run doc tests; cargo test already did.
     if nextest && !a.no_doc {
         let mut c = cargo(["test", "--doc"]);
@@ -466,6 +510,7 @@ fn ci(a: &CiArgs) -> anyhow::Result<()> {
         packages: vec![],
         ci: true,
         no_doc: false,
+        daemon: false,
         args: vec![],
     };
     let mut list: Vec<Step> = vec![
