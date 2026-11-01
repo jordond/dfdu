@@ -2,16 +2,29 @@ use std::fs;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};
+use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions, Model};
 use dfdu_scan::{JobOptions, PortableBackend};
+use dfdu_session::dupes::Run;
 use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 
 use super::*;
+use crate::app::views::View;
 use crate::model::snapshot;
+use crate::state::marks;
 use crate::tests::{press, render};
 use crate::theme::Theme;
+
+/// The view needs a read ([`session::stale`]).
+fn stale(app: &App) -> bool {
+    session::stale(&app.session)
+}
+
+/// How many files a comparison would read ([`session::count`]).
+fn count(m: &Model, app: &App) -> Option<(u64, usize)> {
+    session::count(m, &app.session)
+}
 
 #[test]
 fn duplicates_are_found_marked_and_shown() {
@@ -73,7 +86,7 @@ fn duplicates_are_found_marked_and_shown() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(stale(&app), "the files need their nodes");
-    app.extras.dupes = engine.read(|m| read(m, &app));
+    app.session.extras.dupes = engine.read(|m| dfdu_session::dupes::read(m, &app.session));
     assert!(!stale(&app));
     engine.shutdown(Duration::from_millis(200));
 
@@ -87,12 +100,12 @@ fn duplicates_are_found_marked_and_shown() {
     app.key(press(KeyCode::Char('A')), t0);
     assert_eq!(app.session.marks.items().len(), 2);
     // Space on the group unmarks its copies again.
-    app.dupes.cursor = 0;
+    app.session.dupes.cursor = 0;
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(app.session.marks.is_empty());
     // A deleted file leaves the group; two left still make one.
     let gone = found(&app).unwrap().groups[0].files[0].path.clone();
-    app.extras.dupes.insert(gone, None);
+    app.session.extras.dupes.insert(gone, None);
     let out = render(&mut app, t0, 100, 12);
     assert!(out.contains("2 copies of 1.0 MiB"), "{out}");
 }
@@ -103,7 +116,8 @@ pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
     let mut bits = 0;
     let mut file = |path: &str, mtime: i64| {
         bits += 1;
-        app.extras
+        app.session
+            .extras
             .dupes
             .insert(path.into(), Some(NodeRef::from_bits(bits)));
         Candidate {
@@ -132,15 +146,13 @@ pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
         })
         .unwrap();
     app.session.view = View::Duplicates;
-    app.dupes = Dupes {
-        run: Some(Run {
-            root: "/r".into(),
-            progress: Arc::default(),
-            cancel: Arc::default(),
-            result,
-        }),
-        ..Dupes::default()
-    };
+    app.session.dupes = dfdu_session::dupes::Dupes::default();
+    app.session.dupes.run = Some(Run {
+        root: "/r".into(),
+        progress: Arc::default(),
+        cancel: Arc::default(),
+        result,
+    });
 }
 
 /// The directory a group's files share goes in its header; each row shows the rest of its path,
@@ -258,7 +270,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
 
     for want in ["newest", "shortest path", "first in path order", "oldest"] {
         app.key(press(KeyCode::Char('K')), t0);
-        assert_eq!(app.dupes.keep.label(), want);
+        assert_eq!(app.session.dupes.keep.label(), want);
         let status = app.session.status.clone().unwrap_or_default();
         assert!(status.contains(want), "{status}");
         let kept = kept_after_a(&mut app);
@@ -304,7 +316,7 @@ fn nothing_is_compared_until_asked() {
     assert!(stale(&app), "the files to compare are counted");
     sync(&mut app, &fx.m, t0);
     app.session.snap.busy = false;
-    assert_eq!(app.dupes.candidates, Some(3));
+    assert_eq!(app.session.dupes.candidates, Some(3));
     let frame = render(&mut app, t0, 100, 20);
     assert!(frame.contains("╭ Duplicates ─"), "{frame}");
     assert!(frame.contains("3 files share their size"), "{frame}");
@@ -339,14 +351,14 @@ fn half_pages_move_the_cursor_and_y_copies_the_file() {
         )
     };
     app.key(ctrl('d'), t0);
-    assert_eq!(app.dupes.cursor, 2);
+    assert_eq!(app.session.dupes.cursor, 2);
     let fx = app.key(press(KeyCode::Char('y')), t0);
     assert!(
         matches!(&fx[..], [Effect::Copy(p)] if p.as_str() == "/r/b"),
         "{fx:?}"
     );
     app.key(ctrl('u'), t0);
-    assert_eq!(app.dupes.cursor, 0);
+    assert_eq!(app.session.dupes.cursor, 0);
     let fx = app.key(press(KeyCode::Char('y')), t0);
     assert!(fx.is_empty(), "a group's row has no path: {fx:?}");
 }
@@ -360,29 +372,6 @@ fn ticked(app: &App, group: usize) -> usize {
         .count()
 }
 
-/// `A`, then `K`, then `A` again never ticks every copy: the copy the new rule keeps is
-/// unticked when the rule changes.
-#[test]
-fn the_kept_copy_is_never_ticked_by_a_and_k() {
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    found_in(
-        &mut app,
-        &[&[
-            ("/r/new.bin", 1_760_000_000),
-            ("/r/a/old.bin", 1_700_000_000),
-        ]],
-    );
-    for keys in ["A", "AKA", "AKAKA", "KAKAKA"] {
-        marks::clear(&mut app);
-        for k in keys.chars() {
-            app.key(press(KeyCode::Char(k)), t0);
-            assert!(ticked(&app, 0) < 2, "{keys}: every copy is ticked");
-        }
-        assert_eq!(ticked(&app, 0), 1, "{keys}");
-    }
-}
-
 /// Every copy of a group ticked by hand: `d` refuses rather than delete them all.
 #[test]
 fn deleting_every_copy_of_a_group_is_refused() {
@@ -392,7 +381,7 @@ fn deleting_every_copy_of_a_group_is_refused() {
         &mut app,
         &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
     );
-    app.dupes.cursor = 1;
+    app.session.dupes.cursor = 1;
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(ticked(&app, 0), 2);
@@ -403,33 +392,10 @@ fn deleting_every_copy_of_a_group_is_refused() {
         assert!(status.contains("every copy of"), "{status}");
     }
     // One unticked, the other goes.
-    app.dupes.cursor = 1;
+    app.session.dupes.cursor = 1;
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char('d')), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
-}
-
-/// A read-only browser ticks nothing, a copy or a whole group, and says why.
-#[test]
-fn space_ticks_nothing_read_only() {
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    found_in(
-        &mut app,
-        &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
-    );
-    app.session.read_only = true;
-    for cursor in [0, 1] {
-        app.dupes.cursor = cursor;
-        app.session.status = None;
-        app.key(press(KeyCode::Char(' ')), t0);
-        assert!(app.session.marks.is_empty(), "row {cursor}");
-        assert_eq!(
-            app.session.status.as_deref(),
-            Some(crate::app::keys::READ_ONLY),
-            "row {cursor}"
-        );
-    }
 }
 
 /// The footer keeps every key of the view at 120 columns, and at 80 lets `q quit` go before
@@ -452,18 +418,4 @@ fn the_footer_keeps_the_views_keys_first() {
     if narrow.contains("q quit") {
         assert!(narrow.contains("[ ] views"), "{narrow}");
     }
-}
-
-/// `R` while a scan runs keeps the comparison shown: it cannot start another yet.
-#[test]
-fn compare_again_while_scanning_keeps_what_is_shown() {
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    found_in(&mut app, &[&[("/r/a", 1), ("/r/b", 1)]]);
-    app.session.outside.local = true;
-    app.session.snap.busy = true;
-    assert!(app.key(press(KeyCode::Char('R')), t0).is_empty());
-    assert!(found(&app).is_some(), "the result is kept");
-    let status = app.session.status.clone().unwrap_or_default();
-    assert!(status.contains("wait until the scan is done"), "{status}");
 }

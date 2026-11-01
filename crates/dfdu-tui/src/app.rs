@@ -141,9 +141,7 @@ impl App {
     /// new snapshot is due. A read must make it false: while it is true, the run loop reads
     /// again at once.
     pub fn extras_stale(&self) -> bool {
-        dfdu_session::extras::stale(&self.session)
-            || crate::features::dupes::stale(self)
-            || crate::features::largest::stale(self)
+        dfdu_session::extras::stale(&self.session) || crate::features::largest::stale(self)
     }
 
     /// The tree mode state while the rows are a tree ([`SessionState::tree_shown`]).

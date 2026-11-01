@@ -125,13 +125,15 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::ViewLargest => fx.extend(views::switch(app, View::Largest)),
         Action::PrevView => fx.extend(views::step(app, -1)),
         Action::NextView => fx.extend(views::step(app, 1)),
-        Action::DupesKeep => crate::features::dupes::cycle_keep(app),
+        Action::DupesKeep => fx.extend(dupes::act(app, dupes::Intent::CycleKeep)),
         Action::TickSuggested => match views::current(app) {
             View::Cleanup => fx.extend(cleanup::act(app, cleanup::Intent::TickSuggested)),
-            View::Duplicates => dupes::tick_suggested(app),
+            View::Duplicates => fx.extend(dupes::act(app, dupes::Intent::TickSuggested)),
             _ => only_in(app, a, &[View::Cleanup, View::Duplicates]),
         },
-        Action::CompareAgain if dupes::active(app) => fx.extend(dupes::compare_again(app)),
+        Action::CompareAgain if dupes::active(app) => {
+            fx.extend(dupes::act(app, dupes::Intent::CompareAgain));
+        }
         Action::CleanupFilter if cleanup::active(app) => {
             fx.extend(cleanup::act(app, cleanup::Intent::CycleFilter));
         }

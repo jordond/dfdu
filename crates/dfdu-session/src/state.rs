@@ -18,6 +18,7 @@ use dfdu_tree::filetype::TypeFilter;
 
 use crate::cleanup::Cleanup;
 use crate::details::Details;
+use crate::dupes::Dupes;
 use crate::extras::Extras;
 use crate::filter::Filter;
 use crate::marks::Marks;
@@ -89,6 +90,8 @@ pub struct SessionState {
     pub cleanup: Cleanup,
     /// Whether the details pane is open, and what it was read for.
     pub details: Details,
+    /// The Duplicates view's comparison, cursor, keep rule and open groups.
+    pub dupes: Dupes,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
 }
@@ -128,6 +131,7 @@ impl SessionState {
             map: MapState::default(),
             cleanup: Cleanup::default(),
             details: Details::default(),
+            dupes: Dupes::default(),
             extras: Extras::default(),
         }
     }

@@ -159,7 +159,7 @@ fn what_it_does() -> String {
 /// starts it.
 fn not_compared(f: &mut Frame, app: &App, area: Rect) {
     let back = (first_key(Action::Close), "back to Files");
-    let (why, keys) = match (app.session.snap.busy, app.dupes.candidates) {
+    let (why, keys) = match (app.session.snap.busy, app.session.dupes.candidates) {
         _ if !app.session.outside.local => (
             "It reads this machine's files, and this scan is remote or from a file: there is \
              nothing here to compare."
@@ -194,7 +194,7 @@ fn not_compared(f: &mut Frame, app: &App, area: Rect) {
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let t = app.theme.clone();
-    let Some(run) = app.dupes.run.clone() else {
+    let Some(run) = app.session.dupes.run.clone() else {
         not_compared(f, app, area);
         return;
     };
@@ -231,7 +231,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let head = vec![
         review::summary(app, sum, "copies", &extra, area.width),
-        keep_line(&t, app.dupes.keep),
+        keep_line(&t, app.session.dupes.keep),
     ];
     let head_h = crate::view::cells(head.len());
     let body = Rect {
@@ -243,13 +243,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let (list, pane) = review::split(body, 5);
     let fit = usize::from(list.height).saturating_sub(1).max(1);
     app.list_height = fit;
+    let at = &mut app.session.dupes.cursor;
+    *at = (*at).min(rows.len().saturating_sub(1));
     let d = &mut app.dupes;
-    d.cursor = d.cursor.min(rows.len().saturating_sub(1));
-    d.scroll = d
-        .scroll
-        .min(d.cursor)
-        .max((d.cursor + 1).saturating_sub(fit));
-    let (cursor_at, scroll) = (d.cursor, d.scroll);
+    d.scroll = d.scroll.min(*at).max((*at + 1).saturating_sub(fit));
+    let (cursor_at, scroll) = (*at, d.scroll);
     let app = &*app;
     let width = usize::from(list.width);
     let headings = format!(

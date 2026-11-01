@@ -1,6 +1,7 @@
 //! Files with identical contents below the scan root, found with [`dfdu_dupes`] in a thread of
 //! their own ([`Run`]), and the rules for which copy of a group is kept ([`Keep`], [`kept`]) and
-//! which are the copies to delete ([`copies`], [`suggested`]).
+//! which are the copies to delete ([`copies`], [`suggested`]). The Duplicates view's state, its
+//! rows and what its intents do are in `view` and `rows` ([`Dupes`], [`rows()`], [`act`]).
 //!
 //! A file of the result is looked up in the tree by path once; `nodes` maps each to its node,
 //! `None` once it is gone from the tree (deleted). A group needs two files still in the tree.
@@ -12,6 +13,15 @@ use std::sync::{Arc, OnceLock};
 
 use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
 use dfdu_tree::NodeRef;
+
+mod rows;
+mod view;
+
+pub use rows::{Row, mark_all, mark_of, open, rows};
+pub use view::{
+    Dupes, Groups, Intent, act, active, apply, begin, compared, count, found, groups, listed,
+    min_size, read, running, selected, stale, whole_group_ticked,
+};
 
 /// The node of every file of the result looked up so far, `None` for one gone from the tree.
 pub type Nodes = HashMap<PathBuf, Option<NodeRef>>;

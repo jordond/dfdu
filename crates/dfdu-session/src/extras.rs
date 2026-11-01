@@ -1,5 +1,6 @@
 //! What the features read from the engine model besides the directory snapshot: the marks, the
-//! details of the selected entry, the treemap's lower levels and the cleanup matches. Read with every snapshot, and on its own
+//! details of the selected entry, the treemap's lower levels, the cleanup matches, and the
+//! nodes of the duplicate files with how many files a comparison would read. Read with every snapshot, and on its own
 //! (without copying the directory again) when a feature needs it sooner ([`stale`]).
 
 use dfdu_engine::Model;
@@ -7,7 +8,7 @@ use dfdu_engine::Model;
 use crate::marks::{self, Marked};
 use crate::state::SessionState;
 use crate::treemap;
-use crate::{cleanup, details};
+use crate::{cleanup, details, dupes};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
@@ -15,6 +16,11 @@ pub struct Extras {
     pub details: details::Info,
     pub treemap: treemap::Info,
     pub cleanup: cleanup::Info,
+    /// The node of each file of the duplicates found, by path; `None` once a file is gone.
+    pub dupes: dupes::Nodes,
+    /// How many files a comparison of duplicates would read, when they were counted, and the
+    /// tree's version then.
+    pub dupe_candidates: Option<(u64, usize)>,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree.
@@ -24,6 +30,8 @@ pub fn read(m: &Model, s: &SessionState) -> Extras {
         details: details::read(m, s),
         treemap: treemap::read(m, s),
         cleanup: cleanup::read(m, s),
+        dupes: dupes::read(m, s),
+        dupe_candidates: dupes::count(m, s),
     }
 }
 
@@ -44,6 +52,7 @@ pub fn apply(s: &mut SessionState, extras: Extras) -> Applied {
     s.extras.marked = marked;
     let details_moved = details::apply(s);
     cleanup::apply(s);
+    dupes::apply(s);
     Applied { details_moved }
 }
 
@@ -51,5 +60,9 @@ pub fn apply(s: &mut SessionState, extras: Extras) -> Applied {
 /// snapshot is due. A read must make it false: while it is true, the front end reads again at
 /// once.
 pub fn stale(s: &SessionState) -> bool {
-    marks::stale(s) || details::stale(s) || treemap::stale(s) || cleanup::stale(s)
+    marks::stale(s)
+        || details::stale(s)
+        || treemap::stale(s)
+        || cleanup::stale(s)
+        || dupes::stale(s)
 }
