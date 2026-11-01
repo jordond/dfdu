@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-session"
-description = "What a front end of dfdu shows besides drawing and input: the directory snapshot, tree mode, row order and fuzzy matching"
+description = "What a front end of dfdu shows besides drawing and input: the directory snapshot, tree mode, row order, fuzzy matching, the scan history, the mounts left out, startup and the treemap layout"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,14 +12,17 @@ workspace = true
 
 [dependencies]
 dfdu-tree.workspace = true
+dfdu-scan.workspace = true
 dfdu-rules.workspace = true
 dfdu-engine.workspace = true
 dfdu-sys.workspace = true
+dfdu-store.workspace = true
+crossbeam-channel.workspace = true
 nucleo-matcher.workspace = true
 
 [features]
 # Helpers for the tests of the crates above (`snapshot::build`, `snapshot::test_entry`,
-# `test_support`).
+# `Outside::set_mount`, `Outside::set_linked`, `test_support`).
 test-support = ["dfdu-engine/test-support"]
 
 [dev-dependencies]

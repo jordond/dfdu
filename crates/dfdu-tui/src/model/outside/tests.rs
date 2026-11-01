@@ -1,5 +1,8 @@
 use super::*;
 use dfdu_engine::test_support::local_mount;
+use dfdu_rules::Linked;
+
+use crate::model::snapshot::{EntryData, Mark};
 
 /// Rows of mounts the scan stayed out of say what they are and how much they use, apart
 /// from their size; `m` on one asks the engine to enter it.
@@ -111,16 +114,4 @@ fn the_cleanup_view_lists_links_out_of_the_scan() {
         "{frame}"
     );
     assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
-}
-
-/// A links lookup whose thread could not be started finds none, so nothing is left pending.
-#[test]
-fn a_links_lookup_without_a_thread_is_not_pending() {
-    let mut o = Outside::default();
-    o.look_up_linked(Arc::default(), true);
-    assert!(o.pending());
-    o.look_up_linked(Arc::default(), false);
-    assert!(!o.pending());
-    assert_eq!(o.linked().len(), 0);
-    assert!(o.poll());
 }

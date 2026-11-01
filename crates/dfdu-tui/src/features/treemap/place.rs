@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use dfdu_tree::NodeRef;
 use ratatui::layout::Rect;
 
-use super::layout::{Area, cells, squarify};
+use super::layout::{Area, CellArea, cells, squarify};
 use super::{Key, Kids, MAX_TILES, MIN_CELLS, key_of};
 use crate::app::App;
 use crate::format::ratio;

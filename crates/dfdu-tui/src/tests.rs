@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 use dfdu_engine::Model;
 pub(crate) use dfdu_engine::test_support::meta;
 use dfdu_engine::test_support::{add_dir, add_file, node_at};
+pub(crate) use dfdu_session::test_support::root_model;
 use dfdu_tree::{DirState, HostPath, Ix, Kind, Totals};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -317,13 +318,6 @@ pub(crate) fn below(root: &str, rel: &str) -> HostPath {
 /// A press of `code` without modifiers.
 pub(crate) fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
-}
-
-/// A model holding only the root `/r`, and the root.
-pub(crate) fn root_model() -> (Model, Ix) {
-    let mut m = Model::default();
-    let root = m.tree.new_root(b"/r", &meta(Kind::Dir, 0, 1), true);
-    (m, root)
 }
 
 /// A model of `/r` built up one directory or file at a time, each with an inode of its own.

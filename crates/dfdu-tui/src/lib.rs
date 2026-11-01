@@ -37,15 +37,16 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
-use dfdu_engine::{Command, Engine, EngineOptions, JournalPosition};
+use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::JobOptions;
-use dfdu_store::history;
+use dfdu_session::startup::resume;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
 use features::picker::Picked;
 
 pub use app::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
+pub use dfdu_session::startup::{Source, StartLocal};
 pub use features::debug::summary as debug_summary;
 pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
@@ -56,48 +57,6 @@ pub use theme::{Bars, BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, pa
 
 /// How long the terminal gets to answer the background-colour query at start.
 const BACKGROUND_QUERY: Duration = Duration::from_secs(1);
-
-/// Starts an engine scanning a directory on this host with the options given, and returns it
-/// with the options of the scan (which mounts it descends into, the rules it classifies with).
-/// Nothing is sent to it yet.
-pub type StartLocal =
-    Box<dyn FnOnce(&Path, EngineOptions) -> (Engine<dfdu_scan::NativeBackend>, JobOptions)>;
-
-/// What the browser opens.
-pub enum Source {
-    /// A directory on this host, scanned by the engine `start` returns; `None` shows the disk
-    /// picker first.
-    Local {
-        path: Option<PathBuf>,
-        start: StartLocal,
-    },
-    /// A scan read from a file, shown at once while its root is rescanned by the engine `start`
-    /// returns. When `journal`, where the change journal stood when the scan was taken, can
-    /// tell what changed since, only that is rescanned.
-    Resumed {
-        tree: dfdu_tree::Tree,
-        journal: Option<JournalPosition>,
-        start: StartLocal,
-    },
-    /// A directory on this host, as [`Source::Local`], opened from its cached scan in `slot`
-    /// when there is one (shown at once and brought up to date as [`Source::Resumed`] is), and
-    /// whose complete scans are saved there.
-    Cached {
-        path: PathBuf,
-        slot: dfdu_store::cache::Slot,
-        start: StartLocal,
-    },
-    /// A scan read from a file, browsed read-only.
-    Imported(dfdu_tree::Tree),
-    /// An engine scanning `path` on another host with `job`: the root the agent resolved
-    /// ([`dfdu_engine::Connected::root`]). It deletes there too (unless
-    /// [`EngineOptions::read_only`]); nothing is recorded in the history.
-    Remote {
-        engine: Engine<dfdu_scan::NativeBackend>,
-        path: dfdu_tree::HostPath,
-        job: JobOptions,
-    },
-}
 
 pub struct RunOptions {
     pub source: Source,
@@ -208,11 +167,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         local,
         read_only,
     };
-    // Only scans that count the same data are compared.
     let link = |root: &Path, job: &JobOptions, engine: &EngineOptions| {
-        let db = dfdu_sys::dirs::history_path().filter(|_| opts.history)?;
-        let key = history::options_key(job, engine.measure_workers > 0);
-        Some(HistoryLink::start(db, root.to_path_buf(), key))
+        dfdu_session::startup::history(opts.history, root, job, engine)
     };
     let (path, start) = match opts.source {
         Source::Imported(tree) => {
@@ -307,22 +263,6 @@ fn restore_on_panic(mouse: bool) {
             restore(info);
         }
     }));
-}
-
-/// Starts an engine on the root of `tree`, loads the tree into it and rescans what changed
-/// since `journal`, or all of it. Returns the engine with the root's path and the options of
-/// the scan; `None` when the tree has no root.
-fn resume(
-    tree: dfdu_tree::Tree,
-    journal: Option<JournalPosition>,
-    start: StartLocal,
-    engine: &EngineOptions,
-) -> Option<(Engine<dfdu_scan::NativeBackend>, PathBuf, JobOptions)> {
-    let root = tree.roots().next()?;
-    let path = tree.path_buf(root);
-    let (engine, job) = start(&path, engine.clone());
-    engine.resume(tree, journal, job.clone());
-    Some((engine, path, job))
 }
 
 /// Runs the loop on `engine` until the user quits, then restores the terminal (`restore`) and

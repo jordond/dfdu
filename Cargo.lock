@@ -785,8 +785,11 @@ dependencies = [
 name = "dfdu-session"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "dfdu-engine",
  "dfdu-rules",
+ "dfdu-scan",
+ "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
  "nucleo-matcher",
