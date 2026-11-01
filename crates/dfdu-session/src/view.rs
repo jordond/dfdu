@@ -85,7 +85,7 @@ impl SessionState {
 #[derive(Debug, Default)]
 #[must_use]
 pub struct Then {
-    /// For the front end to carry out.
+    /// For the front end to carry out ([`crate::effect::carry_out`]).
     pub effects: Vec<Effect>,
     /// Show this path in Files: switch to Files, open the path's directory and select it.
     pub show: Option<Show>,

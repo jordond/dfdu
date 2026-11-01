@@ -6,8 +6,9 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, select};
-use dfdu_engine::{Engine, ErrorList, SizeMode, errors};
+use dfdu_engine::{Engine, SizeMode};
 use dfdu_scan::{DirId, JobId};
+use dfdu_session::effect::Output;
 use ratatui::Terminal;
 use ratatui::crossterm::event::Event;
 
@@ -23,8 +24,6 @@ use crate::{UiOptions, overlay, view};
 
 /// Fastest redraw rate for scan data (ncdu's default refresh is 10 per second).
 const DATA_FRAME: Duration = Duration::from_millis(100);
-/// Most entries the error list shows.
-const ERROR_LIST_MAX: usize = 10_000;
 /// Longest sleep when nothing is going on.
 const IDLE: Duration = Duration::from_secs(3600);
 
@@ -319,35 +318,20 @@ impl Pacing {
     }
 }
 
-/// Carries out the effects of a key or mouse event.
+/// Carries out the effects of a key or mouse event: the session does the engine's part
+/// ([`dfdu_session::effect::carry_out`]), and the TUI shows the error list, copies through the
+/// terminal and opens the file manager.
 fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: Vec<Effect>) {
-    for fx in fx {
-        match fx {
-            Effect::Send(cmd) => engine.send(cmd),
-            Effect::FindDupes => {
-                let (root, cands) = engine.read(|m| match m.tree.roots().next() {
-                    Some(r) => (
-                        m.tree.path_buf(r),
-                        dfdu_dupes::candidates(&m.tree, r, dupes::min_size()),
-                    ),
-                    None => (std::path::PathBuf::new(), Vec::new()),
-                });
-                dupes::begin(app, root, cands);
-            }
-            Effect::ShowErrors => {
-                let list = engine.read(|m| match m.tree.roots().next() {
-                    Some(root) => errors(&m.tree, root, ERROR_LIST_MAX),
-                    None => ErrorList::default(),
-                });
-                app.show_errors(list);
-            }
-            Effect::Copy(text) => {
+    for out in dfdu_session::effect::carry_out(&mut app.session, engine, fx) {
+        match out {
+            Output::Errors(list) => app.show_errors(list),
+            Output::Copy(text) => {
                 // To the terminal the frames go to; a frame is never being drawn here.
                 if let Err(e) = selected_path::write_osc52(&mut io::stdout(), &text) {
                     app.session.status = Some(format!("cannot copy: {e}"));
                 }
             }
-            Effect::Open { path, is_dir } => selected_path::spawn_open(app, &path, is_dir),
+            Output::Open { path, is_dir } => selected_path::spawn_open(app, &path, is_dir),
         }
     }
 }

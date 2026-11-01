@@ -71,15 +71,11 @@ fn duplicates_are_found_marked_and_shown() {
     app.session.outside.local = true;
     let fx = app.key(press(KeyCode::Enter), t0);
     assert!(matches!(fx[..], [Effect::FindDupes]));
-    let (root, cands) = engine.read(|m| {
-        let r = m.tree.roots().next().unwrap();
-        (
-            m.tree.path_buf(r),
-            dfdu_dupes::candidates(&m.tree, r, min_size()),
-        )
-    });
-    assert_eq!(cands.len(), 4);
-    begin(&mut app, root, cands);
+    let out = dfdu_session::effect::carry_out(&mut app.session, &engine, fx);
+    assert!(
+        out.is_empty(),
+        "the session reads the candidates and starts: {out:?}"
+    );
     let deadline = Instant::now() + Duration::from_secs(20);
     while running(&app) {
         assert!(Instant::now() < deadline);

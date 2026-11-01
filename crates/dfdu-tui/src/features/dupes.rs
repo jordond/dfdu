@@ -78,11 +78,6 @@ pub fn selected(app: &App) -> Option<PathBuf> {
     session::selected(&app.session)
 }
 
-/// Starts comparing `cands` (read under the lock by the run loop) ([`session::begin`]).
-pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
-    session::begin(&mut app.session, root, cands);
-}
-
 /// A file still in the tree.
 fn live(app: &App, c: &Candidate) -> Option<NodeRef> {
     dfdu_session::dupes::live(&app.session.extras.dupes, c)
