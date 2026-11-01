@@ -87,7 +87,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
         .collect();
     app.refresh(snap_with_alloc(es.clone(), 1), t0);
     render_buffer(&mut app, t0, 120, 65);
-    assert_eq!(app.list_height, 60);
+    assert_eq!(app.session.viewport.rows, 60);
     // Reversed sizes: every row moves and flashes, and every bar eases.
     for (i, e) in es.iter_mut().enumerate() {
         e.size = 5000 - i as u64 * 10;

@@ -1,12 +1,16 @@
 //! What a browser of a scan holds besides how it is drawn: the view shown, the directory opened
 //! and its snapshot, the rows, the selection and the cursor of each directory left, the sort and
 //! size mode, tree mode, the marks, the filters, the status line, and what the scan history and
-//! the lookups outside the scan found. A front end keeps its own view state (scroll, overlays,
-//! layout) next to a [`SessionState`].
+//! the lookups outside the scan found. A new snapshot is folded in by
+//! [`SessionState::refresh`]. A front end keeps its own view state (scroll, overlays, layout)
+//! next to a [`SessionState`], and tells it what its last frame had room for
+//! ([`SessionState::set_viewport`]).
 
 mod cursor;
 mod list;
+mod refresh;
 mod schedule;
+mod viewport;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,7 +37,9 @@ use crate::treemap::MapState;
 use crate::view::View;
 pub use cursor::{Moved, Selection};
 pub use list::List;
+pub use refresh::{Reordered, Resorted, Scroll};
 pub use schedule::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, SortSchedule};
+pub use viewport::Viewport;
 
 /// The status line after a key that deletes, or marks, in a read-only browser.
 pub const READ_ONLY: &str = "read-only: nothing is deleted";
@@ -103,6 +109,8 @@ pub struct SessionState {
     pub extras: Extras,
     /// The delete confirmation, while it is open.
     pub confirm: Option<Confirm>,
+    /// What the front end laid out in its last frame.
+    pub viewport: Viewport,
 }
 
 /// Whether `e` gets a row when no filter hides it.
@@ -145,6 +153,7 @@ impl SessionState {
             marks_pane: MarksPane::default(),
             extras: Extras::default(),
             confirm: None,
+            viewport: Viewport::default(),
         }
     }
 

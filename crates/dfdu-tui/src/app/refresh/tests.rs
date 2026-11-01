@@ -39,7 +39,7 @@ fn cursor_follows_node_across_resort_and_keeps_its_line() {
         .map(|i| test_entry(i, &format!("e{i}"), 1000 - u64::from(i) * 10))
         .collect();
     app.refresh(snap_without_totals(es.clone(), 1), t0);
-    app.list_height = 5;
+    app.session.set_viewport(dfdu_session::view::View::Files, 5);
     for _ in 0..3 {
         app.key(press(KeyCode::Down), t0);
     }
@@ -165,7 +165,7 @@ fn six(app: &mut App, t0: Instant) -> Vec<EntryData> {
         .map(|(name, i)| test_entry(i, name, 600 - u64::from(i) * 100))
         .collect();
     app.refresh(snap_without_totals(es.clone(), 1), t0);
-    app.list_height = 3;
+    app.session.set_viewport(dfdu_session::view::View::Files, 3);
     es
 }
 

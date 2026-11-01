@@ -29,7 +29,7 @@ use crate::state::filter;
 use crate::state::motion::Motion;
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
-pub use dfdu_session::state::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection};
+pub use dfdu_session::state::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
 
 pub use dfdu_session::effect::Effect;
 
@@ -66,9 +66,6 @@ pub struct App {
     scrolls: HashMap<HostPath, usize>,
     /// The optional columns of the list (`c`).
     pub columns: crate::view::columns::Columns,
-    /// Rows the last frame had room for in the view shown; zero before the first frame, when no
-    /// rows are on screen to keep sorted ([`App::refresh`]).
-    pub list_height: usize,
     pub overlay: Overlay,
     pub quit: bool,
     pub details: details::Details,
@@ -98,7 +95,6 @@ impl App {
             scroll: 0,
             scrolls: HashMap::new(),
             columns: crate::view::columns::Columns::default(),
-            list_height: 0,
             overlay: Overlay::None,
             quit: false,
             details: details::Details::default(),

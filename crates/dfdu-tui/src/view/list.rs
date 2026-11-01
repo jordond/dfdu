@@ -26,7 +26,8 @@ use crate::theme::Theme;
 /// Draws the column header on `head` and the rows on `area`.
 pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, frame: u64) {
     let height = area.height as usize;
-    app.list_height = height;
+    let view = app.session.current_view();
+    app.session.set_viewport(view, height);
     let extra = usize::from(app.session.list.new_count > 0);
     let rows = app.session.list.rows.len();
     // Never scroll further than needed to fill the screen, then keep the selection visible.

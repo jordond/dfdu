@@ -25,7 +25,8 @@ const HEAD: usize = 2;
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     let fit = height.saturating_sub(HEAD).max(1);
-    app.list_height = fit;
+    app.session
+        .set_viewport(dfdu_session::view::View::Largest, fit);
     let l = &mut app.session.largest;
     l.cursor = l.cursor.min(l.files.len().saturating_sub(1));
     let v = &mut app.largest;
@@ -235,7 +236,7 @@ mod tests {
         let out = text(term.backend().buffer());
         assert!(out.starts_with(" reading the files below /r…"), "{out}");
         // The list has room for the rows below the summary bar and the column names.
-        assert_eq!(app.list_height, 2);
+        assert_eq!(app.session.viewport.rows, 2);
         assert_eq!(app.session.largest.cursor, 0, "kept within the files");
     }
 }

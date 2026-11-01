@@ -104,7 +104,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         return Some(act(app, Intent::Compare));
     }
     let last = rows(app).len().saturating_sub(1);
-    let page = app.list_height.max(1);
+    let page = app.session.page_rows();
     let action = keys::action_for(k)?;
     let intent = match keys::cursor_after(action, app.session.dupes.cursor, last, page) {
         Some(c) => Intent::Select(c),

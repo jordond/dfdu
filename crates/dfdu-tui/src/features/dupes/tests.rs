@@ -339,7 +339,8 @@ fn half_pages_move_the_cursor_and_y_copies_the_file() {
         &mut app,
         &[&[("/r/a", 1), ("/r/b", 2), ("/r/c", 3), ("/r/d", 4)]],
     );
-    app.list_height = 4;
+    app.session
+        .set_viewport(dfdu_session::view::View::Duplicates, 4);
     let ctrl = |c| {
         KeyEvent::new(
             KeyCode::Char(c),

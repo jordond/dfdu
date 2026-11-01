@@ -20,7 +20,7 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         app.session.status = Some(READ_ONLY.into());
         return fx;
     }
-    let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
+    let page = isize::try_from(app.session.page_rows()).unwrap_or(isize::MAX);
     let before = app.session.selected_index();
     match a {
         Action::Quit => app.quit = true,

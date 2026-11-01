@@ -28,7 +28,8 @@ fn twenty() -> (App, Instant) {
         .map(|i| test_entry(i, &format!("f{i:02}"), 1000 - u64::from(i)))
         .collect();
     app.refresh(snap_with_totals(entries, 1), t0);
-    app.list_height = 10;
+    app.session
+        .set_viewport(dfdu_session::view::View::Files, 10);
     (app, t0)
 }
 

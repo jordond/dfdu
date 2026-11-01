@@ -242,7 +242,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(head), area);
     let (list, pane) = review::split(body, 5);
     let fit = usize::from(list.height).saturating_sub(1).max(1);
-    app.list_height = fit;
+    app.session
+        .set_viewport(dfdu_session::view::View::Duplicates, fit);
     let at = &mut app.session.dupes.cursor;
     *at = (*at).min(rows.len().saturating_sub(1));
     let d = &mut app.dupes;

@@ -32,7 +32,8 @@ use crate::view::spread;
 /// Draws the map in `area`: the legend line, the tiles, and a line on the selected entry.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     crate::state::motion::frame(app, now, &[]);
-    app.list_height = area.height as usize;
+    app.session
+        .set_viewport(dfdu_session::view::View::Map, area.height as usize);
     let [legend, map, info] = ratatui::layout::Layout::vertical([
         ratatui::layout::Constraint::Length(1),
         ratatui::layout::Constraint::Min(1),

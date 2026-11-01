@@ -46,7 +46,7 @@ pub fn selected(app: &App) -> Option<(HostPath, &File)> {
 /// delete act on what is marked, never on the list's selection hidden behind the view.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     let last = app.session.largest.files.len().saturating_sub(1);
-    let page = app.list_height.max(1);
+    let page = app.session.page_rows();
     let action = keys::action_for(k)?;
     let intent = match keys::cursor_after(action, app.session.largest.cursor, last, page) {
         Some(c) => Intent::Select(c),

@@ -15,7 +15,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let Overlay::Errors { list, cursor } = &app.overlay else {
         return Vec::new();
     };
-    let (n, page) = (list.items.len(), app.list_height.max(1));
+    let (n, page) = (list.items.len(), app.session.page_rows());
     let cursor = *cursor;
     let next = match k.code {
         KeyCode::Up | KeyCode::Char('k') => cursor.saturating_sub(1),
