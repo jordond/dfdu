@@ -12,11 +12,6 @@ use crate::app::App;
 /// Most links out of the scan the cleanup view names.
 const VIEW_MAX: usize = 3;
 
-/// Starts the lookups the snapshot held needs ([`Outside::request`]).
-pub fn request(app: &mut App) {
-    app.session.outside.request(&app.session.snap);
-}
-
 /// What the details pane says about the mount at `path`, which the scan did not enter
 /// ([`Outside::pane_info`]), and the key that scans it.
 #[must_use]

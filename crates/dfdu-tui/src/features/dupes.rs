@@ -53,11 +53,6 @@ pub fn active(app: &App) -> bool {
     session::active(&app.session)
 }
 
-/// A comparison is running: the view's progress line needs frames.
-pub fn running(app: &App) -> bool {
-    session::running(&app.session)
-}
-
 #[cfg(test)]
 pub(crate) fn found(app: &App) -> Option<&Found> {
     session::found(&app.session)

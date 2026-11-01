@@ -1,10 +1,13 @@
 //! Folding a new [`Snapshot`] into [`App`]: the session brings the rows and the selection up to
 //! date ([`SessionState::refresh`](dfdu_session::SessionState::refresh)); the deleted rows kept
-//! as placeholders, the rows moving to their places and the scroll are the terminal's.
+//! as placeholders, the rows moving to their places and the scroll are the terminal's. The
+//! session driver folds its reads in through the app as its front end (`FrontEnd`).
 
 use std::time::Instant;
 
+use dfdu_session::extras::Applied;
 use dfdu_session::state::Reordered;
+use dfdu_session::{FrontEnd, SessionState};
 
 use super::App;
 use crate::model::snapshot::Snapshot;
@@ -36,5 +39,35 @@ impl App {
             (self.motion).resorted(&re.before, &s.list.rows, &s.snap.entries, re.auto);
         }
         self.scroll = r.scroll.apply(self.scroll);
+    }
+}
+
+/// The app around the session's state, as the session driver folds reads into it: with the
+/// rows' motion and the scroll, the details pane's scroll, and the type picker's breakdown.
+impl FrontEnd for App {
+    fn state(&self) -> &SessionState {
+        &self.session
+    }
+
+    fn state_mut(&mut self) -> &mut SessionState {
+        &mut self.session
+    }
+
+    fn refresh(&mut self, snap: Snapshot, now: Instant) {
+        App::refresh(self, snap, now);
+    }
+
+    fn reorder(&mut self, now: Instant) {
+        App::reorder(self, now);
+    }
+
+    fn applied(&mut self, applied: Applied) {
+        if applied.details_moved {
+            self.details.scroll = 0;
+        }
+    }
+
+    fn breakdown(&self) -> bool {
+        matches!(self.overlay, super::Overlay::Types(_))
     }
 }

@@ -46,6 +46,7 @@ pub mod state;
 pub mod test_support;
 pub mod tree;
 pub mod treemap;
+pub mod type_filter;
 pub mod view;
 
 pub use session::{FrontEnd, Session, SessionOptions, Tick};

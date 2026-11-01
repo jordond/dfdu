@@ -7,9 +7,9 @@
 //! files' contents (`features::dupes`) and the disk picker lists the disks (`features::picker`).
 
 pub(crate) use dfdu_session::cache_link;
+#[cfg(test)]
 pub(crate) mod extras;
 pub(crate) mod growth;
-pub(crate) mod history_link;
 pub(crate) mod outside;
 
 pub(crate) use dfdu_session::snapshot;

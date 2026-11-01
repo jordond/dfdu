@@ -84,22 +84,37 @@ fn the_wake_is_the_first_of_data_spinner_sort_and_polling() {
     assert_eq!(p.wake_at(&s, false, false, now), Some(due));
 }
 
-/// A session on an engine that scans nothing, ticked at `t0`: its first tick reads the model.
-fn session(engine: &Engine<PortableBackend>, t0: Instant) -> Session<'_, PortableBackend> {
+/// A session on an engine that scans nothing, ticked a frame apart from `t0` (and a few ms apart
+/// in real time) until two ticks in a row find nothing to do. Returns it with its clock then.
+fn settled(
+    engine: &Engine<PortableBackend>,
+    t0: Instant,
+) -> (Session<'_, PortableBackend>, Instant) {
     let mut session = Session::over(engine, SessionState::new(t0), SessionOptions::default());
     let tick = session.tick(t0).expect("no fatal error");
     assert!(tick.changed, "the first tick reads the model");
     session.shown(t0);
-    session
+    let (mut now, mut quiet) = (t0, 0);
+    while quiet < 2 {
+        assert!(now < t0 + Duration::from_secs(100), "never settled");
+        std::thread::sleep(5 * MS);
+        now += DATA_FRAME;
+        let tick = session.tick(now).expect("tick");
+        if tick == Tick::default() {
+            quiet += 1;
+        } else {
+            quiet = 0;
+            session.shown(now);
+        }
+    }
+    (session, now)
 }
 
 #[test]
 fn the_automatic_re_sort_waits_for_its_deadline() {
     let engine = Engine::portable(1);
-    let t0 = Instant::now();
-    let mut session = session(&engine, t0);
-    assert_eq!(session.tick(t0 + MS).expect("tick"), Tick::default());
-    // A snapshot that changed came in, and the user pressed a key a second after the start.
+    let (mut session, t0) = settled(&engine, Instant::now());
+    // A snapshot that changed came in, and the user pressed a key a second later.
     session.state_mut().sort_schedule.note_changed();
     session.state_mut().note_input(t0 + Duration::from_secs(1));
     let due = t0 + Duration::from_secs(1) + IDLE_BEFORE_SORT;
@@ -125,8 +140,7 @@ fn a_scan_is_read_until_it_settles() {
     std::fs::create_dir(tmp.path().join("d")).expect("mkdir");
     std::fs::write(tmp.path().join("d/f"), b"data").expect("write");
     let engine = Engine::portable(2);
-    let t0 = Instant::now();
-    let mut session = session(&engine, t0);
+    let (mut session, t0) = settled(&engine, Instant::now());
     engine.send(dfdu_engine::Command::Scan {
         path: tmp.path().to_path_buf().into(),
         opts: dfdu_scan::JobOptions::default(),

@@ -69,7 +69,7 @@ impl Pacing {
         // directory or changed what a snapshot counts.
         let stale = s.target.path != s.snap.dir_path
             || s.size_mode != self.read_mode
-            || types_stale(s, breakdown)
+            || crate::type_filter::stale(s, breakdown)
             || crate::tree::stale(s.tree_shown(), &s.snap);
         extras::plan(data_ready || stale, extras::stale(s))
     }
@@ -121,12 +121,6 @@ impl Pacing {
         self.last_shown = Some(now);
         self.shown_entries |= !s.snap.entries.is_empty();
     }
-}
-
-/// Whether the snapshot was read with another file type filter, or lacks the breakdown the
-/// front end shows.
-fn types_stale(s: &SessionState, breakdown: bool) -> bool {
-    s.snap.types != s.types || (breakdown && s.snap.breakdown.is_none())
 }
 
 /// A spinner and a clock move while the engine is busy, the cached scan is read or brought up

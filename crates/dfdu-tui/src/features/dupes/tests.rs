@@ -77,7 +77,7 @@ fn duplicates_are_found_marked_and_shown() {
         "the session reads the candidates and starts: {out:?}"
     );
     let deadline = Instant::now() + Duration::from_secs(20);
-    while running(&app) {
+    while dfdu_session::dupes::running(&app.session) {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }

@@ -1,6 +1,7 @@
-//! The interactive browser. The run loop (`run_loop`) reads the engine model under the read lock
-//! only to copy a `model::snapshot::Snapshot` and the features' `model::extras::Extras`, then
-//! draws from the copy.
+//! The interactive browser. The run loop (`run_loop`) ticks the session driver
+//! (`dfdu_session::Session`), which reads the engine model under the read lock only to copy a
+//! `model::snapshot::Snapshot` and the features' `model::extras::Extras`; the loop draws from
+//! the copy.
 //!
 //! State and key handling are in `app` (with the action registry in `app::keys`), drawing in
 //! `view`, with the styles in `theme` and the text for sizes, counts and bars in `format`. Each
@@ -47,9 +48,9 @@ use features::picker::Picked;
 
 pub use app::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
 pub use dfdu_session::cache_link::CacheLink;
+pub use dfdu_session::history_link::HistoryLink;
 pub use dfdu_session::startup::{Source, StartLocal};
 pub use features::debug::summary as debug_summary;
-pub use model::history_link::HistoryLink;
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings};
 pub use state::motion::MAX_STEP as MAX_EASING_STEP;

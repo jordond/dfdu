@@ -129,8 +129,9 @@ impl App {
     }
 
     /// True when the features need a read of the engine model for the next frame although no
-    /// new snapshot is due. A read must make it false: while it is true, the run loop reads
+    /// new snapshot is due. A read must make it false: while it is true, the session driver reads
     /// again at once.
+    #[cfg(test)]
     pub fn extras_stale(&self) -> bool {
         dfdu_session::extras::stale(&self.session)
     }

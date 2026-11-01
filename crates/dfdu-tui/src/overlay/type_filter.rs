@@ -58,13 +58,6 @@ pub fn open(app: &mut App) {
     app.overlay = Overlay::Types(TypePicker::default());
 }
 
-/// Whether the snapshot was read with another filter, or lacks the breakdown the open picker
-/// shows.
-pub fn stale(app: &App) -> bool {
-    app.session.snap.types != app.session.types
-        || (matches!(app.overlay, Overlay::Types(_)) && app.session.snap.breakdown.is_none())
-}
-
 /// Turns the filter off; false when it was off.
 pub fn clear(app: &mut App) -> bool {
     if app.session.types.is_empty() {
@@ -301,6 +294,11 @@ mod tests {
     use crate::model::snapshot;
     use crate::tests::{press, render};
     use crate::theme::Theme;
+
+    /// The snapshot held is not what the filter and the open picker need.
+    fn stale(app: &App) -> bool {
+        dfdu_session::type_filter::stale(&app.session, dfdu_session::FrontEnd::breakdown(app))
+    }
 
     /// `/r` with `films/a.mp4` (100), `films/notes.txt` (10), `music/c.flac` (50), `x.mkv`
     /// (30) and `README` (5).
