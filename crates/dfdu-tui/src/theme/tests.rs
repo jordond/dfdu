@@ -1,24 +1,19 @@
 use super::*;
 
 #[test]
-fn token_names_round_trip() {
-    for (i, t) in Token::ALL.into_iter().enumerate() {
-        assert_eq!(t as usize, i, "{t:?} is in declaration order");
-        assert_eq!(Token::from_name(t.name()), Some(t));
+fn modifiers_map_one_to_one() {
+    let all = Modifiers::ALL
+        .into_iter()
+        .fold(Modifiers::empty(), |acc, m| acc | m);
+    assert_eq!(modifier(all), Modifier::all());
+    assert_eq!(modifier(Modifiers::empty()), Modifier::empty());
+    for m in Modifiers::ALL {
+        assert_eq!(modifier(m).bits().count_ones(), 1, "{m:?}");
     }
-    assert_eq!(Token::from_name("cursor.bg"), None);
-    for c in Category::ALL {
-        assert_eq!(
-            c.token().name().strip_prefix("cat."),
-            Some(format!("{c:?}").to_lowercase().as_str())
-        );
-    }
-    for s in SafetyStyle::ALL {
-        assert_eq!(
-            s.token().name().strip_prefix("safety."),
-            Some(format!("{s:?}").to_lowercase().as_str())
-        );
-    }
+    assert_eq!(
+        modifier(Modifiers::BOLD | Modifiers::UNDERLINED),
+        Modifier::BOLD | Modifier::UNDERLINED
+    );
 }
 
 #[test]
@@ -72,13 +67,12 @@ fn named_themes_remember_how_they_were_resolved() {
 #[test]
 fn every_token_resolves_into_its_own_field() {
     use ratatui::style::Color;
-    let mut palette: Palette = [Spec::NONE; Token::COUNT];
-    for t in Token::ALL {
-        palette[t as usize] = Spec::fg(ColorSpec {
+    let palette = Palette::from_fn(|t| {
+        Spec::fg(ColorSpec {
             ansi256: Some(t as u8),
             ..ColorSpec::NONE
-        });
-    }
+        })
+    });
     let theme = Theme::resolve("test".into(), &palette, ColorLevel::Ansi256, None);
     for t in Token::ALL {
         assert_eq!(theme.style(t).fg, Some(Color::Indexed(t as u8)), "{t:?}");

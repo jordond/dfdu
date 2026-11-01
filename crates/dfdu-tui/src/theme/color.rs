@@ -1,9 +1,7 @@
-//! Colour levels, colours with a value per level, and the conversions between levels.
+//! Colour levels, a palette colour resolved for a level, and the conversions between levels.
 
+use dfdu_session::palette::{AnsiColor, ColorSpec, Rgb};
 use ratatui::style::Color;
-
-/// An sRGB colour with 8 bits per channel.
-pub type Rgb = (u8, u8, u8);
 
 /// How many colours the terminal can show, from none to 24-bit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -14,50 +12,48 @@ pub enum ColorLevel {
     TrueColor,
 }
 
-/// A colour with optional explicit values for each level. Resolving it at a level uses that
-/// level's value when given and otherwise converts from the richest value it has (a colour
-/// with only poorer values uses those unchanged: a named ANSI colour stays named at every
-/// level).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ColorSpec {
-    pub rgb: Option<Rgb>,
-    pub ansi256: Option<u8>,
-    /// One of the 16 named colours or `Color::Reset`.
-    pub ansi16: Option<Color>,
+/// `spec` at `level`: that level's value when given, otherwise converted from the richest value
+/// it has (a colour with only poorer values uses those unchanged: a named ANSI colour stays
+/// named at every level).
+pub fn resolve(spec: &ColorSpec, level: ColorLevel) -> Option<Color> {
+    let indexed = spec.ansi256.map(Color::Indexed);
+    let named = spec.ansi16.map(ansi);
+    match level {
+        ColorLevel::None => None,
+        ColorLevel::TrueColor => spec
+            .rgb
+            .map(|(r, g, b)| Color::Rgb(r, g, b))
+            .or(indexed)
+            .or(named),
+        ColorLevel::Ansi256 => indexed
+            .or_else(|| spec.rgb.map(|c| Color::Indexed(rgb_to_256(c))))
+            .or(named),
+        ColorLevel::Ansi16 => named
+            .or_else(|| spec.rgb.map(rgb_to_16))
+            .or_else(|| spec.ansi256.map(ansi256_to_16)),
+    }
 }
 
-impl ColorSpec {
-    /// No colour at any level: the cell keeps whatever colour it had.
-    pub const NONE: ColorSpec = ColorSpec {
-        rgb: None,
-        ansi256: None,
-        ansi16: None,
-    };
-
-    pub const fn named(c: Color) -> Self {
-        ColorSpec {
-            ansi16: Some(c),
-            ..Self::NONE
-        }
-    }
-
-    pub fn resolve(&self, level: ColorLevel) -> Option<Color> {
-        let indexed = self.ansi256.map(Color::Indexed);
-        match level {
-            ColorLevel::None => None,
-            ColorLevel::TrueColor => self
-                .rgb
-                .map(|(r, g, b)| Color::Rgb(r, g, b))
-                .or(indexed)
-                .or(self.ansi16),
-            ColorLevel::Ansi256 => indexed
-                .or_else(|| self.rgb.map(|c| Color::Indexed(rgb_to_256(c))))
-                .or(self.ansi16),
-            ColorLevel::Ansi16 => self
-                .ansi16
-                .or_else(|| self.rgb.map(rgb_to_16))
-                .or_else(|| self.ansi256.map(ansi256_to_16)),
-        }
+/// The ratatui colour of a named ANSI colour.
+const fn ansi(c: AnsiColor) -> Color {
+    match c {
+        AnsiColor::Reset => Color::Reset,
+        AnsiColor::Black => Color::Black,
+        AnsiColor::Red => Color::Red,
+        AnsiColor::Green => Color::Green,
+        AnsiColor::Yellow => Color::Yellow,
+        AnsiColor::Blue => Color::Blue,
+        AnsiColor::Magenta => Color::Magenta,
+        AnsiColor::Cyan => Color::Cyan,
+        AnsiColor::Gray => Color::Gray,
+        AnsiColor::DarkGray => Color::DarkGray,
+        AnsiColor::LightRed => Color::LightRed,
+        AnsiColor::LightGreen => Color::LightGreen,
+        AnsiColor::LightYellow => Color::LightYellow,
+        AnsiColor::LightBlue => Color::LightBlue,
+        AnsiColor::LightMagenta => Color::LightMagenta,
+        AnsiColor::LightCyan => Color::LightCyan,
+        AnsiColor::White => Color::White,
     }
 }
 
@@ -290,45 +286,48 @@ mod tests {
         let spec = ColorSpec {
             rgb: Some((0xe6, 0x9f, 0x00)),
             ansi256: Some(25),
-            ansi16: Some(Color::Magenta),
+            ansi16: Some(AnsiColor::Magenta),
         };
         assert_eq!(
-            spec.resolve(ColorLevel::TrueColor),
+            resolve(&spec, ColorLevel::TrueColor),
             Some(Color::Rgb(0xe6, 0x9f, 0x00))
         );
-        assert_eq!(spec.resolve(ColorLevel::Ansi256), Some(Color::Indexed(25)));
-        assert_eq!(spec.resolve(ColorLevel::Ansi16), Some(Color::Magenta));
-        assert_eq!(spec.resolve(ColorLevel::None), None);
+        assert_eq!(
+            resolve(&spec, ColorLevel::Ansi256),
+            Some(Color::Indexed(25))
+        );
+        assert_eq!(resolve(&spec, ColorLevel::Ansi16), Some(Color::Magenta));
+        assert_eq!(resolve(&spec, ColorLevel::None), None);
 
         let rgb_only = ColorSpec {
             rgb: Some((0xe6, 0x9f, 0x00)),
             ..ColorSpec::NONE
         };
         assert_eq!(
-            rgb_only.resolve(ColorLevel::Ansi256),
+            resolve(&rgb_only, ColorLevel::Ansi256),
             Some(Color::Indexed(178))
         );
-        assert_eq!(rgb_only.resolve(ColorLevel::Ansi16), Some(Color::Yellow));
+        assert_eq!(resolve(&rgb_only, ColorLevel::Ansi16), Some(Color::Yellow));
 
         let indexed = ColorSpec {
             ansi256: Some(25),
             ..ColorSpec::NONE
         };
         assert_eq!(
-            indexed.resolve(ColorLevel::TrueColor),
+            resolve(&indexed, ColorLevel::TrueColor),
             Some(Color::Indexed(25))
         );
-        assert_eq!(indexed.resolve(ColorLevel::Ansi16), Some(Color::Blue));
+        assert_eq!(resolve(&indexed, ColorLevel::Ansi16), Some(Color::Blue));
 
-        let named = ColorSpec::named(Color::Cyan);
+        let named = ColorSpec::named(AnsiColor::Cyan);
         for level in [
             ColorLevel::Ansi16,
             ColorLevel::Ansi256,
             ColorLevel::TrueColor,
         ] {
-            assert_eq!(named.resolve(level), Some(Color::Cyan), "{level:?}");
+            assert_eq!(resolve(&named, level), Some(Color::Cyan), "{level:?}");
         }
-        assert_eq!(ColorSpec::NONE.resolve(ColorLevel::TrueColor), None);
+        assert_eq!(resolve(&ColorSpec::NONE, ColorLevel::TrueColor), None);
     }
 
     #[test]

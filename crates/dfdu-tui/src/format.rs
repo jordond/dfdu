@@ -24,7 +24,7 @@ pub enum Bars {
 
 impl Bars {
     /// The names [`Bars::parse`] accepts.
-    pub const NAMES: [&'static str; 2] = ["unicode", "ascii"];
+    pub const NAMES: [&'static str; 2] = dfdu_session::palette::BARS;
 
     /// `unicode` or `ascii`.
     #[must_use]

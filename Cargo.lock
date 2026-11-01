@@ -794,6 +794,7 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "nucleo-matcher",
+ "toml",
 ]
 
 [[package]]
@@ -868,7 +869,6 @@ dependencies = [
  "tachyonfx",
  "tempfile",
  "terminal-colorsaurus",
- "toml",
  "unicode-width",
 ]
 

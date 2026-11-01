@@ -502,6 +502,7 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "nucleo-matcher",
+ "toml",
 ]
 
 [[package]]
@@ -555,7 +556,6 @@ dependencies = [
  "ratatui",
  "tachyonfx",
  "terminal-colorsaurus",
- "toml",
  "unicode-width",
 ]
 

@@ -93,7 +93,7 @@ pub(crate) fn resolve_theme(
         None
     };
     let mut theme = if let ThemeChoice::File(file) = &settings.theme {
-        file.resolve(detected.level, background)
+        Theme::from_file(file, detected.level, background)
     } else {
         let b = theme::choose_theme(explicit, detected.level, background);
         Theme::builtin(b, detected.level, background)

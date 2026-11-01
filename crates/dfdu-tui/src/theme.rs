@@ -1,241 +1,57 @@
 //! Semantic styles. Widgets use tokens (`fg.dim`, `dir`, `status.warn`, ...), never literal
-//! colours. A theme gives each token a colour per colour level and modifiers; it is resolved once
-//! for the terminal's level into plain `Style`s. Every colour cue also has a glyph or text, so
-//! `mono` (`NO_COLOR`) keeps the modifiers and drops every colour.
+//! colours. A theme's palette (`dfdu_session::palette`) gives each token a colour per colour
+//! level and modifiers; it is resolved once for the terminal's level into plain `Style`s. Every
+//! colour cue also has a glyph or text, so `mono` (`NO_COLOR`) keeps the modifiers and drops
+//! every colour.
 
+#[cfg(test)]
 mod builtin;
 mod color;
 mod detect;
 mod file;
 
+use dfdu_session::palette::{ColorSpec, Modifiers, Palette, Spec};
 use ratatui::style::{Modifier, Style};
 
 pub use crate::format::Bars;
-pub use builtin::BuiltinTheme;
-pub use color::{ColorLevel, ColorSpec, Rgb, color_rgb, contrast, lightness, rgb_color};
+pub use color::{ColorLevel, color_rgb, contrast, lightness, rgb_color};
 pub use detect::{
     choose_theme, detect_color_level, parse_color_flag, query_background, should_query_background,
 };
-pub use file::{ThemeError, ThemeFile};
+pub use dfdu_session::palette::{
+    BuiltinTheme, Category, Rgb, SafetyStyle, ThemeError, ThemeFile, Token,
+};
 
-/// A themable style. [`Token::name`] is its key in a theme file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Token {
-    Fg,
-    FgDim,
-    Bg,
-    Border,
-    BorderFocus,
-    Header,
-    Title,
-    Cursor,
-    Mark,
-    Dir,
-    Key,
-    BarFill,
-    BarEmpty,
-    SizeBig,
-    ScanActive,
-    ScanDone,
-    StatusError,
-    StatusWarn,
-    StatusOk,
-    Match,
-    CatCache,
-    CatBuild,
-    CatVm,
-    CatToolchain,
-    CatMedia,
-    CatDownload,
-    CatContainer,
-    CatOther,
-    SafetySafe,
-    SafetyReview,
-    SafetyKeep,
-}
-
-impl Token {
-    pub const COUNT: usize = 31;
-    pub const ALL: [Token; Self::COUNT] = [
-        Token::Fg,
-        Token::FgDim,
-        Token::Bg,
-        Token::Border,
-        Token::BorderFocus,
-        Token::Header,
-        Token::Title,
-        Token::Cursor,
-        Token::Mark,
-        Token::Dir,
-        Token::Key,
-        Token::BarFill,
-        Token::BarEmpty,
-        Token::SizeBig,
-        Token::ScanActive,
-        Token::ScanDone,
-        Token::StatusError,
-        Token::StatusWarn,
-        Token::StatusOk,
-        Token::Match,
-        Token::CatCache,
-        Token::CatBuild,
-        Token::CatVm,
-        Token::CatToolchain,
-        Token::CatMedia,
-        Token::CatDownload,
-        Token::CatContainer,
-        Token::CatOther,
-        Token::SafetySafe,
-        Token::SafetyReview,
-        Token::SafetyKeep,
+/// `m` as ratatui's modifiers.
+fn modifier(m: Modifiers) -> Modifier {
+    const PAIRS: [(Modifiers, Modifier); 9] = [
+        (Modifiers::BOLD, Modifier::BOLD),
+        (Modifiers::DIM, Modifier::DIM),
+        (Modifiers::ITALIC, Modifier::ITALIC),
+        (Modifiers::UNDERLINED, Modifier::UNDERLINED),
+        (Modifiers::SLOW_BLINK, Modifier::SLOW_BLINK),
+        (Modifiers::RAPID_BLINK, Modifier::RAPID_BLINK),
+        (Modifiers::REVERSED, Modifier::REVERSED),
+        (Modifiers::HIDDEN, Modifier::HIDDEN),
+        (Modifiers::CROSSED_OUT, Modifier::CROSSED_OUT),
     ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Token::Fg => "fg",
-            Token::FgDim => "fg.dim",
-            Token::Bg => "bg",
-            Token::Border => "border",
-            Token::BorderFocus => "border.focus",
-            Token::Header => "header",
-            Token::Title => "title",
-            Token::Cursor => "cursor",
-            Token::Mark => "mark",
-            Token::Dir => "dir",
-            Token::Key => "key",
-            Token::BarFill => "bar.fill",
-            Token::BarEmpty => "bar.empty",
-            Token::SizeBig => "size.big",
-            Token::ScanActive => "scan.active",
-            Token::ScanDone => "scan.done",
-            Token::StatusError => "status.error",
-            Token::StatusWarn => "status.warn",
-            Token::StatusOk => "status.ok",
-            Token::Match => "match",
-            Token::CatCache => "cat.cache",
-            Token::CatBuild => "cat.build",
-            Token::CatVm => "cat.vm",
-            Token::CatToolchain => "cat.toolchain",
-            Token::CatMedia => "cat.media",
-            Token::CatDownload => "cat.download",
-            Token::CatContainer => "cat.container",
-            Token::CatOther => "cat.other",
-            Token::SafetySafe => "safety.safe",
-            Token::SafetyReview => "safety.review",
-            Token::SafetyKeep => "safety.keep",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Token> {
-        Self::ALL.into_iter().find(|t| t.name() == name)
-    }
+    PAIRS
+        .into_iter()
+        .filter(|&(ours, _)| m.contains(ours))
+        .fold(Modifier::empty(), |acc, (_, r)| acc | r)
 }
 
-/// What a directory's contents are, for category tags; indexes [`Theme::cat`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Category {
-    Cache,
-    Build,
-    Vm,
-    Toolchain,
-    Media,
-    Download,
-    Container,
-    Other,
-}
-
-impl Category {
-    pub const ALL: [Category; 8] = [
-        Category::Cache,
-        Category::Build,
-        Category::Vm,
-        Category::Toolchain,
-        Category::Media,
-        Category::Download,
-        Category::Container,
-        Category::Other,
-    ];
-
-    pub const fn token(self) -> Token {
-        match self {
-            Category::Cache => Token::CatCache,
-            Category::Build => Token::CatBuild,
-            Category::Vm => Token::CatVm,
-            Category::Toolchain => Token::CatToolchain,
-            Category::Media => Token::CatMedia,
-            Category::Download => Token::CatDownload,
-            Category::Container => Token::CatContainer,
-            Category::Other => Token::CatOther,
-        }
+/// `spec` resolved for `level`.
+fn spec_style(spec: &Spec, level: ColorLevel) -> Style {
+    let mut s = Style::new().add_modifier(modifier(spec.modifiers));
+    if let Some(c) = color::resolve(&spec.fg, level) {
+        s = s.fg(c);
     }
-}
-
-/// The style of a cleanup candidate by how safe it is to delete; indexes [`Theme::safety`].
-/// Three buckets for colour, not the rules' [`dfdu_tree::Safety`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SafetyStyle {
-    Safe,
-    Review,
-    Keep,
-}
-
-impl SafetyStyle {
-    pub const ALL: [SafetyStyle; 3] = [SafetyStyle::Safe, SafetyStyle::Review, SafetyStyle::Keep];
-
-    pub const fn token(self) -> Token {
-        match self {
-            SafetyStyle::Safe => Token::SafetySafe,
-            SafetyStyle::Review => Token::SafetyReview,
-            SafetyStyle::Keep => Token::SafetyKeep,
-        }
+    if let Some(c) = color::resolve(&spec.bg, level) {
+        s = s.bg(c);
     }
+    s
 }
-
-/// A token's unresolved value: foreground and background per level, and modifiers that apply at
-/// every level.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Spec {
-    pub fg: ColorSpec,
-    pub bg: ColorSpec,
-    pub modifiers: Modifier,
-}
-
-impl Spec {
-    pub const NONE: Spec = Spec {
-        fg: ColorSpec::NONE,
-        bg: ColorSpec::NONE,
-        modifiers: Modifier::empty(),
-    };
-
-    pub const fn fg(fg: ColorSpec) -> Self {
-        Spec { fg, ..Self::NONE }
-    }
-
-    pub const fn bg(self, bg: ColorSpec) -> Self {
-        Spec { bg, ..self }
-    }
-
-    pub const fn add(self, m: Modifier) -> Self {
-        Spec {
-            modifiers: self.modifiers.union(m),
-            ..self
-        }
-    }
-
-    fn resolve(&self, level: ColorLevel) -> Style {
-        let mut s = Style::new().add_modifier(self.modifiers);
-        if let Some(c) = self.fg.resolve(level) {
-            s = s.fg(c);
-        }
-        if let Some(c) = self.bg.resolve(level) {
-            s = s.bg(c);
-        }
-        s
-    }
-}
-
-/// Every token's value, indexed by `Token as usize`.
-pub type Palette = [Spec; Token::COUNT];
 
 /// A theme resolved for one colour level. Each field is the style of the token of the same
 /// name, with `_` for `.` (`fg_dim` is `fg.dim`); <https://dfdu.app/docs/themes/> says what
@@ -289,7 +105,7 @@ impl Theme {
     /// The names [`Theme::named`] accepts.
     #[must_use]
     pub fn builtin_names() -> &'static [&'static str] {
-        &builtin::NAMES
+        &BuiltinTheme::NAMES
     }
 
     /// Built-in theme `name` resolved for `level`, on a terminal whose background is
@@ -322,13 +138,13 @@ impl Theme {
     ) -> Self {
         let mono = (level == ColorLevel::None).then(|| BuiltinTheme::Mono.palette());
         let style = |t: Token| {
-            let mut spec = palette[t as usize];
+            let mut spec = palette[t];
             if let Some(mono) = &mono
                 && (spec.fg != ColorSpec::NONE || spec.bg != ColorSpec::NONE)
             {
-                spec.modifiers |= mono[t as usize].modifiers;
+                spec.modifiers |= mono[t].modifiers;
             }
-            spec.resolve(level)
+            spec_style(&spec, level)
         };
         Theme {
             fg: style(Token::Fg),

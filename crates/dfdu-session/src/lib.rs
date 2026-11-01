@@ -6,8 +6,9 @@
 //! manager that shows a path (`file_manager`). What is opened and how it starts (`startup`), and
 //! the treemap's layout (`treemap`). The actions with their keys and labels (`actions`), the
 //! duplicates comparison and its keep rules (`dupes`), the largest files below a directory
-//! (`largest`), the details of an entry (`details`), mark by pattern (`mark_pattern`), and the
-//! text for numbers (`format`).
+//! (`largest`), the details of an entry (`details`), mark by pattern (`mark_pattern`), the
+//! text for numbers (`format`), and the theme's tokens, built-in themes and theme files
+//! (`palette`).
 
 pub mod actions;
 pub mod details;
@@ -21,6 +22,7 @@ pub mod largest;
 pub mod mark_pattern;
 pub mod order;
 pub mod outside;
+pub mod palette;
 pub mod snapshot;
 pub mod startup;
 #[cfg(any(test, feature = "test-support"))]
