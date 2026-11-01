@@ -46,9 +46,9 @@ use ratatui::crossterm::execute;
 use features::picker::Picked;
 
 pub use app::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
+pub use dfdu_session::cache_link::CacheLink;
 pub use dfdu_session::startup::{Source, StartLocal};
 pub use features::debug::summary as debug_summary;
-pub use model::cache_link::CacheLink;
 pub use model::history_link::HistoryLink;
 pub use run_loop::{event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings};

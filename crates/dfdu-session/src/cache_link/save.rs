@@ -12,7 +12,7 @@ use dfdu_store::cache::{self, Saved};
 use dfdu_store::snapshot::Header;
 
 use super::{CANCEL_WAIT, CacheLink, Cacher, RESAVE_QUIET, SavedAs, ended};
-use crate::app::App;
+use crate::state::SessionState;
 
 /// A save running on its thread.
 pub(super) struct Writer {
@@ -28,7 +28,7 @@ impl Cacher {
     pub(super) fn save<B: dfdu_scan::Backend>(
         &mut self,
         link: &CacheLink,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
         version: u64,
     ) -> bool {
@@ -65,7 +65,7 @@ impl Cacher {
             cancel,
             done,
         });
-        self.save_started(link, app, version, writer)
+        self.save_started(link, s, version, writer)
     }
 
     /// Takes in the start of a save of the tree at `version`. A thread that could not be
@@ -74,7 +74,7 @@ impl Cacher {
     pub(super) fn save_started(
         &mut self,
         link: &CacheLink,
-        app: &mut App,
+        s: &mut SessionState,
         version: u64,
         writer: std::io::Result<Writer>,
     ) -> bool {
@@ -86,7 +86,7 @@ impl Cacher {
                 false
             }
             Err(e) => {
-                app.session.status = Some(format!(
+                s.status = Some(format!(
                     "cache {}: cannot start a thread: {e}",
                     link.slot.path.display()
                 ));
@@ -97,7 +97,7 @@ impl Cacher {
 
     /// Takes in the end of a save: a problem goes in the status line, and a tree that changed
     /// while it was written is saved again once it stays the same.
-    pub(super) fn save_ended(&mut self, link: &CacheLink, app: &mut App) -> bool {
+    pub(super) fn save_ended(&mut self, link: &CacheLink, s: &mut SessionState) -> bool {
         let Some(w) = self.writer.take_if(|w| w.thread.is_finished()) else {
             return false;
         };
@@ -108,11 +108,11 @@ impl Cacher {
                 false
             }
             Ok(Err(e)) => {
-                app.session.status = Some(format!("cache {}: {e}", link.slot.path.display()));
+                s.status = Some(format!("cache {}: {e}", link.slot.path.display()));
                 true
             }
             Err(_) => {
-                app.session.status = Some(format!(
+                s.status = Some(format!(
                     "cache {}: the writer panicked",
                     link.slot.path.display()
                 ));
@@ -126,7 +126,7 @@ impl Cacher {
     pub(super) fn resave<B: dfdu_scan::Backend>(
         &mut self,
         link: &CacheLink,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
     ) -> bool {
         let worth = self
@@ -147,7 +147,7 @@ impl Cacher {
         match self.changed {
             Some((v, since)) if v == version => {
                 if since.elapsed() >= RESAVE_QUIET {
-                    return self.save(link, app, engine, version);
+                    return self.save(link, s, engine, version);
                 }
             }
             _ => self.changed = Some((version, Instant::now())),

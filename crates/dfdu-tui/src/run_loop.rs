@@ -84,7 +84,7 @@ where
     let mut pacing = Pacing::new(app.session.size_mode);
     loop {
         let history_changed = recorder.poll(&mut app, engine);
-        let cache_changed = cacher.poll(&mut app, engine);
+        let cache_changed = cacher.poll(&mut app.session, engine);
         let outside_changed = app.session.outside.poll();
         if history_changed || cache_changed || outside_changed {
             pacing.input_dirty = true;

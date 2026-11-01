@@ -4,7 +4,7 @@
 //! status line and never fatal: the directory is scanned instead.
 //!
 //! Nothing is saved on the way out: quitting cancels a save still running (the file cached
-//! before stays) and waits at most [`CANCEL_WAIT`] for it to stop.
+//! before stays) and waits at most `CANCEL_WAIT` for it to stop.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use dfdu_store::cache::{self, Hit, MIN_SCAN_MS, Slot};
 use dfdu_store::snapshot::ScanTiming;
 use dfdu_tree::DirState;
 
-use crate::app::App;
+use crate::state::SessionState;
 use save::Writer;
 
 /// How long the tree must stay the same after it changed (a delete, a rescan) before it is
@@ -39,7 +39,7 @@ pub struct CacheLink {
     pub save: bool,
 }
 
-pub use dfdu_session::state::Cached;
+pub use crate::state::Cached;
 
 /// How long ago `then` was at `now` (seconds since the Unix epoch), in a few cells: `40 s`,
 /// `12 min`, `3 h`, `5 d`.
@@ -107,7 +107,7 @@ enum SavedAs {
 
 /// Loads the cached scan, scans when there is none, and saves complete scans, on threads the
 /// drop stops.
-pub(crate) struct Cacher {
+pub struct Cacher {
     link: Option<CacheLink>,
     started: bool,
     loader: Option<thread::JoinHandle<Loaded>>,
@@ -127,7 +127,7 @@ pub(crate) struct Cacher {
 }
 
 impl Cacher {
-    pub(crate) fn new(link: Option<CacheLink>) -> Self {
+    pub fn new(link: Option<CacheLink>) -> Self {
         Cacher {
             link,
             started: false,
@@ -145,9 +145,9 @@ impl Cacher {
     /// Starts on the first call: loads the cached scan, or scans. Then takes in the load, the
     /// end of the scan or resume (and saves it), and the end of a save, reporting problems in
     /// the status line. True when there is something new to draw.
-    pub(crate) fn poll<B: dfdu_scan::Backend>(
+    pub fn poll<B: dfdu_scan::Backend>(
         &mut self,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
     ) -> bool {
         let Some(link) = self.link.clone() else {
@@ -155,18 +155,18 @@ impl Cacher {
         };
         if !self.started {
             self.started = true;
-            self.begin(&link, app, engine);
+            self.begin(&link, s, engine);
             return true;
         }
         let mut changed = false;
         if let Some(l) = self.loader.take_if(|l| l.is_finished()) {
             let loaded = l.join().unwrap_or(Err(LoadError::Panicked));
-            self.loaded(&link, loaded, app, engine);
+            self.loaded(&link, loaded, s, engine);
             changed = true;
         }
-        changed |= self.run_ended(&link, app, engine);
-        changed |= self.save_ended(&link, app);
-        changed |= self.resave(&link, app, engine);
+        changed |= self.run_ended(&link, s, engine);
+        changed |= self.save_ended(&link, s);
+        changed |= self.resave(&link, s, engine);
         changed
     }
 
@@ -174,7 +174,7 @@ impl Cacher {
     fn begin<B: dfdu_scan::Backend>(
         &mut self,
         link: &CacheLink,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
     ) {
         let now = cache::now();
@@ -194,7 +194,7 @@ impl Cacher {
                 });
             if let Ok(t) = spawned {
                 self.loader = Some(t);
-                app.session.cached = Some(Cached::Loading);
+                s.cached = Some(Cached::Loading);
                 return;
             }
         } else {
@@ -222,7 +222,7 @@ impl Cacher {
         &mut self,
         link: &CacheLink,
         loaded: Loaded,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
     ) {
         match loaded {
@@ -232,7 +232,7 @@ impl Cacher {
                 // keep what it missed.
                 let journal = h.journal.filter(|_| !hit.full_rescan);
                 let kept = h.resumed_timing().filter(|_| !hit.full_rescan);
-                app.session.cached = Some(Cached::Refreshing { written: h.written });
+                s.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
                 engine.resume_with(
                     hit.loaded.tree,
@@ -242,12 +242,12 @@ impl Cacher {
                 );
             }
             Ok(None) => {
-                app.session.cached = None;
+                s.cached = None;
                 self.scan(link, engine);
             }
             Err(e) => {
-                app.session.cached = None;
-                app.session.status = Some(format!(
+                s.cached = None;
+                s.status = Some(format!(
                     "cached scan {}: {e}; scanning",
                     link.slot.path.display()
                 ));
@@ -260,7 +260,7 @@ impl Cacher {
     fn run_ended<B: dfdu_scan::Backend>(
         &mut self,
         link: &CacheLink,
-        app: &mut App,
+        s: &mut SessionState,
         engine: &Engine<B>,
     ) -> bool {
         let Some(run) = (self.run.as_mut()).filter(|r| r.saved_as == SavedAs::Pending) else {
@@ -278,16 +278,16 @@ impl Cacher {
         } else {
             SavedAs::Skip
         };
-        let shown = app.session.cached.take().is_some();
+        let shown = s.cached.take().is_some();
         if worth {
-            return self.save(link, app, engine, version) | shown;
+            return self.save(link, s, engine, version) | shown;
         }
         shown
     }
 
     /// Something is being loaded, saved or waited for, so [`Cacher::poll`] has more to take
     /// in.
-    pub(crate) fn busy(&self) -> bool {
+    pub fn busy(&self) -> bool {
         self.link.is_some()
             && (!self.started
                 || self.loader.is_some()

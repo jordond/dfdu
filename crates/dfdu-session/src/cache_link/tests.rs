@@ -8,7 +8,6 @@ use dfdu_store::cache::{Cache, Key};
 use dfdu_store::snapshot::Header;
 
 use super::*;
-use crate::theme::Theme;
 
 /// A directory with a few files in it, and the cache link for it, its cache in `cache` below
 /// `tmp`.
@@ -38,14 +37,14 @@ pub(super) fn cacher(link: &CacheLink) -> Cacher {
 /// Polls until `done` holds, at most 10 s.
 pub(super) fn poll_until(
     c: &mut Cacher,
-    app: &mut App,
+    s: &mut SessionState,
     engine: &Engine<PortableBackend>,
-    done: impl Fn(&Cacher, &App) -> bool,
+    done: impl Fn(&Cacher, &SessionState) -> bool,
 ) {
     let t0 = Instant::now();
-    while !done(c, app) {
+    while !done(c, s) {
         assert!(t0.elapsed() < Duration::from_secs(10), "timed out");
-        c.poll(app, engine);
+        c.poll(s, engine);
         thread::sleep(Duration::from_millis(5));
     }
 }
@@ -78,36 +77,33 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
     let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut s = SessionState::new(Instant::now());
     let mut c = cacher(&link);
-    assert!(c.poll(&mut app, &e), "the scan is sent at once");
-    assert_eq!(app.session.cached, None, "nothing was cached");
-    poll_until(&mut c, &mut app, &e, |c, _| {
+    assert!(c.poll(&mut s, &e), "the scan is sent at once");
+    assert_eq!(s.cached, None, "nothing was cached");
+    poll_until(&mut c, &mut s, &e, |c, _| {
         c.writer.is_none()
             && c.run
                 .as_ref()
                 .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert!(link.slot.path.exists());
-    assert_eq!(app.session.status, None);
+    assert_eq!(s.status, None);
     let scanned = items(&e);
     drop(c);
     e.shutdown(Duration::from_millis(200));
 
     let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut s = SessionState::new(Instant::now());
     let mut c = cacher(&link);
-    c.poll(&mut app, &e);
-    assert_eq!(app.session.cached, Some(Cached::Loading));
-    poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
-    assert!(matches!(
-        app.session.cached,
-        Some(Cached::Refreshing { .. })
-    ));
+    c.poll(&mut s, &e);
+    assert_eq!(s.cached, Some(Cached::Loading));
+    poll_until(&mut c, &mut s, &e, |c, _| c.loader.is_none());
+    assert!(matches!(s.cached, Some(Cached::Refreshing { .. })));
     assert_eq!(items(&e), scanned, "the cached tree is shown");
-    poll_until(&mut c, &mut app, &e, |_, app| app.session.cached.is_none());
+    poll_until(&mut c, &mut s, &e, |_, s| s.cached.is_none());
     assert_eq!(items(&e), scanned);
-    assert_eq!(app.session.status, None);
+    assert_eq!(s.status, None);
     drop(c);
     e.shutdown(Duration::from_millis(200));
 }
@@ -128,10 +124,10 @@ fn nothing_is_saved_before_the_resume_ended() {
     let tmp = tempfile::tempdir().unwrap();
     let link = link(tmp.path());
     let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut s = SessionState::new(Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
-    poll_until(&mut c, &mut app, &e, |c, _| {
+    poll_until(&mut c, &mut s, &e, |c, _| {
         c.writer.is_none()
             && c.run
                 .as_ref()
@@ -145,15 +141,15 @@ fn nothing_is_saved_before_the_resume_ended() {
     fs::write(link.path.join("new"), b"new").unwrap();
 
     let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut s = SessionState::new(Instant::now());
     let mut c = cacher(&link);
     c.position = |_| Some(AT);
     c.changed_since = |_, _, _| {
         ANSWER.wait();
         Some(vec![PathBuf::new()])
     };
-    c.poll(&mut app, &e);
-    poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
+    c.poll(&mut s, &e);
+    poll_until(&mut c, &mut s, &e, |c, _| c.loader.is_none());
     let sub = e.read(|m| {
         let r = m.tree.roots().next()?;
         let sub = m.tree.children(r).find(|&x| m.tree.name(x) == b"sub")?;
@@ -167,9 +163,9 @@ fn nothing_is_saved_before_the_resume_ended() {
             .any(|n| n.starts_with("rescan: not refreshed yet"))
             && m.status.jobs.is_empty()
     };
-    poll_until(&mut c, &mut app, &e, |_, _| e.read(refused));
+    poll_until(&mut c, &mut s, &e, |_, _| e.read(refused));
     for _ in 0..20 {
-        c.poll(&mut app, &e);
+        c.poll(&mut s, &e);
         thread::sleep(Duration::from_millis(2));
     }
     assert!(
@@ -178,10 +174,7 @@ fn nothing_is_saved_before_the_resume_ended() {
                 .as_ref()
                 .is_some_and(|r| r.saved_as == SavedAs::Pending)
     );
-    assert!(matches!(
-        app.session.cached,
-        Some(Cached::Refreshing { .. })
-    ));
+    assert!(matches!(s.cached, Some(Cached::Refreshing { .. })));
     assert_eq!(fs::read(&link.slot.path).unwrap(), before);
     assert_eq!(
         items(&e),
@@ -190,13 +183,13 @@ fn nothing_is_saved_before_the_resume_ended() {
     );
 
     ANSWER.open();
-    poll_until(&mut c, &mut app, &e, |c, _| {
+    poll_until(&mut c, &mut s, &e, |c, _| {
         c.writer.is_none()
             && c.run
                 .as_ref()
                 .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
-    assert_eq!(app.session.cached, None);
+    assert_eq!(s.cached, None);
     assert_eq!(items(&e), Some(scanned + 1));
     let hit = link.slot.load(cache::now()).unwrap().expect("saved");
     assert_eq!(
@@ -216,14 +209,14 @@ fn a_damaged_cache_is_reported_and_scanned_instead() {
     fs::create_dir_all(link.slot.path.parent().unwrap()).unwrap();
     fs::write(&link.slot.path, b"DFDUSNAP\x04\0\0\0cut").unwrap();
     let e = Engine::portable(2);
-    let mut app = App::new(Theme::no_color(), Instant::now());
+    let mut s = SessionState::new(Instant::now());
     let mut c = cacher(&link);
-    c.poll(&mut app, &e);
-    poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
-    let status = app.session.status.clone().expect("a notice");
+    c.poll(&mut s, &e);
+    poll_until(&mut c, &mut s, &e, |c, _| c.loader.is_none());
+    let status = s.status.clone().expect("a notice");
     assert!(status.starts_with("cached scan "), "{status}");
     assert!(status.ends_with("; scanning"), "{status}");
-    assert_eq!(app.session.cached, None);
+    assert_eq!(s.cached, None);
     assert!(!link.slot.path.exists());
     assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
     assert_eq!(items(&e), Some(4));
@@ -240,10 +233,10 @@ fn quick_or_read_only_scans_are_not_saved() {
             ..link(tmp.path())
         };
         let e = Engine::portable(2);
-        let mut app = App::new(Theme::no_color(), Instant::now());
+        let mut s = SessionState::new(Instant::now());
         let mut c = cacher(&link);
         c.min_scan_ms = min;
-        poll_until(&mut c, &mut app, &e, |c, _| {
+        poll_until(&mut c, &mut s, &e, |c, _| {
             c.run
                 .as_ref()
                 .is_some_and(|r| r.saved_as != SavedAs::Pending)
@@ -256,9 +249,9 @@ fn quick_or_read_only_scans_are_not_saved() {
     }
 }
 
-/// Measures opening a cached scan of about a million entries: how long the first poll and the
-/// first frame take on the UI thread, when the cached tree is shown, and the longest poll.
-/// `cargo test --release -p dfdu-tui --lib -- --ignored --nocapture measure_opening`.
+/// Measures opening a cached scan of about a million entries: how long the first poll takes on
+/// the UI thread, when the cached tree is shown, and the longest poll.
+/// `cargo test --release -p dfdu-session --lib -- --ignored --nocapture measure_opening`.
 #[test]
 #[ignore = "a measurement, not a check"]
 fn measure_opening_a_million() {
@@ -284,26 +277,24 @@ fn measure_opening_a_million() {
     drop(t);
     let e = Engine::portable(2);
     let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
+    let mut s = SessionState::new(t0);
     let mut c = Cacher::new(Some(link.clone()));
-    c.poll(&mut app, &e);
+    c.poll(&mut s, &e);
     let first_poll = t0.elapsed();
-    let _ = crate::tests::render_buffer(&mut app, Instant::now(), 100, 30);
-    let first_frame = t0.elapsed();
     let mut longest = Duration::ZERO;
     let mut shown = None;
-    while app.session.cached.is_some() {
+    while s.cached.is_some() {
         assert!(t0.elapsed() < Duration::from_secs(60), "timed out");
         let p = Instant::now();
-        c.poll(&mut app, &e);
+        c.poll(&mut s, &e);
         longest = longest.max(p.elapsed());
-        if shown.is_none() && matches!(app.session.cached, Some(Cached::Refreshing { .. })) {
+        if shown.is_none() && matches!(s.cached, Some(Cached::Refreshing { .. })) {
             shown = Some(t0.elapsed());
         }
         thread::sleep(Duration::from_millis(2));
     }
     eprintln!(
-        "{saved:?}\nfirst poll {first_poll:?}, first frame {first_frame:?}, cached tree shown \
+        "{saved:?}\nfirst poll {first_poll:?}, cached tree shown \
          {shown:?}, refreshed {:?}, longest poll {longest:?}",
         t0.elapsed()
     );

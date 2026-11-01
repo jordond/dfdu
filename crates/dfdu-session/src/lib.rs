@@ -5,17 +5,18 @@
 //! rows (`order`) and the fuzzy matching of what is typed (`fuzzy`). What the features read
 //! from the model besides the snapshot (`extras`), and what is left to carry out after a key
 //! (`effect`). From outside the UI: the scan history (`history_link`) with what grew since the
-//! last scan (`growth`), the mounts and links the scan did not enter (`outside`), and the file
-//! manager that shows a path (`file_manager`). What is opened and how it starts (`startup`).
-//! The views: the treemap's layout, depth and lower levels (`treemap`), the cleanup view
-//! (`cleanup`), the duplicates comparison with its keep rules and view (`dupes`), and the
-//! largest files below a directory (`largest`). The actions with their keys and labels
-//! (`actions`), the delete confirmation (`confirm`), the details of an entry (`details`), the
-//! debug counters (`debug`), mark by pattern (`mark_pattern`), the text for numbers
-//! (`format`), the theme's tokens, built-in themes and theme files (`palette`), and the
+//! last scan (`growth`), the scan cache (`cache_link`), the mounts and links the scan did not
+//! enter (`outside`), and the file manager that shows a path (`file_manager`). What is opened
+//! and how it starts (`startup`). The views: the treemap's layout, depth and lower levels
+//! (`treemap`), the cleanup view (`cleanup`), the duplicates comparison with its keep rules and
+//! view (`dupes`), and the largest files below a directory (`largest`). The actions with their
+//! keys and labels (`actions`), the delete confirmation (`confirm`), the details of an entry
+//! (`details`), the debug counters (`debug`), mark by pattern (`mark_pattern`), the text for
+//! numbers (`format`), the theme's tokens, built-in themes and theme files (`palette`), and the
 //! single-line text input (`line`).
 
 pub mod actions;
+pub mod cache_link;
 pub mod cleanup;
 pub mod confirm;
 pub mod debug;

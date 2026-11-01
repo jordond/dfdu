@@ -794,6 +794,7 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "nucleo-matcher",
+ "tempfile",
  "toml",
 ]
 
