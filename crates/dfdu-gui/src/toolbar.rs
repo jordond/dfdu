@@ -211,11 +211,12 @@ mod tests {
     fn breadcrumbs_run_from_the_root_with_home_as_tilde() {
         let home = Path::new("/home/u");
         let root = HostPath::from("/home/u/dev");
-        let dir = HostPath::from("/home/u/dev/a/b");
+        // Joined as the tree joins them: with `\` on Windows.
+        let dir = root.join(b"a").join(b"b");
         let segs = segments(&dir, &root, Some(home));
         let texts: Vec<&str> = segs.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, ["~/dev", "a", "b"]);
-        assert_eq!(segs[1].dir, HostPath::from("/home/u/dev/a"));
+        assert_eq!(segs[1].dir, root.join(b"a"));
         // Before the first snapshot the root is not known: the directory is one breadcrumb.
         let segs = segments(&dir, &HostPath::from(""), Some(home));
         assert_eq!(segs.len(), 1);
