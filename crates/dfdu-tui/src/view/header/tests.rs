@@ -84,7 +84,7 @@ fn long_paths_collapse_from_the_left() {
 fn done_at_root(root: &str, width: u16) -> (String, String) {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.read_only = true;
+    app.session.read_only = true;
     let snap = Snapshot {
         dir_path: root.into(),
         root_path: root.into(),
@@ -153,7 +153,7 @@ fn header_shows_the_home_directory_as_tilde() {
     let scope = scope_line(&render_buffer(&mut app, t0, 80, 8));
     assert!(scope.starts_with(" /home/jo › dev "), "{scope}");
 
-    app.home = Some("/home/jo".into());
+    app.session.home = Some("/home/jo".into());
     let scope = scope_line(&render_buffer(&mut app, t0, 80, 8));
     assert!(scope.starts_with(" ~ › dev "), "{scope}");
     let crumbs: Vec<_> = app.mouse.crumbs.iter().map(|c| c.child.clone()).collect();
@@ -172,11 +172,12 @@ fn every_view_has_its_tab_and_scope_at_each_width() {
     let t0 = Instant::now();
     let (fx, mut app) = classified_app(t0);
     let mid = app
+        .session
         .list
         .rows
         .iter()
-        .position(|&i| &*app.snap.entries[i].name == b"mid");
-    app.select(mid.expect("mid is listed"));
+        .position(|&i| &*app.session.snap.entries[i].name == b"mid");
+    app.session.select(mid.expect("mid is listed"));
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &fx.m, t0);
     let mut out = String::new();
@@ -260,14 +261,14 @@ fn a_cached_scan_says_so_until_it_is_refreshed() {
         ..snap_without_totals(Vec::new(), 1)
     };
     app.refresh(snap, t0);
-    app.cached = Some(Cached::Loading);
+    app.session.cached = Some(Cached::Loading);
     let loading = first_line(&render_buffer(&mut app, t0, 100, 8));
     assert!(
         loading.ends_with("loading the cached scan 00:00"),
         "{loading}"
     );
     let written = dfdu_tree::now_secs().cast_unsigned() - 3 * 3_600 - 5;
-    app.cached = Some(Cached::Refreshing { written });
+    app.session.cached = Some(Cached::Refreshing { written });
     let header = |app: &mut App, width| {
         let buf = render_buffer(app, t0, width, 8);
         text(&buf)
@@ -280,7 +281,7 @@ fn a_cached_scan_says_so_until_it_is_refreshed() {
     let narrow = header(&mut app, 56);
     let first = narrow.lines().next().unwrap_or_default();
     assert!(first.ends_with(" cached 3 h ago"), "{narrow}");
-    app.cached = None;
+    app.session.cached = None;
     let after = first_line(&render_buffer(&mut app, t0, 100, 8));
     assert!(after.ends_with("scanning 00:00"), "{after}");
 }

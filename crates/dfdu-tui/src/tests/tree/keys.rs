@@ -44,7 +44,7 @@ pub(crate) fn key(app: &mut App, fx: &Fx, code: KeyCode, t0: Instant) {
 }
 
 pub(crate) fn selected(app: &App) -> String {
-    let e = app.selected_entry().expect("a selection");
+    let e = app.session.selected_entry().expect("a selection");
     String::from_utf8_lossy(&e.name).into_owned()
 }
 
@@ -53,7 +53,7 @@ fn t_turns_tree_mode_on_and_off() {
     let fx = small();
     let t0 = Instant::now();
     let mut app = tree_app(&fx, t0);
-    assert!(app.tree.is_some());
+    assert!(app.session.tree.is_some());
     let frame = render(&mut app, t0, 120, 12);
     let flags = frame.lines().nth(1).expect("second header line");
     assert!(
@@ -63,7 +63,7 @@ fn t_turns_tree_mode_on_and_off() {
     assert!(frame.contains("▸ a/"), "{frame}");
     assert!(frame.contains("→ expand  ← collapse"), "{frame}");
     key(&mut app, &fx, KeyCode::Char('T'), t0);
-    assert!(app.tree.is_none());
+    assert!(app.session.tree.is_none());
     let frame = render(&mut app, t0, 120, 12);
     // The selection line starts with `▸`, a row does not.
     assert!(
@@ -92,7 +92,7 @@ fn right_expands_then_goes_to_the_first_entry() {
     select(&mut app, "top");
     key(&mut app, &fx, KeyCode::Right, t0);
     assert_eq!(selected(&app), "top");
-    assert_eq!(app.target.path, HostPath::from("/r"));
+    assert_eq!(app.session.target.path, HostPath::from("/r"));
 }
 
 #[test]
@@ -119,10 +119,13 @@ fn left_collapses_then_goes_to_the_parent_row_then_up() {
     // Enter opens the selected directory; at the top of it, ← goes back up.
     select(&mut app, "a1");
     key(&mut app, &fx, KeyCode::Enter, t0);
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"a").join(b"a1"));
+    assert_eq!(
+        app.session.target.path,
+        HostPath::from("/r").join(b"a").join(b"a1")
+    );
     assert_eq!(row_names(&app), ["x"]);
     key(&mut app, &fx, KeyCode::Left, t0);
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"a"));
+    assert_eq!(app.session.target.path, HostPath::from("/r").join(b"a"));
     assert_eq!(selected(&app), "a1");
 }
 
@@ -136,14 +139,17 @@ fn enter_opens_a_row_below_the_top_keeping_what_is_expanded() {
     key(&mut app, &fx, KeyCode::Right, t0);
     select(&mut app, "a");
     key(&mut app, &fx, KeyCode::Enter, t0);
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"a"));
+    assert_eq!(app.session.target.path, HostPath::from("/r").join(b"a"));
     assert_eq!(row_names(&app), ["a1", "x", "a2", "s"]);
-    assert!(app.tree.is_some(), "still in tree mode");
+    assert!(app.session.tree.is_some(), "still in tree mode");
     // In the list, → opens as it always did.
     key(&mut app, &fx, KeyCode::Char('T'), t0);
     select(&mut app, "a1");
     key(&mut app, &fx, KeyCode::Right, t0);
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"a").join(b"a1"));
+    assert_eq!(
+        app.session.target.path,
+        HostPath::from("/r").join(b"a").join(b"a1")
+    );
 }
 
 #[test]
@@ -153,7 +159,7 @@ fn star_expands_the_largest_entries_and_turns_tree_mode_on() {
     let mut app = App::new(Theme::no_color(), t0);
     sync(&mut app, &fx.m, t0);
     key(&mut app, &fx, KeyCode::Char('*'), t0);
-    assert!(app.tree.is_some());
+    assert!(app.session.tree.is_some());
     assert_eq!(
         row_names(&app),
         ["a", "a1", "x", "a2", "… 1 more", "b", "top"]
@@ -162,7 +168,8 @@ fn star_expands_the_largest_entries_and_turns_tree_mode_on() {
     select(&mut app, "top");
     key(&mut app, &fx, KeyCode::Char('*'), t0);
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.contains("select a directory"))
     );
@@ -177,14 +184,14 @@ fn z_folds_less_then_nothing() {
     assert!(row_names(&app).contains(&"… 1 more".to_owned()));
     // 1 byte of 801 is more than 0.1%.
     key(&mut app, &fx, KeyCode::Char('z'), t0);
-    assert_eq!(app.status.as_deref(), Some("fold < 0.1%"));
+    assert_eq!(app.session.status.as_deref(), Some("fold < 0.1%"));
     assert_eq!(row_names(&app), ["a", "a1", "a2", "s", "b", "top"]);
-    app.status = None;
+    app.session.status = None;
     let frame = render(&mut app, t0, 120, 12);
     assert!(frame.contains("fold < 0.1%"), "{frame}");
     key(&mut app, &fx, KeyCode::Char('z'), t0);
-    assert_eq!(app.status.as_deref(), Some("nothing folds"));
-    app.status = None;
+    assert_eq!(app.session.status.as_deref(), Some("nothing folds"));
+    app.session.status = None;
     let frame = render(&mut app, t0, 120, 12);
     assert!(!frame.contains("fold <"), "{frame}");
     assert!(frame.contains("z no fold"), "{frame}");
@@ -213,14 +220,15 @@ fn fold_rows_open_in_place_and_cannot_be_marked_or_entered() {
             .contains(Modifier::ITALIC)
     );
     key(&mut app, &fx, KeyCode::Char(' '), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.contains("fold row"))
     );
     key(&mut app, &fx, KeyCode::Enter, t0);
-    assert_eq!(app.target.path, HostPath::from("/r"));
+    assert_eq!(app.session.target.path, HostPath::from("/r"));
     // → shows what it folds, for this directory only, and the selection goes to it.
     key(&mut app, &fx, KeyCode::Right, t0);
     assert_eq!(row_names(&app), ["a", "a1", "a2", "s", "b", "top"]);
@@ -246,7 +254,12 @@ fn a_click_on_the_triangle_expands_and_one_on_the_row_selects() {
     let (x, top) = (app.mouse.name_x, 3);
     mouse::event(&mut app, click(x + 4, top + 1), t0).expect("redraw");
     assert_eq!(selected(&app), "b");
-    assert!(app.tree.as_ref().is_some_and(|t| t.expanded.is_empty()));
+    assert!(
+        app.session
+            .tree
+            .as_ref()
+            .is_some_and(|t| t.expanded.is_empty())
+    );
     mouse::event(&mut app, click(x, top), t0).expect("redraw");
     assert_eq!(selected(&app), "a");
     sync(&mut app, &fx.m, t0);

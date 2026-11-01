@@ -5,13 +5,12 @@ mod act;
 mod lookup;
 
 pub use act::run;
-pub use dfdu_session::actions::{ACTIONS, Action, ActionInfo, Group, offered};
+pub use dfdu_session::actions::{ACTIONS, Action, ActionInfo, Group, first_key, offered};
 #[cfg(test)]
 pub(crate) use lookup::parse;
-pub use lookup::{action_for, cursor_after, first_key, half_page};
+pub use lookup::{action_for, cursor_after, half_page};
 
-/// The status line after a key that deletes, in a read-only browser.
-pub const READ_ONLY: &str = "read-only: nothing is deleted";
+pub use dfdu_session::state::READ_ONLY;
 
 #[cfg(test)]
 mod tests;

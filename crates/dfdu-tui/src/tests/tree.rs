@@ -61,16 +61,16 @@ impl Fx {
 /// A read for `app` as the run loop makes it: of its directory, in tree mode while the rows
 /// are a tree, folded into it.
 pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
-    let mut target = app.target.clone();
+    let mut target = app.session.target.clone();
     let snap = snapshot::build_view(
         m,
         &mut target,
-        app.size_mode,
-        &app.types,
+        app.session.size_mode,
+        &app.session.types,
         false,
         app.tree_shown(),
     );
-    app.target = target;
+    app.session.target = target;
     app.refresh(snap, now);
 }
 
@@ -340,22 +340,25 @@ fn expanding_sorts_the_new_children_at_once() {
     let (fx, big, _) = folding();
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.tree = Some(TreeState::default());
+    app.session.tree = Some(TreeState::default());
     let sync = |app: &mut App| {
-        let snap = read(&fx.m, app.tree.as_ref().expect("tree"));
+        let snap = read(&fx.m, app.session.tree.as_ref().expect("tree"));
         app.refresh(snap, t0);
     };
     sync(&mut app);
     assert_eq!(super::row_names(&app), ["big", "top"]);
-    app.move_to(1);
-    fx.expand(app.tree.as_mut().expect("tree"), big);
+    app.session.move_to(1);
+    fx.expand(app.session.tree.as_mut().expect("tree"), big);
     sync(&mut app);
     assert_eq!(
         super::row_names(&app),
         ["big", "f0", "f1", "f2", "… 4 more", "top"],
         "no automatic sort is due, but a group seen for the first time is sorted"
     );
-    assert_eq!(app.selected_entry().map(|e| &e.name[..]), Some(&b"top"[..]));
+    assert_eq!(
+        app.session.selected_entry().map(|e| &e.name[..]),
+        Some(&b"top"[..])
+    );
 }
 
 #[test]

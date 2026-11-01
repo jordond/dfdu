@@ -94,7 +94,7 @@ fn read_extras(m: &Model, app: &mut App) {
 fn read_full(m: &Model, app: &mut App) {
     let x = extras::read(m, app, &Budget::new(1 << 20), Counters::default());
     let snap = snapshot::build(m, &mut Target::root(), SizeMode::Disk);
-    app.refresh(snap, app.started);
+    app.refresh(snap, app.session.started);
     extras::apply(app, x);
 }
 
@@ -113,7 +113,7 @@ fn a_snapshot_read_updates_the_scan_state_and_compression() {
     let proj = child(&m, b"proj");
     m.tree.dir_mut(proj).expect("dir").state = DirState::Pending;
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let out = render(&mut app, t0, 120, 20);
     assert!(out.contains("directory · scanning"), "{out}");
     // The scan of the selected directory ends with an error: the same node, another mark.
@@ -179,10 +179,10 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
     tree.dir_mut(locked).expect("dir").state = DirState::Failed;
     tree.set_error(locked, ErrKind::PermissionDenied);
     let mut app = app_on(&m);
-    let e = app.selected_entry().expect("selected");
+    let e = app.session.selected_entry().expect("selected");
     assert_eq!((&e.name[..], e.mark), (&b"logs"[..], Mark::ErrorsInside));
     app.theme = Theme::ansi16();
-    let t0 = app.started;
+    let t0 = app.session.started;
     let buf = render_buffer(&mut app, t0, 120, 20);
     assert!(render(&mut app, t0, 120, 20).contains("directory · complete, errors below"));
     let dim = app.theme.fg_dim.fg;
@@ -194,7 +194,7 @@ fn errors_below_a_complete_directory_read_dim_like_its_size() {
 fn details_pane_shows_tree_facts() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let out = render(&mut app, t0, 120, 20);
     insta::assert_snapshot!("details_right_mono", out);
     for want in [
@@ -231,7 +231,7 @@ fn details_pane_shows_tree_facts() {
 fn details_pane_is_a_bottom_sheet_when_narrow() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let out = render(&mut app, t0, 80, 24);
     insta::assert_snapshot!("details_bottom_mono", out);
     let pane = app.areas.details.expect("pane");
@@ -243,18 +243,18 @@ fn details_pane_is_a_bottom_sheet_when_narrow() {
 fn details_pane_hidden_when_too_small() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let out = render(&mut app, t0, 60, 12);
     assert!(app.areas.details.is_none());
     assert!(!out.contains("╭ proj/"), "{out}");
     // The selection line sums up the selected row instead; at this width it has no room for
     // the items.
-    let e = app.selected_entry().unwrap();
+    let e = app.session.selected_entry().unwrap();
     let proj = format!("▸ proj/  {}", human(e.size));
     assert!(out.contains(&proj), "{out}");
     // It follows the selection, moved by the wheel as by a key.
-    app.move_by(1);
-    let e = app.selected_entry().unwrap();
+    app.session.move_by(1);
+    let e = app.session.selected_entry().unwrap();
     let notes = format!("▸ notes.txt  {}", human(e.size));
     let out = render(&mut app, t0, 60, 12);
     assert!(out.contains(&notes) && !out.contains(&proj), "{out}");
@@ -264,25 +264,25 @@ fn details_pane_hidden_when_too_small() {
     assert!(!scroll(&mut app, 1));
     // The pane fits again; the selection line stays, as it does with the pane closed.
     let out = render(&mut app, t0, 120, 20);
-    assert!(out.contains("╭ ") && app.status.is_none(), "{out}");
+    assert!(out.contains("╭ ") && app.session.status.is_none(), "{out}");
 }
 
 #[test]
 fn the_summary_does_not_replace_another_message() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
-    app.status = Some("deleted 3 entries".into());
+    let t0 = app.session.started;
+    app.session.status = Some("deleted 3 entries".into());
     let out = render(&mut app, t0, 60, 12);
     assert!(app.areas.details.is_none());
     assert!(
         out.contains("deleted 3 entries") && !out.contains("▸ proj/"),
         "{out}"
     );
-    app.status = None;
+    app.session.status = None;
     assert!(render(&mut app, t0, 60, 12).contains("▸ proj/"));
     // A pane that fits again leaves another message alone.
-    app.status = Some("deleted 3 entries".into());
+    app.session.status = Some("deleted 3 entries".into());
     let out = render(&mut app, t0, 120, 20);
     assert!(out.contains("deleted 3 entries"), "{out}");
 }
@@ -291,7 +291,7 @@ fn the_summary_does_not_replace_another_message() {
 fn details_follow_the_selection() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     assert!(render(&mut app, t0, 120, 20).contains("/r/proj"));
     app.key(press(KeyCode::Down), t0);
     assert!(stale(&app));
@@ -314,7 +314,7 @@ fn details_follow_the_selection() {
 fn tab_focuses_and_scrolls_the_pane() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let first = render(&mut app, t0, 80, 24);
     assert!(
         first.contains("↓ more") && first.contains("│ /r/proj"),
@@ -322,9 +322,13 @@ fn tab_focuses_and_scrolls_the_pane() {
     );
     app.key(press(KeyCode::Tab), t0);
     assert!(focused(&app));
-    let selected = app.selected_index();
+    let selected = app.session.selected_index();
     app.key(press(KeyCode::Down), t0);
-    assert_eq!(app.selected_index(), selected, "the list did not move");
+    assert_eq!(
+        app.session.selected_index(),
+        selected,
+        "the list did not move"
+    );
     let out = render(&mut app, t0, 80, 24);
     assert!(!out.contains("│ /r/proj"), "scrolled past the path:\n{out}");
     for _ in 0..10 {
@@ -338,7 +342,7 @@ fn tab_focuses_and_scrolls_the_pane() {
     assert!(!focused(&app));
     app.key(press(KeyCode::Down), t0);
     assert_ne!(
-        app.selected_index(),
+        app.session.selected_index(),
         selected,
         "the list has the keys again"
     );
@@ -351,7 +355,7 @@ fn tab_focuses_and_scrolls_the_pane() {
 fn the_wheel_scrolls_the_pane_without_focus() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     render(&mut app, t0, 80, 24);
     assert!(scroll(&mut app, 3));
     assert!(!focused(&app));
@@ -367,7 +371,7 @@ fn the_wheel_scrolls_the_pane_without_focus() {
 fn focus_is_visible_without_color() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let unfocused = render(&mut app, t0, 120, 20);
     assert!(unfocused.contains("╭ proj/"), "{unfocused}");
     app.key(press(KeyCode::Tab), t0);
@@ -380,7 +384,7 @@ fn focus_is_visible_without_color() {
 fn largest_children_skipped_for_huge_directories() {
     let m = model();
     let mut app = app_on(&m);
-    let t0 = app.started;
+    let t0 = app.session.started;
     let info = read_within::<9>(&m, &app);
     let names: Vec<String> = match info.facts.as_ref().map(|f| &f.largest) {
         Some(Largest::Listed(kids)) => kids.iter().map(|k| k.name.clone()).collect(),
@@ -434,7 +438,7 @@ fn the_pane_describes_a_mount_left_out() {
         used,
         total,
     };
-    app.outside.set_mount(
+    app.session.outside.set_mount(
         m.tree.host_path(data),
         Some(local("zfs", Some(1_300 << 30), Some(3 << 40))),
     );
@@ -442,9 +446,11 @@ fn the_pane_describes_a_mount_left_out() {
         class: dfdu_sys::FsClass::Network,
         ..local("nfs4", None, None)
     };
-    app.outside.set_mount(m.tree.host_path(nas), Some(nfs));
-    let t0 = app.started;
-    let e = app.selected_entry().expect("selected");
+    app.session
+        .outside
+        .set_mount(m.tree.host_path(nas), Some(nfs));
+    let t0 = app.session.started;
+    let e = app.session.selected_entry().expect("selected");
     assert_eq!((&e.name[..], e.mark), (&b"data"[..], Mark::OtherFs));
     let out = render(&mut app, t0, 120, 14);
     insta::assert_snapshot!("details_mount_left_out", out);

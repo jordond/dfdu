@@ -63,7 +63,7 @@ fn size_mode_change_and_resize_do_not_animate() {
     render_buffer(&mut app, t0, W, H);
 
     es[1].size = 500;
-    app.size_mode = SizeMode::Apparent;
+    app.session.size_mode = SizeMode::Apparent;
     let t1 = t0 + ms(50);
     app.refresh(snap_with_alloc(es.clone(), 2), t1);
     render_buffer(&mut app, t1, W, H);
@@ -96,7 +96,7 @@ fn easing_sixty_rows_costs_under_two_ms_a_frame() {
     app.refresh(snap_with_alloc(es, 2), t1);
     let mut buf = render_buffer(&mut app, t1, 120, 65);
     assert_eq!(app.motion.markers.len(), 60);
-    let visible: Vec<usize> = app.list.rows[app.list.scroll..app.list.scroll + 60].to_vec();
+    let visible: Vec<usize> = app.session.list.rows[app.scroll..app.scroll + 60].to_vec();
     let mut costs = Vec::new();
     for n in 1..=12 {
         let now = t1 + FRAME * n;

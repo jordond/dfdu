@@ -100,7 +100,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
                 "Shows this directory as tiles sized by what they hold; inside the selected \
                  tile, what Enter opens."
                     .into(),
-                if app.filter.active() {
+                if app.session.filter.active() {
                     "Nothing here matches the filter.".into()
                 } else {
                     "This directory is empty.".into()
@@ -203,8 +203,8 @@ fn position(app: &App) -> Option<String> {
 
 /// The line under the map: the selected tile's name, size, share and items.
 fn selected_line(app: &App) -> Option<Line<'static>> {
-    let e = app.selected_entry()?;
-    let total = app.size_mode.of(&app.snap.dir_total).max(1);
+    let e = app.session.selected_entry()?;
+    let total = app.session.size_mode.of(&app.session.snap.dir_total).max(1);
     let mut text = format!(
         " ▶ {}{}  {}  {:.1}%",
         String::from_utf8_lossy(&e.name),

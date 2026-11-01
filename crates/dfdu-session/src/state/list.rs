@@ -1,15 +1,15 @@
-//! The Files list: the order of the current directory's entries, the rows it shows, the
-//! summary row of the entries new since the last sort, and where the list is scrolled to. The
-//! cursor of each directory left is kept to restore it on the way back.
+//! The Files list: the order of the current directory's entries, the rows it shows and the
+//! summary row of the entries new since the last sort. The selection of each directory left is
+//! kept to restore it on the way back; where the list is scrolled to is the front end's.
 
 use std::cell::Cell;
 use std::collections::HashMap;
 
 use dfdu_tree::HostPath;
 
-use crate::app::Selection;
-use crate::model::snapshot::EntryData;
-use crate::state::order::Order;
+use super::Selection;
+use crate::order::Order;
+use crate::snapshot::EntryData;
 
 #[derive(Default)]
 pub struct List {
@@ -21,22 +21,22 @@ pub struct List {
     pub new_largest: u64,
     /// Largest size among `rows`, for the bars.
     pub rows_largest: u64,
-    pub scroll: usize,
     /// Counts the re-sorts of the rows; the treemap lays out again when it changes.
     pub sort_gen: u64,
     /// The user moved the cursor in the current directory; re-sorts then follow the selected
     /// row instead of returning to the top.
-    pub(crate) moved: bool,
-    pub(crate) cursors: HashMap<HostPath, Cursor>,
-    /// Row where [`App::selected_index`](crate::app::App::selected_index) last found the
-    /// selection.
-    pub(crate) sel_hint: Cell<usize>,
+    pub moved: bool,
+    /// The selection of each directory left.
+    pub(super) cursors: HashMap<HostPath, Option<Selection>>,
+    /// Row where [`SessionState::selected_index`](super::SessionState::selected_index) last
+    /// found the selection.
+    pub(super) sel_hint: Cell<usize>,
 }
 
 impl List {
     /// Counts the entries new since the last sort and finds the largest of them and of the
     /// rows, once the order has been brought up to date.
-    pub(crate) fn tally(&mut self, entries: &[EntryData]) {
+    pub fn tally(&mut self, entries: &[EntryData]) {
         let largest = |rows: &[usize]| rows.iter().map(|&i| entries[i].size).max().unwrap_or(0);
         self.new_count = self.order.new_entries().len();
         self.new_largest = largest(self.order.new_entries());
@@ -44,18 +44,11 @@ impl List {
     }
 }
 
-/// Remembered position in a directory, restored when the user comes back to it.
-#[derive(Clone, Debug)]
-pub(crate) struct Cursor {
-    pub(crate) selected: Option<Selection>,
-    pub(crate) scroll: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::snapshot::test_entry;
-    use crate::state::order::SortSpec;
+    use crate::order::SortSpec;
+    use crate::snapshot::test_entry;
 
     #[test]
     fn tally_sizes_up_the_rows_and_the_new_entries() {

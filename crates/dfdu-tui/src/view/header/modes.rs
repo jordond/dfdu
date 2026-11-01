@@ -48,13 +48,13 @@ fn tree_flag(app: &App) -> Option<Flag> {
 
 /// The sort, always shown: `sort size ↓`, or `size ↓` when the line is short.
 fn sort_flag(app: &App) -> Flag {
-    let key = match app.sort.key {
+    let key = match app.session.sort.key {
         SortKey::Size => "size",
         SortKey::Name => "name",
         SortKey::Items => "items",
         SortKey::Mtime => "mtime",
     };
-    let arrow = if app.sort.desc { "↓" } else { "↑" };
+    let arrow = if app.session.sort.desc { "↓" } else { "↑" };
     let sort = format!("{key} {arrow}");
     Flag {
         wide: vec![
@@ -78,25 +78,28 @@ fn flags(app: &App) -> Vec<Flag> {
             out.push(Flag::new(fold, fold));
         }
     }
-    out.push(match app.size_mode {
+    out.push(match app.session.size_mode {
         SizeMode::Disk => Flag::new("disk usage", "disk"),
         SizeMode::Apparent => Flag::new("apparent size", "apparent"),
         SizeMode::Referenced => Flag::new("disk usage like du", "du-like"),
     });
-    if app.hide_hidden {
+    if app.session.hide_hidden {
         out.push(Flag::new("hiding hidden files", "hidden"));
     }
-    if app.filter.active() && !filter::editing(app) {
-        let query = format!("/{}", truncate_middle(app.filter.query(), QUERY_MAX));
+    if app.session.filter.active() && !filter::editing(app) {
+        let query = format!(
+            "/{}",
+            truncate_middle(app.session.filter.query(), QUERY_MAX)
+        );
         out.push(Flag::new(query.clone(), query));
     }
-    if !app.snap.types.is_empty() {
-        let types = truncate_middle(&app.snap.types.to_string(), QUERY_MAX);
+    if !app.session.snap.types.is_empty() {
+        let types = truncate_middle(&app.session.snap.types.to_string(), QUERY_MAX);
         out.push(Flag::new(format!("type {types}"), format!("t {types}")));
     }
     // The size `du` counts is not recorded, so there are no changes to show then.
-    if let Some(g) = &app.growth
-        && app.size_mode != SizeMode::Referenced
+    if let Some(g) = &app.session.growth
+        && app.session.size_mode != SizeMode::Referenced
     {
         out.push(Flag::new(
             format!("Δ since {}", dfdu_tree::day(g.at)),

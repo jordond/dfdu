@@ -221,9 +221,10 @@ impl Placer<'_> {
 /// (none at depth 1, where [`peek`] shows the selected tile's).
 pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
     let key = key_of(app);
-    let entries = &app.snap.entries;
+    let entries = &app.session.snap.entries;
     let below = &app.extras.treemap.below;
     let items = app
+        .session
         .list
         .rows
         .iter()

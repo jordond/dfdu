@@ -22,7 +22,7 @@ pub(super) enum Row {
 /// The rows: a section per safety level with matches, safest first; in each open section its
 /// categories, largest first; each open category followed by its items.
 pub(super) fn rows(app: &App) -> Vec<Row> {
-    let Some(rules) = &app.snap.rules else {
+    let Some(rules) = &app.session.snap.rules else {
         return vec![];
     };
     let items = &app.extras.cleanup.items;
@@ -73,7 +73,7 @@ pub(super) fn section_items(app: &App, safety: Safety) -> Vec<usize> {
 }
 
 pub(super) fn group_items(app: &App, cat: CategoryIx, safety: Safety) -> Vec<usize> {
-    let Some(rules) = &app.snap.rules else {
+    let Some(rules) = &app.session.snap.rules else {
         return vec![];
     };
     (app.extras.cleanup.items.iter().enumerate())
@@ -194,7 +194,7 @@ mod tests {
         app.cleanup.filter = Some(Safety::Safe);
         assert_eq!(shown(&app), ["Safe", "  Safe"]);
         // Without rules there is nothing to group.
-        app.snap.rules = None;
+        app.session.snap.rules = None;
         assert_eq!(rows(&app), []);
         assert_eq!(group_items(&app, cat, safety), Vec::<usize>::new());
     }

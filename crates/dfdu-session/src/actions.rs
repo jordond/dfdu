@@ -425,9 +425,26 @@ pub fn offered(read_only: bool) -> impl Iterator<Item = &'static ActionInfo> {
         .filter(move |info| !(read_only && info.action.deletes()))
 }
 
+/// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
+pub fn first_key(a: Action) -> &'static str {
+    ACTIONS
+        .iter()
+        .find(|info| info.action == a)
+        .and_then(|info| info.keys.split_whitespace().next())
+        .unwrap_or("")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_key_is_the_first_binding() {
+        assert_eq!(first_key(Action::Up), "↑");
+        assert_eq!(first_key(Action::Palette), ":");
+        assert_eq!(first_key(Action::ClearMarks), "X");
+        assert_eq!(first_key(Action::MarkPattern), "");
+    }
 
     #[test]
     fn a_read_only_browser_offers_no_action_that_deletes() {

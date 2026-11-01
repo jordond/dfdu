@@ -27,24 +27,25 @@ use crate::theme::Theme;
 pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, frame: u64) {
     let height = area.height as usize;
     app.list_height = height;
-    let extra = usize::from(app.list.new_count > 0);
-    let rows = app.list.rows.len();
+    let extra = usize::from(app.session.list.new_count > 0);
+    let rows = app.session.list.rows.len();
     // Never scroll further than needed to fill the screen, then keep the selection visible.
-    app.list.scroll = app.list.scroll.min((rows + extra).saturating_sub(height));
-    if let Some(sel) = app.selected_index() {
-        if sel < app.list.scroll {
-            app.list.scroll = sel;
-        } else if sel >= app.list.scroll + height.saturating_sub(extra).max(1) {
-            app.list.scroll = sel + 1 - height.saturating_sub(extra).max(1);
+    app.scroll = app.scroll.min((rows + extra).saturating_sub(height));
+    if let Some(sel) = app.session.selected_index() {
+        if sel < app.scroll {
+            app.scroll = sel;
+        } else if sel >= app.scroll + height.saturating_sub(extra).max(1) {
+            app.scroll = sel + 1 - height.saturating_sub(extra).max(1);
         }
     }
-    app.list.scroll = app.list.scroll.min(rows.saturating_sub(1));
+    app.scroll = app.scroll.min(rows.saturating_sub(1));
     // Entry indices of the rows on screen.
     let visible: Vec<usize> = app
+        .session
         .list
         .rows
         .iter()
-        .skip(app.list.scroll)
+        .skip(app.scroll)
         .take(height.saturating_sub(extra))
         .copied()
         .collect();
@@ -65,8 +66,8 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     f.render_widget(Paragraph::new(header(app, &cols)), head);
 
     let mut lines = Vec::with_capacity(height);
-    if rows == 0 && app.list.new_count == 0 {
-        let msg = match app.snap.dir_mark {
+    if rows == 0 && app.session.list.new_count == 0 {
+        let msg = match app.session.snap.dir_mark {
             Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "  (scanning…)",
             Some(Mark::Error) => "  (could not be read)",
             Some(Mark::Incomplete) => "  (incomplete: press r to rescan)",
@@ -74,9 +75,9 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
         };
         lines.push(Line::styled(msg, t.fg_dim));
     }
-    let max = app.list.rows_largest.max(1);
-    let total = app.size_mode.of(&app.snap.dir_total).max(1);
-    let sel = app.selected_index();
+    let max = app.session.list.rows_largest.max(1);
+    let total = app.session.size_mode.of(&app.session.snap.dir_total).max(1);
+    let sel = app.session.selected_index();
     for (row, (&i, &change)) in visible.iter().zip(&changes).enumerate() {
         let row_of = Row {
             index: i,
@@ -87,18 +88,18 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
             tree: trees.as_ref().map(|v| &v[row]),
         };
         let mut line = entry_line(app, &row_of, &cols);
-        if sel == Some(app.list.scroll + row) {
+        if sel == Some(app.scroll + row) {
             line = cursor(t, line, width);
         }
         lines.push(line);
     }
-    if app.list.new_count > 0 && lines.len() < height {
-        let n = app.list.new_count;
+    if app.session.list.new_count > 0 && lines.len() < height {
+        let n = app.session.list.new_count;
         lines.push(Line::styled(
             format!(
                 "   + {n} new entr{} since last sort (largest {})   S to sort now",
                 if n == 1 { "y" } else { "ies" },
-                human(app.list.new_largest)
+                human(app.session.list.new_largest)
             ),
             t.fg_dim,
         ));
@@ -106,7 +107,7 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     f.render_widget(Paragraph::new(lines), area);
     if scrollbar {
         let mut state = ScrollbarState::new((rows + extra).saturating_sub(height) + 1)
-            .position(app.list.scroll)
+            .position(app.scroll)
             .viewport_content_length(height);
         let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
@@ -134,19 +135,19 @@ fn name_offset(cols: &[(Col, u16)]) -> u16 {
 
 /// What entry `index` changed since the last recorded scan, when that is worth a note.
 fn change(app: &App, index: usize) -> Option<RowNote> {
-    let e = &app.snap.entries[index];
-    if app.growth.is_none() || e.ghost || e.pseudo {
+    let e = &app.session.snap.entries[index];
+    if app.session.growth.is_none() || e.ghost || e.pseudo {
         return None;
     }
-    let path = crate::state::tree::path_of(&app.snap, index);
+    let path = crate::state::tree::path_of(&app.session.snap, index);
     growth::row_note(app, &path, e.size, e.mark)
 }
 
 /// The optional columns the rows on screen (`visible`, with their `changes`) have something
 /// to show in, of those the user asked for.
 fn present(app: &App, visible: &[usize], changes: &[Option<RowNote>]) -> ColSet {
-    let entries = || visible.iter().map(|&i| &app.snap.entries[i]);
-    let category = app.snap.rules.as_ref().map_or(0, |rules| {
+    let entries = || visible.iter().map(|&i| &app.session.snap.entries[i]);
+    let category = app.session.snap.rules.as_ref().map_or(0, |rules| {
         entries()
             .filter_map(|e| e.tag)
             .map(|g| Span::raw(g.category(rules).0).width())
@@ -221,7 +222,7 @@ struct Row<'a> {
 /// the next re-sort) is struck through and dimmed, and says so.
 fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
     let t = &app.theme;
-    let e = &app.snap.entries[row.index];
+    let e = &app.session.snap.entries[row.index];
     let mut spans = Vec::new();
     let mut notes = Vec::new();
     for (gap, c, w) in gaps(cols) {
@@ -278,7 +279,7 @@ fn entry_line(app: &App, row: &Row<'_>, cols: &[(Col, u16)]) -> Line<'static> {
                 spans.push(Span::styled(flag, t.fg_dim));
             }
             Col::Category => {
-                let rules = app.snap.rules.as_ref();
+                let rules = app.session.snap.rules.as_ref();
                 // Inside a match, rows show its category dim: the match is the directory above.
                 let (text, style) = match e.tag.zip(rules).map(|(g, r)| (g, g.category(r))) {
                     Some((g, (name, _))) if g.inherited => (name, t.fg_dim),

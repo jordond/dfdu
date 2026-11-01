@@ -68,7 +68,7 @@ impl View {
 /// and the list is drawn in its place. Cleanup needs the rules: without them it is Files.
 pub fn current(app: &App) -> View {
     match app.view {
-        View::Cleanup if app.snap.rules.is_none() => View::Files,
+        View::Cleanup if app.session.snap.rules.is_none() => View::Files,
         view => view,
     }
 }
@@ -88,8 +88,8 @@ pub fn list_shown(app: &App) -> bool {
 /// tree opens on the directory the selected row is in. Cleanup without rules says so and
 /// changes nothing else.
 pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
-    if view == View::Cleanup && app.snap.rules.is_none() {
-        app.status = Some("no rules: the cleanup view needs classification".into());
+    if view == View::Cleanup && app.session.snap.rules.is_none() {
+        app.session.status = Some("no rules: the cleanup view needs classification".into());
         return Vec::new();
     }
     if view == View::Map {
@@ -120,7 +120,7 @@ pub fn step(app: &mut App, by: isize) -> Vec<Effect> {
     for _ in 0..n {
         at = (at + n).saturating_add_signed(by) % n;
         let view = View::ALL[at];
-        if view != View::Cleanup || app.snap.rules.is_some() {
+        if view != View::Cleanup || app.session.snap.rules.is_some() {
             return switch(app, view);
         }
     }
@@ -225,10 +225,10 @@ mod tests {
         }
         app.key(press(KeyCode::Enter), t0);
         app.reorder(t0);
-        assert!(app.filter.active());
+        assert!(app.session.filter.active());
         app.key(press(KeyCode::Esc), t0);
         app.reorder(t0);
-        assert!(!app.filter.active());
+        assert!(!app.session.filter.active());
         assert_eq!(current(&app), View::Map);
         app.key(press(KeyCode::Esc), t0);
         assert_eq!(current(&app), View::Files);
@@ -242,7 +242,8 @@ mod tests {
         assert!(switch(&mut app, View::Cleanup).is_empty());
         assert_eq!(app.view, View::Files);
         assert!(
-            app.status
+            app.session
+                .status
                 .as_deref()
                 .is_some_and(|s| s.starts_with("no rules"))
         );

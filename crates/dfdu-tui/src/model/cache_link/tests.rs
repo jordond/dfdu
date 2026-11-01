@@ -81,7 +81,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     assert!(c.poll(&mut app, &e), "the scan is sent at once");
-    assert_eq!(app.cached, None, "nothing was cached");
+    assert_eq!(app.session.cached, None, "nothing was cached");
     poll_until(&mut c, &mut app, &e, |c, _| {
         c.writer.is_none()
             && c.run
@@ -89,7 +89,7 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
                 .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
     assert!(link.slot.path.exists());
-    assert_eq!(app.status, None);
+    assert_eq!(app.session.status, None);
     let scanned = items(&e);
     drop(c);
     e.shutdown(Duration::from_millis(200));
@@ -98,13 +98,16 @@ fn a_complete_scan_is_saved_and_opened_next_time() {
     let mut app = App::new(Theme::no_color(), Instant::now());
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
-    assert_eq!(app.cached, Some(Cached::Loading));
+    assert_eq!(app.session.cached, Some(Cached::Loading));
     poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
-    assert!(matches!(app.cached, Some(Cached::Refreshing { .. })));
+    assert!(matches!(
+        app.session.cached,
+        Some(Cached::Refreshing { .. })
+    ));
     assert_eq!(items(&e), scanned, "the cached tree is shown");
-    poll_until(&mut c, &mut app, &e, |_, app| app.cached.is_none());
+    poll_until(&mut c, &mut app, &e, |_, app| app.session.cached.is_none());
     assert_eq!(items(&e), scanned);
-    assert_eq!(app.status, None);
+    assert_eq!(app.session.status, None);
     drop(c);
     e.shutdown(Duration::from_millis(200));
 }
@@ -175,7 +178,10 @@ fn nothing_is_saved_before_the_resume_ended() {
                 .as_ref()
                 .is_some_and(|r| r.saved_as == SavedAs::Pending)
     );
-    assert!(matches!(app.cached, Some(Cached::Refreshing { .. })));
+    assert!(matches!(
+        app.session.cached,
+        Some(Cached::Refreshing { .. })
+    ));
     assert_eq!(fs::read(&link.slot.path).unwrap(), before);
     assert_eq!(
         items(&e),
@@ -190,7 +196,7 @@ fn nothing_is_saved_before_the_resume_ended() {
                 .as_ref()
                 .is_some_and(|r| r.saved_as != SavedAs::Pending)
     });
-    assert_eq!(app.cached, None);
+    assert_eq!(app.session.cached, None);
     assert_eq!(items(&e), Some(scanned + 1));
     let hit = link.slot.load(cache::now()).unwrap().expect("saved");
     assert_eq!(
@@ -214,10 +220,10 @@ fn a_damaged_cache_is_reported_and_scanned_instead() {
     let mut c = cacher(&link);
     c.poll(&mut app, &e);
     poll_until(&mut c, &mut app, &e, |c, _| c.loader.is_none());
-    let status = app.status.clone().expect("a notice");
+    let status = app.session.status.clone().expect("a notice");
     assert!(status.starts_with("cached scan "), "{status}");
     assert!(status.ends_with("; scanning"), "{status}");
-    assert_eq!(app.cached, None);
+    assert_eq!(app.session.cached, None);
     assert!(!link.slot.path.exists());
     assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
     assert_eq!(items(&e), Some(4));
@@ -286,12 +292,12 @@ fn measure_opening_a_million() {
     let first_frame = t0.elapsed();
     let mut longest = Duration::ZERO;
     let mut shown = None;
-    while app.cached.is_some() {
+    while app.session.cached.is_some() {
         assert!(t0.elapsed() < Duration::from_secs(60), "timed out");
         let p = Instant::now();
         c.poll(&mut app, &e);
         longest = longest.max(p.elapsed());
-        if shown.is_none() && matches!(app.cached, Some(Cached::Refreshing { .. })) {
+        if shown.is_none() && matches!(app.session.cached, Some(Cached::Refreshing { .. })) {
             shown = Some(t0.elapsed());
         }
         thread::sleep(Duration::from_millis(2));

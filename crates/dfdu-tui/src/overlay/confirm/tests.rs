@@ -30,7 +30,7 @@ fn twelve_marked(t: Instant) -> App {
     for _ in 0..12 {
         app.key(press(KeyCode::Char(' ')), t);
     }
-    assert_eq!(app.marks.items().len(), 12);
+    assert_eq!(app.session.marks.items().len(), 12);
     app
 }
 
@@ -84,7 +84,7 @@ fn permanent_delete_needs_the_word_delete() {
     );
     assert!(matches!(app.overlay, Overlay::None));
     assert_eq!(
-        app.status.as_deref(),
+        app.session.status.as_deref(),
         Some("not deleted: type delete to confirm")
     );
     app.key(press(KeyCode::Char('D')), t0);

@@ -62,7 +62,7 @@ pub fn close(app: &mut App) -> bool {
 
 /// The marked nodes a delete would send: the outermost marks.
 fn outermost(app: &App) -> Vec<NodeRef> {
-    (app.marks.items().iter())
+    (app.session.marks.items().iter())
         .filter(|it| !it.inside)
         .filter_map(|it| it.target.node)
         .collect()
@@ -75,11 +75,11 @@ fn ask(app: &mut App) -> Vec<Effect> {
     if items.is_empty() || items == app.marks_pane.asked {
         return Vec::new();
     }
-    app.estimates += 1;
-    app.marks_pane.estimate = app.estimates;
+    app.session.estimates += 1;
+    app.marks_pane.estimate = app.session.estimates;
     app.marks_pane.asked.clone_from(&items);
     vec![Effect::Send(Command::Estimate {
-        id: app.estimates,
+        id: app.session.estimates,
         items,
     })]
 }
@@ -88,7 +88,8 @@ fn ask(app: &mut App) -> Vec<Effect> {
 /// delete dialog asks for the same marks), while the marks are those asked for.
 fn estimate(app: &App) -> Option<&dfdu_engine::Estimate> {
     let p = &app.marks_pane;
-    app.snap
+    app.session
+        .snap
         .estimate
         .as_ref()
         .filter(|e| p.estimate > 0 && e.id >= p.estimate && outermost(app) == p.asked)
@@ -114,7 +115,7 @@ pub fn scroll(app: &mut App, delta: i32) -> bool {
 }
 
 fn move_by(app: &mut App, delta: isize) {
-    let last = app.marks.items().len().saturating_sub(1);
+    let last = app.session.marks.items().len().saturating_sub(1);
     let p = &mut app.marks_pane;
     p.cursor = p.cursor.saturating_add_signed(delta).min(last);
 }
@@ -149,14 +150,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         }
         Action::ToggleMark => unmark(app),
         Action::InvertMarks => {
-            app.status = None;
+            app.session.status = None;
             marks::invert(app);
         }
         a @ (Action::Trash | Action::DeletePermanent) => {
-            app.status = None;
-            if app.marks.is_empty() && !app.read_only {
+            app.session.status = None;
+            if app.session.marks.is_empty() && !app.session.read_only {
                 let space = first_key(Action::ToggleMark);
-                app.status = Some(format!("nothing is marked: {space} in the list marks"));
+                app.session.status = Some(format!("nothing is marked: {space} in the list marks"));
             } else {
                 fx = keys::run(app, a);
             }
@@ -170,7 +171,13 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 
 /// Unmarks the selected item; the cursor stays on the row, now the next item.
 fn unmark(app: &mut App) {
-    if let Some(it) = app.marks.items().get(app.marks_pane.cursor).cloned() {
+    if let Some(it) = app
+        .session
+        .marks
+        .items()
+        .get(app.marks_pane.cursor)
+        .cloned()
+    {
         marks::set(app, it, false);
     }
 }
@@ -178,7 +185,7 @@ fn unmark(app: &mut App) {
 /// The path of a mark relative to the scan root, `/` after a directory.
 fn label(app: &App, it: &marks::Item) -> String {
     let path = &it.target.path;
-    let mut s = match rel_text(path, &app.snap.root_path) {
+    let mut s = match rel_text(path, &app.session.snap.root_path) {
         Some(rel) if !rel.is_empty() => rel,
         _ => path.to_string(),
     };
@@ -191,9 +198,9 @@ fn label(app: &App, it: &marks::Item) -> String {
 /// What is marked and what deleting it would free, above the items.
 fn head(app: &App) -> Vec<Line<'static>> {
     let t = &app.theme;
-    let (total, scanning) = app.marks.total();
+    let (total, scanning) = app.session.marks.total();
     let at_least = if scanning { "at least " } else { "" };
-    let n = app.marks.items().len();
+    let n = app.session.marks.items().len();
     let marked = Line::from(vec![
         Span::styled("● ", t.mark),
         Span::raw(format!("{n} marked, {at_least}{}", human(total))),
@@ -242,7 +249,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .border_style(t.border_focus)
         .title(Span::styled(" Marks ", t.title));
     let inner = block.inner(area);
-    if app.marks.is_empty() {
+    if app.session.marks.is_empty() {
         let text = empty(app);
         f.render_widget(
             Paragraph::new(text).wrap(Wrap { trim: true }).block(block),
@@ -262,7 +269,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let width = inner.width;
     let name = (width as usize).saturating_sub(SIZE + 2);
     let mut lines = head(app);
-    let items = app.marks.items();
+    let items = app.session.marks.items();
     for (i, it) in items.iter().enumerate().skip(p.scroll).take(fit) {
         let path = truncate_middle(&label(app, it), name);
         let line = Line::from(format!("{:>SIZE$}  {path}", human(it.size)));

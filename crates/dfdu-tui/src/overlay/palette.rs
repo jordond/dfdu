@@ -111,7 +111,7 @@ fn group_name(g: Group) -> &'static str {
 
 /// Opens the palette with an empty query.
 pub fn open(app: &mut App) {
-    app.overlay = Overlay::Palette(Palette::new(app.read_only));
+    app.overlay = Overlay::Palette(Palette::new(app.session.read_only));
 }
 
 /// Typing searches; `↑`/`↓`/`PgUp`/`PgDn` move, `Enter` closes the palette and runs the entry,
@@ -146,7 +146,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
 }
 
 fn run_entry(app: &mut App, run: Run) -> Vec<Effect> {
-    app.status = None;
+    app.session.status = None;
     match run {
         Run::Action(a) => keys::run(app, a),
         Run::Theme(name) => {
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(labels(&app)[0], "toggle apparent size / disk usage");
         assert!(app.key(press(KeyCode::Enter), t0).is_empty());
         assert!(matches!(app.overlay, Overlay::None));
-        assert_eq!(app.size_mode, SizeMode::Apparent);
+        assert_eq!(app.session.size_mode, SizeMode::Apparent);
 
         // Moving the cursor picks another entry; one that opens an overlay works too.
         app.key(press(KeyCode::Char(':')), t0);
@@ -364,7 +364,7 @@ mod tests {
         app.key(press(KeyCode::Down), t0);
         assert_eq!(labels(&app)[1], "sort by name (again: reverse)");
         app.key(press(KeyCode::Enter), t0);
-        assert_eq!(app.sort.key, crate::state::order::SortKey::Name);
+        assert_eq!(app.session.sort.key, crate::state::order::SortKey::Name);
 
         // Rescan returns its effect to the run loop.
         app.key(press(KeyCode::Char(':')), t0);

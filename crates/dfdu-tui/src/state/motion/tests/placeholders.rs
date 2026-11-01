@@ -19,7 +19,7 @@ fn deleted_row_stays_as_placeholder_until_resort() {
     let t1 = t0 + ms(100);
     app.refresh(snap_with_alloc(vec![a.clone(), c.clone()], 2), t1);
     assert_eq!(row_names(&app), ["a", "b", "c"]);
-    assert!(app.snap.entries[app.list.rows[1]].ghost);
+    assert!(app.session.snap.entries[app.session.list.rows[1]].ghost);
     let buf = render_buffer(&mut app, t1, W, H);
     let frame = text(&buf);
     assert!(frame.contains("b  deleted"), "{frame}");
@@ -35,7 +35,11 @@ fn deleted_row_stays_as_placeholder_until_resort() {
     assert_eq!(row_names(&app), ["a", "c"]);
     app.refresh(snap_with_alloc(vec![a, c], 4), t0 + ms(300));
     assert_eq!(row_names(&app), ["a", "c"]);
-    assert_eq!(app.snap.entries.len(), 2, "the ghost was added again");
+    assert_eq!(
+        app.session.snap.entries.len(),
+        2,
+        "the ghost was added again"
+    );
 }
 
 #[test]

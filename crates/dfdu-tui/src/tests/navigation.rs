@@ -36,14 +36,14 @@ fn twenty() -> (App, Instant) {
 fn half_pages_in_the_list() {
     let (mut app, t0) = twenty();
     app.key(ctrl('d'), t0);
-    assert_eq!(app.selected_index(), Some(5));
+    assert_eq!(app.session.selected_index(), Some(5));
     app.key(ctrl('d'), t0);
-    assert_eq!(app.selected_index(), Some(10));
+    assert_eq!(app.session.selected_index(), Some(10));
     app.key(ctrl('u'), t0);
-    assert_eq!(app.selected_index(), Some(5));
+    assert_eq!(app.session.selected_index(), Some(5));
     app.key(ctrl('u'), t0);
     app.key(ctrl('u'), t0);
-    assert_eq!(app.selected_index(), Some(0));
+    assert_eq!(app.session.selected_index(), Some(0));
 }
 
 #[test]
@@ -53,7 +53,8 @@ fn range_mark_marks_every_row_passed() {
     app.key(press(KeyCode::Char('v')), t0);
     assert_eq!(marked(&app), ["f01"]);
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.starts_with("range mark"))
     );
@@ -65,12 +66,12 @@ fn range_mark_marks_every_row_passed() {
     app.key(ctrl('d'), t0);
     assert_eq!(marked(&app).len(), 7, "{:?}", marked(&app));
     assert_eq!(
-        app.status.as_deref(),
+        app.session.status.as_deref(),
         Some("range mark: 7 marked; v or Esc ends it")
     );
     // `v` ends it: moving marks no more.
     app.key(press(KeyCode::Char('v')), t0);
-    assert_eq!(app.status.as_deref(), Some("range mark ended"));
+    assert_eq!(app.session.status.as_deref(), Some("range mark ended"));
     app.key(press(KeyCode::Char('j')), t0);
     assert_eq!(marked(&app).len(), 7);
     // `Esc` ends it too, and `G` marks to the end.
@@ -78,7 +79,7 @@ fn range_mark_marks_every_row_passed() {
     app.key(press(KeyCode::Char('G')), t0);
     assert_eq!(marked(&app).len(), 19, "all but f00");
     app.key(press(KeyCode::Esc), t0);
-    assert_eq!(app.status.as_deref(), Some("range mark ended"));
+    assert_eq!(app.session.status.as_deref(), Some("range mark ended"));
     app.key(press(KeyCode::Char('g')), t0);
     assert_eq!(marked(&app).len(), 19);
     assert!(!crate::state::marks::range::on(&app));
@@ -87,12 +88,12 @@ fn range_mark_marks_every_row_passed() {
 #[test]
 fn range_mark_is_refused_read_only() {
     let (mut app, t0) = twenty();
-    app.read_only = true;
+    app.session.read_only = true;
     app.key(press(KeyCode::Char('v')), t0);
-    assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+    assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
     assert!(!crate::state::marks::range::on(&app));
     app.key(press(KeyCode::Char('j')), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 }
 
 #[test]
@@ -106,7 +107,7 @@ fn y_copies_the_selected_path() {
         matches!(&fx[..], [Effect::Copy(text)] if *text == want),
         "{fx:?}"
     );
-    let status = app.status.clone().unwrap_or_default();
+    let status = app.session.status.clone().unwrap_or_default();
     assert!(
         status.starts_with("copied ") && status.contains("OSC 52"),
         "{status}"
@@ -139,20 +140,25 @@ fn paths_of_another_kind_of_host_are_shown_and_found_as_they_are() {
         matches!(&fx[..], [Effect::Copy(text)] if *text == want),
         "{fx:?}"
     );
-    assert!(app.status.as_deref().is_some_and(|s| s.contains(want)));
+    assert!(
+        app.session
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains(want))
+    );
 
     // Gone to by its path: its directory opens with it selected.
-    let root_path = app.snap.root_path.clone();
+    let root_path = app.session.snap.root_path.clone();
     app.go_to(&path, &root_path);
     sync(&mut app, &m, t0);
-    assert_eq!(app.snap.dir_path, root_path);
+    assert_eq!(app.session.snap.dir_path, root_path);
     assert_eq!(
-        app.selected_entry().map(|e| &e.name[..]),
+        app.session.selected_entry().map(|e| &e.name[..]),
         Some(name.as_bytes())
     );
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &m, t0);
-    assert_eq!(app.snap.dir_path, path);
+    assert_eq!(app.session.snap.dir_path, path);
     // `render` shows `\` as `/` on Windows, `pro\j` included.
     let header = render(&mut app, t0, 80, 8);
     let want = format!("{root_name} › {name}");
@@ -172,8 +178,13 @@ fn o_opens_the_file_manager_only_for_this_machine() {
     // A remote scan, or one read from a file: nothing to open here.
     let fx = app.key(press(KeyCode::Char('o')), t0);
     assert!(fx.is_empty(), "{fx:?}");
-    assert!(app.status.as_deref().is_some_and(|s| s.contains("remote")));
-    app.outside.local = true;
+    assert!(
+        app.session
+            .status
+            .as_deref()
+            .is_some_and(|s| s.contains("remote"))
+    );
+    app.session.outside.local = true;
     let fx = app.key(press(KeyCode::Char('o')), t0);
     let want = PathBuf::from("/r").join("Library");
     assert!(
@@ -196,20 +207,20 @@ fn filter_enter_opens_the_only_match() {
     // Two matches: Enter keeps the filter and stays.
     app.key(press(KeyCode::Char('/')), t0);
     typed(&mut app, "i", t0);
-    assert_eq!(app.list.rows.len(), 2);
+    assert_eq!(app.session.list.rows.len(), 2);
     app.key(press(KeyCode::Enter), t0);
-    assert!(!app.target.path.to_local().ends_with("Library"));
+    assert!(!app.session.target.path.to_local().ends_with("Library"));
     // One file: stays too.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "notes", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert!(!app.target.path.to_local().ends_with("Library"));
+    assert!(!app.session.target.path.to_local().ends_with("Library"));
     // One directory: Enter opens it.
     app.key(press(KeyCode::Char('/')), t0);
     app.key(ctrl('u'), t0);
     typed(&mut app, "libr", t0);
-    assert_eq!(app.list.rows.len(), 1);
+    assert_eq!(app.session.list.rows.len(), 1);
     app.key(press(KeyCode::Enter), t0);
-    assert_eq!(app.target.path, below("/r", "Library"));
+    assert_eq!(app.session.target.path, below("/r", "Library"));
 }

@@ -53,7 +53,7 @@ fn auto_resort_marks_the_selected_row_for_two_seconds() {
     app.refresh(snap_with_alloc(es, 2), t1);
     assert_eq!(row_names(&app), ["e", "a", "b", "c", "d"]);
     assert_eq!(
-        app.selected_entry().map(|e| e.name.to_vec()),
+        app.session.selected_entry().map(|e| e.name.to_vec()),
         Some(b"e".to_vec())
     );
     render_buffer(&mut app, t1, W, RANK_H);
@@ -99,7 +99,7 @@ fn a_selected_row_that_moved_two_places_gets_no_marker() {
     app.refresh(snap_with_alloc(es, 2), t1);
     assert_eq!(row_names(&app), ["c", "a", "b", "d", "e"]);
     assert_eq!(
-        app.selected_entry().map(|e| e.name.to_vec()),
+        app.session.selected_entry().map(|e| e.name.to_vec()),
         Some(b"c".to_vec())
     );
     let frame = render(&mut app, t1, W, RANK_H);

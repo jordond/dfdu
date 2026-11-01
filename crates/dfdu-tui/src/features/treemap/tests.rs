@@ -44,7 +44,8 @@ pub(crate) fn buffer_row(buf: &Buffer, y: u16) -> String {
 }
 
 fn selected(app: &App) -> String {
-    app.selected_entry()
+    app.session
+        .selected_entry()
         .map(|e| String::from_utf8_lossy(&e.name).into_owned())
         .unwrap_or_default()
 }
@@ -57,6 +58,7 @@ fn read_finds_the_levels_below_the_largest_directories() {
     let below = &app.extras.treemap.below;
     assert_eq!(below.len(), 2, "big and mid");
     let big = app
+        .session
         .snap
         .entries
         .iter()
@@ -74,6 +76,7 @@ fn read_finds_the_levels_below_the_largest_directories() {
     assert!(app.extras_stale());
     sync(&mut app, &fx.m, t0);
     let big = app
+        .session
         .snap
         .entries
         .iter()
@@ -96,7 +99,7 @@ fn read_skips_hidden_entries_when_they_are_hidden_and_keeps_the_rest_total() {
     fx.file(d, ".dot", 50_000);
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    let node = app.snap.entries[0].node;
+    let node = app.session.snap.entries[0].node;
     let kids = &app.extras.treemap.below[&node];
     assert_eq!(kids.items.len(), MAX_TILES);
     assert_eq!(kids.items[0].name, b".dot");
@@ -348,11 +351,11 @@ fn arrows_move_between_tiles_and_enter_zooms() {
 
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.snap.dir_path.to_local().ends_with("big"));
+    assert!(app.session.snap.dir_path.to_local().ends_with("big"));
     render(&mut app, t0, 100, 30);
     app.key(press(KeyCode::Char('<')), t0);
     sync(&mut app, &fx.m, t0);
-    assert_eq!(app.snap.dir_path, HostPath::from("/r"));
+    assert_eq!(app.session.snap.dir_path, HostPath::from("/r"));
 }
 
 #[test]
@@ -400,7 +403,7 @@ fn click_selects_a_tile_and_a_second_click_zooms_in() {
     let fx2 = crate::input::mouse::event(&mut app, click, t0).expect("handled");
     assert!(fx2.is_empty());
     sync(&mut app, &fx.m, t0);
-    assert!(app.snap.dir_path.to_local().ends_with("mid"));
+    assert!(app.session.snap.dir_path.to_local().ends_with("mid"));
 }
 
 #[test]
@@ -537,11 +540,12 @@ fn depth_one_peeks_into_the_selected_tile() {
     assert_eq!(selected(&app), "big");
     assert!(frame.contains(" a/") && !frame.contains(" m0"), "{frame}");
     let mid = app
+        .session
         .list
         .rows
         .iter()
-        .position(|&i| &*app.snap.entries[i].name == b"mid");
-    app.move_to(mid.expect("mid is a row"));
+        .position(|&i| &*app.session.snap.entries[i].name == b"mid");
+    app.session.move_to(mid.expect("mid is a row"));
     assert_eq!(selected(&app), "mid");
     let frame = render(&mut app, t0, 100, 30);
     assert!(!frame.contains(" a/") && frame.contains(" m0"), "{frame}");

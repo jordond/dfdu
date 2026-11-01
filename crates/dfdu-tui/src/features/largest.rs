@@ -80,9 +80,9 @@ pub fn on_open(app: &mut App) {
 pub fn stale(app: &App) -> bool {
     active(app)
         && !app.largest.walked.as_ref().is_some_and(|w| {
-            w.dir == app.snap.dir_path
-                && w.mode == app.size_mode
-                && w.hide_hidden == app.hide_hidden
+            w.dir == app.session.snap.dir_path
+                && w.mode == app.session.size_mode
+                && w.hide_hidden == app.session.hide_hidden
         })
 }
 
@@ -95,24 +95,24 @@ pub fn read(m: &Model, app: &App) -> Option<Info> {
     let fingerprint = m.fingerprint();
     if !stale(app) {
         let w = app.largest.walked.as_ref()?;
-        let paced = !app.snap.busy || w.at.elapsed() >= MIN_INTERVAL.max(w.cost * 9);
+        let paced = !app.session.snap.busy || w.at.elapsed() >= MIN_INTERVAL.max(w.cost * 9);
         if w.fingerprint == fingerprint || !paced {
             return None;
         }
     }
     let at = Instant::now();
     let t = &m.tree;
-    let (files, count) = match app.snap.dir_node.and_then(|r| t.resolve_visible(r)) {
-        Some(dir) => walk(t, dir, app.size_mode, app.hide_hidden),
+    let (files, count) = match app.session.snap.dir_node.and_then(|r| t.resolve_visible(r)) {
+        Some(dir) => walk(t, dir, app.session.size_mode, app.session.hide_hidden),
         None => (Vec::new(), 0),
     };
     Some(Info {
         files,
         count,
         walked: Walked {
-            dir: app.snap.dir_path.clone(),
-            mode: app.size_mode,
-            hide_hidden: app.hide_hidden,
+            dir: app.session.snap.dir_path.clone(),
+            mode: app.session.size_mode,
+            hide_hidden: app.session.hide_hidden,
             at,
             cost: at.elapsed(),
             fingerprint,
@@ -143,7 +143,7 @@ pub fn apply(app: &mut App) {
 /// The selected file, its path joined to the directory shown.
 pub fn selected(app: &App) -> Option<(HostPath, &File)> {
     let f = app.largest.files.get(app.largest.cursor)?;
-    Some((app.snap.dir_path.join(f.path.as_bytes()), f))
+    Some((app.session.snap.dir_path.join(f.path.as_bytes()), f))
 }
 
 /// Keys the view takes before the action registry; `None` passes the key on. The keys that
@@ -174,7 +174,7 @@ fn show_in_files(app: &mut App) {
     let Some((path, _)) = selected(app) else {
         return;
     };
-    let dir = app.snap.dir_path.clone();
+    let dir = app.session.snap.dir_path.clone();
     views::switch(app, View::Files);
     app.go_to(&path, &dir);
 }
@@ -200,7 +200,7 @@ fn toggle(app: &mut App) {
         scanning: false,
         inside: false,
     };
-    let on = !app.marks.contains(f.node);
+    let on = !app.session.marks.contains(f.node);
     marks::set(app, item, on);
     let last = app.largest.files.len().saturating_sub(1);
     app.largest.cursor = (app.largest.cursor + 1).min(last);

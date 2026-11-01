@@ -13,7 +13,7 @@ use crate::theme::Theme;
 fn app(read_only: bool) -> (App, Instant) {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.read_only = read_only;
+    app.session.read_only = read_only;
     app.refresh(library_snap(), t0);
     (app, t0)
 }
@@ -22,8 +22,8 @@ fn app(read_only: bool) -> (App, Instant) {
 fn marked_read_only() -> (App, Instant) {
     let (mut app, t0) = app(false);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(!app.marks.is_empty());
-    app.read_only = true;
+    assert!(!app.session.marks.is_empty());
+    app.session.read_only = true;
     (app, t0)
 }
 
@@ -31,19 +31,19 @@ fn marked_read_only() -> (App, Instant) {
 fn space_marks_nothing() {
     let (mut ro, t0) = app(true);
     ro.key(press(KeyCode::Char(' ')), t0);
-    assert!(ro.marks.is_empty());
-    assert_eq!(ro.status.as_deref(), Some(READ_ONLY));
+    assert!(ro.session.marks.is_empty());
+    assert_eq!(ro.session.status.as_deref(), Some(READ_ONLY));
 }
 
 #[test]
 fn delete_keys_open_no_dialog() {
     let (mut ro, t0) = marked_read_only();
     for c in ['d', 'D', 'U'] {
-        ro.status = None;
+        ro.session.status = None;
         let fx = ro.key(press(KeyCode::Char(c)), t0);
         assert!(fx.is_empty(), "{c}: {fx:?}");
         assert!(matches!(ro.overlay, Overlay::None), "{c}");
-        assert_eq!(ro.status.as_deref(), Some(READ_ONLY), "{c}");
+        assert_eq!(ro.session.status.as_deref(), Some(READ_ONLY), "{c}");
     }
     // The same key opens the dialog in a browser that deletes.
     let (mut rw, t0) = app(false);

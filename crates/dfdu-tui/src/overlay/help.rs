@@ -138,7 +138,7 @@ impl Help {
 /// Opens the help at the top, without a search.
 pub fn open(app: &mut App) {
     app.overlay = Overlay::Help(Help {
-        read_only: app.read_only,
+        read_only: app.session.read_only,
         ..Help::default()
     });
 }

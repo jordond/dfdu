@@ -53,7 +53,7 @@ fn mmss(d: std::time::Duration) -> String {
 /// Draws the whole screen and updates the list height, scroll offset and areas in `app`.
 pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     let area = f.area();
-    let stalled_line = u16::from(app.snap.stalled > 0);
+    let stalled_line = u16::from(app.session.snap.stalled > 0);
     let filter_line = filter::line(app);
     let [header, body, prompt, filter_row, status, footer] = Layout::vertical([
         Constraint::Length(2),
@@ -82,8 +82,8 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         overlay: None,
         debug: None,
     };
-    let frame =
-        u64::try_from(now.duration_since(app.started).as_millis() / 100).unwrap_or(u64::MAX);
+    let frame = u64::try_from(now.duration_since(app.session.started).as_millis() / 100)
+        .unwrap_or(u64::MAX);
 
     // The header names the treemap's colouring and depth while it is shown.
     app.treemap.shown = view == View::Map && treemap::fits(area);

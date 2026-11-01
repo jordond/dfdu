@@ -19,7 +19,7 @@ const NOTE_MIN: usize = 8;
 /// that fit. The notes come apart so a ghost's are not struck through with its name.
 pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
     let t = &app.theme;
-    let e = &app.snap.entries[index];
+    let e = &app.session.snap.entries[index];
     let name = String::from_utf8_lossy(&e.name).into_owned();
     let style = if e.is_dir { t.dir } else { Style::new() };
     let mut spans = filter::name_spans(app, name, style);
@@ -52,7 +52,7 @@ pub fn cell(app: &App, index: usize, width: usize) -> (Vec<Span<'static>>, Vec<S
 /// deleted, what went wrong reading it or inside it, its mark, its subvolume label, and that its
 /// size is only an upper bound.
 fn notes(app: &App, index: usize, t: &Theme) -> Vec<(String, Style)> {
-    let e = &app.snap.entries[index];
+    let e = &app.session.snap.entries[index];
     let mut notes = Vec::new();
     if e.ghost {
         notes.push(("  deleted".to_owned(), t.fg_dim));
@@ -84,7 +84,7 @@ fn notes(app: &App, index: usize, t: &Theme) -> Vec<(String, Style)> {
 
 /// What the row says about its mark after the name, if anything.
 fn mark_note(app: &App, index: usize, t: &Theme) -> Option<(String, Style)> {
-    let e = &app.snap.entries[index];
+    let e = &app.session.snap.entries[index];
     let note = |s: &str, style| Some((s.to_owned(), style));
     match e.mark {
         Mark::Stalled => note("  not responding", t.status_warn),

@@ -12,12 +12,12 @@ use crate::state::filter;
 /// The filter's line above the status line, while it has one: the input while editing, else
 /// the query in force.
 pub fn line(app: &App) -> Option<Line<'static>> {
-    let (f, t) = (&app.filter, &app.theme);
+    let (f, t) = (&app.session.filter, &app.theme);
     let editing = filter::editing(app);
     if !editing && !f.active() {
         return None;
     }
-    let (shown, of) = f.shown(app.hide_hidden);
+    let (shown, of) = f.shown(app.session.hide_hidden);
     let spans = if editing {
         let mut spans = vec![Span::styled(" /", t.key), Span::raw(" ")];
         spans.extend(input_spans(f.input(), Style::new(), t.key));
@@ -39,7 +39,7 @@ pub fn line(app: &App) -> Option<Line<'static>> {
 
 /// `name` drawn in `style`, with the characters the query matches highlighted.
 pub fn name_spans(app: &App, name: String, style: Style) -> Vec<Span<'static>> {
-    let Some(indices) = app.filter.indices(&name) else {
+    let Some(indices) = app.session.filter.indices(&name) else {
         return vec![Span::styled(name, style)];
     };
     let matched = style.patch(app.theme.r#match);

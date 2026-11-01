@@ -86,7 +86,7 @@ impl Cacher {
                 false
             }
             Err(e) => {
-                app.status = Some(format!(
+                app.session.status = Some(format!(
                     "cache {}: cannot start a thread: {e}",
                     link.slot.path.display()
                 ));
@@ -108,11 +108,11 @@ impl Cacher {
                 false
             }
             Ok(Err(e)) => {
-                app.status = Some(format!("cache {}: {e}", link.slot.path.display()));
+                app.session.status = Some(format!("cache {}: {e}", link.slot.path.display()));
                 true
             }
             Err(_) => {
-                app.status = Some(format!(
+                app.session.status = Some(format!(
                     "cache {}: the writer panicked",
                     link.slot.path.display()
                 ));

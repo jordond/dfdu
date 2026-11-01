@@ -22,8 +22,8 @@ pub(super) struct TreeRow {
 /// tree.
 pub(super) fn rows(app: &App, visible: &[usize]) -> Option<Vec<TreeRow>> {
     app.tree_shown()?;
-    let entries = &app.snap.entries;
-    let last = tree::last_children(entries, &app.list.rows);
+    let entries = &app.session.snap.entries;
+    let last = tree::last_children(entries, &app.session.list.rows);
     Some(
         visible
             .iter()
@@ -43,7 +43,11 @@ pub(super) fn prefix(app: &App, e: &EntryData, row: &TreeRow, width: usize) -> V
     let glyph = if e.fold > 0 {
         ""
     } else if e.is_dir && !e.pseudo {
-        let open = app.tree.as_ref().is_some_and(|tr| tr.is_expanded(e.node));
+        let open = app
+            .session
+            .tree
+            .as_ref()
+            .is_some_and(|tr| tr.is_expanded(e.node));
         if open { "▾ " } else { "▸ " }
     } else {
         "  "
@@ -85,7 +89,9 @@ pub(super) fn bar(
 ) -> [Span<'static>; 2] {
     let t = &app.theme;
     let own = motion::bar(app, e, ratio(e.size, max));
-    let parent = row.parent.map(|p| ratio(app.snap.entries[p].size, max));
+    let parent = row
+        .parent
+        .map(|p| ratio(app.session.snap.entries[p].size, max));
     let (filled, shadow) = bar_with_shadow(own, parent, width.into(), t.bars);
     [
         Span::styled(filled, t.bar_fill),
@@ -97,7 +103,7 @@ pub(super) fn bar(
 pub(super) fn share(app: &App, e: &EntryData, row: &TreeRow, total: u64) -> String {
     let whole = row
         .parent
-        .map_or(total, |p| app.snap.entries[p].size)
+        .map_or(total, |p| app.session.snap.entries[p].size)
         .max(1);
     format!("{:.1}%", percent(e.size, whole))
 }
@@ -132,7 +138,7 @@ mod tests {
             path: "/r/a/y".into(),
             ident: None,
         });
-        app.tree = Some(tree);
+        app.session.tree = Some(tree);
         app.refresh(snap_with_totals(entries, 1), t0);
         app.reorder(t0);
         app
@@ -150,14 +156,14 @@ mod tests {
         assert_eq!(guides, ["", "├─", "│ ├─", "  └─"]);
         let parents: Vec<Option<usize>> = rows.iter().map(|r| r.parent).collect();
         assert_eq!(parents, [None, Some(0), Some(2), Some(7)]);
-        app.tree = None;
+        app.session.tree = None;
         assert!(super::rows(&app, &[0]).is_none());
     }
 
     #[test]
     fn the_glyph_says_whether_a_directory_is_open() {
         let app = browser();
-        let es = &app.snap.entries;
+        let es = &app.session.snap.entries;
         let rows = rows(&app, &[0, 2, 3]).expect("a tree");
         let shown = |i: usize, row: &TreeRow, width| text(&prefix(&app, &es[i], row, width));
         assert_eq!(shown(0, &rows[0], 40), "▸ ");
@@ -171,7 +177,7 @@ mod tests {
     fn shares_are_of_the_parent_and_fold_rows_are_dim() {
         let mut app = browser();
         let rows = rows(&app, &[0, 1]).expect("a tree");
-        let es = app.snap.entries.clone();
+        let es = app.session.snap.entries.clone();
         assert_eq!(share(&app, &es[1], &rows[1], 1000), "50.0%", "x of a");
         assert_eq!(
             share(&app, &es[0], &rows[0], 1000),
@@ -186,9 +192,9 @@ mod tests {
         );
         let base = Style::new();
         assert_eq!(size_style(&app, &es[1], base), base);
-        app.snap.entries[1].fold = 3;
-        app.snap.entries[1].name = "… 3 more".as_bytes().into();
-        let fold = &app.snap.entries[1];
+        app.session.snap.entries[1].fold = 3;
+        app.session.snap.entries[1].name = "… 3 more".as_bytes().into();
+        let fold = &app.session.snap.entries[1];
         assert_eq!(size_style(&app, fold, base), base.patch(app.theme.fg_dim));
         let name = fold_name(&app, fold, 4);
         assert_eq!(name.content, "… 3…");

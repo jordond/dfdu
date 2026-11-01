@@ -70,14 +70,14 @@ pub fn cycle_keep(app: &mut App) {
                     let c = &g.files[kept(app, g)?];
                     live(app, c).map(|n| (c.clone(), n))
                 })
-                .filter(|(_, n)| app.marks.contains(*n))
+                .filter(|(_, n)| app.session.marks.contains(*n))
                 .collect()
         })
         .unwrap_or_default();
     for (c, n) in &kept_now {
         marks::set(app, mark_of(c, *n), false);
     }
-    app.status = Some(format!(
+    app.session.status = Some(format!(
         "duplicates: keep the {} copy ({} ticks the others)",
         app.dupes.keep.label(),
         crate::app::keys::first_key(crate::app::keys::Action::TickSuggested)
@@ -101,7 +101,7 @@ pub fn whole_group_ticked(app: &App) -> Option<String> {
     let f = found(app)?;
     f.groups.iter().find_map(|g| {
         let left: Vec<NodeRef> = g.files.iter().filter_map(|c| live(app, c)).collect();
-        let all = left.len() >= 2 && left.iter().all(|&n| app.marks.contains(n));
+        let all = left.len() >= 2 && left.iter().all(|&n| app.session.marks.contains(n));
         all.then(|| {
             let first = g.files.iter().find(|c| live(app, c).is_some())?;
             Some(first.path.file_name()?.to_string_lossy().into_owned())
@@ -158,7 +158,7 @@ pub fn compared(app: &App) -> bool {
 
 /// The view waits to be asked to compare this machine's files, and the scan is done.
 fn waits(app: &App) -> bool {
-    active(app) && app.outside.local && app.dupes.run.is_none() && !app.snap.busy
+    active(app) && app.session.outside.local && app.dupes.run.is_none() && !app.session.snap.busy
 }
 
 /// The view waits, and the files to compare were never counted.
@@ -201,12 +201,12 @@ pub fn apply(app: &mut App) {
 fn cannot_start(app: &App) -> Option<String> {
     // The comparison reads the files here: for another machine's tree it would read this
     // one's files at the same paths, and a delete would then remove the other's.
-    if !app.outside.local {
+    if !app.session.outside.local {
         return Some(
             "duplicates reads this machine's files; this scan is remote or from a file".into(),
         );
     }
-    if app.snap.busy {
+    if app.session.snap.busy {
         let again = crate::app::keys::first_key(crate::app::keys::Action::CompareAgain);
         return Some(format!(
             "duplicates: wait until the scan is done, then press {again}"
@@ -217,7 +217,7 @@ fn cannot_start(app: &App) -> Option<String> {
 
 fn start(app: &mut App) -> Vec<Effect> {
     if let Some(why) = cannot_start(app) {
-        app.status = Some(why);
+        app.session.status = Some(why);
         return Vec::new();
     }
     app.dupes.cursor = 0;
@@ -232,7 +232,7 @@ fn start(app: &mut App) -> Vec<Effect> {
 pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
     match Run::start(root, cands) {
         Ok(run) => app.dupes.run = Some(run),
-        Err(e) => app.status = Some(format!("duplicates: cannot start a thread: {e}")),
+        Err(e) => app.session.status = Some(format!("duplicates: cannot start a thread: {e}")),
     }
 }
 
@@ -301,14 +301,14 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
                 Some(&Row::File(group, file)) => {
                     let c = f.groups[group].files[file].clone();
                     if let Some(n) = live(app, &c) {
-                        let on = !app.marks.contains(n);
+                        let on = !app.session.marks.contains(n);
                         marks::set(app, mark_of(&c, n), on);
                     }
                     app.dupes.cursor = (app.dupes.cursor + 1).min(last);
                 }
                 Some(&Row::Group(group)) => {
                     let picks = copies(app, &f.groups[group]);
-                    let on = !picks.iter().all(|(_, n)| app.marks.contains(*n));
+                    let on = !picks.iter().all(|(_, n)| app.session.marks.contains(*n));
                     for (c, n) in &picks {
                         marks::set(app, mark_of(c, *n), on);
                     }
@@ -357,7 +357,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
 pub fn compare_again(app: &mut App) -> Vec<Effect> {
     // What there is stays shown when a new comparison cannot start.
     if let Some(why) = cannot_start(app) {
-        app.status = Some(why);
+        app.session.status = Some(why);
         return Vec::new();
     }
     if let Some(r) = app.dupes.run.take() {
@@ -369,13 +369,13 @@ pub fn compare_again(app: &mut App) -> Vec<Effect> {
 /// `A` ([`Action::TickSuggested`](crate::app::keys::Action)): marks every copy but the one
 /// kept in each group that frees something.
 pub fn tick_suggested(app: &mut App) {
-    if app.read_only {
-        app.status = Some(crate::app::keys::READ_ONLY.into());
+    if app.session.read_only {
+        app.session.status = Some(crate::app::keys::READ_ONLY.into());
         return;
     }
     let n = mark_all(app);
     let keep = app.dupes.keep.label();
-    app.status = Some(match n {
+    app.session.status = Some(match n {
         0 => "every copy is marked already, or there are none to free".into(),
         1 => format!("marked 1 copy (the {keep} file of each group is kept)"),
         n => format!("marked {n} copies (the {keep} file of each group is kept)"),

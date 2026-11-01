@@ -28,13 +28,13 @@ fn click_on_breadcrumb_goes_up() {
     assert!(event(&mut app, left(10, 1), t0).is_none());
     assert!(event(&mut app, left(4, 1), t0).is_none());
     event(&mut app, left(6, 1), t0).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"a"));
-    assert_eq!(app.selected.as_ref().expect("selection").name, b"b");
+    assert_eq!(app.session.target.path, HostPath::from("/r").join(b"a"));
+    assert_eq!(app.session.selected.as_ref().expect("selection").name, b"b");
 
     let mut app = below_root(t0);
     event(&mut app, left(2, 1), t0).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from("/r"));
-    assert_eq!(app.selected.as_ref().expect("selection").name, b"a");
+    assert_eq!(app.session.target.path, HostPath::from("/r"));
+    assert_eq!(app.session.selected.as_ref().expect("selection").name, b"a");
 }
 
 #[test]

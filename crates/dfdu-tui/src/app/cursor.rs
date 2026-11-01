@@ -1,145 +1,41 @@
-//! The selection and the cursor moves: the selected row, found again after a rescan by name
-//! and identity, the moves through the rows, and the way into and out of directories, which
-//! remembers the cursor of each directory left to restore it on the way back.
+//! The cursor moves into and out of directories with the list's scroll: the session saves the
+//! selection of each directory left (`SessionState::enter`, `up`, `go_to`) and the app the
+//! scroll with it, to restore both on the way back.
 
-use dfdu_tree::{HostPath, NodeRef, Target};
+use dfdu_session::state::Moved;
+use dfdu_tree::HostPath;
 
 use super::App;
-use crate::model::snapshot::EntryData;
-use crate::state::list::Cursor;
-
-/// The selected entry: its reference, plus name and identity to find it again after a rescan.
-#[derive(Clone, Debug)]
-pub struct Selection {
-    /// `None` when only the name is known (going up to the parent directory).
-    pub node: Option<NodeRef>,
-    pub name: Vec<u8>,
-    pub dev_ino: (u64, u64),
-}
-
-impl Selection {
-    pub(crate) fn of(e: &EntryData) -> Self {
-        Selection {
-            node: Some(e.node),
-            name: e.name.to_vec(),
-            dev_ino: e.dev_ino,
-        }
-    }
-
-    /// The entry named `name` below the directory opened, to find again by name once its
-    /// rows are read.
-    fn named(name: Vec<u8>) -> Self {
-        Selection {
-            node: None,
-            name,
-            dev_ino: (0, 0),
-        }
-    }
-}
 
 impl App {
-    pub fn selected_index(&self) -> Option<usize> {
-        let node = self.selected.as_ref()?.node?;
-        let is_sel = |&i: &usize| self.snap.entries[i].node == node;
-        // Usually the row found last time; a directory can have a million rows.
-        let hint = self.list.sel_hint.get();
-        if self.list.rows.get(hint).is_some_and(is_sel) {
-            return Some(hint);
+    /// Keeps the scroll of the directory left, and puts back that of the directory opened.
+    fn moved(&mut self, m: Moved) {
+        self.scrolls.insert(m.left, self.scroll);
+        if let Some(dir) = m.opened {
+            self.scroll = self.scrolls.get(&dir).copied().unwrap_or(0);
         }
-        let found = self.list.rows.iter().position(is_sel)?;
-        self.list.sel_hint.set(found);
-        Some(found)
-    }
-
-    pub fn selected_entry(&self) -> Option<&EntryData> {
-        self.selected_index()
-            .map(|i| &self.snap.entries[self.list.rows[i]])
-    }
-
-    pub(crate) fn select(&mut self, index: usize) {
-        if let Some(&i) = self.list.rows.get(index) {
-            self.selected = Some(Selection::of(&self.snap.entries[i]));
-            self.list.sel_hint.set(index);
-        }
-    }
-
-    /// Selects row `index` as a cursor move of the user's, so re-sorts follow the selected row.
-    pub(crate) fn move_to(&mut self, index: usize) {
-        self.list.moved = true;
-        self.select(index);
-    }
-
-    pub(crate) fn move_by(&mut self, delta: isize) {
-        if self.list.rows.is_empty() {
-            return;
-        }
-        self.list.moved = true;
-        let cur = self.selected_index().unwrap_or(0);
-        let next = cur
-            .saturating_add_signed(delta)
-            .min(self.list.rows.len() - 1);
-        self.select(next);
-    }
-
-    fn save_cursor(&mut self) {
-        let c = Cursor {
-            selected: self.selected.clone(),
-            scroll: self.list.scroll,
-        };
-        self.list.cursors.insert(self.snap.dir_path.clone(), c);
     }
 
     /// Opens the directory of entry `index` of the snapshot: in tree mode a row at any depth,
     /// and the expanded directories stay expanded.
     pub(super) fn enter(&mut self, index: usize) {
-        self.save_cursor();
-        let target = crate::state::tree::target_of(&self.snap, index);
-        let saved = self.list.cursors.get(&target.path).cloned();
-        self.target = target;
-        self.list.moved = saved.is_some();
-        self.selected = saved.as_ref().and_then(|c| c.selected.clone());
-        self.list.scroll = saved.map_or(0, |c| c.scroll);
+        let m = self.session.enter(index);
+        self.moved(m);
     }
 
     pub(super) fn up(&mut self) {
-        if self.snap.at_root {
-            return;
+        if let Some(m) = self.session.up() {
+            self.moved(m);
         }
-        self.save_cursor();
-        let path = &self.snap.dir_path;
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return;
-        };
-        let name = name.to_vec();
-        let saved = self.list.cursors.get(&parent).cloned();
-        self.target = Target {
-            node: None,
-            path: parent,
-            ident: None,
-        };
-        self.list.moved = true;
-        self.list.scroll = saved.as_ref().map_or(0, |c| c.scroll);
-        // Select the directory we came from, found again by name after the refresh.
-        self.selected = Some(Selection::named(name));
     }
 
-    /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
+    /// Goes to an entry below the scan root `root`: opens its parent directory and selects it,
+    /// with the list scrolled to the top.
     pub(crate) fn go_to(&mut self, path: &HostPath, root: &HostPath) {
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return;
-        };
-        if path == root {
-            return;
+        if let Some(m) = self.session.go_to(path, root) {
+            self.scrolls.insert(m.left, self.scroll);
+            self.scroll = 0;
         }
-        self.save_cursor();
-        self.target = Target {
-            node: None,
-            path: parent,
-            ident: None,
-        };
-        self.list.moved = true;
-        self.list.scroll = 0;
-        self.selected = Some(Selection::named(name.to_vec()));
     }
 }
 
@@ -148,7 +44,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::model::snapshot::{Snapshot, test_entry};
+    use crate::model::snapshot::{EntryData, Snapshot, test_entry};
     use crate::tests::{snap_with_totals, snap_without_totals};
     use crate::theme::Theme;
 
@@ -171,48 +67,60 @@ mod tests {
     }
 
     fn selected(app: &App) -> Option<String> {
-        app.selected_entry()
+        app.session
+            .selected_entry()
             .map(|e| String::from_utf8_lossy(&e.name).into_owned())
     }
 
     #[test]
     fn moves_stay_within_the_rows() {
         let (mut app, _) = browser();
-        assert_eq!(app.selected_index(), Some(0));
-        app.move_by(3);
+        assert_eq!(app.session.selected_index(), Some(0));
+        app.session.move_by(3);
         assert_eq!(selected(&app).as_deref(), Some("d3"));
-        app.move_by(10);
-        assert_eq!(app.selected_index(), Some(4), "the last row at most");
-        app.move_by(-10);
-        assert_eq!(app.selected_index(), Some(0), "the first row at least");
-        app.move_to(2);
+        app.session.move_by(10);
+        assert_eq!(
+            app.session.selected_index(),
+            Some(4),
+            "the last row at most"
+        );
+        app.session.move_by(-10);
+        assert_eq!(
+            app.session.selected_index(),
+            Some(0),
+            "the first row at least"
+        );
+        app.session.move_to(2);
         assert_eq!(selected(&app).as_deref(), Some("d2"));
         // A row that is not there selects nothing new.
-        app.select(99);
+        app.session.select(99);
         assert_eq!(selected(&app).as_deref(), Some("d2"));
     }
 
     #[test]
     fn the_selection_is_found_where_it_moved_to() {
         let (mut app, t0) = browser();
-        app.move_to(3);
+        app.session.move_to(3);
         // The same entries, the selected one now the largest.
-        let mut entries = app.snap.entries.clone();
+        let mut entries = app.session.snap.entries.clone();
         entries[3].size = 1000;
         app.refresh(snap_with_totals(entries, 2), t0);
         app.reorder(t0);
-        let at = app.selected_index().expect("still selected");
-        assert_eq!(app.snap.entries[app.list.rows[at]].name, b"d3");
+        let at = app.session.selected_index().expect("still selected");
+        assert_eq!(
+            app.session.snap.entries[app.session.list.rows[at]].name,
+            b"d3"
+        );
     }
 
     #[test]
     fn the_cursor_of_a_directory_left_comes_back() {
         let (mut app, t0) = browser();
-        app.move_to(2);
-        app.enter(app.list.rows[2]);
-        assert_eq!(app.target.path, HostPath::from("/r").join(b"d2"));
+        app.session.move_to(2);
+        app.enter(app.session.list.rows[2]);
+        assert_eq!(app.session.target.path, HostPath::from("/r").join(b"d2"));
         assert!(
-            app.selected.is_none(),
+            app.session.selected.is_none(),
             "a directory not seen before starts at the top"
         );
         let inside = Snapshot {
@@ -223,8 +131,8 @@ mod tests {
         app.refresh(inside, t0);
         // Up selects the directory come from, by name until the rows are read.
         app.up();
-        assert_eq!(app.target.path, HostPath::from("/r"));
-        let sel = app.selected.as_ref().expect("a selection");
+        assert_eq!(app.session.target.path, HostPath::from("/r"));
+        let sel = app.session.selected.as_ref().expect("a selection");
         assert_eq!((sel.node, &sel.name[..]), (None, &b"d2"[..]));
     }
 
@@ -234,13 +142,13 @@ mod tests {
         let root = HostPath::from("/r");
         let path = root.join(b"d1").join(b"deep.bin");
         app.go_to(&path, &root);
-        assert_eq!(app.target.path, root.join(b"d1"));
+        assert_eq!(app.session.target.path, root.join(b"d1"));
         assert_eq!(
-            app.selected.as_ref().map(|s| &s.name[..]),
+            app.session.selected.as_ref().map(|s| &s.name[..]),
             Some(&b"deep.bin"[..])
         );
         // The root itself has no parent to open below the scan.
         app.go_to(&root, &root);
-        assert_eq!(app.target.path, root.join(b"d1"));
+        assert_eq!(app.session.target.path, root.join(b"d1"));
     }
 }

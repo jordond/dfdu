@@ -307,8 +307,8 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
     };
     m.last = Some(now);
     let scope = Scope {
-        dir: app.snap.dir_node,
-        mode: app.size_mode,
+        dir: app.session.snap.dir_node,
+        mode: app.session.size_mode,
         area: app.areas.list,
     };
     if m.scope != Some(scope) {
@@ -322,8 +322,8 @@ pub fn frame(app: &mut App, now: Instant, visible: &[usize]) {
         m.scope = Some(scope);
     }
 
-    let entries = &app.snap.entries;
-    let largest = app.list.rows_largest.max(1);
+    let entries = &app.session.snap.entries;
+    let largest = app.session.list.rows_largest.max(1);
     let step = 1.0 - (-dt.as_secs_f64() / TAU).exp();
     let mut easing = false;
     let mut bars = std::mem::take(&mut m.spare);
@@ -403,7 +403,7 @@ pub fn bar(app: &App, e: &EntryData, frac: f64) -> f64 {
 /// on each of them would cover the list in arrows while a scan runs.
 pub fn rank(app: &App, e: &EntryData) -> Option<Span<'static>> {
     let &d = app.motion.markers.get(&e.node)?;
-    let selected = app.selected.as_ref().and_then(|s| s.node) == Some(e.node);
+    let selected = app.session.selected.as_ref().and_then(|s| s.node) == Some(e.node);
     if !selected || d.unsigned_abs() < RANK_MIN {
         return None;
     }
@@ -424,11 +424,15 @@ pub fn post_process(app: &App, buf: &mut Buffer, now: Instant) {
         return;
     }
     // Reversing the selected row would take its highlight off.
-    let keep = app.selected_entry().filter(|_| !rgb).map(|e| e.node);
+    let keep = app
+        .session
+        .selected_entry()
+        .filter(|_| !rgb)
+        .map(|e| e.node);
     let list = app.areas.list;
     let covers = [app.areas.overlay, app.areas.debug];
     for (y, &i) in (list.top()..list.bottom()).zip(&m.shown) {
-        let Some(e) = app.snap.entries.get(i) else {
+        let Some(e) = app.session.snap.entries.get(i) else {
             continue;
         };
         let flashing = flash.filter(|_| m.markers.contains_key(&e.node) && keep != Some(e.node));

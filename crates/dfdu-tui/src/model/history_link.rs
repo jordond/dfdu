@@ -25,10 +25,10 @@ impl Recorder {
     ) -> bool {
         let polled = self.0.poll(engine);
         if let Some(g) = &polled.growth {
-            app.growth.clone_from(g);
+            app.session.growth.clone_from(g);
         }
         if let Some(p) = &polled.problem {
-            app.status = Some(p.clone());
+            app.session.status = Some(p.clone());
         }
         polled.changed()
     }
@@ -73,12 +73,12 @@ mod tests {
         let mut app = App::new(Theme::no_color(), std::time::Instant::now());
         let mut rec = Recorder::new(Some(link));
         assert!(poll_until(&mut rec, &mut app, &engine));
-        let status = app.status.clone().expect("a status");
+        let status = app.session.status.clone().expect("a status");
         assert!(
             status.starts_with(&format!("history {}: ", db.display())),
             "{status}"
         );
-        assert!(app.growth.is_none());
+        assert!(app.session.growth.is_none());
         engine.shutdown(Duration::from_millis(200));
     }
 
@@ -103,7 +103,7 @@ mod tests {
         let mut app = App::new(Theme::no_color(), std::time::Instant::now());
         let mut rec = Recorder::new(Some(link));
         assert!(poll_until(&mut rec, &mut app, &engine));
-        let status = app.status.clone().expect("a status");
+        let status = app.session.status.clone().expect("a status");
         assert!(
             status.starts_with(&format!("history {}: ", db.display())),
             "{status}"

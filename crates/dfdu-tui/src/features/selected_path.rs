@@ -34,39 +34,42 @@ fn selected(app: &App) -> Option<(HostPath, bool)> {
         }
         View::Files | View::Map => {}
     }
-    let index = app.list.rows[app.selected_index()?];
-    let e = &app.snap.entries[index];
+    let index = app.session.list.rows[app.session.selected_index()?];
+    let e = &app.session.snap.entries[index];
     if e.pseudo {
         return None;
     }
-    Some((crate::state::tree::path_of(&app.snap, index), e.is_dir))
+    Some((
+        crate::state::tree::path_of(&app.session.snap, index),
+        e.is_dir,
+    ))
 }
 
 /// `y`: copies the selected path, and says so.
 pub fn copy(app: &mut App) -> Option<Effect> {
     let Some((path, _)) = selected(app) else {
-        app.status = Some("nothing selected to copy".into());
+        app.session.status = Some("nothing selected to copy".into());
         return None;
     };
     let text = path.to_string();
-    let shown = tilde(&path, app.home.as_deref());
-    app.status = Some(format!("copied {shown} (through the terminal, OSC 52)"));
+    let shown = tilde(&path, app.session.home.as_deref());
+    app.session.status = Some(format!("copied {shown} (through the terminal, OSC 52)"));
     Some(Effect::Copy(text))
 }
 
 /// `o`: shows the selected entry in the file manager, unless the scan is not of this machine.
 pub fn open(app: &mut App) -> Option<Effect> {
-    if !app.outside.local {
-        app.status =
+    if !app.session.outside.local {
+        app.session.status =
             Some("o opens this machine's file manager; this scan is remote or from a file".into());
         return None;
     }
     let Some((path, is_dir)) = selected(app) else {
-        app.status = Some("nothing selected to open".into());
+        app.session.status = Some("nothing selected to open".into());
         return None;
     };
-    let shown = tilde(&path, app.home.as_deref());
-    app.status = Some(format!("opening {shown} in the file manager…"));
+    let shown = tilde(&path, app.session.home.as_deref());
+    app.session.status = Some(format!("opening {shown} in the file manager…"));
     Some(Effect::Open {
         path: path.to_local(),
         is_dir,
@@ -77,7 +80,7 @@ pub fn open(app: &mut App) -> Option<Effect> {
 /// ([`dfdu_session::file_manager::spawn_open`]). An error goes to the status line.
 pub fn spawn_open(app: &mut App, path: &Path, is_dir: bool) {
     if let Err(problem) = dfdu_session::file_manager::spawn_open(path, is_dir) {
-        app.status = Some(problem);
+        app.session.status = Some(problem);
     }
 }
 

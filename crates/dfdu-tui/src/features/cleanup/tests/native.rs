@@ -71,7 +71,7 @@ fn read_only_runs_only_the_dry_run() {
     let fx = classified();
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.read_only = true;
+    app.session.read_only = true;
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
@@ -111,5 +111,8 @@ fn read_only_runs_only_the_dry_run() {
     );
     assert!(!frame.contains("y run it"), "{frame}");
     assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
-    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
+    assert_eq!(
+        app.session.status.as_deref(),
+        Some(crate::app::keys::READ_ONLY)
+    );
 }

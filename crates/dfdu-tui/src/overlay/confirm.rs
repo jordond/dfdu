@@ -131,8 +131,8 @@ impl Confirm {
 /// entry, and asks the engine what that would free. The "shared between entries" row and
 /// deleted rows cannot be deleted.
 pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
-    let targets: Vec<Item> = if app.marks.is_empty() {
-        let e = app.selected_entry().filter(|e| !e.pseudo);
+    let targets: Vec<Item> = if app.session.marks.is_empty() {
+        let e = app.session.selected_entry().filter(|e| !e.pseudo);
         e.map(Item::of).into_iter().collect()
     } else {
         marked(app, |_| true)
@@ -154,11 +154,11 @@ pub fn open_only(
 /// A mark inside another counts as inside only while that other one is kept too: left out,
 /// it is deleted on its own.
 fn marked(app: &App, keep: impl Fn(dfdu_tree::NodeRef) -> bool) -> Vec<Item> {
-    let dir = &app.snap.dir_path;
-    let kept: Vec<&crate::state::marks::Item> = (app.marks.items().iter())
+    let dir = &app.session.snap.dir_path;
+    let kept: Vec<&crate::state::marks::Item> = (app.session.marks.items().iter())
         .filter(|m| m.target.node.is_some_and(&keep))
         .collect();
-    let all = kept.len() == app.marks.items().len();
+    let all = kept.len() == app.session.marks.items().len();
     let below_a_kept = |m: &crate::state::marks::Item| {
         kept.iter().any(|o| {
             o.target.node != m.target.node
@@ -194,17 +194,18 @@ fn ask(app: &mut App, mode: Mode, targets: Vec<Item>) -> Vec<Effect> {
     if targets.is_empty() {
         return Vec::new();
     }
-    if app.marks.is_empty() && targets[0].is_dir && crate::overlay::type_filter::active(app) {
-        app.status = Some(crate::overlay::type_filter::NO_FOLDERS.into());
+    if app.session.marks.is_empty() && targets[0].is_dir && crate::overlay::type_filter::active(app)
+    {
+        app.session.status = Some(crate::overlay::type_filter::NO_FOLDERS.into());
         return Vec::new();
     }
     let mut c = Confirm::new(targets, mode);
-    app.estimates += 1;
-    c.estimate = app.estimates;
+    app.session.estimates += 1;
+    c.estimate = app.session.estimates;
     let items = c.sent().map(|t| t.node).collect();
     app.overlay = Overlay::ConfirmDelete(c);
     vec![Effect::Send(Command::Estimate {
-        id: app.estimates,
+        id: app.session.estimates,
         items,
     })]
 }
@@ -238,7 +239,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         _ => match line_keys::edit(&mut c.typed, &k) {
             Edit::Submit => {
                 if c.typed.text() != WORD {
-                    app.status = Some("not deleted: type delete to confirm".into());
+                    app.session.status = Some("not deleted: type delete to confirm".into());
                 }
                 c.typed.text() == WORD
             }
@@ -253,7 +254,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
             items: c.sent().map(|t| t.node).collect(),
             mode,
         }));
-        app.status = Some(match mode {
+        app.session.status = Some(match mode {
             Mode::Trash => "moving to the Trash…".into(),
             Mode::Stage => "staging…".into(),
             Mode::Permanent => "deleting…".into(),
@@ -353,7 +354,13 @@ fn targets(lines: &mut Vec<Line<'_>>, c: &Confirm, t: &Theme) {
 /// What the engine estimates the delete frees, or else what may keep it from freeing it all.
 fn frees(lines: &mut Vec<Line<'_>>, app: &App, c: &Confirm) {
     let t = &app.theme;
-    match app.snap.estimate.as_ref().filter(|e| e.id == c.estimate) {
+    match app
+        .session
+        .snap
+        .estimate
+        .as_ref()
+        .filter(|e| e.id == c.estimate)
+    {
         Some(e) => {
             let mut s = format!(
                 " Frees {}{}",

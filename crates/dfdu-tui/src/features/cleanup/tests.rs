@@ -33,7 +33,7 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     let items = &app.extras.cleanup.items;
     assert_eq!(items.len(), 2, "{items:?}");
     // Both are below their rules' minimum sizes: nothing is recommended.
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     let frame = render(&mut app, t0, 100, 24);
     assert!(
         frame.contains("Selected 0 B of 70.3 KiB · 0 of 2 items"),
@@ -52,7 +52,7 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(
-        app.marks.items()[0]
+        app.session.marks.items()[0]
             .target
             .path
             .to_local()
@@ -60,15 +60,18 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     );
     app.key(press(KeyCode::Up), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.is_empty(), "Space on a group toggles all of it");
+    assert!(
+        app.session.marks.is_empty(),
+        "Space on a group toggles all of it"
+    );
     // On the section, Space ticks the whole level, and `←` closes it.
     app.key(press(KeyCode::Up), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks.items().len(), 1);
+    assert_eq!(app.session.marks.items().len(), 1);
     let frame = render(&mut app, t0, 100, 24);
     assert!(frame.contains("▾ [x] Safe to delete"), "{frame}");
     app.key(press(KeyCode::Char('X')), t0);
-    assert!(app.marks.is_empty(), "X unticks everything");
+    assert!(app.session.marks.is_empty(), "X unticks everything");
     app.key(press(KeyCode::Home), t0);
     app.key(press(KeyCode::Left), t0);
     let frame = render(&mut app, t0, 100, 24);
@@ -76,11 +79,11 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     assert!(!frame.contains("OS and user caches"), "{frame}");
     app.key(press(KeyCode::Right), t0);
     // Backspace closes it too, as in the list, and leaves the list behind where it was.
-    let dir = app.snap.dir_path.clone();
+    let dir = app.session.snap.dir_path.clone();
     app.key(press(KeyCode::Backspace), t0);
     let frame = render(&mut app, t0, 100, 24);
     assert!(frame.contains("▸ [ ] Safe to delete"), "{frame}");
-    assert_eq!(app.snap.dir_path, dir);
+    assert_eq!(app.session.snap.dir_path, dir);
     app.key(press(KeyCode::Right), t0);
     // `f` shows safe items only: the regenerable group goes.
     app.key(press(KeyCode::Char('f')), t0);
@@ -122,28 +125,34 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     app.view = crate::app::views::View::Cleanup;
     sync(&mut app, &fx.m, t0);
     assert_eq!(app.extras.cleanup.items.len(), 3);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     app.key(press(KeyCode::Char('1')), t0);
 
     // Opening it marks the recommended item, and says so.
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
-    let marked: Vec<_> = app.marks.items().iter().map(|i| &i.target.path).collect();
+    let marked: Vec<_> = app
+        .session
+        .marks
+        .items()
+        .iter()
+        .map(|i| &i.target.path)
+        .collect();
     assert_eq!(marked, [&HostPath::from("/r").join(b"old-cache")]);
     assert_eq!(
-        app.status.as_deref(),
+        app.session.status.as_deref(),
         Some("Ticked 1 suggested item (1.0 GiB) · X untick all")
     );
     // Said until the next key.
     app.key(press(KeyCode::Down), t0);
-    assert_eq!(app.status, None);
+    assert_eq!(app.session.status, None);
     // Unmarked, it stays so: through later reads, and when the view opens again.
     marks::clear(&mut app);
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('1')), t0);
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 }
 
 #[test]
@@ -151,19 +160,25 @@ fn a_read_only_browser_never_marks() {
     let fx = with_recommended();
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.read_only = true;
+    app.session.read_only = true;
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     // `A` and Space say why instead.
     app.key(press(KeyCode::Char('A')), t0);
-    assert!(app.marks.is_empty());
-    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
-    app.status = None;
+    assert!(app.session.marks.is_empty());
+    assert_eq!(
+        app.session.status.as_deref(),
+        Some(crate::app::keys::READ_ONLY)
+    );
+    app.session.status = None;
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.is_empty());
-    assert_eq!(app.status.as_deref(), Some(crate::app::keys::READ_ONLY));
+    assert!(app.session.marks.is_empty());
+    assert_eq!(
+        app.session.status.as_deref(),
+        Some(crate::app::keys::READ_ONLY)
+    );
 }
 
 /// The group rows' columns are as wide as the categories shown, a category found at two safety
@@ -173,7 +188,7 @@ fn group_columns_fit_the_categories_shown() {
     let fx = classified();
     let t0 = Instant::now();
     let mut app = opened(&fx.m, t0);
-    let rules = app.snap.rules.clone().unwrap();
+    let rules = app.session.snap.rules.clone().unwrap();
     let base = app.extras.cleanup.items[0].clone();
     // Three and a half days old, so the age shown stays the same during the test.
     let mtime = now_secs() - 3 * 86_400 - 43_200;
@@ -275,7 +290,7 @@ fn recommended_items() {
     let fx = classified();
     let t0 = Instant::now();
     let app = opened(&fx.m, t0);
-    let rules = app.snap.rules.clone().unwrap();
+    let rules = app.session.snap.rules.clone().unwrap();
     let base = app.extras.cleanup.items[0].clone();
     let rule = |id: &str| rules.index(id).unwrap();
     let now = now_secs();
@@ -368,7 +383,7 @@ fn rows_say_why_and_the_rule_is_explained_below() {
         .unwrap();
     app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
     let frame = render(&mut app, t0, 100, 24);
-    let rules = app.snap.rules.clone().unwrap();
+    let rules = app.session.snap.rules.clone().unwrap();
     let name = &rules.rule(items[at].class.rule).name;
     let lines: Vec<&str> = frame.lines().collect();
     let last = lines.iter().rposition(|l| l.contains("/r/")).unwrap();
@@ -416,6 +431,7 @@ fn marking_a_container_marks_its_rest() {
             .any(|i| i.path.to_local().ends_with("Caches/pip"))
     );
     let cat = app
+        .session
         .snap
         .rules
         .as_ref()
@@ -425,13 +441,19 @@ fn marking_a_container_marks_its_rest() {
     app.cleanup.open.insert((cat, it.class.safety));
     app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
     app.key(press(KeyCode::Char(' ')), t0);
-    let mut marked: Vec<&HostPath> = app.marks.items().iter().map(|i| &i.target.path).collect();
+    let mut marked: Vec<&HostPath> = app
+        .session
+        .marks
+        .items()
+        .iter()
+        .map(|i| &i.target.path)
+        .collect();
     marked.sort();
     assert_eq!(marked, rest);
     assert!(is_marked(&app, it));
     app.cleanup.cursor -= 1;
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 }
 
 #[test]

@@ -145,7 +145,7 @@ fn summary(app: &App) -> Option<String> {
             it.items,
         )
     } else {
-        let e = app.selected_entry()?;
+        let e = app.session.selected_entry()?;
         let name = String::from_utf8_lossy(&e.name).into_owned();
         (name, e.is_dir, e.size, e.items)
     };
@@ -172,24 +172,25 @@ pub fn split(app: &mut App, area: Rect, list_view: bool) -> (Rect, Option<Rect>)
     } else {
         None
     };
-    let ours = app.status.is_none() || app.status == app.details.summary;
+    let ours = app.session.status.is_none() || app.session.status == app.details.summary;
     if let Some([list, pane]) = parts {
         if ours {
-            app.status = None;
+            app.session.status = None;
         }
         app.details.summary = None;
         (list, Some(pane))
     } else {
         app.details.focused = false;
         if marks_pane::close(app) {
-            app.status = Some("no room for the marks pane: make the terminal larger".into());
+            app.session.status =
+                Some("no room for the marks pane: make the terminal larger".into());
             if !app.details.open {
                 return (area, None);
             }
         }
         let line = if list_view { None } else { summary(app) };
         if ours {
-            app.status.clone_from(&line);
+            app.session.status.clone_from(&line);
         }
         app.details.summary = line;
         (area, None)

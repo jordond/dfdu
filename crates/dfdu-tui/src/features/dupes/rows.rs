@@ -88,7 +88,7 @@ pub(super) fn mark_all(app: &mut App) -> usize {
     let picks: Vec<(Candidate, NodeRef)> =
         dfdu_session::dupes::suggested(f, app.dupes.keep, &app.extras.dupes)
             .into_iter()
-            .filter(|(_, n)| !app.marks.contains(*n))
+            .filter(|(_, n)| !app.session.marks.contains(*n))
             .collect();
     for (c, n) in &picks {
         marks::set(app, mark_of(c, *n), true);
@@ -177,7 +177,7 @@ mod tests {
             [local("/r/bb/b"), local("/r/c")]
         );
         assert_eq!(mark_all(&mut app), 0, "marked already");
-        let item = &app.marks.items()[0];
+        let item = &app.session.marks.items()[0];
         assert!(!item.is_dir && item.items == 1);
         assert_eq!(item.size, 1 << 20, "what deleting it frees");
     }

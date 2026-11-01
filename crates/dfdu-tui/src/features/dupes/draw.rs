@@ -118,7 +118,7 @@ fn tally(app: &App, found: &Found) -> (Tally, usize) {
             let Some(node) = live(app, c) else {
                 continue;
             };
-            let ticked = app.marks.contains(node);
+            let ticked = app.session.marks.contains(node);
             if Some(i) != keep || ticked {
                 t.add(c.freed(), ticked);
             }
@@ -159,8 +159,8 @@ fn what_it_does() -> String {
 /// starts it.
 fn not_compared(f: &mut Frame, app: &App, area: Rect) {
     let back = (first_key(Action::Close), "back to Files");
-    let (why, keys) = match (app.snap.busy, app.dupes.candidates) {
-        _ if !app.outside.local => (
+    let (why, keys) = match (app.session.snap.busy, app.dupes.candidates) {
+        _ if !app.session.outside.local => (
             "It reads this machine's files, and this scan is remote or from a file: there is \
              nothing here to compare."
                 .to_owned(),
@@ -349,7 +349,7 @@ fn file_line(
 ) -> Line<'static> {
     let t = &app.theme;
     let c = &group.files[file];
-    let ticked = live(app, c).is_some_and(|n| app.marks.contains(n));
+    let ticked = live(app, c).is_some_and(|n| app.session.marks.contains(n));
     let tick = match (ticked, kept(app, group) == Some(file)) {
         (true, _) => Tick::On,
         (false, true) => Tick::Keep,
@@ -397,7 +397,7 @@ fn detail_lines(app: &App, found: &Found, row: Option<&Row>, root: &Path) -> Vec
     };
     let (Row::Group(g) | Row::File(g, _)) = row;
     let group = &found.groups[g];
-    let home = app.home.as_deref();
+    let home = app.session.home.as_deref();
     let name = |c: &Candidate| tilde(&dfdu_tree::HostPath::local(&c.path), home);
     let mut out = Vec::new();
     if let Row::File(_, i) = row {

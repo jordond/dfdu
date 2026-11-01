@@ -127,7 +127,7 @@ fn frame(state: State, theme: Theme) -> Buffer {
         render_buffer(&mut app, now, WIDTH, HEIGHT);
         press_all(&mut app, now, &[KeyCode::Tab]);
         assert!(details::focused(&app), "the pane has the focus");
-        assert!(!app.snap.busy && app.extras.details.facts.is_some());
+        assert!(!app.session.snap.busy && app.extras.details.facts.is_some());
         return render_buffer(&mut app, now, WIDTH, HEIGHT);
     }
     let (mut app, now) = mid_scan_app(theme);
@@ -151,12 +151,12 @@ fn frame(state: State, theme: Theme) -> Buffer {
         }
     }
     let reached = match state {
-        State::MidScan => app.snap.busy && matches!(app.overlay, Overlay::None),
+        State::MidScan => app.session.snap.busy && matches!(app.overlay, Overlay::None),
         State::Details => unreachable!("returned above"),
         State::Delete => {
-            app.marks.items().len() == 2 && matches!(app.overlay, Overlay::ConfirmDelete(_))
+            app.session.marks.items().len() == 2 && matches!(app.overlay, Overlay::ConfirmDelete(_))
         }
-        State::Filter => filter::editing(&app) && app.list.rows.len() == 2,
+        State::Filter => filter::editing(&app) && app.session.list.rows.len() == 2,
         State::Help => matches!(app.overlay, Overlay::Help(_)),
         State::Palette => matches!(app.overlay, Overlay::Palette(_)),
         State::Errors => matches!(app.overlay, Overlay::Errors { .. }),
@@ -350,11 +350,11 @@ fn every_mark_has_a_glyph() {
     assert_eq!(cue(Mark::Scanning).0, &spinners[..]);
 
     let reversed = |s: Style| s.add_modifier.contains(Modifier::REVERSED);
-    let first = format!("entry-{:02}", app.list.rows[0]);
+    let first = format!("entry-{:02}", app.session.list.rows[0]);
     assert_cue(&buf, &first, reversed);
     assert!(!reversed(style_at(
         &buf,
-        &format!("entry-{:02}", app.list.rows[1])
+        &format!("entry-{:02}", app.session.list.rows[1])
     )));
 
     // A marked row starts with `●`, and so does the count of marks.

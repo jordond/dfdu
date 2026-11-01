@@ -45,7 +45,7 @@ fn marks_the_names_the_glob_matches() {
     let mut marked = marked_names(&app);
     marked.sort();
     assert_eq!(marked, ["build.log", "old.log", "server.log"]);
-    let status = app.status.clone().unwrap_or_default();
+    let status = app.session.status.clone().unwrap_or_default();
     assert!(
         status.starts_with("marked 3 of 3 entries matching *.log"),
         "{status}"
@@ -56,7 +56,8 @@ fn marks_the_names_the_glob_matches() {
     typed(&mut app, "*.log", t0);
     app.key(press(KeyCode::Enter), t0);
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.contains("marked already"))
     );
@@ -79,9 +80,10 @@ fn a_bad_or_empty_glob_marks_nothing() {
     let frame = render(&mut app, t0, 80, 12);
     assert!(frame.contains("`[...]` is not supported"), "{frame}");
     app.key(press(KeyCode::Enter), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.contains("not supported"))
     );
@@ -89,26 +91,29 @@ fn a_bad_or_empty_glob_marks_nothing() {
     open_from_palette(&mut app, t0);
     typed(&mut app, "*.iso", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert!(app.marks.is_empty());
-    assert_eq!(app.status.as_deref(), Some("nothing here matches *.iso"));
+    assert!(app.session.marks.is_empty());
+    assert_eq!(
+        app.session.status.as_deref(),
+        Some("nothing here matches *.iso")
+    );
 
     // Esc closes the prompt without marking.
     open_from_palette(&mut app, t0);
     typed(&mut app, "*", t0);
     app.key(press(KeyCode::Esc), t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 }
 
 #[test]
 fn read_only_does_not_open_it() {
     let (mut app, t0) = app();
-    app.read_only = true;
+    app.session.read_only = true;
     open_from_palette(&mut app, t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+    assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
     // Nor does anything else mark through the bulk path.
     let items = vec![marks::item_of(&app, 0)];
     assert_eq!(marks::add(&mut app, items), 0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 }

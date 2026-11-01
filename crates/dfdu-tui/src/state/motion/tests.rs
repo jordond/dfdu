@@ -37,6 +37,7 @@ fn snap_with_alloc(entries: Vec<EntryData>, version: u64) -> Snapshot {
 /// The shown bar fraction of the entry named `name`.
 fn shown(app: &App, name: &str) -> f64 {
     let e = app
+        .session
         .snap
         .entries
         .iter()

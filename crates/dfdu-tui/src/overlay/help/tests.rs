@@ -221,7 +221,7 @@ fn help_closes_on_esc_q_question_f1() {
             assert!(app.key(press(other), t0).is_empty());
             assert!(matches!(app.overlay, Overlay::Help(_)), "{other:?}");
         }
-        assert_eq!(app.sort, crate::state::order::SortSpec::default());
+        assert_eq!(app.session.sort, crate::state::order::SortSpec::default());
         app.key(press(close), t0);
         assert!(matches!(app.overlay, Overlay::None), "{close:?}");
         assert!(!app.quit, "{close:?}");

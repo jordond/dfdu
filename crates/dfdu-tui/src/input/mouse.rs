@@ -57,14 +57,14 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     let at = Position::new(m.column, m.row);
     let up = match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            app.note_input(now);
+            app.session.note_input(now);
             return click(app, at, now);
         }
         MouseEventKind::ScrollUp => true,
         MouseEventKind::ScrollDown => false,
         _ => return None,
     };
-    app.note_input(now);
+    app.session.note_input(now);
     if !matches!(app.overlay, Overlay::None) || over_debug(app, at) {
         return None;
     }
@@ -80,12 +80,12 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     {
         return Some(Vec::new());
     }
-    if app.list.rows.is_empty() {
+    if app.session.list.rows.is_empty() {
         return None;
     }
-    app.status = None;
+    app.session.status = None;
     let rows = isize::from(WHEEL_ROWS);
-    app.move_by(if up { -rows } else { rows });
+    app.session.move_by(if up { -rows } else { rows });
     Some(Vec::new())
 }
 
@@ -108,13 +108,13 @@ fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
     }
     if let Some(tab) = app.mouse.tabs.iter().find(|t| t.area.contains(at)) {
         let view = tab.view;
-        app.status = None;
+        app.session.status = None;
         app.mouse.last_click = None;
         return Some(crate::app::views::switch(app, view));
     }
     if let Some(c) = app.mouse.crumbs.iter().find(|c| c.area.contains(at)) {
-        let (child, root) = (c.child.clone(), app.snap.root_path.clone());
-        app.status = None;
+        let (child, root) = (c.child.clone(), app.session.snap.root_path.clone());
+        app.session.status = None;
         app.mouse.last_click = None;
         app.go_to(&child, &root);
         return Some(Vec::new());
@@ -134,16 +134,17 @@ fn click_list(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> 
     // The rows as the list drew them: entries from `scroll`, then the "new entries" row.
     let list = app.areas.list;
     let line = (at.y - list.y) as usize;
-    let new_row = app.list.new_count > 0;
+    let new_row = app.session.list.new_count > 0;
     let entries = app
+        .session
         .list
         .rows
         .len()
-        .saturating_sub(app.list.scroll)
+        .saturating_sub(app.scroll)
         .min((list.height as usize).saturating_sub(usize::from(new_row)));
-    app.status = None;
+    app.session.status = None;
     if line < entries {
-        return Some(click_row(app, app.list.scroll + line, at.x, now));
+        return Some(click_row(app, app.scroll + line, at.x, now));
     }
     if line == entries && new_row {
         app.mouse.last_click = None;
@@ -160,7 +161,7 @@ fn click_row(app: &mut App, row: usize, x: u16, now: Instant) -> Vec<Effect> {
         crate::state::tree::act::toggle_row(app, row);
         return Vec::new();
     }
-    let node = app.snap.entries[app.list.rows[row]].node;
+    let node = app.session.snap.entries[app.session.list.rows[row]].node;
     let again = app
         .mouse
         .last_click
@@ -168,11 +169,11 @@ fn click_row(app: &mut App, row: usize, x: u16, now: Instant) -> Vec<Effect> {
     if again {
         app.mouse.last_click = None;
         // The selection may have moved since the first click; open the row clicked.
-        app.move_to(row);
+        app.session.move_to(row);
         return keys::run(app, Action::Enter);
     }
     app.mouse.last_click = Some((now, node));
-    app.move_to(row);
+    app.session.move_to(row);
     Vec::new()
 }
 
@@ -182,7 +183,7 @@ fn on_glyph(app: &App, row: usize, x: u16) -> bool {
     if app.tree_shown().is_none() {
         return false;
     }
-    let e = &app.snap.entries[app.list.rows[row]];
+    let e = &app.session.snap.entries[app.session.list.rows[row]];
     if !e.is_dir || e.pseudo {
         return false;
     }

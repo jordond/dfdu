@@ -135,7 +135,7 @@ fn completed_scan_view() {
     assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
-    app.size_mode = dfdu_engine::SizeMode::Apparent;
+    app.session.size_mode = dfdu_engine::SizeMode::Apparent;
     let mut target = Target::root();
     let snap = engine.read(|m| snapshot::build(m, &mut target, dfdu_engine::SizeMode::Apparent));
     app.refresh(snap, t0 + Duration::from_secs(1));
@@ -158,7 +158,7 @@ fn completed_scan_view() {
     );
     // The cursor starts on the first row.
     assert_eq!(
-        app.selected_entry().map(|e| e.name.to_vec()),
+        app.session.selected_entry().map(|e| e.name.to_vec()),
         Some(b"big".to_vec())
     );
 }
@@ -271,10 +271,11 @@ fn shared_data_has_its_own_row_and_cannot_be_deleted() {
     let out = render(&mut app, t0, 90, 8);
     assert!(out.contains("(shared between entries)"), "{out}");
     let at = app
+        .session
         .list
         .rows
         .iter()
-        .position(|&i| app.snap.entries[i].pseudo)
+        .position(|&i| app.session.snap.entries[i].pseudo)
         .unwrap();
     for _ in 0..at {
         app.key(press(KeyCode::Down), t0);
@@ -340,12 +341,12 @@ fn errors_are_listed_and_lead_to_the_entry() {
     assert!(out.contains("a/b/locked/  permission denied"), "{out}");
     app.key(press(KeyCode::Enter), t0);
     assert!(matches!(app.overlay, crate::app::Overlay::None));
-    let mut target = app.target.clone();
+    let mut target = app.session.target.clone();
     let snap = snapshot::build(&m, &mut target, dfdu_engine::SizeMode::Disk);
-    app.target = target;
+    app.session.target = target;
     app.refresh(snap, t0);
-    assert_eq!(app.snap.dir_path, below("/r", "a/b"));
-    let sel = app.selected_entry().expect("selected");
+    assert_eq!(app.session.snap.dir_path, below("/r", "a/b"));
+    let sel = app.session.selected_entry().expect("selected");
     assert_eq!(sel.name, b"locked");
     assert_eq!(sel.problem.as_deref(), Some("permission denied"));
 }

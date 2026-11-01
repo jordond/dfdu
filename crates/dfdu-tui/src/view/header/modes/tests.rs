@@ -61,7 +61,7 @@ fn modes(setup: &dyn Fn(&mut App, Instant), types: &str) -> String {
 }
 
 fn history(app: &mut App, _: Instant) {
-    app.growth = Some(Arc::new(Growth {
+    app.session.growth = Some(Arc::new(Growth {
         root: "/home/jo/dev".into(),
         at: BASELINE,
         sizes: std::collections::BTreeMap::new(),
@@ -69,15 +69,15 @@ fn history(app: &mut App, _: Instant) {
 }
 
 fn hidden(app: &mut App, _: Instant) {
-    app.hide_hidden = true;
+    app.session.hide_hidden = true;
 }
 
 fn apparent(app: &mut App, _: Instant) {
-    app.size_mode = SizeMode::Apparent;
+    app.session.size_mode = SizeMode::Apparent;
 }
 
 fn du_like(app: &mut App, _: Instant) {
-    app.size_mode = SizeMode::Referenced;
+    app.session.size_mode = SizeMode::Referenced;
 }
 
 /// Types `/kmp` and keeps it with `Enter`.

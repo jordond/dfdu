@@ -62,7 +62,7 @@ pub(super) fn base_style(
         ColorBy::Folder => parent(app).unwrap_or((t.cat[tile.top % t.cat.len()], None)),
         ColorBy::Age => (age_style(app, age_band(tile.mtime, today)), None),
         ColorBy::Category => {
-            let slot = match (&app.snap.rules, tile.tag) {
+            let slot = match (&app.session.snap.rules, tile.tag) {
                 (Some(rules), Some(tag)) => Some(tag.category(rules).1),
                 _ => tile.dominant,
             };
@@ -78,6 +78,7 @@ pub(super) fn base_style(
 fn live_size(app: &App, tile: &Tile) -> u64 {
     match tile.entry {
         Some((node, i)) => app
+            .session
             .snap
             .entries
             .get(i)
@@ -94,7 +95,9 @@ pub(super) fn texts(app: &App, tile: &Tile) -> (String, Sizes) {
         let text = format!("{} more · {}", count(tile.small), human(tile.size));
         return (text, Sizes::default());
     }
-    let marked = tile.entry.is_some_and(|(node, _)| app.marks.contains(node));
+    let marked = tile
+        .entry
+        .is_some_and(|(node, _)| app.session.marks.contains(node));
     let name = format!(
         "{}{}{}",
         if marked { "✓ " } else { "" },
@@ -104,7 +107,7 @@ pub(super) fn texts(app: &App, tile: &Tile) -> (String, Sizes) {
     let size = live_size(app, tile);
     // Top-level tiles show live sizes, so their share is of the directory's live total.
     let parent = match tile.level {
-        0 => app.size_mode.of(&app.snap.dir_total),
+        0 => app.session.size_mode.of(&app.session.snap.dir_total),
         _ => tile.parent_size,
     };
     let share = (size.saturating_mul(100))
@@ -158,7 +161,7 @@ pub(super) fn third_line(app: &App, tile: &Tile, today: i64) -> Option<String> {
     match color_shown(app) {
         ColorBy::Age => Some(format!("≤ {}", AGES[age_band(tile.mtime, today)].1)),
         ColorBy::Category => {
-            let (rules, tag) = (app.snap.rules.as_ref()?, tile.tag?);
+            let (rules, tag) = (app.session.snap.rules.as_ref()?, tile.tag?);
             (!tag.inherited).then(|| {
                 let safety = tag.class.safety.as_str();
                 format!("{} · {safety}", tag.category(rules).0)

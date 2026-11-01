@@ -128,8 +128,8 @@ fn dev_in(theme: Theme, t0: Instant) -> App {
         ..Default::default()
     };
     let mut app = App::new(theme, t0);
-    app.home = Some(PathBuf::from("/home/jo"));
-    app.growth = Some(Arc::new(Growth {
+    app.session.home = Some(PathBuf::from("/home/jo"));
+    app.session.growth = Some(Arc::new(Growth {
         root: PathBuf::from("/home/jo/dev"),
         at: BASELINE,
         sizes: then,

@@ -134,7 +134,11 @@ fn flash_colors_only_at_truecolor() {
         let t1 = t0 + Duration::from_secs(3);
         app.refresh(snap_with_alloc(es, 2), t1);
         assert_eq!(row_names(&app), ["c", "a", "b"]);
-        assert_eq!(app.selected_index(), Some(0), "the top row stays selected");
+        assert_eq!(
+            app.session.selected_index(),
+            Some(0),
+            "the top row stays selected"
+        );
         let buf = render_buffer(&mut app, t1, W, H);
         assert_eq!(has_rgb(&buf), truecolor, "{name}\n{}", styled(&buf));
         let later = render_buffer(&mut app, t1 + FLASH, W, H);

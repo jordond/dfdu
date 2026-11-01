@@ -66,7 +66,7 @@ fn asked(fx: &[Effect]) -> Option<(u64, usize)> {
 
 /// The engine's answer to the estimate `id`.
 fn answer(app: &mut App, id: u64, bytes: u64) {
-    app.snap.estimate = Some(Estimate {
+    app.session.snap.estimate = Some(Estimate {
         id,
         bytes,
         items: 0,
@@ -110,7 +110,7 @@ fn tab_cycles_the_list_the_details_and_the_marks() {
     assert!(is_open(&app));
     app.key(press(KeyCode::Esc), t0);
     assert!(!is_open(&app));
-    assert_eq!(app.marks.items().len(), 2, "Esc keeps the marks");
+    assert_eq!(app.session.marks.items().len(), 2, "Esc keeps the marks");
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn space_unmarks_the_selected_item_and_asks_again() {
     render(&mut app, t0, 100, 24);
     app.key(press(KeyCode::Down), t0);
     let fx = app.key(press(KeyCode::Char(' ')), t0);
-    let names: Vec<_> = (app.marks.items().iter())
+    let names: Vec<_> = (app.session.marks.items().iter())
         .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     assert_eq!(names, ["target", "node_modules"]);
@@ -167,12 +167,12 @@ fn space_unmarks_the_selected_item_and_asks_again() {
     assert!(again > first);
     assert_eq!(n, 2);
     // The list's selection did not move: Space acted on the pane.
-    assert_eq!(app.selected_index(), Some(3));
+    assert_eq!(app.session.selected_index(), Some(3));
     // The last one unmarked leaves the cursor on the new last row.
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.marks_pane.cursor, 0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     assert!(render(&mut app, t0, 100, 24).contains("Nothing is marked."));
 }
 
@@ -182,7 +182,7 @@ fn star_inverts_the_marks_of_the_directory() {
     mark(&mut app, 1, t0);
     app.key(press(KeyCode::Tab), t0);
     app.key(press(KeyCode::Char('*')), t0);
-    let mut names: Vec<_> = (app.marks.items().iter())
+    let mut names: Vec<_> = (app.session.marks.items().iter())
         .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     names.sort();
@@ -195,7 +195,7 @@ fn star_inverts_the_marks_of_the_directory() {
         ]
     );
     assert_eq!(
-        app.status.as_deref(),
+        app.session.status.as_deref(),
         Some("marks inverted: 3 marked, 1 unmarked")
     );
     // Again, back to the first mark. In the list `*` is tree mode's, not the marks'.
@@ -206,11 +206,11 @@ fn star_inverts_the_marks_of_the_directory() {
 #[test]
 fn star_marks_nothing_in_a_read_only_browser() {
     let (mut app, t0) = browser();
-    app.read_only = true;
+    app.session.read_only = true;
     app.key(press(KeyCode::Tab), t0);
     app.key(press(KeyCode::Char('*')), t0);
-    assert!(app.marks.is_empty());
-    assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+    assert!(app.session.marks.is_empty());
+    assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
     // `d` there deletes nothing either.
     refused(&mut app, KeyCode::Char('d'), READ_ONLY, t0);
 }
@@ -251,10 +251,10 @@ fn the_wheel_moves_the_cursor_wherever_the_pointer_is() {
         row: list.y + 1,
         modifiers: KeyModifiers::NONE,
     };
-    let selected = app.selected_index();
+    let selected = app.session.selected_index();
     crate::input::mouse::event(&mut app, down, t0).expect("redraw");
     assert_eq!(app.marks_pane.cursor, 3);
-    assert_eq!(app.selected_index(), selected, "the list stays");
+    assert_eq!(app.session.selected_index(), selected, "the list stays");
 }
 
 #[test]

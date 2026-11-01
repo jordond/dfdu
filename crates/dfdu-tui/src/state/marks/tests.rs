@@ -2,16 +2,18 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use dfdu_engine::Model;
 use dfdu_engine::test_support::{add_dir, add_file};
 use dfdu_engine::{Command, Engine, EngineOptions};
 use dfdu_scan::{JobOptions, PortableBackend};
-use dfdu_tree::{DirState, Kind, Totals};
+use dfdu_tree::{DirState, HostPath, Ix, Totals};
 use ratatui::crossterm::event::KeyCode;
 use ratatui::style::Color;
 
 use super::*;
-use crate::app::Effect;
-use crate::model::snapshot::{self, Snapshot, test_entry};
+use crate::app::{App, Effect};
+use crate::format::human;
+use crate::model::snapshot::{self, EntryData, Mark, Snapshot, test_entry};
 use crate::tests::{
     press, render, render_buffer, root_model, select, snap_without_totals, style_at, styled, text,
 };
@@ -19,10 +21,10 @@ use crate::theme::Theme;
 
 /// Reads the model as the run loop does for a frame with a new snapshot.
 fn sync(app: &mut App, m: &Model, now: Instant) {
-    let mut target = app.target.clone();
-    let snap = snapshot::build(m, &mut target, app.size_mode);
+    let mut target = app.session.target.clone();
+    let snap = snapshot::build(m, &mut target, app.session.size_mode);
     let marked = read(m, app);
-    app.target = target;
+    app.session.target = target;
     app.refresh(snap, now);
     app.extras.marked = marked;
     apply(app);
@@ -100,16 +102,16 @@ fn space_marks_and_moves_down() {
     assert!(!stale(&app));
     assert!(app.key(press(KeyCode::Char(' ')), t0).is_empty());
     assert!(stale(&app), "a new mark needs a read");
-    assert_eq!(app.selected_index(), Some(1));
+    assert_eq!(app.session.selected_index(), Some(1));
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.selected_index(), Some(2));
+    assert_eq!(app.session.selected_index(), Some(2));
     assert_eq!(summary(&app), Some(format!("● 2 marked ({})", human(5000))));
     assert!(is_marked(&app, &es[0]));
     assert!(!is_marked(&app, &es[2]));
     // On the last row the cursor stays; a second Space unmarks.
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.selected_index(), Some(2));
+    assert_eq!(app.session.selected_index(), Some(2));
     app.key(press(KeyCode::Char('g')), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(summary(&app), Some(format!("● 1 marked ({})", human(2000))));
@@ -141,13 +143,16 @@ fn space_on_shared_row_is_refused() {
         ..gone
     };
     app.refresh(snap_without_totals(vec![shared.clone(), ghost, a], 2), t0);
-    assert!(app.snap.entries[app.list.rows[1]].ghost);
+    assert!(app.session.snap.entries[app.session.list.rows[1]].ghost);
     for row in 0..2 {
-        app.move_to(row);
+        app.session.move_to(row);
         app.key(press(KeyCode::Char(' ')), t0);
-        assert!(app.marks.is_empty());
-        assert_eq!(app.selected_index(), Some(row), "the cursor stays");
-        assert_eq!(app.status.as_deref(), Some("only entries can be marked"));
+        assert!(app.session.marks.is_empty());
+        assert_eq!(app.session.selected_index(), Some(row), "the cursor stays");
+        assert_eq!(
+            app.session.status.as_deref(),
+            Some("only entries can be marked")
+        );
     }
     assert!(!stale(&app));
     // The shared row has the directory's reference; marking the directory from its parent
@@ -171,7 +176,7 @@ fn marks_survive_navigation_and_rescan_swap() {
     e.read(|m| sync(&mut app, m, t));
     select(&mut app, "inner");
     app.key(press(KeyCode::Char(' ')), t);
-    let old = app.marks.items()[0].target.node;
+    let old = app.session.marks.items()[0].target.node;
     app.key(press(KeyCode::Left), t);
     e.read(|m| sync(&mut app, m, t));
     assert!(!stale(&app));
@@ -188,11 +193,12 @@ fn marks_survive_navigation_and_rescan_swap() {
 
     // Rescanning sub replaces its children with new nodes.
     e.send(Command::Rescan {
-        node: app.snap.dir_node.expect("sub"),
+        node: app.session.snap.dir_node.expect("sub"),
     });
     assert!(e.wait_idle(Some(Duration::from_secs(20))).is_idle());
     e.read(|m| sync(&mut app, m, t));
     let inner = app
+        .session
         .snap
         .entries
         .iter()
@@ -200,8 +206,8 @@ fn marks_survive_navigation_and_rescan_swap() {
         .expect("inner")
         .node;
     assert_ne!(Some(inner), old, "the rescan swapped the node");
-    assert_eq!(app.marks.items().len(), 1);
-    assert_eq!(app.marks.items()[0].target.node, Some(inner));
+    assert_eq!(app.session.marks.items().len(), 1);
+    assert_eq!(app.session.marks.items()[0].target.node, Some(inner));
     let out = render(&mut app, t, 90, 8);
     assert!(line(&out, "inner/").starts_with('●'), "{out}");
     e.shutdown(Duration::from_millis(200));
@@ -230,7 +236,7 @@ fn nested_marks_count_once() {
     app.key(press(KeyCode::Left), t);
     sync(&mut app, &m, t);
     let a_total = m.tree.total(a).alloc;
-    assert_eq!(app.marks.total(), (a_total, false));
+    assert_eq!(app.session.marks.total(), (a_total, false));
     assert_eq!(
         summary(&app),
         Some(format!("● 2 marked ({})", human(a_total)))
@@ -248,7 +254,7 @@ fn nested_marks_count_once() {
     select(&mut app2, "a");
     app2.key(press(KeyCode::Char(' ')), t);
     sync(&mut app2, &m, t);
-    assert_eq!(app2.marks.total(), (a_total, false));
+    assert_eq!(app2.session.marks.total(), (a_total, false));
 
     app.key(press(KeyCode::Char('d')), t);
     let out = render(&mut app, t, 100, 20);
@@ -294,9 +300,9 @@ fn totals_follow_live_sizes() {
     sync(&mut app, &m, t);
     assert_eq!(summary(&app), Some(format!("● 1 marked ({})", size(&m))));
     // The size mode of the read decides the size.
-    app.size_mode = dfdu_engine::SizeMode::Apparent;
+    app.session.size_mode = dfdu_engine::SizeMode::Apparent;
     sync(&mut app, &m, t);
-    assert_eq!(app.marks.total().0, m.tree.total(big).apparent);
+    assert_eq!(app.session.marks.total().0, m.tree.total(big).apparent);
 }
 
 #[test]
@@ -317,17 +323,18 @@ fn deleted_marks_are_dropped() {
         app.key(press(KeyCode::Char(' ')), t);
     }
     e.read(|m| sync(&mut app, m, t));
-    assert_eq!(app.marks.items().len(), 2);
+    assert_eq!(app.session.marks.items().len(), 2);
     // file.bin changes after the scan: the delete leaves it alone.
     write(&root.join("file.bin"), 4_000);
     delete_permanently(&mut app, &e, t);
     e.read(|m| sync(&mut app, m, t));
     e.shutdown(Duration::from_millis(200));
     assert!(!root.join("junk").exists());
-    let status = app.status.clone().unwrap_or_default();
+    let status = app.session.status.clone().unwrap_or_default();
     assert!(status.contains("deleted 1"), "{status}");
     assert!(status.contains("1 changed since the scan"), "{status}");
     let left: Vec<_> = app
+        .session
         .marks
         .items()
         .iter()
@@ -356,91 +363,12 @@ fn refused_delete_keeps_the_marks() {
     e.read(|m| sync(&mut app, m, t));
     e.shutdown(Duration::from_millis(200));
     assert!(root.join("junk").exists());
-    assert_eq!(app.marks.items().len(), 1);
+    assert_eq!(app.session.marks.items().len(), 1);
     let out = render(&mut app, t, 90, 8);
     assert!(line(&out, "junk/").starts_with('●'), "{out}");
-    assert_eq!(app.snap.notice.as_deref(), Some("delete: read-only mode"));
-}
-
-/// A mark of `path` with no reference, as after a rescan swap.
-fn lost(path: &str, ident: Option<Ident>) -> Item {
-    Item {
-        target: Target {
-            node: None,
-            path: path.into(),
-            ident,
-        },
-        is_dir: false,
-        size: 1,
-        items: 1,
-        shared_out: 0,
-        scanning: false,
-        inside: false,
-    }
-}
-
-#[test]
-fn many_marks_index_quickly() {
-    let mut marks = Marks::default();
-    for i in 0..10_000 {
-        let path = format!("/home/jo/d{}/e{}/f{i}", i % 100, i % 7);
-        marks.items.push(lost(&path, None));
-    }
-    marks.items.push(lost("/home/jo/d1", None));
-    let t = Instant::now();
-    marks.index();
-    let took = t.elapsed();
-    println!("10,001 marks indexed in {took:?}");
-    assert!(took < Duration::from_secs(2), "{took:?}");
-    assert_eq!(marks.items.iter().filter(|it| it.inside).count(), 100);
-    assert_eq!(marks.total(), (10_000 - 100 + 1, false));
-}
-
-#[test]
-fn lost_references_are_found_by_path() {
-    let (mut m, root) = root_model();
-    let big = add_dir(&mut m.tree, root, "big", 2);
-    let files: Vec<Ix> = (0..1000)
-        .map(|i| add_file(&mut m.tree, big, &format!("f{i}"), 10, 100 + i))
-        .collect();
-    let other = add_dir(&mut m.tree, root, "other", 3);
-    let g = add_file(&mut m.tree, other, "g", 10, 4);
-    let file = |ino| {
-        Some(Ident {
-            dev_ino: (1, ino),
-            kind: Kind::File,
-        })
-    };
-    let t = Instant::now();
-    let mut app = App::new(Theme::no_color(), t);
-    app.marks.items = vec![
-        lost("/r/big/f999", file(1099)),
-        lost("/r/other/g", file(4)),
-        lost("/r/big/f10", None),
-        lost("/r/big/missing", None),
-        lost("/r/big/f20", file(7)),
-        lost("/r/gone/f1", None),
-        lost("/r/big/f500", file(600)),
-        lost("/r", None),
-    ];
-    let found: Vec<_> = read(&m, &app)
-        .found
-        .iter()
-        .map(|f| f.as_ref().map(|f| f.node))
-        .collect();
-    let at = |ix| Some(m.tree.node_ref(ix));
     assert_eq!(
-        found,
-        [
-            at(files[999]),
-            at(g),
-            at(files[10]),
-            None,
-            None,
-            None,
-            at(files[500]),
-            at(root),
-        ]
+        app.session.snap.notice.as_deref(),
+        Some("delete: read-only mode")
     );
 }
 

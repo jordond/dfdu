@@ -10,17 +10,29 @@ use crate::model::snapshot::Mark;
 /// The change in the size shown of `path` (now `size`) since the last recorded scan, with its
 /// size then and when that scan finished ([`dfdu_session::growth::since`]).
 pub fn since(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<(i128, u64, i64)> {
-    dfdu_session::growth::since(app.growth.as_deref(), app.size_mode, path, size, mark)
+    dfdu_session::growth::since(
+        app.session.growth.as_deref(),
+        app.session.size_mode,
+        path,
+        size,
+        mark,
+    )
 }
 
 /// The note for a list row ([`dfdu_session::growth::row_note`]).
 pub fn row_note(app: &App, path: &HostPath, size: u64, mark: Mark) -> Option<RowNote> {
-    dfdu_session::growth::row_note(app.growth.as_deref(), app.size_mode, path, size, mark)
+    dfdu_session::growth::row_note(
+        app.session.growth.as_deref(),
+        app.session.size_mode,
+        path,
+        size,
+        mark,
+    )
 }
 
 /// The header of the column of changes ([`dfdu_session::growth::column_title`]).
 pub fn column_title(app: &App) -> String {
-    dfdu_session::growth::column_title(app.growth.as_deref())
+    dfdu_session::growth::column_title(app.session.growth.as_deref())
 }
 
 #[cfg(test)]

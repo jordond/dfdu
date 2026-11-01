@@ -18,9 +18,9 @@ use crate::state::tree;
 /// position and the marked badge on the right; `None` when nothing is selected.
 pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     let t = &app.theme;
-    let sel = app.selected_index()?;
-    let index = app.list.rows[sel];
-    let e = &app.snap.entries[index];
+    let sel = app.session.selected_index()?;
+    let index = app.session.list.rows[sel];
+    let e = &app.session.snap.entries[index];
     let in_tree = app.tree_shown().is_some();
     let mut right = Vec::new();
     if let Some(marked) = marks::summary(app) {
@@ -28,7 +28,7 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
         right.push(Span::raw("  "));
     }
     right.push(Span::styled(
-        format!("{}/{} ", sel + 1, app.list.rows.len()),
+        format!("{}/{} ", sel + 1, app.session.list.rows.len()),
         t.fg_dim,
     ));
 
@@ -48,15 +48,15 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
             t.fg_dim,
         ));
     }
-    let path = tree::path_of(&app.snap, index);
-    if app.growth.is_some()
+    let path = tree::path_of(&app.session.snap, index);
+    if app.session.growth.is_some()
         && !e.pseudo
         && let Some(n) = growth::row_note(app, &path, e.size, e.mark)
     {
         let style = if n.grew() { t.status_warn } else { t.fg_dim };
         rest.push(Span::styled(n.long(), style));
     }
-    if let Some((g, rules)) = e.tag.zip(app.snap.rules.as_ref()) {
+    if let Some((g, rules)) = e.tag.zip(app.session.snap.rules.as_ref()) {
         let (name, slot) = g.category(rules);
         rest.push(Span::styled(
             name,
@@ -75,8 +75,8 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
     };
     // In tree mode the path from the scan root, or all of it when that fits.
     let names: Vec<String> = if in_tree && e.fold == 0 {
-        let rel = rel_text(&path, &app.snap.root_path).unwrap_or_else(|| path.to_string());
-        vec![slash(tilde(&path, app.home.as_deref())), slash(rel)]
+        let rel = rel_text(&path, &app.session.snap.root_path).unwrap_or_else(|| path.to_string());
+        vec![slash(tilde(&path, app.session.home.as_deref())), slash(rel)]
     } else {
         vec![slash(String::from_utf8_lossy(&e.name).into_owned())]
     };
@@ -131,14 +131,14 @@ pub fn line(app: &App, width: u16) -> Option<Line<'static>> {
 /// `42.5% of dfdu/`: the share of entry `index` in the row it is in, or at the top in the
 /// current directory.
 fn share_of_parent(app: &App, index: usize) -> Span<'static> {
-    let s = &app.snap;
+    let s = &app.session.snap;
     let (whole, name) = match tree::parent(&s.entries, index) {
         Some(p) => (
             s.entries[p].size,
             String::from_utf8_lossy(&s.entries[p].name).into_owned(),
         ),
         None => (
-            app.size_mode.of(&s.dir_total),
+            app.session.size_mode.of(&s.dir_total),
             s.dir_path.file_name().map_or_else(
                 || s.dir_path.to_string(),
                 |n| String::from_utf8_lossy(n).into_owned(),
@@ -206,7 +206,7 @@ mod tests {
     fn in_tree_mode_it_starts_with_the_path_and_the_share_of_the_parent() {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.tree = Some(TreeState::default());
+        app.session.tree = Some(TreeState::default());
         let a = EntryData {
             is_dir: true,
             ..test_entry(0, "a", 400)
@@ -220,14 +220,14 @@ mod tests {
         snap.root_path = "/r".into();
         app.refresh(snap, t0);
         app.reorder(t0);
-        app.move_to(1);
+        app.session.move_to(1);
         let shown = text(&line_of(&app, 100));
         let path = crate::tests::below("/r", "a/x").to_string();
         assert!(
             shown.starts_with(&format!(" ▸ {path}  100 B · 25.0% of a/")),
             "{shown}"
         );
-        app.move_to(0);
+        app.session.move_to(0);
         let top = text(&line_of(&app, 100));
         assert!(top.contains("80.0% of r/"), "{top}");
     }

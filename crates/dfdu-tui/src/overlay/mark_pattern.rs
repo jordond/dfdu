@@ -34,13 +34,18 @@ pub struct Prompt {
 /// shows only some of their files.
 fn matched(app: &App, g: &Glob) -> Vec<usize> {
     let folders = !crate::overlay::type_filter::active(app);
-    dfdu_session::mark_pattern::matched(&app.snap.entries, &app.list.rows, folders, g)
+    dfdu_session::mark_pattern::matched(
+        &app.session.snap.entries,
+        &app.session.list.rows,
+        folders,
+        g,
+    )
 }
 
 /// Opens the prompt, empty. A read-only browser marks nothing, so it says so instead.
 pub fn open(app: &mut App) {
-    if app.read_only {
-        app.status = Some(READ_ONLY.into());
+    if app.session.read_only {
+        app.session.status = Some(READ_ONLY.into());
         return;
     }
     app.overlay = Overlay::MarkPattern(Prompt::default());
@@ -75,20 +80,20 @@ fn mark(app: &mut App, pattern: &str) {
     let g = match glob(pattern) {
         Ok(g) => g,
         Err(e) => {
-            app.status = Some(format!("mark by pattern: {e}"));
+            app.session.status = Some(format!("mark by pattern: {e}"));
             return;
         }
     };
     let hits = matched(app, &g);
     if hits.is_empty() {
-        app.status = Some(format!("nothing here matches {pattern}"));
+        app.session.status = Some(format!("nothing here matches {pattern}"));
         return;
     }
     let items: Vec<marks::Item> = (hits.iter()).map(|&i| marks::item_of(app, i)).collect();
     let size: u64 = items.iter().map(|it| it.size).sum();
     let n = items.len();
     let added = marks::add(app, items);
-    app.status = Some(match added {
+    app.session.status = Some(match added {
         0 => format!("everything matching {pattern} is marked already"),
         _ => format!(
             "marked {added} of {n} entr{} matching {pattern} ({})",
@@ -112,7 +117,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         Some(Ok(n)) => Line::styled(
             format!(
                 " {n} of {} names here match · Enter marks them",
-                app.list.rows.len()
+                app.session.list.rows.len()
             ),
             t.fg_dim,
         ),

@@ -66,7 +66,7 @@ fn every_key_on_an_empty_review_view_is_safe() {
     for view in [View::Cleanup, View::Duplicates, View::Largest] {
         for k in every_key() {
             let mut app = App::new(Theme::no_color(), t0);
-            app.outside.local = true;
+            app.session.outside.local = true;
             sync(&mut app, &fx.m, t0);
             views::switch(&mut app, view);
             sync(&mut app, &fx.m, t0);
@@ -110,7 +110,7 @@ fn the_palettes_delete_needs_ticks_in_a_review_view() {
     for mode in [Action::Trash, Action::DeletePermanent] {
         assert!(keys::run(&mut app, mode).is_empty());
         assert!(matches!(app.overlay, Overlay::None));
-        let status = app.status.clone().unwrap_or_default();
+        let status = app.session.status.clone().unwrap_or_default();
         assert!(status.contains("tick items with Space first"), "{status}");
     }
 }
@@ -122,14 +122,14 @@ fn delete_in_a_review_view_takes_only_its_ticks() {
     // In Files: mark `small`, the second row.
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks.items().len(), 1);
+    assert_eq!(app.session.marks.items().len(), 1);
     views::switch(&mut app, View::Largest);
     sync(&mut app, &fx.m, t0);
     render(&mut app, t0, 100, 20);
     // `small` is listed too: Largest lists every file below. Tick `a.iso` only.
     app.key(press(KeyCode::Home), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks.items().len(), 2);
+    assert_eq!(app.session.marks.items().len(), 2);
     let fx_out = keys::run(&mut app, Action::Trash);
     assert_eq!(asked(&fx_out), 2, "both are listed in Largest");
     app.overlay = Overlay::None;
@@ -140,7 +140,7 @@ fn delete_in_a_review_view_takes_only_its_ticks() {
     sync(&mut app, &fx.m, t0);
     render(&mut app, t0, 100, 20);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks.items().len(), 2, "big/ and a.iso");
+    assert_eq!(app.session.marks.items().len(), 2, "big/ and a.iso");
     let fx_out = app.key(press(KeyCode::Char('d')), t0);
     assert_eq!(asked(&fx_out), 1, "a.iso only, not big/");
 }

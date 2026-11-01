@@ -23,7 +23,7 @@ fn clicks_and_wheel_over_the_debug_panel_change_nothing() {
         assert!(event(&mut app, mouse(kind, x, y), t0).is_none(), "{kind:?}");
     }
     assert_eq!(selected(&app).as_deref(), Some("d0"));
-    assert_eq!(app.target.path, HostPath::from(""));
+    assert_eq!(app.session.target.path, HostPath::from(""));
     // Left of the panel, the same row takes the click.
     event(&mut app, left(panel.x - 1, y), t0).expect("redraw");
     assert_eq!(selected(&app).as_deref(), Some("d1"));

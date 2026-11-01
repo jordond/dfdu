@@ -34,7 +34,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .max((l.cursor + 1).saturating_sub(fit));
     let app = &*app;
     let (t, l) = (&app.theme, &app.largest);
-    let dir = tilde(&app.snap.dir_path, app.home.as_deref());
+    let dir = tilde(&app.session.snap.dir_path, app.session.home.as_deref());
     let width = area.width;
     if l.walked.is_none() {
         let text = format!(" reading the files below {dir}…");
@@ -59,7 +59,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let mut tally = Tally::default();
     for file in &l.files {
-        tally.add(file.size, app.marks.contains(file.node));
+        tally.add(file.size, app.session.marks.contains(file.node));
     }
     let found = format!(
         " · the largest {} of {} files below {dir}",
@@ -79,7 +79,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     lines.push(Line::from(header(&cols)).style(t.fg_dim));
     let largest = l.files[0].size.max(1);
-    let total = app.size_mode.of(&app.snap.dir_total).max(1);
+    let total = app.session.size_mode.of(&app.session.snap.dir_total).max(1);
     let shown = l.files.iter().skip(l.scroll).take(fit);
     let paths: Vec<String> = shown
         .clone()
@@ -123,7 +123,7 @@ fn row(
     total: u64,
 ) -> Line<'static> {
     let t = &app.theme;
-    let tick = if app.marks.contains(file.node) {
+    let tick = if app.session.marks.contains(file.node) {
         Tick::On
     } else {
         Tick::Off
@@ -180,7 +180,7 @@ mod tests {
         let entries = vec![test_entry(0, "big.iso", 4000), test_entry(1, "x", 4000)];
         app.refresh(snap_with_totals(entries, 1), t0);
         let file = File {
-            node: app.snap.entries[0].node,
+            node: app.session.snap.entries[0].node,
             path: HostPath::from("a/big.iso"),
             size: 4000,
             dev_ino: (1, 10),
@@ -219,7 +219,7 @@ mod tests {
                 .any(|s| s.content == "a/" && s.style == t.fg_dim)
         );
         assert!(line.spans.iter().any(|s| s.content == "big.iso"));
-        app.move_to(0);
+        app.session.move_to(0);
         crate::state::marks::toggle(&mut app);
         assert!(joined(&row_of(&app).spans).starts_with(" [x] "));
     }

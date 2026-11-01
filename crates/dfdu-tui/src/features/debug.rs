@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn debug_panel_shows_counters() {
         let mut app = open_app(info(0), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         let out = render(&mut app, t0, 100, 20);
         insta::assert_snapshot!("debug_panel_mono", out);
         let panel = panel_lines(&out).join("\n");
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn anomalies_are_marked_without_color() {
         let mut app = open_app(info(2), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         let out = render(&mut app, t0, 100, 20);
         assert!(out.contains("corrupt 0  lost 2!  duplicate 0"), "{out}");
         let ansi = Theme::ansi16();
@@ -425,7 +425,7 @@ mod tests {
     fn summary_has_the_same_numbers() {
         let info = info(2);
         let mut app = open_app(info.clone(), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         let mut panel = panel_lines(&render(&mut app, t0, 100, 20));
         assert_eq!(panel.pop().as_deref(), Some("ui draw 1.2ms  read 310µs"));
         let summary = text(&info);
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn panel_stays_left_of_the_details_pane() {
         let mut app = open_app(info(0), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         crate::features::details::toggle(&mut app);
         let buf = render_buffer(&mut app, t0, 120, 20);
         let pane = app.areas.details.expect("details pane");
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn panel_stays_above_the_details_sheet() {
         let mut app = open_app(info(0), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         crate::features::details::toggle(&mut app);
         let out = render(&mut app, t0, 80, 24);
         let (panel, sheet) = (
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn panel_is_hidden_on_a_small_terminal_and_keys_still_work() {
         let mut app = open_app(info(0), Theme::no_color());
-        let t0 = app.started;
+        let t0 = app.session.started;
         let small = render(&mut app, t0, 49, 20);
         assert!(!small.contains("Debug"), "{small}");
         let low = render(&mut app, t0, 100, 15);

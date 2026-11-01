@@ -115,15 +115,15 @@ struct Key {
 
 fn key_of(app: &App) -> Key {
     Key {
-        dir: app.snap.dir_node,
-        sort_gen: app.list.sort_gen,
+        dir: app.session.snap.dir_node,
+        sort_gen: app.session.list.sort_gen,
         depth: app.treemap.depth,
-        mode: app.size_mode,
-        hide_hidden: app.hide_hidden,
+        mode: app.session.size_mode,
+        hide_hidden: app.session.hide_hidden,
         types: {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            app.types.hash(&mut h);
+            app.session.types.hash(&mut h);
             h.finish()
         },
     }
@@ -182,15 +182,20 @@ pub fn read(m: &Model, app: &App) -> Info {
     let mut below = HashMap::new();
     // One level even at depth 1: what the selected tile shows.
     let levels = app.treemap.depth.max(2) - 1;
-    let dir = app.snap.dir_node.and_then(|n| m.tree.resolve_visible(n));
+    let dir = app
+        .session
+        .snap
+        .dir_node
+        .and_then(|n| m.tree.resolve_visible(n));
     let info = |below| Info {
         key: Some(key),
         below: Arc::new(below),
         dominant: Arc::new(dir.map_or_else(HashMap::new, |d| dominant(m, d, key.mode))),
         classes,
     };
-    let entries = &app.snap.entries;
+    let entries = &app.session.snap.entries;
     let mut dirs: Vec<(u64, usize)> = app
+        .session
         .list
         .rows
         .iter()
@@ -210,7 +215,7 @@ pub fn read(m: &Model, app: &App) -> Info {
                     .and_then(|r| r.class_in_effect(&m.tree, ix)),
                 levels,
                 &key,
-                &app.types,
+                &app.session.types,
                 &mut budget,
             )
         {
@@ -358,13 +363,13 @@ pub fn deeper(app: &mut App, by: i8) {
         .depth
         .saturating_add_signed(by)
         .clamp(MIN_DEPTH, MAX_DEPTH);
-    app.status = Some(format!("map depth {}", t.depth));
+    app.session.status = Some(format!("map depth {}", t.depth));
 }
 
 /// The colouring drawn: by category needs the rules, and without them is by top folder.
 pub fn color_shown(app: &App) -> ColorBy {
     match app.treemap.color {
-        ColorBy::Category if app.snap.rules.is_none() => ColorBy::Folder,
+        ColorBy::Category if app.session.snap.rules.is_none() => ColorBy::Folder,
         c => c,
     }
 }
@@ -374,17 +379,17 @@ pub fn cycle_color(app: &mut App) {
     let next = match color_shown(app) {
         ColorBy::Category => ColorBy::Age,
         ColorBy::Age => ColorBy::Folder,
-        ColorBy::Folder if app.snap.rules.is_some() => ColorBy::Category,
+        ColorBy::Folder if app.session.snap.rules.is_some() => ColorBy::Category,
         ColorBy::Folder => ColorBy::Age,
     };
     app.treemap.color = next;
-    app.status = Some(format!("map colour: {}", next.label()));
+    app.session.status = Some(format!("map colour: {}", next.label()));
 }
 
 /// The top-level tile of the selection, as the last frame laid it out.
 fn selected_top(app: &App) -> Option<usize> {
     let l = app.treemap.layout.as_ref()?;
-    let node = app.selected.as_ref()?.node?;
+    let node = app.session.selected.as_ref()?.node?;
     l.tops
         .iter()
         .position(|&t| l.tiles[t].entry.is_some_and(|(n, _)| n == node))
@@ -398,9 +403,15 @@ fn select_top(app: &mut App, top: usize) {
     let Some((node, _)) = l.tops.get(top).and_then(|&t| l.tiles[t].entry) else {
         return;
     };
-    let entries = &app.snap.entries;
-    if let Some(row) = app.list.rows.iter().position(|&i| entries[i].node == node) {
-        app.move_to(row);
+    let entries = &app.session.snap.entries;
+    if let Some(row) = app
+        .session
+        .list
+        .rows
+        .iter()
+        .position(|&i| entries[i].node == node)
+    {
+        app.session.move_to(row);
     }
 }
 
@@ -437,7 +448,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         KeyCode::Down | KeyCode::Char('j') => (0.0, 1.0),
         _ => return None,
     };
-    app.status = None;
+    app.session.status = None;
     let next = app
         .treemap
         .layout
@@ -470,7 +481,7 @@ pub fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
         .treemap
         .last_click
         .is_some_and(|(t, n)| n == node && now.duration_since(t) <= DOUBLE_CLICK);
-    app.status = None;
+    app.session.status = None;
     select_top(app, top);
     if again {
         app.treemap.last_click = None;

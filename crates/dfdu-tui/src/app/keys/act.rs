@@ -16,26 +16,31 @@ use crate::state::{filter, marks, tree};
 /// read-only browser an action that deletes only says so.
 pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
     let mut fx = Vec::new();
-    if app.read_only && a.deletes() {
-        app.status = Some(READ_ONLY.into());
+    if app.session.read_only && a.deletes() {
+        app.session.status = Some(READ_ONLY.into());
         return fx;
     }
     let page = isize::try_from(app.list_height.max(1)).unwrap_or(isize::MAX);
-    let before = app.selected_index();
+    let before = app.session.selected_index();
     match a {
         Action::Quit => app.quit = true,
-        Action::Up => app.move_by(-1),
-        Action::Down => app.move_by(1),
-        Action::PageUp => app.move_by(-page),
-        Action::PageDown => app.move_by(page),
-        Action::HalfPageUp => app.move_by(-(page / 2).max(1)),
-        Action::HalfPageDown => app.move_by((page / 2).max(1)),
-        Action::First => app.move_to(0),
-        Action::Last => app.move_to(app.list.rows.len().saturating_sub(1)),
+        Action::Up => app.session.move_by(-1),
+        Action::Down => app.session.move_by(1),
+        Action::PageUp => app.session.move_by(-page),
+        Action::PageDown => app.session.move_by(page),
+        Action::HalfPageUp => app.session.move_by(-(page / 2).max(1)),
+        Action::HalfPageDown => app.session.move_by((page / 2).max(1)),
+        Action::First => app.session.move_to(0),
+        Action::Last => app
+            .session
+            .move_to(app.session.list.rows.len().saturating_sub(1)),
         Action::Open if tree::act::right(app) => {}
         Action::Open | Action::Enter => {
-            let dir = app.selected_index().map(|row| app.list.rows[row]);
-            if let Some(i) = dir.filter(|&i| app.snap.entries[i].is_dir) {
+            let dir = app
+                .session
+                .selected_index()
+                .map(|row| app.session.list.rows[row]);
+            if let Some(i) = dir.filter(|&i| app.session.snap.entries[i].is_dir) {
                 app.enter(i);
             }
         }
@@ -45,50 +50,50 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::SortName => sort_by(app, SortKey::Name),
         Action::SortItems => sort_by(app, SortKey::Items),
         Action::SortMtime => sort_by(app, SortKey::Mtime),
-        Action::Resort => app.request_sort(),
+        Action::Resort => app.session.request_sort(),
         Action::ToggleApparent => toggle_size(app, SizeMode::Apparent),
         Action::ToggleReferenced => toggle_size(app, SizeMode::Referenced),
         Action::ToggleHidden => {
-            app.hide_hidden = !app.hide_hidden;
-            app.request_sort();
+            app.session.hide_hidden = !app.session.hide_hidden;
+            app.session.request_sort();
         }
         Action::Columns => {
             app.columns = app.columns.next();
-            app.status = Some(app.columns.describe().into());
+            app.session.status = Some(app.columns.describe().into());
         }
         Action::ToggleTree => tree::act::toggle(app),
         Action::ExpandChain => tree::act::chain(app),
         Action::CycleFold => tree::act::cycle_fold(app),
         Action::Rescan => {
-            let node = match app.selected_entry() {
+            let node = match app.session.selected_entry() {
                 Some(e) if e.is_dir => Some(e.node),
-                _ => app.snap.dir_node,
+                _ => app.session.snap.dir_node,
             };
             if let Some(node) = node {
                 fx.push(Effect::Send(Command::Rescan { node }));
-                app.status = Some("rescan requested".into());
+                app.session.status = Some("rescan requested".into());
             }
         }
         Action::EnterMount => fx.extend(enter_mount(app)),
         Action::SkipStalled => {
-            if app.snap.stalled > 0 {
+            if app.session.snap.stalled > 0 {
                 fx.push(Effect::Send(Command::AbandonAllStalled));
-                app.status = Some("skipping directories that are not responding".into());
+                app.session.status = Some("skipping directories that are not responding".into());
             }
         }
         Action::Trash => fx.extend(review::delete(app, Mode::Trash)),
         Action::DeletePermanent => fx.extend(review::delete(app, Mode::Permanent)),
-        Action::Undo => match &app.snap.undo {
-            Some(u) if !app.snap.undoing => {
+        Action::Undo => match &app.session.snap.undo {
+            Some(u) if !app.session.snap.undoing => {
                 fx.push(Effect::Send(Command::Undo { plan: u.plan }));
-                app.status = Some(format!(
+                app.session.status = Some(format!(
                     "putting back {} item{} ({})…",
                     u.items,
                     crate::format::plural(u.items as u64),
                     crate::format::human(u.bytes)
                 ));
             }
-            _ => app.status = Some("nothing to undo".into()),
+            _ => app.session.status = Some("nothing to undo".into()),
         },
         Action::Help => help::open(app),
         Action::Errors => fx.push(Effect::ShowErrors),
@@ -143,28 +148,29 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
 
 /// A sort key: the key's default direction, or the other direction if it is already in use.
 fn sort_by(app: &mut App, key: SortKey) {
-    app.sort = if app.sort.key == key {
+    app.session.sort = if app.session.sort.key == key {
         SortSpec {
             key,
-            desc: !app.sort.desc,
+            desc: !app.session.sort.desc,
         }
     } else {
         SortSpec::for_key(key)
     };
-    app.request_sort();
+    app.session.request_sort();
 }
 
 /// Asks the engine to scan into the selected mount the scan stayed out of.
 fn enter_mount(app: &mut App) -> Option<Effect> {
-    match app.selected_entry() {
+    match app.session.selected_entry() {
         Some(e) if matches!(e.mark, Mark::OtherFs | Mark::Network) => {
             let name = String::from_utf8_lossy(&e.name).into_owned();
             let node = e.node;
-            app.status = Some(format!("scanning {name}/ on its own filesystem…"));
+            app.session.status = Some(format!("scanning {name}/ on its own filesystem…"));
             Some(Effect::Send(Command::Enter { node }))
         }
         _ => {
-            app.status = Some("m scans a mount the scan stayed out of; select one first".into());
+            app.session.status =
+                Some("m scans a mount the scan stayed out of; select one first".into());
             None
         }
     }
@@ -175,17 +181,17 @@ fn only_in(app: &mut App, a: Action, views: &[View]) {
     let names: Vec<String> = (views.iter())
         .map(|v| format!("{} ({})", v.name(), first_key(v.action())))
         .collect();
-    app.status = Some(format!("{} works in {}", first_key(a), names.join(" and ")));
+    app.session.status = Some(format!("{} works in {}", first_key(a), names.join(" and ")));
 }
 
 /// Switches to `mode`, or back to disk usage if `mode` is shown already.
 fn toggle_size(app: &mut App, mode: SizeMode) {
-    app.size_mode = if app.size_mode == mode {
+    app.session.size_mode = if app.session.size_mode == mode {
         SizeMode::Disk
     } else {
         mode
     };
-    app.request_sort();
+    app.session.request_sort();
 }
 
 #[cfg(test)]
@@ -210,22 +216,25 @@ mod tests {
     fn a_sort_key_again_reverses_it() {
         let (mut app, _) = browser();
         sort_by(&mut app, SortKey::Name);
-        assert_eq!(app.sort, SortSpec::for_key(SortKey::Name));
+        assert_eq!(app.session.sort, SortSpec::for_key(SortKey::Name));
         sort_by(&mut app, SortKey::Name);
-        assert_eq!((app.sort.key, app.sort.desc), (SortKey::Name, true));
+        assert_eq!(
+            (app.session.sort.key, app.session.sort.desc),
+            (SortKey::Name, true)
+        );
         sort_by(&mut app, SortKey::Size);
-        assert_eq!(app.sort, SortSpec::default());
+        assert_eq!(app.session.sort, SortSpec::default());
     }
 
     #[test]
     fn a_size_mode_again_goes_back_to_disk_usage() {
         let (mut app, _) = browser();
         toggle_size(&mut app, SizeMode::Apparent);
-        assert_eq!(app.size_mode, SizeMode::Apparent);
+        assert_eq!(app.session.size_mode, SizeMode::Apparent);
         toggle_size(&mut app, SizeMode::Referenced);
-        assert_eq!(app.size_mode, SizeMode::Referenced);
+        assert_eq!(app.session.size_mode, SizeMode::Referenced);
         toggle_size(&mut app, SizeMode::Referenced);
-        assert_eq!(app.size_mode, SizeMode::Disk);
+        assert_eq!(app.session.size_mode, SizeMode::Disk);
     }
 
     #[test]
@@ -244,13 +253,14 @@ mod tests {
             Some(Effect::Send(Command::Enter { node: n })) if n == node
         ));
         assert_eq!(
-            app.status.as_deref(),
+            app.session.status.as_deref(),
             Some("scanning nfs/ on its own filesystem…")
         );
-        app.move_to(1);
+        app.session.move_to(1);
         assert!(enter_mount(&mut app).is_none());
         assert!(
-            app.status
+            app.session
+                .status
                 .as_deref()
                 .is_some_and(|s| s.starts_with("m scans"))
         );
@@ -260,14 +270,17 @@ mod tests {
     fn a_key_of_another_view_says_where_it_works() {
         let (mut app, _) = browser();
         only_in(&mut app, Action::CleanupFilter, &[View::Cleanup]);
-        assert_eq!(app.status.as_deref(), Some("f works in Cleanup (3)"));
+        assert_eq!(
+            app.session.status.as_deref(),
+            Some("f works in Cleanup (3)")
+        );
         only_in(
             &mut app,
             Action::TickSuggested,
             &[View::Cleanup, View::Duplicates],
         );
         assert_eq!(
-            app.status.as_deref(),
+            app.session.status.as_deref(),
             Some("A works in Cleanup (3) and Duplicates (4)")
         );
     }
@@ -275,11 +288,11 @@ mod tests {
     #[test]
     fn a_read_only_browser_only_says_it_deletes_nothing() {
         let (mut app, _) = browser();
-        app.read_only = true;
+        app.session.read_only = true;
         for a in [Action::Trash, Action::DeletePermanent, Action::Undo] {
-            app.status = None;
+            app.session.status = None;
             assert!(run(&mut app, a).is_empty(), "{a:?}");
-            assert_eq!(app.status.as_deref(), Some(READ_ONLY));
+            assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
             assert!(matches!(app.overlay, Overlay::None));
         }
     }
@@ -288,8 +301,8 @@ mod tests {
     fn undo_puts_back_the_last_plan_once() {
         let (mut app, _) = browser();
         assert!(run(&mut app, Action::Undo).is_empty());
-        assert_eq!(app.status.as_deref(), Some("nothing to undo"));
-        app.snap.undo = Some(UndoInfo {
+        assert_eq!(app.session.status.as_deref(), Some("nothing to undo"));
+        app.session.snap.undo = Some(UndoInfo {
             plan: 7,
             mode: Mode::Trash,
             items: 2,
@@ -298,24 +311,24 @@ mod tests {
         let fx = run(&mut app, Action::Undo);
         assert!(matches!(fx[..], [Effect::Send(Command::Undo { plan: 7 })]));
         assert_eq!(
-            app.status.as_deref(),
+            app.session.status.as_deref(),
             Some("putting back 2 items (1.0 MiB)…")
         );
         // While it runs, not again.
-        app.snap.undoing = true;
+        app.session.snap.undoing = true;
         assert!(run(&mut app, Action::Undo).is_empty());
     }
 
     #[test]
     fn rescan_takes_the_selected_directory_or_the_one_shown() {
         let (mut app, _) = browser();
-        let library = app.snap.entries[0].node;
+        let library = app.session.snap.entries[0].node;
         let fx = run(&mut app, Action::Rescan);
         assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == library));
-        app.move_to(1);
-        let dir = app.snap.dir_node.expect("the directory shown");
+        app.session.move_to(1);
+        let dir = app.session.snap.dir_node.expect("the directory shown");
         let fx = run(&mut app, Action::Rescan);
         assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == dir));
-        assert_eq!(app.status.as_deref(), Some("rescan requested"));
+        assert_eq!(app.session.status.as_deref(), Some("rescan requested"));
     }
 }

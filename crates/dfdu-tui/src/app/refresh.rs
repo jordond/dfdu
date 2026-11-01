@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use dfdu_tree::NodeRef;
 
-use super::{App, IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection, shown};
+use dfdu_session::state::shown;
+
+use super::{App, Selection};
 use crate::model::snapshot::{EntryData, Snapshot};
 use crate::state::order::{Order, Siblings};
 
@@ -60,81 +62,6 @@ struct Folded {
     changed: bool,
 }
 
-/// When the rows are sorted again: before the next frame when asked, otherwise automatically
-/// once the user has been idle for [`IDLE_BEFORE_SORT`], at most every [`MIN_SORT_INTERVAL`].
-#[derive(Debug)]
-pub struct SortSchedule {
-    last_input: Instant,
-    last_sort: Instant,
-    /// An exact sort is asked for.
-    requested: bool,
-    /// The filter changed: its rows are needed before the next frame.
-    refilter: bool,
-    /// A snapshot that changed came in since the last sort.
-    changed: bool,
-}
-
-impl SortSchedule {
-    /// The schedule of a browser opened at `now`: idle, with an exact sort asked for.
-    pub fn new(now: Instant) -> Self {
-        SortSchedule {
-            // No key pressed yet counts as idle.
-            last_input: now.checked_sub(IDLE_BEFORE_SORT).unwrap_or(now),
-            last_sort: now,
-            requested: true,
-            refilter: false,
-            changed: false,
-        }
-    }
-
-    pub fn request_sort(&mut self) {
-        self.requested = true;
-    }
-
-    pub fn request_refilter(&mut self) {
-        self.refilter = true;
-    }
-
-    pub fn note_input(&mut self, now: Instant) {
-        self.last_input = now;
-    }
-
-    /// A snapshot that changed came in since the last sort.
-    pub fn changed(&self) -> bool {
-        self.changed
-    }
-
-    /// When an automatic sort is due, if one is pending.
-    pub fn due_at(&self) -> Instant {
-        (self.last_input + IDLE_BEFORE_SORT).max(self.last_sort + MIN_SORT_INTERVAL)
-    }
-
-    fn idle(&self, now: Instant) -> bool {
-        now.duration_since(self.last_input) >= IDLE_BEFORE_SORT
-    }
-
-    /// An automatic sort is due at `now`: one is `pending` and the user has been idle, long
-    /// enough after the last sort or right after the scan `finished`.
-    fn auto_due(&self, pending: bool, finished: bool, now: Instant) -> bool {
-        let interval = now.duration_since(self.last_sort) >= MIN_SORT_INTERVAL;
-        self.idle(now) && ((pending && interval) || finished)
-    }
-
-    /// Takes the requests: an exact sort, and the rows of a changed filter.
-    fn take_requests(&mut self) -> (bool, bool) {
-        (
-            std::mem::take(&mut self.requested),
-            std::mem::take(&mut self.refilter),
-        )
-    }
-
-    /// Records a sort at `now`, which took in every snapshot that changed before it.
-    fn record_sort(&mut self, now: Instant) {
-        self.last_sort = now;
-        self.changed = false;
-    }
-}
-
 /// How [`App::update_order`] brings the rows up to date.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Reorder {
@@ -163,29 +90,31 @@ impl App {
     /// the cursor in this directory, or it is on the first row (`index`, before the snapshot).
     /// Deleted rows kept as placeholders hold still until the next re-sort.
     fn keeps_top_sorted(&self, index: Option<usize>) -> bool {
-        (!self.list.moved || index == Some(0)) && !self.motion.has_ghosts()
+        (!self.session.list.moved || index == Some(0)) && !self.motion.has_ghosts()
     }
 
     pub fn refresh(&mut self, mut snap: Snapshot, now: Instant) {
-        if let (Some(tree), Some(found)) = (&mut self.tree, &snap.tree) {
+        if let (Some(tree), Some(found)) = (&mut self.session.tree, &snap.tree) {
             tree.apply(found);
         }
-        self.motion.carry_ghosts(&self.snap, &mut snap, now);
+        self.motion.carry_ghosts(&self.session.snap, &mut snap, now);
         if let Some(d) = &snap.last_delete
             && self
+                .session
                 .snap
                 .last_delete
                 .as_ref()
                 .is_none_or(|p| p.plan != d.plan)
         {
-            self.status = Some(delete_summary(d));
+            self.session.status = Some(delete_summary(d));
         }
-        let dir_changed = snap.dir_path != self.snap.dir_path;
+        let dir_changed = snap.dir_path != self.session.snap.dir_path;
         // While a scan runs, entries are only added: the old entries are a prefix of the new
         // ones and indices into them stay valid, so nothing needs to be looked up by node.
         let appended = !dir_changed
-            && snap.entries.len() >= self.snap.entries.len()
+            && snap.entries.len() >= self.session.snap.entries.len()
             && self
+                .session
                 .snap
                 .entries
                 .iter()
@@ -196,32 +125,33 @@ impl App {
         } else {
             self.carry_over_swapped(&snap)
         };
-        let changed = snap.version != self.snap.version;
+        let changed = snap.version != self.session.snap.version;
         if changed {
-            self.sort_schedule.changed = true;
+            self.session.sort_schedule.note_changed();
         }
         // A scan that just finished gets one more automatic sort right away (if the user is
         // idle), so the final order does not wait for the minimum interval.
-        let finished = self.snap.busy && !snap.busy;
-        if self.done_at.is_none() && !snap.busy && snap.dir_node.is_some() {
-            self.done_at = Some(now);
+        let finished = self.session.snap.busy && !snap.busy;
+        if self.session.done_at.is_none() && !snap.busy && snap.dir_node.is_some() {
+            self.session.done_at = Some(now);
         }
-        if self.done_at.is_some() && snap.busy && !self.snap.busy {
+        if self.session.done_at.is_some() && snap.busy && !self.session.snap.busy {
             // A rescan started: time it from now.
-            self.started = now;
-            self.done_at = None;
+            self.session.started = now;
+            self.session.done_at = None;
         }
-        let old_index = self.selected_index();
-        let old = std::mem::replace(&mut self.snap, snap);
+        let old_index = self.session.selected_index();
+        let old = std::mem::replace(&mut self.session.snap, snap);
         if !dir_changed && !appended {
             let pos: HashMap<NodeRef, usize> = self
+                .session
                 .snap
                 .entries
                 .iter()
                 .enumerate()
                 .map(|(i, e)| (e.node, i))
                 .collect();
-            self.list.order.remap(|i| {
+            self.session.list.order.remap(|i| {
                 let node = old.entries[i].node;
                 pos.get(swapped.get(&node).unwrap_or(&node)).copied()
             });
@@ -239,7 +169,7 @@ impl App {
     /// Applies sort requests and the automatic sort to the snapshot already held, for a frame
     /// drawn without reading the engine again.
     pub fn reorder(&mut self, now: Instant) {
-        let old_index = self.selected_index();
+        let old_index = self.session.selected_index();
         self.update_order(None, old_index, now);
     }
 
@@ -253,12 +183,13 @@ impl App {
             finished,
             changed,
         } = folded.unwrap_or_default();
-        let (requested, refilter) = self.sort_schedule.take_requests();
+        let (requested, refilter) = self.session.sort_schedule.take_requests();
         let mode = if dir_changed || requested || refilter {
             Reorder::Exact
         } else if self
+            .session
             .sort_schedule
-            .auto_due(self.sort_pending(), finished, now)
+            .auto_due(self.session.sort_pending(), finished, now)
         {
             Reorder::Auto
         } else if fresh && changed && self.keeps_top_sorted(old_index) {
@@ -269,9 +200,9 @@ impl App {
             // The entries and the order are those of the last frame: nothing below changes.
             return;
         };
-        self.filter.prepare(&self.snap, replaced);
-        let entries = &self.snap.entries;
-        let (hide, filter) = (self.hide_hidden, &self.filter);
+        self.session.filter.prepare(&self.session.snap, replaced);
+        let entries = &self.session.snap.entries;
+        let (hide, filter) = (self.session.hide_hidden, &self.session.filter);
         let tree = self.tree_shown().is_some();
         // Rows below the top are left out of a list until the read without them comes in.
         let visible = |i: usize, e: &EntryData| {
@@ -284,7 +215,11 @@ impl App {
             && refilter
             && !requested
             && !fresh
-            && self.list.order.refilter(entries, visible, self.sort);
+            && self
+                .session
+                .list
+                .order
+                .refilter(entries, visible, self.session.sort);
         match mode {
             _ if tree => {
                 let how = match mode {
@@ -295,47 +230,69 @@ impl App {
                 // Between sorts a deleted row keeps its place, as the list keeps its row.
                 let keep = how == Siblings::Keep;
                 let visible = |i: usize, e: &EntryData| visible(i, e) || (keep && e.ghost);
-                self.list.order.sort_tree(entries, visible, self.sort, how);
+                self.session
+                    .list
+                    .order
+                    .sort_tree(entries, visible, self.session.sort, how);
             }
             Reorder::Exact if refiltered => {}
             Reorder::Exact => {
-                self.list.order = Order::default();
+                self.session.list.order = Order::default();
                 if filter.active() {
-                    self.list.order.sort_exact(entries, visible, self.sort);
-                } else {
-                    self.list
+                    self.session
+                        .list
                         .order
-                        .sort_exact_unfiltered(entries, visible, self.sort);
+                        .sort_exact(entries, visible, self.session.sort);
+                } else {
+                    self.session.list.order.sort_exact_unfiltered(
+                        entries,
+                        visible,
+                        self.session.sort,
+                    );
                 }
             }
-            Reorder::Auto => self.list.order.sort_auto(entries, visible, self.sort),
-            Reorder::Sync => self.list.order.sync(entries, visible, self.sort),
+            Reorder::Auto => self
+                .session
+                .list
+                .order
+                .sort_auto(entries, visible, self.session.sort),
+            Reorder::Sync => self
+                .session
+                .list
+                .order
+                .sync(entries, visible, self.session.sort),
             Reorder::Top => {
-                self.list
-                    .order
-                    .sort_top(entries, visible, self.sort, self.list_height);
+                self.session.list.order.sort_top(
+                    entries,
+                    visible,
+                    self.session.sort,
+                    self.list_height,
+                );
             }
         }
         let resorted = mode.resorts();
         if resorted {
-            self.list.sort_gen += 1;
-            self.sort_schedule.record_sort(now);
+            self.session.list.sort_gen += 1;
+            self.session.sort_schedule.record_sort(now);
         }
 
         // The rows before a re-sort go to the motion hook; otherwise the buffer is reused.
         let old_rows = if resorted && !dir_changed {
-            std::mem::take(&mut self.list.rows)
+            std::mem::take(&mut self.session.list.rows)
         } else {
-            self.list.rows.clear();
+            self.session.list.rows.clear();
             Vec::new()
         };
-        self.list.rows.extend_from_slice(self.list.order.rows());
+        self.session
+            .list
+            .rows
+            .extend_from_slice(self.session.list.order.rows());
         if resorted && !dir_changed {
             let auto = mode == Reorder::Auto;
             self.motion
-                .resorted(&old_rows, &self.list.rows, entries, auto);
+                .resorted(&old_rows, &self.session.list.rows, entries, auto);
         }
-        self.list.tally(entries);
+        self.session.list.tally(entries);
         self.restore_cursor(mode, dir_changed, old_index);
     }
 
@@ -344,21 +301,21 @@ impl App {
     /// across a re-sort in the same directory.
     fn restore_cursor(&mut self, mode: Reorder, dir_changed: bool, old_index: Option<usize>) {
         self.fix_selection(old_index);
-        if mode == Reorder::Top && !self.list.moved {
-            self.select(0);
-            self.list.scroll = 0;
+        if mode == Reorder::Top && !self.session.list.moved {
+            self.session.select(0);
+            self.scroll = 0;
         }
         if mode.resorts() && !dir_changed {
-            if self.list.moved {
+            if self.session.list.moved {
                 // Keep the selected row on the same screen line.
-                if let (Some(old), Some(new)) = (old_index, self.selected_index()) {
-                    let line = old.saturating_sub(self.list.scroll);
-                    self.list.scroll = new.saturating_sub(line);
+                if let (Some(old), Some(new)) = (old_index, self.session.selected_index()) {
+                    let line = old.saturating_sub(self.scroll);
+                    self.scroll = new.saturating_sub(line);
                 }
             } else {
                 // The user has not moved the cursor here: stay at the top.
-                self.select(0);
-                self.list.scroll = 0;
+                self.session.select(0);
+                self.scroll = 0;
             }
         }
     }
@@ -369,7 +326,7 @@ impl App {
     fn carry_over_swapped(&mut self, snap: &Snapshot) -> HashMap<NodeRef, NodeRef> {
         let mut swapped = HashMap::new();
         let present: HashSet<NodeRef> = snap.entries.iter().map(|e| e.node).collect();
-        let before: HashSet<NodeRef> = self.snap.entries.iter().map(|e| e.node).collect();
+        let before: HashSet<NodeRef> = self.session.snap.entries.iter().map(|e| e.node).collect();
         let fresh: HashMap<(&[u8], (u64, u64)), NodeRef> = snap
             .entries
             .iter()
@@ -380,6 +337,7 @@ impl App {
             return swapped;
         }
         for old in self
+            .session
             .snap
             .entries
             .iter()
@@ -387,7 +345,12 @@ impl App {
         {
             if let Some(&new) = fresh.get(&(&old.name[..], old.dev_ino)) {
                 swapped.insert(old.node, new);
-                if let Some(sel) = self.selected.as_mut().filter(|s| s.node == Some(old.node)) {
+                if let Some(sel) = self
+                    .session
+                    .selected
+                    .as_mut()
+                    .filter(|s| s.node == Some(old.node))
+                {
                     sel.node = Some(new);
                 }
             }
@@ -398,24 +361,26 @@ impl App {
     /// Re-finds the selection after a refresh: by reference, then by name and identity (rescan
     /// swap), then by the old position.
     fn fix_selection(&mut self, old_index: Option<usize>) {
-        if self.selected_index().is_some() {
+        if self.session.selected_index().is_some() {
             return;
         }
-        if let Some(sel) = &self.selected {
-            let found = self.list.rows.iter().find(|&&i| {
-                let e = &self.snap.entries[i];
+        if let Some(sel) = &self.session.selected {
+            let found = self.session.list.rows.iter().find(|&&i| {
+                let e = &self.session.snap.entries[i];
                 e.name[..] == sel.name[..] && (sel.dev_ino == (0, 0) || e.dev_ino == sel.dev_ino)
             });
             if let Some(&i) = found {
-                self.selected = Some(Selection::of(&self.snap.entries[i]));
+                self.session.selected = Some(Selection::of(&self.session.snap.entries[i]));
                 return;
             }
         }
-        if self.list.rows.is_empty() {
-            self.selected = None;
+        if self.session.list.rows.is_empty() {
+            self.session.selected = None;
             return;
         }
-        let i = old_index.unwrap_or(0).min(self.list.rows.len() - 1);
-        self.selected = Some(Selection::of(&self.snap.entries[self.list.rows[i]]));
+        let i = old_index.unwrap_or(0).min(self.session.list.rows.len() - 1);
+        self.session.selected = Some(Selection::of(
+            &self.session.snap.entries[self.session.list.rows[i]],
+        ));
     }
 }

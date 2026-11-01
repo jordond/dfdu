@@ -46,7 +46,8 @@ fn browser(t0: Instant) -> App {
 }
 
 fn selected(app: &App) -> Option<String> {
-    app.selected_entry()
+    app.session
+        .selected_entry()
         .map(|e| String::from_utf8_lossy(&e.name).into_owned())
 }
 
@@ -59,7 +60,7 @@ fn click_selects_row() {
     assert!(fx.is_empty());
     assert_eq!(selected(&app).as_deref(), Some("d2"));
     assert_eq!(
-        app.target.path,
+        app.session.target.path,
         HostPath::default(),
         "a single click opens nothing"
     );
@@ -78,11 +79,11 @@ fn click_on_new_entries_row_sorts() {
     entries.push(dir(1, "b", 99));
     app.refresh(snap_without_totals(entries, 2), t0);
     render(&mut app, t0, 80, 12);
-    assert_eq!(app.list.new_count, 1);
+    assert_eq!(app.session.list.new_count, 1);
     event(&mut app, left(10, TOP + 1), t0).expect("redraw");
     app.reorder(t0);
-    assert_eq!(app.list.new_count, 0);
-    assert_eq!(app.list.rows.len(), 2);
+    assert_eq!(app.session.list.new_count, 0);
+    assert_eq!(app.session.list.rows.len(), 2);
 }
 
 #[test]
@@ -92,7 +93,7 @@ fn double_click_opens_directory() {
     event(&mut app, left(30, TOP + 1), t0).expect("redraw");
     let t1 = t0 + Duration::from_millis(250);
     event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"d1"));
+    assert_eq!(app.session.target.path, HostPath::from("/r").join(b"d1"));
 }
 
 #[test]
@@ -104,7 +105,7 @@ fn double_click_opens_the_clicked_row_after_the_selection_moved() {
     assert_eq!(selected(&app).as_deref(), Some("d2"));
     let t1 = t0 + Duration::from_millis(250);
     event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from("/r").join(b"d1"));
+    assert_eq!(app.session.target.path, HostPath::from("/r").join(b"d1"));
 }
 
 #[test]
@@ -114,11 +115,11 @@ fn slow_second_click_does_not_open() {
     event(&mut app, left(30, TOP + 1), t0).expect("redraw");
     let t1 = t0 + Duration::from_millis(450);
     event(&mut app, left(30, TOP + 1), t1).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from(""));
+    assert_eq!(app.session.target.path, HostPath::from(""));
     assert_eq!(selected(&app).as_deref(), Some("d1"));
     // Two quick clicks on different rows select the second one.
     event(&mut app, left(30, TOP + 3), t1).expect("redraw");
-    assert_eq!(app.target.path, HostPath::from(""));
+    assert_eq!(app.session.target.path, HostPath::from(""));
     assert_eq!(selected(&app).as_deref(), Some("d3"));
 }
 
@@ -131,7 +132,7 @@ fn mouse_moves_do_not_redraw() {
     entries.push(dir(1, "b", 99));
     app.refresh(snap_without_totals(entries, 2), t0);
     render(&mut app, t0, 80, 12);
-    let due = app.next_sort_at().expect("a re-sort is pending");
+    let due = app.session.next_sort_at().expect("a re-sort is pending");
     let later = t0 + Duration::from_secs(1);
     for kind in [
         MouseEventKind::Moved,
@@ -140,9 +141,13 @@ fn mouse_moves_do_not_redraw() {
     ] {
         assert!(event(&mut app, mouse(kind, 30, TOP), later).is_none());
     }
-    assert_eq!(app.next_sort_at(), Some(due), "not counted as input");
+    assert_eq!(
+        app.session.next_sort_at(),
+        Some(due),
+        "not counted as input"
+    );
     assert_eq!(selected(&app).as_deref(), Some("a"));
     // A click is input: the re-sort waits for the user to be idle again.
     event(&mut app, left(30, TOP), later).expect("redraw");
-    assert!(app.next_sort_at().expect("still pending") > due);
+    assert!(app.session.next_sort_at().expect("still pending") > due);
 }

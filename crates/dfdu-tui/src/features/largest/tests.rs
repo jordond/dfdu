@@ -74,9 +74,9 @@ fn lists_the_largest_files_below_with_their_paths_relative() {
     app.key(press(KeyCode::Enter), t0);
     sync(&mut app, &m, t0);
     assert!(
-        app.snap.dir_path.to_local().ends_with("a"),
+        app.session.snap.dir_path.to_local().ends_with("a"),
         "{:?}",
-        app.snap.dir_path
+        app.session.snap.dir_path
     );
     app.key(press(KeyCode::Char('5')), t0);
     sync(&mut app, &m, t0);
@@ -102,11 +102,11 @@ fn enter_goes_to_the_file_in_its_directory() {
     app.key(press(KeyCode::Enter), t0);
     assert!(!active(&app), "the view closes");
     assert_eq!(
-        app.target.path,
+        app.session.target.path,
         HostPath::from("/r").join(b"a").join(b"deep")
     );
     sync(&mut app, &m, t0);
-    let e = app.selected_entry().expect("selected");
+    let e = app.session.selected_entry().expect("selected");
     assert_eq!(&e.name[..], b"x.bin");
     // `5` opens the view again, now for this directory; `1` comes back to the list.
     app.key(press(KeyCode::Char('5')), t0);
@@ -114,7 +114,10 @@ fn enter_goes_to_the_file_in_its_directory() {
     assert_eq!(paths(&app), ["x.bin"]);
     app.key(press(KeyCode::Char('1')), t0);
     assert!(!active(&app));
-    assert_eq!(&app.selected_entry().expect("selected").name[..], b"x.bin");
+    assert_eq!(
+        &app.session.selected_entry().expect("selected").name[..],
+        b"x.bin"
+    );
 }
 
 /// The walk runs only while the view is open, and again only when the data changed.
@@ -153,9 +156,9 @@ fn keys_move_mark_and_refuse() {
         t0,
     );
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks.items().len(), 1);
+    assert_eq!(app.session.marks.items().len(), 1);
     let huge = HostPath::from("/r").join(b".cache").join(b"huge");
-    assert_eq!(app.marks.items()[0].target.path, huge);
+    assert_eq!(app.session.marks.items()[0].target.path, huge);
     assert_eq!(app.largest.cursor, 1);
     let frame = render(&mut app, t0, 100, 10);
     let row = frame
@@ -172,12 +175,12 @@ fn keys_move_mark_and_refuse() {
     app.key(press(KeyCode::Esc), t0);
     // `X` unticks every file.
     app.key(press(KeyCode::Char('X')), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
 
     // A read-only browser marks nothing.
     let (mut ro, t0) = opened(&m);
-    ro.read_only = true;
+    ro.session.read_only = true;
     ro.key(press(KeyCode::Char(' ')), t0);
-    assert!(ro.marks.is_empty());
-    assert_eq!(ro.status.as_deref(), Some(READ_ONLY));
+    assert!(ro.session.marks.is_empty());
+    assert_eq!(ro.session.status.as_deref(), Some(READ_ONLY));
 }

@@ -82,11 +82,11 @@ where
     }
     let mut recorder = Recorder::new(ui.history);
     let mut cacher = Cacher::new(ui.cache);
-    let mut pacing = Pacing::new(app.size_mode);
+    let mut pacing = Pacing::new(app.session.size_mode);
     loop {
         let history_changed = recorder.poll(&mut app, engine);
         let cache_changed = cacher.poll(&mut app, engine);
-        let outside_changed = app.outside.poll();
+        let outside_changed = app.session.outside.poll();
         if history_changed || cache_changed || outside_changed {
             pacing.input_dirty = true;
         }
@@ -192,12 +192,12 @@ impl Pacing {
                     .is_none_or(|t| now.duration_since(t) >= self.data_interval()));
         // Keys are drawn from the snapshot already held, except when they opened another
         // directory or changed the size mode.
-        let stale = app.target.path != app.snap.dir_path
-            || app.size_mode != self.read_mode
+        let stale = app.session.target.path != app.session.snap.dir_path
+            || app.session.size_mode != self.read_mode
             || overlay::type_filter::stale(app)
-            || crate::state::tree::stale(app.tree_shown(), &app.snap);
+            || crate::state::tree::stale(app.tree_shown(), &app.session.snap);
         let read = extras::plan(data_ready || stale, app.extras_stale());
-        let sort_due = app.next_sort_at().is_some_and(|t| now >= t);
+        let sort_due = app.session.next_sort_at().is_some_and(|t| now >= t);
         let animating = spinners_visible(app)
             && self
                 .last_draw
@@ -214,8 +214,8 @@ impl Pacing {
         engine: &Engine<B>,
         now: Instant,
     ) -> io::Result<()> {
-        let mut target = app.target.clone();
-        let mode = app.size_mode;
+        let mut target = app.session.target.clone();
+        let mode = app.session.size_mode;
         let breakdown = matches!(app.overlay, app::Overlay::Types(_));
         let (snap, extras, cost) = engine.read(|m| {
             let t = Instant::now();
@@ -223,7 +223,7 @@ impl Pacing {
                 m,
                 &mut target,
                 mode,
-                &app.types,
+                &app.session.types,
                 breakdown,
                 app.tree_shown(),
             );
@@ -248,7 +248,7 @@ impl Pacing {
             }
             self.focus = snap.focus;
         }
-        app.target = target;
+        app.session.target = target;
         app.refresh(snap, now);
         outside::request(app);
         extras::apply(app, extras);
@@ -286,7 +286,7 @@ impl Pacing {
     /// Notes a frame drawn at `now`.
     fn drawn(&mut self, app: &App, now: Instant) {
         self.last_draw = Some(now);
-        self.shown_entries |= !app.snap.entries.is_empty();
+        self.shown_entries |= !app.session.snap.entries.is_empty();
         self.input_dirty = false;
     }
 
@@ -301,13 +301,13 @@ impl Pacing {
         if spinners_visible(app) {
             wake = wake.min(DATA_FRAME.saturating_sub(since(self.last_draw)));
         }
-        if let Some(t) = app.next_sort_at() {
+        if let Some(t) = app.session.next_sort_at() {
             wake = wake.min(t.saturating_duration_since(now));
         }
         if let Some(t) = app.motion.next_frame_at() {
             wake = wake.min(t.saturating_duration_since(now));
         }
-        if polling || app.outside.pending() {
+        if polling || app.session.outside.pending() {
             wake = wake.min(DATA_FRAME);
         }
         if app.extras_stale() {
@@ -344,7 +344,7 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
             Effect::Copy(text) => {
                 // To the terminal the frames go to; a frame is never being drawn here.
                 if let Err(e) = selected_path::write_osc52(&mut io::stdout(), &text) {
-                    app.status = Some(format!("cannot copy: {e}"));
+                    app.session.status = Some(format!("cannot copy: {e}"));
                 }
             }
             Effect::Open { path, is_dir } => selected_path::spawn_open(app, &path, is_dir),
@@ -355,5 +355,5 @@ fn handle_effects<B: dfdu_scan::Backend>(app: &mut App, engine: &Engine<B>, fx: 
 /// The header spinner and clock move while the engine is busy or the cached scan is read or
 /// refreshed; nothing animates otherwise.
 fn spinners_visible(app: &App) -> bool {
-    app.snap.busy || app.cached.is_some() || dupes::running(app)
+    app.session.snap.busy || app.session.cached.is_some() || dupes::running(app)
 }

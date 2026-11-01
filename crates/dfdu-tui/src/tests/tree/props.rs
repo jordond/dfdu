@@ -180,18 +180,18 @@ proptest! {
         let (fx, t) = build(&nodes, &open);
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.sort = from;
+        app.session.sort = from;
         let snap = snapshot_of(&fx, &t);
-        app.tree = Some(t);
+        app.session.tree = Some(t);
         app.refresh(snap, t0);
-        prop_assert_eq!(&app.list.rows, &tree_order(&app.snap.entries, from));
-        prop_assume!(!app.list.rows.is_empty());
-        app.move_to(pick.index(app.list.rows.len()));
-        let node = app.selected_entry().map(|e| e.node);
-        app.sort = to;
-        app.request_sort();
+        prop_assert_eq!(&app.session.list.rows, &tree_order(&app.session.snap.entries, from));
+        prop_assume!(!app.session.list.rows.is_empty());
+        app.session.move_to(pick.index(app.session.list.rows.len()));
+        let node = app.session.selected_entry().map(|e| e.node);
+        app.session.sort = to;
+        app.session.request_sort();
         app.reorder(t0);
-        prop_assert_eq!(&app.list.rows, &tree_order(&app.snap.entries, to));
-        prop_assert_eq!(app.selected_entry().map(|e| e.node), node);
+        prop_assert_eq!(&app.session.list.rows, &tree_order(&app.session.snap.entries, to));
+        prop_assert_eq!(app.session.selected_entry().map(|e| e.node), node);
     }
 }

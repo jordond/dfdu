@@ -50,8 +50,8 @@ fn show(e: &Engine<NativeBackend>, app: &mut App, dir: &Path, t: Instant) -> Str
         let ix = dfdu_tree::find_path(&m.tree, &dir.into()).expect("directory in the tree");
         Target::of(&m.tree, ix)
     });
-    let snap = e.read(|m| snapshot::build(m, &mut target, app.size_mode));
-    app.target = target;
+    let snap = e.read(|m| snapshot::build(m, &mut target, app.session.size_mode));
+    app.session.target = target;
     app.refresh(snap, t);
     render(app, t, 160, 24)
 }

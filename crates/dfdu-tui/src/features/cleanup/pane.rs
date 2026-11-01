@@ -33,11 +33,11 @@ pub fn command(app: &mut App) -> Vec<Effect> {
     let Some(it) = selected(app).cloned() else {
         return Vec::new();
     };
-    let Some(rules) = app.snap.rules.clone() else {
+    let Some(rules) = app.session.snap.rules.clone() else {
         return Vec::new();
     };
     let Some(def) = rules.rule(it.class.rule).action.native() else {
-        app.status = Some(if app.read_only {
+        app.session.status = Some(if app.session.read_only {
             "no native command for this item".into()
         } else {
             "no native command for this item; d or D deletes it".into()
@@ -82,7 +82,7 @@ pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
     let Some(p) = app.cleanup.pane.clone() else {
         return Vec::new();
     };
-    let Some(rules) = app.snap.rules.clone() else {
+    let Some(rules) = app.session.snap.rules.clone() else {
         return Vec::new();
     };
     let Some(def) = rules.rule(p.rule).action.native() else {
@@ -99,8 +99,8 @@ pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
     let running = p.id != 0 && done.is_none();
     // The real run only after nothing ran yet (no dry run to show) or a dry run that worked.
     let may_run = p.id == 0 || (p.dry_run && done == Some(Ok(())));
-    if app.read_only && may_run && k.code == KeyCode::Char('y') {
-        app.status = Some(crate::app::keys::READ_ONLY.into());
+    if app.session.read_only && may_run && k.code == KeyCode::Char('y') {
+        app.session.status = Some(crate::app::keys::READ_ONLY.into());
         return Vec::new();
     }
     let it = app
@@ -143,7 +143,7 @@ pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
                 if let Some(pane) = app.cleanup.pane.as_mut() {
                     pane.armed = true;
                 }
-                app.status = Some("press y again to run it".into());
+                app.session.status = Some("press y again to run it".into());
                 return Vec::new();
             }
             return start(app, &it, p.variant, false);
@@ -158,7 +158,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect, t: &crate::theme::Theme
     let Some(p) = &app.cleanup.pane else {
         return;
     };
-    let Some(rules) = &app.snap.rules else {
+    let Some(rules) = &app.session.snap.rules else {
         return;
     };
     let rule = rules.rule(p.rule);
@@ -201,7 +201,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect, t: &crate::theme::Theme
         None => &def.command,
         Some(v) => def.variants.get(v).map_or(&def.command, |x| &x.command),
     };
-    let ro = app.read_only;
+    let ro = app.session.read_only;
     // What `y` and the other keys do once the command can run.
     let keys = |intro: String| {
         let mut spans = vec![Span::raw(intro)];

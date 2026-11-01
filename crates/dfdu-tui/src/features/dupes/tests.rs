@@ -40,8 +40,8 @@ fn duplicates_are_found_marked_and_shown() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     let mut target = Target::root();
-    let snap = engine.read(|m| snapshot::build(m, &mut target, app.size_mode));
-    app.target = target;
+    let snap = engine.read(|m| snapshot::build(m, &mut target, app.session.size_mode));
+    app.session.target = target;
     app.refresh(snap, t0);
 
     // Nothing is compared until asked, and another machine's tree (remote or from a file) is
@@ -49,12 +49,13 @@ fn duplicates_are_found_marked_and_shown() {
     assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
     assert!(app.key(press(KeyCode::Enter), t0).is_empty());
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .unwrap()
             .contains("this machine's files")
     );
-    app.outside.local = true;
+    app.session.outside.local = true;
     let fx = app.key(press(KeyCode::Enter), t0);
     assert!(matches!(fx[..], [Effect::FindDupes]));
     let (root, cands) = engine.read(|m| {
@@ -82,13 +83,13 @@ fn duplicates_are_found_marked_and_shown() {
     assert!(!out.contains("other.jpg"), "{out}");
     // `A` marks every copy but the oldest.
     app.key(press(KeyCode::Char('A')), t0);
-    assert_eq!(app.marks.items().len(), 2);
+    assert_eq!(app.session.marks.items().len(), 2);
     app.key(press(KeyCode::Char('A')), t0);
-    assert_eq!(app.marks.items().len(), 2);
+    assert_eq!(app.session.marks.items().len(), 2);
     // Space on the group unmarks its copies again.
     app.dupes.cursor = 0;
     app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     // A deleted file leaves the group; two left still make one.
     let gone = found(&app).unwrap().groups[0].files[0].path.clone();
     app.extras.dupes.insert(gone, None);
@@ -218,7 +219,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
     let kept_after_a = |app: &mut App| {
         marks::clear(app);
         app.key(press(KeyCode::Char('A')), t0);
-        let marked: Vec<String> = (app.marks.items().iter())
+        let marked: Vec<String> = (app.session.marks.items().iter())
             .map(|i| i.target.path.display().to_string())
             .collect();
         let files = &found(app).unwrap().groups[0].files;
@@ -258,7 +259,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
     for want in ["newest", "shortest path", "first in path order", "oldest"] {
         app.key(press(KeyCode::Char('K')), t0);
         assert_eq!(app.dupes.keep.label(), want);
-        let status = app.status.clone().unwrap_or_default();
+        let status = app.session.status.clone().unwrap_or_default();
         assert!(status.contains(want), "{status}");
         let kept = kept_after_a(&mut app);
         assert!(in_force(&mut app, want), "{want}");
@@ -290,7 +291,7 @@ fn nothing_is_compared_until_asked() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     sync(&mut app, &fx.m, t0);
-    app.snap.busy = false;
+    app.session.snap.busy = false;
     // A tree from another machine (or a file) counts nothing and offers no comparison.
     assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
     assert!(!stale(&app));
@@ -298,11 +299,11 @@ fn nothing_is_compared_until_asked() {
     assert!(frame.contains("this scan is remote or from"), "{frame}");
     assert!(!frame.contains("compare now"), "{frame}");
     app.key(press(KeyCode::Esc), t0);
-    app.outside.local = true;
+    app.session.outside.local = true;
     assert!(app.key(press(KeyCode::Char('4')), t0).is_empty());
     assert!(stale(&app), "the files to compare are counted");
     sync(&mut app, &fx.m, t0);
-    app.snap.busy = false;
+    app.session.snap.busy = false;
     assert_eq!(app.dupes.candidates, Some(3));
     let frame = render(&mut app, t0, 100, 20);
     assert!(frame.contains("╭ Duplicates ─"), "{frame}");
@@ -355,7 +356,7 @@ fn ticked(app: &App, group: usize) -> usize {
     let g = &found(app).unwrap().groups[group];
     (g.files.iter())
         .filter_map(|c| live(app, c))
-        .filter(|&n| app.marks.contains(n))
+        .filter(|&n| app.session.marks.contains(n))
         .count()
 }
 
@@ -398,7 +399,7 @@ fn deleting_every_copy_of_a_group_is_refused() {
     for key in ['d', 'D'] {
         assert!(app.key(press(KeyCode::Char(key)), t0).is_empty());
         assert!(matches!(app.overlay, crate::app::Overlay::None));
-        let status = app.status.clone().unwrap_or_default();
+        let status = app.session.status.clone().unwrap_or_default();
         assert!(status.contains("every copy of"), "{status}");
     }
     // One unticked, the other goes.
@@ -417,14 +418,14 @@ fn space_ticks_nothing_read_only() {
         &mut app,
         &[&[("/r/b.bin", 1_760_000_000), ("/r/a.bin", 1_700_000_000)]],
     );
-    app.read_only = true;
+    app.session.read_only = true;
     for cursor in [0, 1] {
         app.dupes.cursor = cursor;
-        app.status = None;
+        app.session.status = None;
         app.key(press(KeyCode::Char(' ')), t0);
-        assert!(app.marks.is_empty(), "row {cursor}");
+        assert!(app.session.marks.is_empty(), "row {cursor}");
         assert_eq!(
-            app.status.as_deref(),
+            app.session.status.as_deref(),
             Some(crate::app::keys::READ_ONLY),
             "row {cursor}"
         );
@@ -459,10 +460,10 @@ fn compare_again_while_scanning_keeps_what_is_shown() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     found_in(&mut app, &[&[("/r/a", 1), ("/r/b", 1)]]);
-    app.outside.local = true;
-    app.snap.busy = true;
+    app.session.outside.local = true;
+    app.session.snap.busy = true;
     assert!(app.key(press(KeyCode::Char('R')), t0).is_empty());
     assert!(found(&app).is_some(), "the result is kept");
-    let status = app.status.clone().unwrap_or_default();
+    let status = app.session.status.clone().unwrap_or_default();
     assert!(status.contains("wait until the scan is done"), "{status}");
 }

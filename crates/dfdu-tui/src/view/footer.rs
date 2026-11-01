@@ -16,7 +16,7 @@ use crate::state::filter;
 
 /// Drawn only while directories are stalled (the row has no height otherwise).
 pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
-    let n = app.snap.stalled;
+    let n = app.session.snap.stalled;
     let text = format!(
         " {n} director{} not responding: wait, or press x to skip {}",
         if n == 1 { "y is" } else { "ies are" },
@@ -32,13 +32,14 @@ pub fn stalled(f: &mut Frame, app: &App, area: Rect) {
 /// Without any of those, the list view shows the selection line there, unless an overlay is
 /// open over it.
 pub fn status(f: &mut Frame, app: &App, area: Rect, list_view: bool) {
-    let msg = match app.snap.deleting {
+    let msg = match app.session.snap.deleting {
         Some((done, total)) => format!("deleting {done}/{total}…"),
-        None if app.snap.undoing => "putting back…".into(),
+        None if app.session.snap.undoing => "putting back…".into(),
         None => app
+            .session
             .status
             .clone()
-            .or_else(|| app.snap.notice.clone())
+            .or_else(|| app.session.snap.notice.clone())
             .unwrap_or_default(),
     };
     if msg.is_empty()
@@ -85,7 +86,7 @@ fn hint(keys: impl Into<String>, label: &'static str, drop: u8) -> Hint {
 /// without the keys that delete.
 fn context(app: &App) -> Vec<Hint> {
     let mut hints = offered_now(app);
-    if app.read_only {
+    if app.session.read_only {
         let deleting = [Action::Trash, Action::DeletePermanent, Action::Undo].map(first_key);
         hints.retain(|h| !deleting.contains(&h.keys.as_str()));
     }
@@ -177,7 +178,7 @@ fn view_actions(app: &App, arrows: &str) -> Option<Vec<Hint>> {
         View::Duplicates if !crate::features::dupes::compared(app) => {
             let mut actions = vec![hint(first_key(Action::Close), "back to Files", 1)];
             // Only this machine's files are compared.
-            if app.outside.local {
+            if app.session.outside.local {
                 actions.insert(0, hint(first_key(Action::Enter), "compare now", 0));
             }
             actions
@@ -309,27 +310,28 @@ fn list_hints(app: &App, arrows: String, help: Hint, quit: Hint, views: Hint) ->
     ];
     hints.push(hint(first_key(Action::Parent), "up", 4));
     if app
+        .session
         .selected_entry()
         .is_some_and(|e| matches!(e.mark, Mark::OtherFs | Mark::Network))
     {
         hints.push(hint(first_key(Action::EnterMount), "scan it", 1));
     }
-    if !app.marks.is_empty() {
+    if !app.session.marks.is_empty() {
         hints.push(hint(first_key(Action::ToggleMark), "mark", 2));
         hints.push(hint(first_key(Action::Trash), "trash marked", 2));
         hints.push(hint(first_key(Action::DeletePermanent), "delete marked", 3));
     }
     hints.push(hint(sort, "sort", 7));
-    if app.snap.busy {
+    if app.session.snap.busy {
         hints.push(hint(first_key(Action::Resort), "re-sort", 8));
     }
-    if app.marks.is_empty() {
+    if app.session.marks.is_empty() {
         hints.push(hint(first_key(Action::ToggleMark), "mark", 6));
     }
     hints.push(hint(first_key(Action::Filter), "filter", 5));
     hints.push(hint(first_key(Action::Details), "details", 10));
     hints.push(hint(first_key(Action::Palette), "commands", 9));
-    if app.snap.root_total.errors > 0 {
+    if app.session.snap.root_total.errors > 0 {
         hints.push(hint(first_key(Action::Errors), "errors", 4));
     }
     hints.push(help);

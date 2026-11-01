@@ -82,7 +82,7 @@ pub fn summary(app: &App, tally: Tally, noun: &str, extra: &str, width: u16) -> 
         tally.ticked,
         tally.items
     );
-    let right = if app.read_only {
+    let right = if app.session.read_only {
         String::new()
     } else {
         format!("{} delete selected ", first_key(Action::Trash))
@@ -148,11 +148,11 @@ pub fn delete(app: &mut App, mode: Mode) -> Vec<Effect> {
         View::Cleanup => cleanup::listed(app),
         View::Duplicates => dupes::listed(app),
     };
-    let ticked = (app.marks.items().iter())
+    let ticked = (app.session.marks.items().iter())
         .filter_map(|m| m.target.node)
         .any(|n| listed.contains(&n));
     if !ticked {
-        app.status = Some(format!(
+        app.session.status = Some(format!(
             "tick items with {} first: {} and {} delete the ticked ones",
             first_key(Action::ToggleMark),
             first_key(Action::Trash),
@@ -163,7 +163,7 @@ pub fn delete(app: &mut App, mode: Mode) -> Vec<Effect> {
     if views::current(app) == View::Duplicates
         && let Some(name) = dupes::whole_group_ticked(app)
     {
-        app.status = Some(format!(
+        app.session.status = Some(format!(
             "every copy of {name} is ticked: untick one to keep it ({} unticks)",
             first_key(Action::ToggleMark)
         ));
@@ -220,7 +220,7 @@ mod tests {
         let narrow = text(&app, 60);
         assert!(!narrow.contains("groups"), "{narrow}");
         assert!(narrow.contains("1 of 2 files"), "{narrow}");
-        app.read_only = true;
+        app.session.read_only = true;
         assert!(!text(&app, 80).contains("delete"));
     }
 }

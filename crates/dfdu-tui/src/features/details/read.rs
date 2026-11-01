@@ -24,7 +24,7 @@ pub(super) fn subject(app: &App) -> Option<Subject> {
             },
         });
     }
-    app.selected_entry().map(|e| Subject {
+    app.session.selected_entry().map(|e| Subject {
         node: e.node,
         pseudo: e.pseudo,
         compressed: e.compressed,
@@ -49,7 +49,7 @@ pub(super) fn read_within<const MAX: usize>(m: &Model, app: &App) -> Info {
     };
     Info {
         node: Some(e.node),
-        facts: facts::<MAX>(m, &e, app.size_mode),
+        facts: facts::<MAX>(m, &e, app.session.size_mode),
     }
 }
 

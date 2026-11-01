@@ -25,8 +25,7 @@ use crate::input::line::{Edit, LineInput};
 use crate::input::line_keys;
 use crate::view::input_spans;
 
-/// Why a directory cannot be marked or deleted while the filter is on.
-pub const NO_FOLDERS: &str = "folders cannot be marked or deleted while the type filter is on: their sizes count only some files (Esc shows all)";
+pub use dfdu_session::state::NO_FOLDERS;
 
 /// Extensions listed at most, largest first; chosen ones are always listed.
 const MAX_EXTS: usize = 300;
@@ -53,7 +52,7 @@ enum Row {
 
 /// Whether the type filter is on.
 pub fn active(app: &App) -> bool {
-    !app.types.is_empty()
+    !app.session.types.is_empty()
 }
 
 /// Opens the picker.
@@ -64,17 +63,17 @@ pub fn open(app: &mut App) {
 /// Whether the snapshot was read with another filter, or lacks the breakdown the open picker
 /// shows.
 pub fn stale(app: &App) -> bool {
-    app.snap.types != app.types
-        || (matches!(app.overlay, Overlay::Types(_)) && app.snap.breakdown.is_none())
+    app.session.snap.types != app.session.types
+        || (matches!(app.overlay, Overlay::Types(_)) && app.session.snap.breakdown.is_none())
 }
 
 /// Turns the filter off; false when it was off.
 pub fn clear(app: &mut App) -> bool {
-    if app.types.is_empty() {
+    if app.session.types.is_empty() {
         return false;
     }
-    app.types = TypeFilter::default();
-    app.status = Some("showing all files".into());
+    app.session.types = TypeFilter::default();
+    app.session.status = Some("showing all files".into());
     true
 }
 
@@ -83,9 +82,10 @@ pub fn clear(app: &mut App) -> bool {
 /// directory has none, and a query that is an extension the directory lacks is offered too.
 fn rows(app: &App, query: &str) -> Vec<(Row, Totals)> {
     let q = query.trim().to_ascii_lowercase();
-    let size = |t: &Totals| app.size_mode.of(t);
+    let size = |t: &Totals| app.session.size_mode.of(t);
     let mut out = Vec::new();
     let all = app
+        .session
         .snap
         .breakdown
         .as_ref()
@@ -104,17 +104,23 @@ fn rows(app: &App, query: &str) -> Vec<(Row, Totals)> {
     let mut types: Vec<(Row, Totals)> = FileType::ALL
         .iter()
         .map(|&t| {
-            let tot = app.snap.breakdown.as_ref().map(|b| b.by_type[t as usize]);
+            let tot = app
+                .session
+                .snap
+                .breakdown
+                .as_ref()
+                .map(|b| b.by_type[t as usize]);
             (Row::Type(t), tot.unwrap_or_default())
         })
         .filter(|(r, t)| {
             let Row::Type(ty) = r else { return false };
-            (t.items > 0 || app.types.has_type(*ty)) && wanted(ty.name())
+            (t.items > 0 || app.session.types.has_type(*ty)) && wanted(ty.name())
         })
         .collect();
     types.sort_by_key(|(_, t)| std::cmp::Reverse(size(t)));
     out.extend(types);
     let mut exts: Vec<(Row, Totals)> = app
+        .session
         .snap
         .breakdown
         .as_ref()
@@ -125,7 +131,7 @@ fn rows(app: &App, query: &str) -> Vec<(Row, Totals)> {
         .take(MAX_EXTS)
         .map(|(e, t)| (Row::Ext(e), t))
         .collect();
-    for e in app.types.exts() {
+    for e in app.session.types.exts() {
         if !exts.iter().any(|(r, _)| *r == Row::Ext(*e)) && wanted(&format!(".{e}")) {
             exts.push((Row::Ext(*e), Totals::default()));
         }
@@ -149,14 +155,14 @@ fn chosen(f: &TypeFilter, r: Row) -> bool {
 
 fn toggle(app: &mut App, r: Row) {
     match r {
-        Row::All => app.types = TypeFilter::default(),
-        Row::Type(t) => app.types.toggle_type(t),
-        Row::Ext(e) => app.types.toggle_ext(e),
+        Row::All => app.session.types = TypeFilter::default(),
+        Row::Type(t) => app.session.types.toggle_type(t),
+        Row::Ext(e) => app.session.types.toggle_ext(e),
     }
-    app.status = Some(if app.types.is_empty() {
+    app.session.status = Some(if app.session.types.is_empty() {
         "showing all files".into()
     } else {
-        format!("showing only {}", app.types)
+        format!("showing only {}", app.session.types)
     });
 }
 
@@ -225,7 +231,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     let mut prompt = vec![Span::styled(" type or extension:", t.key), Span::raw(" ")];
     prompt.extend(input_spans(&p.input, Style::new(), t.key));
     let mut lines = vec![Line::from(prompt)];
-    if app.snap.breakdown.is_none() {
+    if app.session.snap.breakdown.is_none() {
         lines.push(Line::styled(" reading…", t.fg_dim));
     } else if rows.is_empty() {
         lines.push(Line::styled(" nothing matches", t.fg_dim));
@@ -235,7 +241,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         .iter()
         .map(|(_, tot)| {
             let files = format!("{} file{}", count(tot.items), plural(tot.items));
-            (human(app.size_mode.of(tot)), files)
+            (human(app.session.size_mode.of(tot)), files)
         })
         .collect();
     let size_w = numbers
@@ -250,7 +256,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         .unwrap_or(0);
     for (i, ((row, _), (size, files))) in rows.iter().zip(&numbers).enumerate().skip(top).take(fit)
     {
-        let mark = if chosen(&app.types, *row) {
+        let mark = if chosen(&app.session.types, *row) {
             "[x]"
         } else {
             "[ ]"
@@ -273,10 +279,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
         }
         lines.push(line);
     }
-    let title = if app.types.is_empty() {
+    let title = if app.session.types.is_empty() {
         " File types ".to_string()
     } else {
-        format!(" File types: {} ", app.types)
+        format!(" File types: {} ", app.session.types)
     };
     f.render_widget(Clear, rect);
     f.render_widget(
@@ -327,22 +333,23 @@ mod tests {
 
     /// A read as the run loop makes it.
     fn read(app: &mut App, m: &dfdu_engine::Model, now: Instant) {
-        let mut target = app.target.clone();
+        let mut target = app.session.target.clone();
         let breakdown = matches!(app.overlay, Overlay::Types(_));
         let snap = snapshot::build_view(
             m,
             &mut target,
-            app.size_mode,
-            &app.types,
+            app.session.size_mode,
+            &app.session.types,
             breakdown,
             app.tree_shown(),
         );
-        app.target = target;
+        app.session.target = target;
         app.refresh(snap, now);
     }
 
     fn names(app: &App) -> Vec<String> {
         let mut v: Vec<String> = app
+            .session
             .snap
             .entries
             .iter()
@@ -357,9 +364,9 @@ mod tests {
         let m = model();
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.target = Target::root();
+        app.session.target = Target::root();
         read(&mut app, &m, t0);
-        assert_eq!(app.snap.entries.len(), 4);
+        assert_eq!(app.session.snap.entries.len(), 4);
         assert!(!stale(&app));
 
         app.key(press(KeyCode::Char('t')), t0);
@@ -375,12 +382,15 @@ mod tests {
         }
         app.key(press(KeyCode::Enter), t0);
         assert!(matches!(app.overlay, Overlay::None));
-        assert_eq!(app.types.to_string(), "video");
+        assert_eq!(app.session.types.to_string(), "video");
         assert!(stale(&app));
         read(&mut app, &m, t0);
         assert_eq!(names(&app), ["\"films\" 100 1", "\"x.mkv\" 30 1"]);
         assert_eq!(
-            (app.snap.dir_total.alloc, app.snap.dir_total.items),
+            (
+                app.session.snap.dir_total.alloc,
+                app.session.snap.dir_total.items
+            ),
             (130, 2)
         );
         let out = render(&mut app, t0, 100, 10);
@@ -388,14 +398,15 @@ mod tests {
 
         // Folders cannot be marked or deleted; files can.
         let films = app
+            .session
             .list
             .rows
             .iter()
-            .position(|&i| app.snap.entries[i].is_dir);
-        app.move_to(films.unwrap());
+            .position(|&i| app.session.snap.entries[i].is_dir);
+        app.session.move_to(films.unwrap());
         app.key(press(KeyCode::Char(' ')), t0);
-        assert!(app.marks.is_empty());
-        assert_eq!(app.status.as_deref(), Some(NO_FOLDERS));
+        assert!(app.session.marks.is_empty());
+        assert_eq!(app.session.status.as_deref(), Some(NO_FOLDERS));
         app.key(press(KeyCode::Char('d')), t0);
         assert!(matches!(app.overlay, Overlay::None));
 
@@ -407,13 +418,13 @@ mod tests {
         }
         app.key(press(KeyCode::Char(' ')), t0);
         app.key(press(KeyCode::Esc), t0);
-        assert_eq!(app.types.to_string(), "video, .flac");
+        assert_eq!(app.session.types.to_string(), "video, .flac");
         read(&mut app, &m, t0);
-        assert_eq!(app.snap.entries.len(), 3);
+        assert_eq!(app.session.snap.entries.len(), 3);
         app.key(press(KeyCode::Esc), t0);
-        assert!(app.types.is_empty());
+        assert!(app.session.types.is_empty());
         read(&mut app, &m, t0);
-        assert_eq!(app.snap.entries.len(), 4);
+        assert_eq!(app.session.snap.entries.len(), 4);
     }
 
     /// Counts read as everywhere else (`1.5k files`), and the size and count columns are as
@@ -432,7 +443,7 @@ mod tests {
         }
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.target = Target::root();
+        app.session.target = Target::root();
         read(&mut app, &m, t0);
         app.key(press(KeyCode::Char('t')), t0);
         read(&mut app, &m, t0);

@@ -7,11 +7,11 @@ use crate::app::App;
 
 /// `T`: turns tree mode on or off. Turning it off forgets what was expanded.
 pub fn toggle(app: &mut App) {
-    app.tree = match app.tree {
+    app.session.tree = match app.session.tree {
         Some(_) => None,
         None => Some(TreeState::default()),
     };
-    app.request_sort();
+    app.session.request_sort();
 }
 
 /// The fold threshold as the header and the hints write it; `None` when nothing folds.
@@ -28,8 +28,8 @@ pub fn fold_label(ratio: f64) -> Option<&'static str> {
 /// The selected row and its entry, while the rows are a tree.
 fn selected(app: &App) -> Option<(usize, usize)> {
     app.tree_shown()?;
-    let row = app.selected_index()?;
-    Some((row, app.list.rows[row]))
+    let row = app.session.selected_index()?;
+    Some((row, app.session.list.rows[row]))
 }
 
 /// `→` in tree mode: on a fold row shows the entries folded in it, on a collapsed directory
@@ -42,10 +42,10 @@ pub fn right(app: &mut App) -> bool {
     let Some((row, i)) = selected(app) else {
         return true;
     };
-    let e = &app.snap.entries[i];
+    let e = &app.session.snap.entries[i];
     if e.fold > 0 {
-        let node = parent(&app.snap.entries, i).map(|p| app.snap.entries[p].node);
-        if let (Some(node), Some(tree)) = (node, app.tree.as_mut()) {
+        let node = parent(&app.session.snap.entries, i).map(|p| app.session.snap.entries[p].node);
+        if let (Some(node), Some(tree)) = (node, app.session.tree.as_mut()) {
             tree.unfold(node);
         }
         return true;
@@ -53,14 +53,19 @@ pub fn right(app: &mut App) -> bool {
     if !e.is_dir || e.pseudo {
         return true;
     }
-    if app.tree.as_ref().is_some_and(|t| t.is_expanded(e.node)) {
-        let first = app.list.rows.get(row + 1).copied();
-        if first.is_some_and(|c| parent(&app.snap.entries, c) == Some(i)) {
-            app.move_to(row + 1);
+    if app
+        .session
+        .tree
+        .as_ref()
+        .is_some_and(|t| t.is_expanded(e.node))
+    {
+        let first = app.session.list.rows.get(row + 1).copied();
+        if first.is_some_and(|c| parent(&app.session.snap.entries, c) == Some(i)) {
+            app.session.move_to(row + 1);
         }
     } else {
-        let target = target_of(&app.snap, i);
-        if let Some(tree) = app.tree.as_mut() {
+        let target = target_of(&app.session.snap, i);
+        if let Some(tree) = app.session.tree.as_mut() {
             tree.expand(target);
         }
     }
@@ -74,20 +79,27 @@ pub fn left(app: &mut App) -> bool {
     let Some((row, i)) = selected(app) else {
         return false;
     };
-    let e = &app.snap.entries[i];
-    if e.is_dir && !e.pseudo && app.tree.as_ref().is_some_and(|t| t.is_expanded(e.node)) {
+    let e = &app.session.snap.entries[i];
+    if e.is_dir
+        && !e.pseudo
+        && app
+            .session
+            .tree
+            .as_ref()
+            .is_some_and(|t| t.is_expanded(e.node))
+    {
         let node = e.node;
-        if let Some(tree) = app.tree.as_mut() {
+        if let Some(tree) = app.session.tree.as_mut() {
             tree.collapse(node);
         }
         return true;
     }
-    let Some(p) = parent(&app.snap.entries, i) else {
+    let Some(p) = parent(&app.session.snap.entries, i) else {
         return false;
     };
     // The parent row is above.
-    if let Some(r) = app.list.rows[..row].iter().rposition(|&x| x == p) {
-        app.move_to(r);
+    if let Some(r) = app.session.list.rows[..row].iter().rposition(|&x| x == p) {
+        app.session.move_to(r);
     }
     true
 }
@@ -96,45 +108,47 @@ pub fn left(app: &mut App) -> bool {
 /// Turns tree mode on first when it is off.
 pub fn chain(app: &mut App) {
     let i = app
+        .session
         .selected_index()
-        .map(|row| app.list.rows[row])
-        .filter(|&i| app.snap.entries[i].is_dir && !app.snap.entries[i].pseudo);
+        .map(|row| app.session.list.rows[row])
+        .filter(|&i| app.session.snap.entries[i].is_dir && !app.session.snap.entries[i].pseudo);
     let Some(i) = i else {
-        app.status = Some("* expands a directory's largest entries: select a directory".into());
+        app.session.status =
+            Some("* expands a directory's largest entries: select a directory".into());
         return;
     };
-    if app.tree.is_none() {
+    if app.session.tree.is_none() {
         toggle(app);
     }
-    let target = target_of(&app.snap, i);
-    if let Some(tree) = app.tree.as_mut() {
+    let target = target_of(&app.session.snap, i);
+    if let Some(tree) = app.session.tree.as_mut() {
         tree.expand_chain(target);
     }
 }
 
 /// `z`: the next fold threshold, 1% → 0.1% → none.
 pub fn cycle_fold(app: &mut App) {
-    let Some(tree) = app.tree.as_mut() else {
-        app.status = Some("z changes what folds in tree mode: T turns it on".into());
+    let Some(tree) = app.session.tree.as_mut() else {
+        app.session.status = Some("z changes what folds in tree mode: T turns it on".into());
         return;
     };
     let ratio = tree.cycle_fold();
-    app.status = Some(fold_label(ratio).unwrap_or("nothing folds").into());
+    app.session.status = Some(fold_label(ratio).unwrap_or("nothing folds").into());
 }
 
 /// A click on the `▸` or `▾` of row `row`: expands or collapses its directory, and selects it.
 pub fn toggle_row(app: &mut App, row: usize) {
-    let Some(&i) = app.list.rows.get(row) else {
+    let Some(&i) = app.session.list.rows.get(row) else {
         return;
     };
-    app.move_to(row);
-    let e = &app.snap.entries[i];
+    app.session.move_to(row);
+    let e = &app.session.snap.entries[i];
     if !e.is_dir || e.pseudo {
         return;
     }
     let node = e.node;
-    let target = target_of(&app.snap, i);
-    if let Some(tree) = app.tree.as_mut() {
+    let target = target_of(&app.session.snap, i);
+    if let Some(tree) = app.session.tree.as_mut() {
         if tree.is_expanded(node) {
             tree.collapse(node);
         } else {
@@ -149,11 +163,11 @@ pub fn treemap_dir(app: &mut App) {
     let Some((_, i)) = selected(app) else {
         return;
     };
-    if parent(&app.snap.entries, i).is_none() {
+    if parent(&app.session.snap.entries, i).is_none() {
         return;
     }
-    let path = path_of(&app.snap, i);
-    let root = app.snap.root_path.clone();
+    let path = path_of(&app.session.snap, i);
+    let root = app.session.snap.root_path.clone();
     app.go_to(&path, &root);
 }
 
@@ -173,7 +187,7 @@ mod tests {
     fn browser() -> App {
         let t0 = Instant::now();
         let mut app = App::new(Theme::no_color(), t0);
-        app.tree = Some(TreeState::default());
+        app.session.tree = Some(TreeState::default());
         let mut snap = snap_with_totals(sample_with_files(), 1);
         snap.root_path = HostPath::from("/r");
         app.refresh(snap, t0);
@@ -183,16 +197,20 @@ mod tests {
 
     fn expanded(app: &App, name: &str) -> bool {
         let e = app
+            .session
             .snap
             .entries
             .iter()
             .find(|e| e.name[..] == *name.as_bytes());
         let node = e.expect("an entry").node;
-        app.tree.as_ref().is_some_and(|t| t.is_expanded(node))
+        app.session
+            .tree
+            .as_ref()
+            .is_some_and(|t| t.is_expanded(node))
     }
 
     fn selected_name(app: &App) -> String {
-        let e = app.selected_entry().expect("a selection");
+        let e = app.session.selected_entry().expect("a selection");
         String::from_utf8_lossy(&e.name).into_owned()
     }
 
@@ -225,15 +243,15 @@ mod tests {
     fn the_keys_leave_a_list_that_is_no_tree_alone() {
         let mut app = browser();
         toggle(&mut app);
-        assert!(app.tree.is_none());
+        assert!(app.session.tree.is_none());
         assert!(!right(&mut app) && !left(&mut app));
         cycle_fold(&mut app);
         assert_eq!(
-            app.status.as_deref(),
+            app.session.status.as_deref(),
             Some("z changes what folds in tree mode: T turns it on")
         );
         toggle(&mut app);
-        assert!(app.tree.is_some());
+        assert!(app.session.tree.is_some());
     }
 
     #[test]
@@ -242,7 +260,7 @@ mod tests {
         let mut said = Vec::new();
         for _ in 0..3 {
             cycle_fold(&mut app);
-            said.push(app.status.clone().unwrap_or_default());
+            said.push(app.session.status.clone().unwrap_or_default());
         }
         assert_eq!(said, ["fold < 0.1%", "nothing folds", "fold < 1%"]);
         assert_eq!(fold_label(0.0), None);
@@ -254,14 +272,15 @@ mod tests {
         select(&mut app, "p");
         chain(&mut app);
         assert!(
-            app.status
+            app.session
+                .status
                 .as_deref()
                 .is_some_and(|s| s.starts_with("* expands"))
         );
         toggle(&mut app);
-        app.move_to(6);
+        app.session.move_to(6);
         chain(&mut app);
-        let tree = app.tree.as_ref().expect("tree mode is on");
+        let tree = app.session.tree.as_ref().expect("tree mode is on");
         let target = tree.chain.as_ref().expect("a chain to expand");
         assert_eq!(target.path, HostPath::from("/r").join(b"b"));
     }
@@ -286,11 +305,14 @@ mod tests {
         select(&mut app, "p");
         treemap_dir(&mut app);
         let root = HostPath::from("/r");
-        assert_eq!(app.target.path, root.join(b"a").join(b"y"));
-        assert_eq!(app.selected.as_ref().map(|s| &s.name[..]), Some(&b"p"[..]));
+        assert_eq!(app.session.target.path, root.join(b"a").join(b"y"));
+        assert_eq!(
+            app.session.selected.as_ref().map(|s| &s.name[..]),
+            Some(&b"p"[..])
+        );
         // At the top the directory shown already is the one.
         let mut app = browser();
         treemap_dir(&mut app);
-        assert_eq!(app.target.path, HostPath::default());
+        assert_eq!(app.session.target.path, HostPath::default());
     }
 }

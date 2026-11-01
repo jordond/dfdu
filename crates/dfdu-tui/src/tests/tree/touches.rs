@@ -41,7 +41,7 @@ fn a_directory_and_what_is_inside_it_are_never_both_marked() {
     // A range keeps the outermost.
     select(&mut app, "a");
     key(&mut app, &fx, KeyCode::Char(' '), t0);
-    assert!(app.marks.is_empty());
+    assert!(app.session.marks.is_empty());
     select(&mut app, "a1");
     key(&mut app, &fx, KeyCode::Char(' '), t0);
     select(&mut app, "a");
@@ -115,12 +115,12 @@ fn a_deleted_row_below_the_top_stays_in_place_until_the_next_sort() {
     let rows = ["a", "a1", "x", "a2", "… 1 more", "b", "top"];
     assert_eq!(row_names(&app), rows);
     // `x` is deleted: it is the first entry below the top, so every later one moves up.
-    let mut next = without(&app.snap, "x");
+    let mut next = without(&app.session.snap, "x");
     next.deleting = Some((0, 1));
     next.version += 1;
     app.refresh(next.clone(), t0);
     assert_eq!(row_names(&app), rows, "the ghost keeps its place under a1");
-    let ghost = app.selected_entry().filter(|e| e.ghost);
+    let ghost = app.session.selected_entry().filter(|e| e.ghost);
     assert!(ghost.is_none() || selected(&app) == "x");
     let frame = render(&mut app, t0, 80, 12);
     let line = frame.lines().find(|l| l.contains(" x ")).expect("x");
@@ -130,7 +130,7 @@ fn a_deleted_row_below_the_top_stays_in_place_until_the_next_sort() {
     app.refresh(next, t0);
     assert_eq!(row_names(&app), rows);
     key(&mut app, &fx, KeyCode::Char('S'), t0);
-    assert!(!app.snap.entries.iter().any(|e| e.ghost));
+    assert!(!app.session.snap.entries.iter().any(|e| e.ghost));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn the_treemap_shows_the_directory_of_the_selected_row() {
     key(&mut app, &fx, KeyCode::Right, t0);
     select(&mut app, "a2");
     key(&mut app, &fx, KeyCode::Char('2'), t0);
-    assert_eq!(app.target.path, below("/r", "a"));
+    assert_eq!(app.session.target.path, below("/r", "a"));
     assert_eq!(selected(&app), "a2");
     assert!(app.tree_shown().is_none(), "the tiles are one directory's");
     assert_eq!(row_names(&app), ["a1", "a2", "s"]);

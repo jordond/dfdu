@@ -30,8 +30,8 @@ fn rows_of_mounts_left_out_show_their_use_and_m_enters_them() {
         },
     ];
     app.refresh(crate::tests::snap_with_totals(es, 1), t0);
-    let dir = app.snap.dir_path.clone();
-    app.outside.set_mount(
+    let dir = app.session.snap.dir_path.clone();
+    app.session.outside.set_mount(
         dir.join(b"data"),
         Some(local_mount("zfs", Some(1_300 << 30))),
     );
@@ -39,7 +39,7 @@ fn rows_of_mounts_left_out_show_their_use_and_m_enters_them() {
     if let Some(n) = &mut nfs {
         n.class = dfdu_sys::FsClass::Network;
     }
-    app.outside.set_mount(dir.join(b"nas"), nfs);
+    app.session.outside.set_mount(dir.join(b"nas"), nfs);
     let frame = render(&mut app, t0, 140, 10);
     let line = |name: &str| {
         frame
@@ -65,16 +65,17 @@ fn rows_of_mounts_left_out_show_their_use_and_m_enters_them() {
     insta::assert_snapshot!("mounts_left_out", frame);
 
     // Rows are sorted by size: `src` first, then the mounts by name.
-    let at = |app: &App| app.selected_entry().map(|e| e.name.to_vec());
+    let at = |app: &App| app.session.selected_entry().map(|e| e.name.to_vec());
     app.key(press(KeyCode::Char('m')), t0);
     assert!(at(&app).is_some_and(|n| n == b"src"));
     assert!(
-        app.status
+        app.session
+            .status
             .as_deref()
             .is_some_and(|s| s.contains("select one"))
     );
     app.key(press(KeyCode::Down), t0);
-    let node = app.selected_entry().expect("selected").node;
+    let node = app.session.selected_entry().expect("selected").node;
     let frame = render(&mut app, t0, 140, 10);
     assert!(frame.contains("m scan it"), "{frame}");
     let fx = app.key(press(KeyCode::Char('m')), t0);
@@ -94,13 +95,13 @@ fn the_cleanup_view_lists_links_out_of_the_scan() {
     let fx = classified();
     let t0 = std::time::Instant::now();
     let mut app = App::new(crate::theme::Theme::no_color(), t0);
-    app.home = Some("/home/u".into());
+    app.session.home = Some("/home/u".into());
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('3')), t0);
     sync(&mut app, &fx.m, t0);
     let rules = fx.m.rules.clone().expect("rules");
     let gradle = rules.index("rust.target").expect("rust.target");
-    app.outside.set_linked(vec![Linked {
+    app.session.outside.set_linked(vec![Linked {
         link: "/home/u/.gradle".into(),
         target: "/mnt/data/gradle".into(),
         rules: vec![gradle],

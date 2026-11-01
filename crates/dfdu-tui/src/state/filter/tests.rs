@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use super::*;
 use crate::app::Overlay;
-use crate::model::snapshot::{EntryData, test_entry};
+use crate::model::snapshot::{EntryData, Snapshot, test_entry};
 use crate::tests::{
     assert_cue, press, render, render_buffer, row_names, snap_with_totals, style_at, styled, text,
     typed,
@@ -56,8 +56,11 @@ fn typing_filters_and_highlights() {
     assert!(editing(&app));
     assert_eq!(row_names(&app), ["Library", "notes.sqlite", "lib64"]);
     assert_eq!(line_text(&app).as_deref(), Some(" / li▌   3 of 7"));
-    assert_eq!(app.filter.indices("Library").as_deref(), Some(&[0, 1][..]));
-    assert_eq!(app.filter.indices("dev").as_deref(), None);
+    assert_eq!(
+        app.session.filter.indices("Library").as_deref(),
+        Some(&[0, 1][..])
+    );
+    assert_eq!(app.session.filter.indices("dev").as_deref(), None);
     insta::assert_snapshot!("filter_editing_mono", render(&mut app, t0, 80, 9));
     let buf = render_buffer(&mut app, t0, 80, 9);
     let underlined = |s: Style| s.add_modifier.contains(Modifier::UNDERLINED);
@@ -99,17 +102,11 @@ fn typing_filters_and_highlights() {
 #[test]
 fn inactive_filter_counts_nothing_until_opened() {
     let t0 = Instant::now();
-    let mut f = Filter::default();
-    f.prepare(&snap_with_totals(entries(), 1), true);
-    assert_eq!(f.hits, [] as [bool; 0]);
-    assert_eq!(f.counts.entries, 0);
-
     let mut app = app_with(Theme::no_color(), entries(), t0);
-    assert_eq!(app.filter.counts.entries, 0);
+    assert_eq!(app.session.filter.shown(false), (0, 0));
     open(&mut app);
-    assert_eq!(app.filter.counts.entries, 7);
-    assert_eq!(app.filter.counts.matched, 7);
-    assert_eq!(app.filter.counts.hidden, 1);
+    assert_eq!(app.session.filter.shown(false), (7, 7));
+    assert_eq!(app.session.filter.shown(true), (6, 6), "one is hidden");
     assert_eq!(line_text(&app).as_deref(), Some(" / ▌   7 of 7"));
     filter_by(&mut app, "li", t0);
     assert_eq!(line_text(&app).as_deref(), Some(" / li▌   3 of 7"));
@@ -134,7 +131,7 @@ fn query_typed_before_the_first_snapshot_stays() {
     app.reorder(t0);
     assert!(!editing(&app));
     assert_eq!(line_text(&app), None);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
 }
 
 #[test]
@@ -153,7 +150,7 @@ fn enter_keeps_filter_esc_clears() {
     // Keys go to the list again: `n` sorts by name instead of being typed.
     app.key(press(KeyCode::Char('n')), t0);
     app.reorder(t0);
-    assert_eq!(app.sort.key, crate::state::order::SortKey::Name);
+    assert_eq!(app.session.sort.key, crate::state::order::SortKey::Name);
     assert_eq!(row_names(&app), ["Downloads"]);
 
     // `/` edits the query in force; Esc clears it and closes the input.
@@ -163,14 +160,14 @@ fn enter_keeps_filter_esc_clears() {
     app.reorder(t0);
     assert!(!editing(&app));
     assert_eq!(line_text(&app), None);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
 
     // Ctrl-U empties the input; Enter on an empty query closes it.
     filter_by(&mut app, "/xyz", t0);
-    assert_eq!(app.list.rows, [] as [usize; 0]);
+    assert_eq!(app.session.list.rows, [] as [usize; 0]);
     app.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
     app.key(press(KeyCode::Enter), t0);
     assert_eq!(line_text(&app), None);
 }
@@ -187,11 +184,11 @@ fn esc_in_list_clears_before_closing() {
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.list.rows.len(), 3);
+    assert_eq!(app.session.list.rows.len(), 3);
     // Then Esc clears the filter, and a second Esc has nothing left to do.
     assert!(app.key(press(KeyCode::Esc), t0).is_empty());
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
     assert_eq!(line_text(&app), None);
     assert!(!clear(&mut app));
 }
@@ -215,7 +212,7 @@ fn hidden_toggle_and_filter_combine() {
     );
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 6, "hidden files stay hidden");
+    assert_eq!(app.session.list.rows.len(), 6, "hidden files stay hidden");
 }
 
 #[test]
@@ -224,18 +221,24 @@ fn new_entries_during_scan_are_filtered() {
     let mut app = app_with(Theme::no_color(), entries(), t0);
     filter_by(&mut app, "/li", t0);
     app.key(press(KeyCode::Enter), t0);
-    assert_eq!(app.list.rows.len(), 3);
+    assert_eq!(app.session.list.rows.len(), 3);
     let mut es = entries();
     es.push(test_entry(7, "linux", 1 << 40));
     es.push(test_entry(8, "zzz", 1 << 40));
     let at = t0 + Duration::from_millis(100);
     app.refresh(snap_with_totals(es.clone(), 2), at);
-    assert_eq!((app.list.rows.len(), app.list.new_count), (3, 1));
-    assert_eq!(app.list.new_largest, 1 << 40);
+    assert_eq!(
+        (app.session.list.rows.len(), app.session.list.new_count),
+        (3, 1)
+    );
+    assert_eq!(app.session.list.new_largest, 1 << 40);
     es.push(test_entry(9, "lilo.conf", 5));
     es.push(test_entry(10, "other", 5));
     app.refresh(snap_with_totals(es, 3), at);
-    assert_eq!((app.list.rows.len(), app.list.new_count), (3, 2));
+    assert_eq!(
+        (app.session.list.rows.len(), app.session.list.new_count),
+        (3, 2)
+    );
     assert_eq!(
         line_text(&app).as_deref(),
         Some(" filter: \"li\" (5 of 11)   / edit  Esc clear")
@@ -271,12 +274,15 @@ fn filter_keeps_sort_order() {
     // Clearing the filter keeps the selected entry selected when the cursor was moved.
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Down), t0);
-    let picked = app.selected_entry().map(|e| e.name.to_vec());
+    let picked = app.session.selected_entry().map(|e| e.name.to_vec());
     app.key(press(KeyCode::Esc), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
     assert_eq!(with_o(row_names(&app)), filtered_by_name);
-    assert_eq!(app.selected_entry().map(|e| e.name.to_vec()), picked);
+    assert_eq!(
+        app.session.selected_entry().map(|e| e.name.to_vec()),
+        picked
+    );
     assert_eq!(picked.as_deref(), Some(filtered_by_name[2].as_bytes()));
 }
 
@@ -285,11 +291,14 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
     let t0 = Instant::now();
     let mut app = app_with(Theme::no_color(), entries(), t0);
     app.key(press(KeyCode::Down), t0);
-    assert_eq!(app.selected_entry().map(|e| &e.name[..]), Some(&b"dev"[..]));
+    assert_eq!(
+        app.session.selected_entry().map(|e| &e.name[..]),
+        Some(&b"dev"[..])
+    );
     // "dow" hides `dev`; the selection moves to a row that is left.
     filter_by(&mut app, "/dow", t0);
     assert_eq!(row_names(&app), ["Downloads"]);
-    let picked = |app: &App| app.selected_entry().map(|e| e.name.to_vec());
+    let picked = |app: &App| app.session.selected_entry().map(|e| e.name.to_vec());
     assert_eq!(picked(&app).as_deref(), Some(&b"Downloads"[..]));
     // While no other entry was picked, `dev` is selected again once it shows.
     app.key(press(KeyCode::Backspace), t0);
@@ -308,7 +317,7 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
     assert_eq!(last.as_deref(), Some(&b"build.log"[..]));
     assert!(app.key(press(KeyCode::Esc), t0).is_empty());
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows.len(), 7);
     assert_eq!(picked(&app), last);
 }
 
@@ -316,9 +325,9 @@ fn clearing_the_filter_selects_the_hidden_entry_again() {
 fn exact_rows(app: &App) -> Vec<usize> {
     let mut o = crate::state::order::Order::default();
     let visible = |i: usize, e: &EntryData| {
-        !e.ghost && (!app.hide_hidden || !e.hidden()) && app.filter.matches(i)
+        !e.ghost && (!app.session.hide_hidden || !e.hidden()) && app.session.filter.matches(i)
     };
-    o.sort_exact(&app.snap.entries, visible, app.sort);
+    o.sort_exact(&app.session.snap.entries, visible, app.session.sort);
     o.rows().to_vec()
 }
 
@@ -345,8 +354,8 @@ fn filter_rows_are_those_of_an_exact_sort() {
             app.key(press(k), t0);
         }
         app.reorder(t0);
-        assert_eq!(app.list.rows, exact_rows(&app), "after {keys:?}");
-        seen.push(app.list.rows.len());
+        assert_eq!(app.session.list.rows, exact_rows(&app), "after {keys:?}");
+        seen.push(app.session.list.rows.len());
     }
     assert_eq!(seen, [6, 1, 6, 9, 6, 0, 9]);
 
@@ -354,11 +363,11 @@ fn filter_rows_are_those_of_an_exact_sort() {
     filter_by(&mut app, "/do", t0);
     es.push(test_entry(9, "docs", 10 << 30));
     app.refresh(snap_with_totals(es, 2), t0);
-    assert_eq!(app.list.new_count, 1);
+    assert_eq!(app.session.list.new_count, 1);
     filter_by(&mut app, "s", t0);
     assert_eq!(row_names(&app), ["docs", "Downloads"]);
-    assert_eq!(app.list.rows, exact_rows(&app));
-    assert_eq!(app.list.new_count, 0);
+    assert_eq!(app.session.list.rows, exact_rows(&app));
+    assert_eq!(app.session.list.new_count, 0);
 }
 
 #[test]
@@ -373,9 +382,9 @@ fn a_snapshot_before_the_cleared_filter_is_applied_is_sorted_in() {
     es.push(test_entry(7, "zeta", 1 << 30));
     app.refresh(snap_with_totals(es, 2), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows, exact_rows(&app));
+    assert_eq!(app.session.list.rows, exact_rows(&app));
     assert_eq!(row_names(&app)[0], "build.log");
-    assert_eq!(app.list.rows.len(), 8);
+    assert_eq!(app.session.list.rows.len(), 8);
 }
 
 #[test]
@@ -384,13 +393,13 @@ fn showing_hidden_files_before_the_cleared_filter_is_applied_shows_them() {
     let mut app = app_with(Theme::no_color(), entries(), t0);
     app.key(press(KeyCode::Char('e')), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 6);
+    assert_eq!(app.session.list.rows.len(), 6);
     filter_by(&mut app, "/d", t0);
     app.key(press(KeyCode::Esc), t0);
     app.key(press(KeyCode::Char('e')), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows, exact_rows(&app));
-    assert_eq!(app.list.rows.len(), 7);
+    assert_eq!(app.session.list.rows, exact_rows(&app));
+    assert_eq!(app.session.list.rows.len(), 7);
 }
 
 #[test]
@@ -419,7 +428,7 @@ fn filter_rows_after_an_automatic_sort_are_those_of_an_exact_sort() {
     app.key(press(KeyCode::Backspace), later);
     app.reorder(later);
     assert_eq!(row_names(&app), ["x", "y"]);
-    assert_eq!(app.list.rows, exact_rows(&app));
+    assert_eq!(app.session.list.rows, exact_rows(&app));
 }
 
 #[test]
@@ -481,26 +490,6 @@ fn synthetic(n: usize) -> Snapshot {
     }
 }
 
-/// Times `prepare` for a one-letter query and then for a second letter appended.
-fn prepare_times(n: usize) {
-    let snap = synthetic(n);
-    let mut f = Filter::default();
-    f.prepare(&snap, true);
-    let mut times = Vec::new();
-    for q in ["e", "ep"] {
-        f.input.set(q);
-        let t = Instant::now();
-        f.prepare(&snap, false);
-        times.push(t.elapsed());
-    }
-    let hits = f.hits.iter().filter(|&&h| h).count();
-    println!("prepare on {n} entries: {times:?}, {hits} match \"ep\"");
-    assert!(hits > 0 && hits < n);
-    for t in times {
-        assert!(t < Duration::from_millis(250), "{t:?}");
-    }
-}
-
 /// Times the first keystrokes of a filter in a directory of `n` entries of different sizes
 /// whose last sort was automatic, as when its scan finished, as the run loop handles them,
 /// each with its frame: `/`, which keeps an exact sort of the entries, then `e`, which
@@ -523,7 +512,7 @@ fn first_keystroke_times(n: usize) {
         render_buffer(&mut app, later, 100, 30);
         times.push(t.elapsed());
     }
-    let shown = app.list.rows.len();
+    let shown = app.session.list.rows.len();
     println!(
         "first filter keystrokes on {n} entries, each with its frame: {times:?}, {shown} rows"
     );
@@ -534,14 +523,8 @@ fn first_keystroke_times(n: usize) {
 }
 
 #[test]
-fn filtering_a_large_directory_is_fast() {
-    prepare_times(100_000);
-}
-
-#[test]
-#[ignore = "builds a million entries; run in release. On an M4 Max, release: prepare 21-23 \
-            ms; with the frame, `/` 32-34 ms and `e` 29-33 ms. Debug: `/` 0.59 s, `e` 0.48 s"]
+#[ignore = "builds a million entries; run in release. On an M4 Max, release, with the frame: \
+            `/` 32-34 ms and `e` 29-33 ms. Debug: `/` 0.59 s, `e` 0.48 s"]
 fn filtering_a_large_directory_is_fast_at_a_million_entries() {
     first_keystroke_times(1_000_000);
-    prepare_times(1_000_000);
 }

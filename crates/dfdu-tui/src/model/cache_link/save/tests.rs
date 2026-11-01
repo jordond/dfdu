@@ -26,7 +26,7 @@ fn a_save_that_cannot_start_is_reported_and_not_retried() {
     c.saved = None;
     let failed = Err(std::io::Error::other("no threads"));
     assert!(c.save_started(&link, &mut app, version, failed));
-    let status = app.status.clone().expect("a notice");
+    let status = app.session.status.clone().expect("a notice");
     assert_eq!(
         status,
         format!(

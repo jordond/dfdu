@@ -123,7 +123,7 @@ pub fn active(app: &App) -> bool {
 /// view, it also asks the rules' native size commands for their numbers.
 pub fn on_open(app: &mut App, again: bool) -> Vec<Effect> {
     app.cleanup.fresh = false;
-    app.cleanup.premark = !app.cleanup.preselected && !app.read_only;
+    app.cleanup.premark = !app.cleanup.preselected && !app.session.read_only;
     if again {
         return Vec::new();
     }
@@ -159,7 +159,7 @@ pub fn read(m: &Model, app: &App) -> Info {
     if !active(app) {
         // Closed, only the total for the tab, when the tree changed since it was counted.
         let at = count_key(m);
-        if app.snap.busy || app.cleanup.counted_at == Some(at) {
+        if app.session.snap.busy || app.cleanup.counted_at == Some(at) {
             return Info::default();
         }
         let total = (dfdu_engine::listed(&m.tree, rules).iter())
@@ -245,7 +245,7 @@ pub fn apply(app: &mut App) {
     app.cleanup.preselected = true;
     let (n, size) = mark_recommended(app);
     if n > 0 {
-        app.status = Some(marked_status(n, size));
+        app.session.status = Some(marked_status(n, size));
     }
 }
 
@@ -261,7 +261,7 @@ fn marked_status(n: usize, size: u64) -> String {
 
 /// Whether `it` is marked by default, and why; `None` without rules.
 fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
-    let rules = app.snap.rules.as_ref()?;
+    let rules = app.session.snap.rules.as_ref()?;
     Some(verdict(
         rules.rule(it.class.rule),
         it.class,
@@ -302,9 +302,9 @@ fn marked_size(it: &Item) -> u64 {
 /// Whether `it` is marked: itself, or all of its rest.
 fn is_marked(app: &App, it: &Item) -> bool {
     if it.rest.is_empty() {
-        app.marks.contains(it.node)
+        app.session.marks.contains(it.node)
     } else {
-        it.rest.iter().all(|r| app.marks.contains(r.node))
+        it.rest.iter().all(|r| app.session.marks.contains(r.node))
     }
 }
 
@@ -351,7 +351,7 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         return Some(pane::key(app, k));
     }
     // What the first opening ticked is said until the next key.
-    app.status = None;
+    app.session.status = None;
     let rows = rows(app);
     let last = rows.len().saturating_sub(1);
     let action = keys::action_for(k)?;
@@ -399,7 +399,7 @@ fn show_in_files(app: &mut App, i: usize) {
     let Some(path) = app.extras.cleanup.items.get(i).map(|it| it.path.clone()) else {
         return;
     };
-    let root = app.snap.root_path.clone();
+    let root = app.session.snap.root_path.clone();
     views::switch(app, View::Files);
     app.go_to(&path, &root);
 }
@@ -420,17 +420,17 @@ pub fn cycle_filter(app: &mut App) {
         Safety::Regenerable => "safe and regenerable",
         _ => "up to review",
     });
-    app.status = Some(format!("cleanup: showing {label}"));
+    app.session.status = Some(format!("cleanup: showing {label}"));
 }
 
 /// `A` ([`Action::TickSuggested`](crate::app::keys::Action)): marks every recommended item.
 pub fn tick_suggested(app: &mut App) {
-    if app.read_only {
-        app.status = Some(crate::app::keys::READ_ONLY.into());
+    if app.session.read_only {
+        app.session.status = Some(crate::app::keys::READ_ONLY.into());
         return;
     }
     let (n, size) = mark_recommended(app);
-    app.status = Some(if n == 0 {
+    app.session.status = Some(if n == 0 {
         "every suggested item is ticked already".into()
     } else {
         marked_status(n, size)
@@ -450,7 +450,7 @@ fn toggle(app: &mut App, row: Option<Row>) {
         .filter(markable)
         .collect();
     if items.is_empty() {
-        app.status = Some("protected: cannot be marked".into());
+        app.session.status = Some("protected: cannot be marked".into());
         return;
     }
     let on = !items.iter().all(|it| is_marked(app, it));

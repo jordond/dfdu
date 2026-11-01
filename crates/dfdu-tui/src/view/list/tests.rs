@@ -32,7 +32,7 @@ fn rows_note_growth_since_the_last_scan() {
         apparent: disk,
         entries: 1,
     };
-    app.growth = Some(std::sync::Arc::new(Growth {
+    app.session.growth = Some(std::sync::Arc::new(Growth {
         root: PathBuf::from("/r"),
         at: 86_400 * 3,
         sizes: [
@@ -114,8 +114,8 @@ fn ghost_rows_are_struck_through_and_cannot_be_opened_or_deleted() {
         ..dir
     };
     app.refresh(finished_snap(vec![ghost, test_entry(1, "kept", 10)], 2), t0);
-    assert_eq!(app.list.rows.len(), 2);
-    assert!(app.selected_entry().expect("selected").ghost);
+    assert_eq!(app.session.list.rows.len(), 2);
+    assert!(app.session.selected_entry().expect("selected").ghost);
 
     let mut term = Terminal::new(TestBackend::new(80, 7)).expect("terminal");
     term.draw(|f| crate::view::draw(f, &mut app, t0))
@@ -138,7 +138,7 @@ fn ghost_rows_are_struck_through_and_cannot_be_opened_or_deleted() {
         assert!(app.key(press(code), t0).is_empty());
         assert!(matches!(app.overlay, Overlay::None), "{code:?}");
         assert_eq!(
-            app.target.path,
+            app.session.target.path,
             HostPath::default(),
             "{code:?} opened the ghost"
         );
@@ -146,7 +146,7 @@ fn ghost_rows_are_struck_through_and_cannot_be_opened_or_deleted() {
     // A re-sort drops the ghost.
     app.key(press(KeyCode::Char('S')), t0);
     app.reorder(t0);
-    assert_eq!(app.list.rows.len(), 1);
+    assert_eq!(app.session.list.rows.len(), 1);
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn ghost_rows_have_no_share() {
     let mut s = finished_snap(vec![ghost, kept], 2);
     s.dir_total.alloc = 1;
     app.refresh(s, t0);
-    assert_eq!(app.list.rows.len(), 2);
+    assert_eq!(app.session.list.rows.len(), 2);
     let out = crate::tests::render(&mut app, t0, 80, 7);
     let row = |name: &str| {
         out.lines()

@@ -74,6 +74,7 @@ pub(super) fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
 /// selected.
 fn unread_note(app: &App) -> String {
     let listed = app
+        .session
         .selected_entry()
         .filter(|_| !crate::features::cleanup::active(app));
     match listed {
@@ -130,7 +131,7 @@ fn sizes(out: &mut Text, app: &App, f: &Facts) {
         human(f.total.referenced)
     );
     out.add(&other, plain);
-    let size = app.size_mode.of(&f.total);
+    let size = app.session.size_mode.of(&f.total);
     if let Some((d, then, at)) = crate::model::growth::since(app, &f.path, size, f.mark) {
         let s = if d == 0 {
             format!("the same as on {}", dfdu_tree::day(at))

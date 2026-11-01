@@ -265,10 +265,11 @@ pub(crate) fn typed(app: &mut App, s: &str, now: Instant) {
 
 /// The names of the list rows, in display order.
 pub(crate) fn row_names(app: &App) -> Vec<String> {
-    app.list
+    app.session
+        .list
         .rows
         .iter()
-        .map(|&i| String::from_utf8_lossy(&app.snap.entries[i].name).into_owned())
+        .map(|&i| String::from_utf8_lossy(&app.session.snap.entries[i].name).into_owned())
         .collect()
 }
 
@@ -279,19 +280,19 @@ pub(crate) fn select(app: &mut App, name: &str) {
         .iter()
         .position(|n| n == name)
         .unwrap_or_else(|| panic!("{name} is not a row: {:?}", row_names(app)));
-    app.move_to(row);
+    app.session.move_to(row);
 }
 
 /// The paths of the marked entries, in the order they were marked.
 pub(crate) fn marked_paths(app: &App) -> Vec<HostPath> {
-    (app.marks.items().iter())
+    (app.session.marks.items().iter())
         .map(|it| it.target.path.clone())
         .collect()
 }
 
 /// The names of the marked entries, in the order they were marked.
 pub(crate) fn marked_names(app: &App) -> Vec<String> {
-    (app.marks.items().iter())
+    (app.session.marks.items().iter())
         .map(|it| {
             String::from_utf8_lossy(it.target.path.file_name().unwrap_or_default()).into_owned()
         })
@@ -304,7 +305,7 @@ pub(crate) fn marked_names(app: &App) -> Vec<String> {
 pub(crate) fn refused(app: &mut App, code: KeyCode, says: &str, now: Instant) {
     app.key(press(code), now);
     assert!(matches!(app.overlay, Overlay::None), "a dialog opened");
-    let status = app.status.as_deref().unwrap_or_default();
+    let status = app.session.status.as_deref().unwrap_or_default();
     assert!(status.contains(says), "{status:?} does not say {says:?}");
 }
 
@@ -397,9 +398,9 @@ pub(crate) fn classified_app(t0: Instant) -> (Fixture, App) {
 /// Reads the model as the run loop does for a frame with a new snapshot: the snapshot, then
 /// the extras until none is stale.
 pub(crate) fn sync(app: &mut App, m: &Model, now: Instant) {
-    let mut target = app.target.clone();
-    let snap = snapshot::build(m, &mut target, app.size_mode);
-    app.target = target;
+    let mut target = app.session.target.clone();
+    let snap = snapshot::build(m, &mut target, app.session.size_mode);
+    app.session.target = target;
     app.refresh(snap, now);
     for _ in 0..3 {
         let budget = dfdu_scan::Budget::new(1 << 20);

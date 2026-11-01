@@ -46,7 +46,7 @@ fn section_name(s: Safety) -> (&'static str, &'static str) {
 
 /// Draws the view in `area`.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    if app.snap.rules.is_none() {
+    if app.session.snap.rules.is_none() {
         return;
     }
     let rows = rows(app);
@@ -57,7 +57,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 "Lists what the rules recognise in the whole scan (caches, build output, \
                  dependencies), by how safe it is to delete."
                     .into(),
-                if app.snap.busy {
+                if app.session.snap.busy {
                     "Nothing matched yet; the scan is still running.".into()
                 } else {
                     "Nothing the rules know about was found.".into()
@@ -99,7 +99,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .filter_map(|r| match r {
                 Row::Item(i) => Some(tilde(
                     &app.extras.cleanup.items[*i].path,
-                    app.home.as_deref(),
+                    app.session.home.as_deref(),
                 )),
                 _ => None,
             })
@@ -153,7 +153,7 @@ fn notes(app: &App) -> Vec<Line<'static>> {
             .collect();
         lines.push(Line::styled(format!(" {}", parts.join(" · ")), t.fg_dim));
     }
-    if let Some(rules) = &app.snap.rules {
+    if let Some(rules) = &app.session.snap.rules {
         lines.extend(crate::model::outside::view_lines(app, rules));
     }
     lines
@@ -298,7 +298,7 @@ fn item_line(app: &App, it: &Item, now: i64, shared: usize, width: usize) -> Lin
     };
     let used: usize = spans.iter().map(Span::width).sum();
     let room = width.saturating_sub(used + CHIP + 3);
-    let path = tilde(&it.path, app.home.as_deref());
+    let path = tilde(&it.path, app.session.home.as_deref());
     let shown = review::path(t, &path, shared, room, Style::new());
     let path_w: usize = shown.iter().map(Span::width).sum();
     spans.extend(shown);
@@ -328,7 +328,7 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
         }
         None => None,
     };
-    let (Some(i), Some(rules)) = (i, &app.snap.rules) else {
+    let (Some(i), Some(rules)) = (i, &app.session.snap.rules) else {
         return Vec::new();
     };
     let it = &app.extras.cleanup.items[i];
@@ -368,7 +368,7 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
     if r.action.native().is_some() {
         let key = first_key(Action::CleanupCommand);
         d.push(Line::styled(
-            if app.read_only {
+            if app.session.read_only {
                 format!("{key} shows its own cleanup command and runs its dry run")
             } else {
                 format!("{key} runs its own cleanup command (dry run first)")

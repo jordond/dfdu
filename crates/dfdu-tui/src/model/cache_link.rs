@@ -39,15 +39,7 @@ pub struct CacheLink {
     pub save: bool,
 }
 
-/// What the header says about the cached scan shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Cached {
-    /// It is being read.
-    Loading,
-    /// It is shown, written at `written` (seconds since the Unix epoch), and being brought up
-    /// to date.
-    Refreshing { written: u64 },
-}
+pub use dfdu_session::state::Cached;
 
 /// How long ago `then` was at `now` (seconds since the Unix epoch), in a few cells: `40 s`,
 /// `12 min`, `3 h`, `5 d`.
@@ -202,7 +194,7 @@ impl Cacher {
                 });
             if let Ok(t) = spawned {
                 self.loader = Some(t);
-                app.cached = Some(Cached::Loading);
+                app.session.cached = Some(Cached::Loading);
                 return;
             }
         } else {
@@ -240,7 +232,7 @@ impl Cacher {
                 // keep what it missed.
                 let journal = h.journal.filter(|_| !hit.full_rescan);
                 let kept = h.resumed_timing().filter(|_| !hit.full_rescan);
-                app.cached = Some(Cached::Refreshing { written: h.written });
+                app.session.cached = Some(Cached::Refreshing { written: h.written });
                 self.run = Some(Run::new(kept, position));
                 engine.resume_with(
                     hit.loaded.tree,
@@ -250,12 +242,12 @@ impl Cacher {
                 );
             }
             Ok(None) => {
-                app.cached = None;
+                app.session.cached = None;
                 self.scan(link, engine);
             }
             Err(e) => {
-                app.cached = None;
-                app.status = Some(format!(
+                app.session.cached = None;
+                app.session.status = Some(format!(
                     "cached scan {}: {e}; scanning",
                     link.slot.path.display()
                 ));
@@ -286,7 +278,7 @@ impl Cacher {
         } else {
             SavedAs::Skip
         };
-        let shown = app.cached.take().is_some();
+        let shown = app.session.cached.take().is_some();
         if worth {
             return self.save(link, app, engine, version) | shown;
         }

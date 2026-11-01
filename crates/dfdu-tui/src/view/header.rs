@@ -34,9 +34,12 @@ use tabs::{TABS_NAMED_FROM, Tabs, tabs};
 /// `read-only · done 00:16`, `done 00:16`, `00:16`. While scanning, each keeps the spinner. A
 /// cached scan says so until it is up to date: `cached 3 h ago, refreshing 00:02`.
 fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
-    let ((long, short, bare), style) = match (app.cached, app.done_at) {
+    let ((long, short, bare), style) = match (app.session.cached, app.session.done_at) {
         (Some(cached), _) => {
-            let (spin, time) = (spinner(frame), mmss(now.duration_since(app.started)));
+            let (spin, time) = (
+                spinner(frame),
+                mmss(now.duration_since(app.session.started)),
+            );
             let (long, short) = match cached {
                 Cached::Loading => (
                     format!("{spin} loading the cached scan {time}"),
@@ -55,15 +58,18 @@ fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
                 app.theme.scan_active,
             )
         }
-        (None, Some(done)) if !app.snap.busy => {
-            let time = mmss(done.duration_since(app.started));
+        (None, Some(done)) if !app.session.snap.busy => {
+            let time = mmss(done.duration_since(app.session.started));
             (
                 (format!("done in {time}"), format!("done {time}"), time),
                 app.theme.scan_done,
             )
         }
         _ => {
-            let (spin, time) = (spinner(frame), mmss(now.duration_since(app.started)));
+            let (spin, time) = (
+                spinner(frame),
+                mmss(now.duration_since(app.session.started)),
+            );
             let scanning = format!("{spin} scanning {time}");
             (
                 (scanning.clone(), scanning, format!("{spin} {time}")),
@@ -81,7 +87,7 @@ fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
         spans
     };
     let mut forms = Vec::new();
-    if app.read_only {
+    if app.session.read_only {
         forms.extend([read_only(&long), read_only(&short)]);
     } else {
         forms.push(state(&long));
@@ -108,9 +114,9 @@ fn width(spans: &[Span]) -> usize {
 /// the type filter and what is still being measured.
 fn totals(app: &App) -> Vec<Span<'static>> {
     let t = &app.theme;
-    let s = &app.snap;
+    let s = &app.session.snap;
     let root = s.root_total;
-    let size = app.size_mode.of(&root);
+    let size = app.session.size_mode.of(&root);
     let mut info = vec![
         Span::styled(format!("{} items · ", count(root.items)), t.fg_dim),
         Span::styled(human(size), t.header),
@@ -128,7 +134,7 @@ fn totals(app: &App) -> Vec<Span<'static>> {
             format!(
                 " · only {}: {} in {} files here",
                 s.types,
-                human(app.size_mode.of(&d)),
+                human(app.session.size_mode.of(&d)),
                 count(d.items)
             ),
             t.status_warn,
@@ -221,7 +227,7 @@ fn tab_line(app: &App, area: Rect, now: Instant, frame: u64) -> (Line<'static>, 
 /// Then the scope shortens, as the sort is never left out while the line has room for the totals
 /// and it.
 fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
-    let s = &app.snap;
+    let s = &app.session.snap;
     let w = usize::from(area.width);
     let lead = 1;
     let view = views::current(app);
@@ -232,8 +238,8 @@ fn scope_line(app: &App, area: Rect) -> (Line<'static>, Vec<Crumb>) {
     } else {
         &s.root_path
     };
-    let root = tilde(root_path, app.home.as_deref());
-    let segs = segments(&s.dir_path, &s.root_path, app.home.as_deref());
+    let root = tilde(root_path, app.session.home.as_deref());
+    let segs = segments(&s.dir_path, &s.root_path, app.session.home.as_deref());
     let least = if whole_scan {
         Span::raw(WHOLE_SCAN).width() + Span::raw(&root).width().min(WHOLE_SCAN_ROOT_MIN)
     } else {

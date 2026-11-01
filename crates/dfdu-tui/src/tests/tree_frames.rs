@@ -101,18 +101,18 @@ fn dev(t0: Instant) -> App {
     }
 
     let mut app = App::new(Theme::no_color(), t0);
-    app.home = Some(PathBuf::from("/home/jo"));
+    app.session.home = Some(PathBuf::from("/home/jo"));
     let mut tree = TreeState::default();
     for d in [dfdu, claude, worktrees, target] {
         fx.expand(&mut tree, d);
     }
-    app.tree = Some(tree);
+    app.session.tree = Some(tree);
     sync(&mut app, &fx.m, t0);
     let row = row_names(&app)
         .iter()
         .position(|n| n == "target")
         .expect("target");
-    app.move_to(row);
+    app.session.move_to(row);
     app
 }
 
