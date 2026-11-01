@@ -1,19 +1,21 @@
 //! What the features read from the engine model besides the directory snapshot: the marks, the
-//! details of the selected entry, the treemap's lower levels, the cleanup matches, the largest
+//! debug counters, the details of the selected entry, the treemap's lower levels, the cleanup matches, the largest
 //! files below, and the nodes of the duplicate files with how many files a comparison would
 //! read. Read with every snapshot, and on its own (without copying the directory again) when a
 //! feature needs it sooner ([`stale`]).
 
 use dfdu_engine::Model;
+use dfdu_scan::Budget;
 
 use crate::marks::{self, Marked};
 use crate::state::SessionState;
 use crate::treemap;
-use crate::{cleanup, details, dupes, largest};
+use crate::{cleanup, debug, details, dupes, largest};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
     pub marked: Marked,
+    pub debug: debug::Info,
     pub details: details::Info,
     pub treemap: treemap::Info,
     pub cleanup: cleanup::Info,
@@ -26,10 +28,14 @@ pub struct Extras {
     pub dupe_candidates: Option<(u64, usize)>,
 }
 
-/// Runs under the read lock; costs no walk of the directory or the tree.
-pub fn read(m: &Model, s: &SessionState) -> Extras {
+/// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
+/// files below while that view is open, at most a tenth of the time ([`largest::read`]).
+/// `counters` are the engine's own, read under the same lock ([`debug::Counters::of`]), and
+/// `budget` the byte budget of its scanner.
+pub fn read(m: &Model, s: &SessionState, budget: &Budget, counters: debug::Counters) -> Extras {
     Extras {
         marked: marks::read(m, s),
+        debug: debug::read(m, budget, counters),
         details: details::read(m, s),
         treemap: treemap::read(m, s),
         cleanup: cleanup::read(m, s),

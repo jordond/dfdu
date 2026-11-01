@@ -1,13 +1,13 @@
 //! The debug panel (`F12`): pipeline counters, the byte budget, lock times and frame costs.
 //!
-//! The counters come with every read of the model. `Timing` is not part of the model's
-//! fingerprint, so the panel adds no frames of its own: it shows what the last frame read.
+//! The counters come with every read of the model (`dfdu_session::debug`). `Timing` is not part
+//! of the model's fingerprint, so the panel adds no frames of its own: it shows what the last
+//! frame read.
 
 use std::time::Duration;
 
-use dfdu_engine::{Engine, Model, Stats, Timing};
-use dfdu_scan::{Backend, Budget};
-use dfdu_tree::HostPath;
+use dfdu_engine::{Engine, Timing};
+use dfdu_scan::Backend;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -19,8 +19,6 @@ use crate::format::{count, human};
 use crate::theme::Theme;
 use crate::view::cells;
 
-/// Stalled directories listed by path.
-const STALLED_SHOWN: usize = 3;
 const WIDTH: u16 = 48;
 /// Below this terminal size the panel is not drawn.
 const MIN_AREA: (u16, u16) = (50, 16);
@@ -34,67 +32,7 @@ pub struct Debug {
     pub read: Duration,
 }
 
-/// Counters kept outside the model, read with it.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct Counters {
-    /// Scanner messages sent to the applier ([`Engine::sent_messages`]).
-    pub sent: u64,
-    /// Scanner tasks not finished, and how many of them were abandoned.
-    pub outstanding: (u64, u64),
-    /// Published tasks not yet taken: `(priority, normal)`.
-    pub queued: (usize, usize),
-}
-
-impl Counters {
-    /// Reads the engine's counters; cheap, and done under the read lock so that `sent` is never
-    /// below the messages the model has received.
-    pub fn of<B: Backend>(engine: &Engine<B>) -> Self {
-        Counters {
-            sent: engine.sent_messages(),
-            outstanding: engine
-                .local_scanner()
-                .map(|s| s.outstanding())
-                .unwrap_or_default(),
-            queued: engine
-                .local_scanner()
-                .map(|s| s.queued())
-                .unwrap_or_default(),
-        }
-    }
-}
-
-/// What [`read`] copied under the read lock.
-#[derive(Clone, Debug, Default)]
-pub struct Info {
-    pub stats: Stats,
-    pub timing: Timing,
-    pub counters: Counters,
-    pub budget: BudgetUse,
-    pub running: usize,
-    pub stalled: usize,
-    /// The first [`STALLED_SHOWN`] stalled directories.
-    pub stalled_paths: Vec<HostPath>,
-}
-
-/// The byte budget on scanner data in transit, in bytes.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BudgetUse {
-    /// In transit now.
-    pub used: usize,
-    /// The most in transit at once so far.
-    pub peak: usize,
-    pub capacity: usize,
-}
-
-impl BudgetUse {
-    fn of(budget: &Budget) -> Self {
-        BudgetUse {
-            used: budget.used(),
-            peak: budget.peak(),
-            capacity: budget.capacity(),
-        }
-    }
-}
+pub use dfdu_session::debug::{BudgetUse, Counters, Info, read};
 
 /// Opens or closes the panel.
 pub fn toggle(app: &mut App) {
@@ -117,7 +55,7 @@ pub fn draw(f: &mut Frame, app: &App, body: Rect) -> Option<Rect> {
         ..body
     };
     let lines = lines(
-        &app.extras.debug,
+        &app.session.extras.debug,
         &app.theme,
         Some((app.debug.draw, app.debug.read)),
     );
@@ -131,28 +69,6 @@ pub fn draw(f: &mut Frame, app: &App, body: Rect) -> Option<Rect> {
         .title(Span::styled(" Debug ", app.theme.title));
     f.render_widget(Paragraph::new(lines).block(block), r);
     Some(r)
-}
-
-/// Copies the counters; runs under the read lock. Read whether the panel is open or not (a copy
-/// of two histograms and at most [`STALLED_SHOWN`] paths), so it has numbers as soon as it
-/// opens.
-pub fn read(m: &Model, budget: &Budget, counters: Counters) -> Info {
-    let s = &m.status;
-    Info {
-        stats: s.stats.clone(),
-        timing: s.timing.clone(),
-        counters,
-        budget: BudgetUse::of(budget),
-        running: s.running_jobs(),
-        stalled: s.stalled.len(),
-        stalled_paths: s
-            .stalled
-            .iter()
-            .filter_map(|st| m.tree.resolve_visible(st.node))
-            .take(STALLED_SHOWN)
-            .map(|ix| m.tree.host_path(ix))
-            .collect(),
-    }
 }
 
 /// Records how long the last frame took to draw and its model read held the lock.
@@ -311,6 +227,9 @@ fn lines(info: &Info, t: &Theme, ui: Option<(Duration, Duration)>) -> Vec<Line<'
 mod tests {
     use std::time::Instant;
 
+    use dfdu_engine::Stats;
+    use dfdu_scan::Budget;
+    use dfdu_tree::HostPath;
     use ratatui::crossterm::event::KeyCode;
 
     use super::*;
@@ -361,7 +280,7 @@ mod tests {
     fn open_app(info: Info, theme: Theme) -> App {
         let mut app = App::new(theme, Instant::now());
         toggle(&mut app);
-        app.extras.debug = info;
+        app.session.extras.debug = info;
         frame_drawn(
             &mut app,
             Duration::from_micros(1200),

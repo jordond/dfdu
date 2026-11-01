@@ -1,46 +1,28 @@
-//! What the features read from the engine model besides the directory snapshot: the session's
-//! (`dfdu_session::extras`: the marks, the details of the selected entry, the treemap's lower
-//! levels, the cleanup matches, the largest files below, the nodes of the duplicate files) and
-//! the debug counters. Read with every snapshot, and on its own (without copying the directory
-//! again) when a feature needs it sooner.
+//! What the features read from the engine model besides the directory snapshot
+//! (`dfdu_session::extras`), read with the app: with every snapshot, and on its own (without
+//! copying the directory again) when a feature needs it sooner, as the run loop plans it
+//! ([`plan`]).
 
 use dfdu_engine::Model;
 use dfdu_scan::Budget;
+pub use dfdu_session::extras::Extras;
 
 use crate::app::App;
 use crate::features::debug;
 
-#[derive(Clone, Debug, Default)]
-pub struct Extras {
-    pub debug: debug::Info,
+/// Runs under the read lock ([`dfdu_session::extras::read`]).
+pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Extras {
+    dfdu_session::extras::read(m, &app.session, budget, counters)
 }
 
-/// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
-/// files below while that view is open, at most a tenth of the time
-/// ([`dfdu_session::largest::read`]).
-/// `counters` are the engine's own, read under the same lock ([`debug::Counters::of`]).
-pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Found {
-    let session = dfdu_session::extras::read(m, &app.session);
-    let extras = Extras {
-        debug: debug::read(m, budget, counters),
-    };
-    Found { session, extras }
-}
-
-/// What [`read`] found: the session's part and the rest.
-pub struct Found {
-    pub session: dfdu_session::extras::Extras,
-    pub extras: Extras,
-}
-
-/// Stores what [`read`] found in `app.extras` and lets the features take it in. Called after
-/// every read, after [`App::refresh`] when the read brought a new snapshot.
-pub fn apply(app: &mut App, Found { session, extras }: Found) {
-    let applied = dfdu_session::extras::apply(&mut app.session, session);
+/// Stores what [`read`] found in the session and lets the features take it in; the details pane
+/// scrolls to its top for another entry. Called after every read, after [`App::refresh`] when
+/// the read brought a new snapshot.
+pub fn apply(app: &mut App, extras: Extras) {
+    let applied = dfdu_session::extras::apply(&mut app.session, extras);
     if applied.details_moved {
         app.details.scroll = 0;
     }
-    app.extras = extras;
 }
 
 /// What the run loop reads from the model before a frame.

@@ -88,7 +88,8 @@ fn the_pane_reads_what_the_view_shown_selects() {
     let _ = cleanup::act(&mut s, Intent::Activate);
     let _ = cleanup::act(&mut s, Intent::Select(2));
     assert!(stale(&s));
-    let x = crate::extras::read(&fx.m, &s);
+    let budget = dfdu_scan::Budget::new(1 << 20);
+    let x = crate::extras::read(&fx.m, &s, &budget, crate::debug::Counters::default());
     assert!(crate::extras::apply(&mut s, x).details_moved);
     let item = cleanup::selected(&s).map(|it| it.path.clone());
     assert!(item.is_some());

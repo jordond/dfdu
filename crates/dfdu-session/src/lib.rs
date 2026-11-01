@@ -13,6 +13,7 @@
 
 pub mod actions;
 pub mod cleanup;
+pub mod debug;
 pub mod details;
 pub mod dupes;
 pub mod effect;

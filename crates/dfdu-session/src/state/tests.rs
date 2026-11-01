@@ -55,7 +55,8 @@ pub(crate) fn sync(s: &mut SessionState, m: &Model) {
         s.select(0);
     }
     for _ in 0..3 {
-        let x = crate::extras::read(m, s);
+        let budget = dfdu_scan::Budget::new(1 << 20);
+        let x = crate::extras::read(m, s, &budget, crate::debug::Counters::default());
         let _ = crate::extras::apply(s, x);
         if !crate::extras::stale(s) {
             return;

@@ -23,7 +23,6 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
 use crate::input::{line_keys, mouse};
-use crate::model::extras::Extras;
 
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
 use crate::state::filter;
@@ -83,8 +82,6 @@ pub struct App {
     pub cleanup: crate::features::cleanup::Cleanup,
     pub dupes: crate::features::dupes::Dupes,
     pub largest: crate::features::largest::Largest,
-    /// What the features read from the engine model with the last read.
-    pub extras: Extras,
     /// Where the last frame drew each part of the screen.
     pub areas: Areas,
 }
@@ -114,7 +111,6 @@ impl App {
             cleanup: crate::features::cleanup::Cleanup::default(),
             dupes: crate::features::dupes::Dupes::default(),
             largest: crate::features::largest::Largest::default(),
-            extras: Extras::default(),
             areas: Areas::default(),
         }
     }
