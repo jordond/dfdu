@@ -21,7 +21,7 @@ use super::glyph::glyph_tile;
 use super::paint::{Colors, Paint};
 use super::place::{build, peek};
 use super::tile::{AGES, age_style, base_style, hatch_glyph};
-use super::{ColorBy, color_shown, key_of, selected_top};
+use super::{ColorBy, color_shown, selected_top};
 use crate::app::App;
 use crate::app::keys::{Action, first_key};
 use crate::format::{count, human, percent};
@@ -42,15 +42,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     .areas(area);
     let paint = Paint::of(&app.theme);
     let framed = paint == Paint::Glyphs;
-    let key = key_of(app);
-    let below = &app.session.extras.treemap;
-    let current = app.treemap.layout.as_ref().is_some_and(|l| {
-        l.key == key
-            && l.area == map
-            && l.below == below.key
-            && l.classes == below.classes
-            && l.framed == framed
-    });
+    let current = (app.treemap.layout.as_ref()).is_some_and(|l| l.current(app, map, framed));
     if !current {
         app.treemap.layout = Some(build(app, map, framed));
     }
@@ -71,14 +63,15 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
             f.render_widget(Paragraph::new(Line::from(at)), right);
         }
     }
-    let Some(l) = &app.treemap.layout else {
+    let Some(layout) = &app.treemap.layout else {
         return;
     };
+    let l = &layout.map;
     let sel = selected_top(app);
     // At depth 1 the selected tile shows what is in it, in place of its tile.
     let peeked = sel
         .filter(|_| app.session.map.depth == 1)
-        .map(|s| (l.tops[s], peek(app, l, l.tops[s])))
+        .map(|s| (l.tops[s], peek(app, layout, l.tops[s])))
         .filter(|(_, tiles)| !tiles.is_empty());
     let mut slots = Vec::new();
     for tiles in [
@@ -198,7 +191,7 @@ fn draw_legend(f: &mut Frame, app: &App, area: Rect, slots: &[usize]) {
 /// ` 3/12 `: the place of the selected tile among the top-level tiles, in the order they were
 /// laid out (largest first). `None` when the selection has no tile of its own.
 fn position(app: &App) -> Option<String> {
-    let tops = app.treemap.layout.as_ref()?.tops.len();
+    let tops = app.treemap.layout.as_ref()?.map.tops.len();
     selected_top(app).map(|i| format!(" {}/{tops} ", i + 1))
 }
 

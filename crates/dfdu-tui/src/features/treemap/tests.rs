@@ -6,13 +6,14 @@ use dfdu_tree::{DirState, HostPath, Ix};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 
-use super::place::{Tile, build};
+use super::place::{Tile, build, rect};
 use super::*;
 use crate::model::snapshot::{EntryData, test_entry};
 use crate::tests::{
     Fixture, classified, press, render, render_buffer, snap_without_totals, styled, sync, tree,
 };
 use crate::theme::Theme;
+use dfdu_session::treemap::MAX_TILES;
 
 pub(crate) fn treemap_app(m: &Model, now: Instant) -> App {
     let mut app = App::new(Theme::no_color(), now);
@@ -195,10 +196,10 @@ fn labels_stay_inside_their_tiles() {
     let mut app = treemap_app(&fx.m, t0);
     for (w, h) in [(60, 15), (80, 24), (100, 30), (133, 41), (200, 60)] {
         let buf = render_buffer(&mut app, t0, w, h);
-        let l = app.treemap.layout.as_ref().expect("layout");
+        let l = &app.treemap.layout.as_ref().expect("layout").map;
         assert!(!l.tiles.is_empty());
         for tile in &l.tiles {
-            let r = tile.rect;
+            let r = rect(tile.rect);
             if r.width < 4 || r.height < 3 {
                 continue;
             }
@@ -249,7 +250,7 @@ fn category_colour_follows_matches_found_later_and_deep_inside() {
     app.theme = Theme::named("dark", crate::theme::ColorLevel::TrueColor, None).expect("dark");
     let slot_of = |app: &mut App, name: &str| {
         render(app, t0, 100, 30);
-        let l = app.treemap.layout.as_ref().expect("layout");
+        let l = &app.treemap.layout.as_ref().expect("layout").map;
         let i = (l.tiles.iter().position(|t| t.name == name)).expect(name);
         super::tile::base_style(app, &l.tiles, i, 0).1
     };
@@ -308,13 +309,13 @@ fn arrows_move_between_tiles_and_enter_zooms() {
     let mut app = treemap_app(&fx.m, t0);
     render(&mut app, t0, 100, 30);
     assert_eq!(selected(&app), "big");
-    let l = app.treemap.layout.as_ref().expect("layout");
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
     let rect = |name: &str| {
         l.tops
             .iter()
             .map(|&t| &l.tiles[t])
             .find(|t| t.name == name)
-            .map(|t| t.rect)
+            .map(|t| rect(t.rect))
             .expect(name)
     };
     let (big, mid) = (rect("big"), rect("mid"));
@@ -349,7 +350,7 @@ fn the_line_under_the_map_shows_the_selected_tiles_place() {
         frame.lines().rev().nth(2).unwrap_or_default().to_owned()
     };
     let line = info(&mut app);
-    let tops = app.treemap.layout.as_ref().map_or(0, |l| l.tops.len());
+    let tops = app.treemap.layout.as_ref().map_or(0, |l| l.map.tops.len());
     assert!(tops > 1, "{line}");
     assert!(line.ends_with(&format!(" 1/{tops}")), "{line}");
     app.key(press(KeyCode::Char('l')), t0);
@@ -364,14 +365,14 @@ fn click_selects_a_tile_and_a_second_click_zooms_in() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     render(&mut app, t0, 100, 30);
-    let l = app.treemap.layout.as_ref().expect("layout");
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
     let mid = l
         .tops
         .iter()
         .map(|&t| &l.tiles[t])
         .find(|t| t.name == "mid")
-        .expect("mid")
-        .rect;
+        .map(|t| rect(t.rect))
+        .expect("mid");
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: mid.x + 2,
@@ -410,8 +411,8 @@ fn tiles_hold_still_until_the_next_sort() {
 }
 
 fn layout_rects(app: &App) -> Vec<Rect> {
-    let l = app.treemap.layout.as_ref().expect("layout");
-    l.tiles.iter().map(|t| t.rect).collect()
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
+    l.tiles.iter().map(|t| rect(t.rect)).collect()
 }
 
 #[test]
@@ -430,8 +431,8 @@ fn the_selected_tile_has_a_heavy_frame() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     let buf: Buffer = render_buffer(&mut app, t0, 100, 30);
-    let l = app.treemap.layout.as_ref().expect("layout");
-    let big = l.tiles[l.tops[0]].rect;
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
+    let big = rect(l.tiles[l.tops[0]].rect);
     assert_eq!(buf[(big.x, big.y)].symbol(), "┏");
 }
 
@@ -454,7 +455,7 @@ fn ten_thousand_rows_lay_out_quickly() {
     let mut best = Duration::MAX;
     for _ in 0..5 {
         let t = Instant::now();
-        let l = build(&app, area, false);
+        let l = build(&app, area, false).map;
         best = best.min(t.elapsed());
         assert!(l.tiles.iter().any(|t| t.small > 0));
     }
@@ -489,9 +490,16 @@ fn colour_fills_tiles_and_outlines_only_the_selection() {
     let mut app = treemap_app(&fx.m, t0);
     app.theme = Theme::named("dark", crate::theme::ColorLevel::TrueColor, None).expect("dark");
     let buf = render_buffer(&mut app, t0, 80, 18);
-    let l = app.treemap.layout.as_ref().expect("layout");
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
     let mut edge = 0;
-    for p in l.area.positions() {
+    for p in app
+        .treemap
+        .layout
+        .as_ref()
+        .expect("layout")
+        .area
+        .positions()
+    {
         let s = buf[p].symbol();
         assert!(
             !["┌", "─", "│", "┐", "└", "┘"].contains(&s),
@@ -500,9 +508,9 @@ fn colour_fills_tiles_and_outlines_only_the_selection() {
         edge += usize::from(["┃", "━", "┗", "┛"].contains(&s));
     }
     assert!(edge > 0, "the selection has an edge");
-    let big = l.tiles[l.tops[0]].rect;
+    let big = rect(l.tiles[l.tops[0]].rect);
     assert_eq!(Some(buf[(big.x, big.y)].bg), app.theme.border_focus.fg);
-    let other = l.tiles[l.tops[1]].rect;
+    let other = rect(l.tiles[l.tops[1]].rect);
     let (head, body) = (buf[(other.x, other.y)].bg, buf[(other.x, other.y + 1)].bg);
     assert!(matches!(head, ratatui::style::Color::Rgb(..)), "{head:?}");
     assert_ne!(head, body, "the header is a darker shade");
@@ -573,10 +581,10 @@ fn switching_views_keeps_the_selection() {
     sync(&mut app, &fx.m, t0);
     let buf = render_buffer(&mut app, t0, 100, 30);
     assert_eq!(selected(&app), "mid");
-    let l = app.treemap.layout.as_ref().expect("layout");
+    let l = &app.treemap.layout.as_ref().expect("layout").map;
     let top = l.tops[selected_top(&app).expect("a selected tile")];
     assert_eq!(l.tiles[top].name, "mid");
-    let r = l.tiles[top].rect;
+    let r = rect(l.tiles[top].rect);
     assert_eq!(
         buf[(r.x, r.y)].symbol(),
         "┏",
@@ -617,11 +625,11 @@ fn narrow_tiles_show_short_labels_or_none() {
         for cut in ["dir-1…", "dir-…", "19 m…", "19 mo…", "19 more…", "19 …"] {
             assert!(!frame.contains(cut), "{w}x{h} has {cut:?}:\n{frame}");
         }
-        let l = app.treemap.layout.as_ref().expect("layout");
-        let slivers: Vec<&Tile> = l.tiles.iter().filter(|t| t.rect.width < 3).collect();
+        let l = &app.treemap.layout.as_ref().expect("layout").map;
+        let slivers: Vec<&Tile> = l.tiles.iter().filter(|t| rect(t.rect).width < 3).collect();
         assert!(!slivers.is_empty(), "{w}x{h}: the fixture has slivers");
         for t in slivers {
-            for (x, y) in t.rect.positions().map(|p| (p.x, p.y)) {
+            for (x, y) in rect(t.rect).positions().map(|p| (p.x, p.y)) {
                 assert_eq!(buf[(x, y)].symbol(), " ", "{w}x{h}: {:?}\n{frame}", t.name);
             }
         }

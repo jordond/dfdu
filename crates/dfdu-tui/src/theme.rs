@@ -177,7 +177,6 @@ impl Theme {
     }
 
     /// The style of `token`.
-    #[cfg(test)]
     #[must_use]
     pub fn style(&self, token: Token) -> Style {
         match token {

@@ -9,7 +9,7 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Widget};
 
 use super::paint;
-use super::place::Tile;
+use super::place::{Tile, rect};
 use super::tile::{
     LABEL_MIN, SLIVER, base_style, candidate, fit_name, hatch, put, texts, third_line,
 };
@@ -60,7 +60,7 @@ pub(super) fn glyph_tile(
 ) {
     let t = &app.theme;
     let tile = &tiles[i];
-    let r = tile.rect.intersection(buf.area);
+    let r = rect(tile.rect).intersection(buf.area);
     if r.is_empty() {
         return;
     }
@@ -153,6 +153,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::features::treemap::place::tile_of;
     use crate::features::treemap::tests::buffer_row as row;
     use crate::model::snapshot::test_entry;
     use crate::theme::Theme;
@@ -169,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_tile_is_framed_labelled_and_shaded_by_depth() {
-        let tiles = [Tile::of(AREA, "notes", 300)];
+        let tiles = [tile_of(AREA, "notes", 300)];
         let buf = drawn(Theme::no_color(), &tiles, false);
         assert_eq!(row(&buf, 0), format!("┌{}┐", "─".repeat(14)));
         assert!(row(&buf, 1).starts_with("│ notes "), "{:?}", row(&buf, 1));
@@ -183,7 +184,7 @@ mod tests {
         let node = test_entry(0, "notes", 300).node;
         let tiles = [Tile {
             entry: Some((node, 0)),
-            ..Tile::of(AREA, "notes", 300)
+            ..tile_of(AREA, "notes", 300)
         }];
         let buf = drawn(Theme::no_color(), &tiles, true);
         assert_eq!(buf[(0, 0)].symbol(), "┏");
@@ -196,7 +197,7 @@ mod tests {
 
     #[test]
     fn slivers_are_shaded_only_when_wide_enough_or_selected() {
-        let narrow = |w| [Tile::of(Rect::new(0, 0, w, 6), "s", 1)];
+        let narrow = |w| [tile_of(Rect::new(0, 0, w, 6), "s", 1)];
         let shade = paint::shade(Bars::Unicode, 0);
         assert_eq!(
             drawn(Theme::no_color(), &narrow(3), false)[(1, 2)].symbol(),

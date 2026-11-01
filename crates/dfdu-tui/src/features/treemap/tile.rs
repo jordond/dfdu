@@ -7,19 +7,15 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use super::place::Tile;
+use dfdu_session::treemap as map;
+
+use super::place::{Tile, rect};
 use super::{ColorBy, color_shown};
 use crate::app::App;
 use crate::format::{count, human};
-use crate::theme::{Bars, Category, Rgb, color_rgb};
+use crate::theme::{Bars, Rgb, color_rgb};
 
-/// Age bands for [`ColorBy::Age`]: their upper bound in days and name.
-pub(super) const AGES: [(i64, &str); 4] = [
-    (7, "week"),
-    (90, "3 months"),
-    (365, "year"),
-    (i64::MAX, "older"),
-];
+pub(super) use dfdu_session::treemap::AGES;
 
 /// A tile needs this many cells across and down for any text.
 pub(super) const LABEL_MIN: (u16, u16) = (8, 2);
@@ -30,48 +26,21 @@ pub(super) const SLIVER: u16 = 3;
 /// The colour of a tile whose base colour has no value (`Reset`).
 const GREY: Rgb = (0x80, 0x80, 0x80);
 
-pub(super) fn age_band(mtime: i64, now: i64) -> usize {
-    let days = now.saturating_sub(mtime) / 86_400;
-    AGES.iter()
-        .position(|&(d, _)| days < d)
-        .unwrap_or(AGES.len() - 1)
-}
-
+/// The style of age band `band` ([`dfdu_session::treemap::age_token`]).
 pub(super) fn age_style(app: &App, band: usize) -> Style {
-    let t = &app.theme;
-    [t.status_ok, t.fg, t.status_warn, t.fg_dim][band]
+    app.theme.style(map::age_token(band))
 }
 
 /// The style a tile's colour comes from, and its category colour slot when it is coloured by
-/// one. In category colouring a tile takes its match's category, a directory without one the
-/// category most of it is in, and anything else its parent's colour; by top folder every tile
-/// takes its top-level tile's colour.
+/// one ([`dfdu_session::treemap::base`]).
 pub(super) fn base_style(
     app: &App,
     tiles: &[Tile],
     i: usize,
     today: i64,
 ) -> (Style, Option<usize>) {
-    let t = &app.theme;
-    let tile = &tiles[i];
-    let parent = |app: &App| tile.up.map(|u| base_style(app, tiles, u, today));
-    if tile.small > 0 {
-        return parent(app).unwrap_or((t.fg_dim, None));
-    }
-    match color_shown(app) {
-        ColorBy::Folder => parent(app).unwrap_or((t.cat[tile.top % t.cat.len()], None)),
-        ColorBy::Age => (age_style(app, age_band(tile.mtime, today)), None),
-        ColorBy::Category => {
-            let slot = match (&app.session.snap.rules, tile.tag) {
-                (Some(rules), Some(tag)) => Some(tag.category(rules).1),
-                _ => tile.dominant,
-            };
-            match slot {
-                Some(s) => (t.cat[s], Some(s)),
-                None => parent(app).unwrap_or((t.cat[Category::Other as usize], None)),
-            }
-        }
-    }
+    let (token, slot) = map::base(&app.session, tiles, i, today);
+    (app.theme.style(token), slot)
 }
 
 /// The live size of a top-level tile's entry, or the size it was laid out with.
@@ -159,7 +128,7 @@ pub(super) fn third_line(app: &App, tile: &Tile, today: i64) -> Option<String> {
         return None;
     }
     match color_shown(app) {
-        ColorBy::Age => Some(format!("≤ {}", AGES[age_band(tile.mtime, today)].1)),
+        ColorBy::Age => Some(format!("≤ {}", AGES[map::age_band(tile.mtime, today)].1)),
         ColorBy::Category => {
             let (rules, tag) = (app.session.snap.rules.as_ref()?, tile.tag?);
             (!tag.inherited).then(|| {
@@ -181,7 +150,7 @@ pub(super) fn hatch_glyph(bars: Bars) -> &'static str {
 
 /// Whether the tile is a cleanup candidate, hatched below its labels.
 pub(super) fn candidate(tile: &Tile) -> bool {
-    !tile.nested && tile.tag.is_some_and(crate::model::snapshot::Tag::candidate)
+    tile.candidate()
 }
 
 /// Hatches the rows of `r` from `from` down in `style`, one cell in `every` along diagonals.
@@ -199,8 +168,8 @@ pub(super) fn hatch(buf: &mut Buffer, r: Rect, from: u16, style: Style, bars: Ba
 /// The cells a tile fills: its rectangle on screen, less a gutter on the right when a sibling
 /// is beside it.
 pub(super) fn cells_of(buf: &Buffer, tile: &Tile) -> Rect {
-    let mut r = tile.rect.intersection(buf.area);
-    if tile.rect.right() < tile.bound.right() && r.width > 1 {
+    let mut r = rect(tile.rect).intersection(buf.area);
+    if rect(tile.rect).right() < rect(tile.bound).right() && r.width > 1 {
         r.width -= 1;
     }
     r
@@ -222,22 +191,10 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::features::treemap::layout::area_of;
+    use crate::features::treemap::place::tile_of;
     use crate::features::treemap::tests::buffer_row;
     use crate::theme::Theme;
-
-    const DAY: i64 = 86_400;
-
-    #[test]
-    fn ages_fall_in_their_band() {
-        let now = 1_792_324_800;
-        let bands: Vec<usize> = [3, 30, 200, 2_000]
-            .iter()
-            .map(|days| age_band(now - days * DAY, now))
-            .collect();
-        assert_eq!(bands, [0, 1, 2, 3]);
-        // A time ahead of the clock is new.
-        assert_eq!(age_band(now + DAY, now), 0);
-    }
 
     #[test]
     fn labels_name_the_tile_and_its_share_of_the_one_it_is_in() {
@@ -246,7 +203,7 @@ mod tests {
             level: 1,
             is_dir: true,
             parent_size: 200,
-            ..Tile::of(Rect::new(0, 0, 10, 4), "photos", 50)
+            ..tile_of(Rect::new(0, 0, 10, 4), "photos", 50)
         };
         let (name, sizes) = texts(&app, &tile);
         assert_eq!(name, "photos/");
@@ -260,7 +217,7 @@ mod tests {
         assert_eq!(sizes.fit(4), "", "a size is not cut");
         let merged = Tile {
             small: 3,
-            ..Tile::of(Rect::new(0, 0, 10, 4), "", 1000)
+            ..tile_of(Rect::new(0, 0, 10, 4), "", 1000)
         };
         assert_eq!(texts(&app, &merged).0, "3 more · 1000 B");
         assert_eq!(third_line(&app, &merged, 0), None);
@@ -270,13 +227,13 @@ mod tests {
     fn a_tile_beside_a_sibling_leaves_a_gutter() {
         let buf = Buffer::empty(Rect::new(0, 0, 20, 5));
         let tile = Tile {
-            bound: Rect::new(0, 0, 20, 5),
-            ..Tile::of(Rect::new(0, 0, 12, 5), "a", 1)
+            bound: area_of(Rect::new(0, 0, 20, 5)),
+            ..tile_of(Rect::new(0, 0, 12, 5), "a", 1)
         };
         assert_eq!(cells_of(&buf, &tile), Rect::new(0, 0, 11, 5));
         let last = Tile {
-            bound: Rect::new(0, 0, 20, 5),
-            ..Tile::of(Rect::new(12, 0, 8, 5), "b", 1)
+            bound: area_of(Rect::new(0, 0, 20, 5)),
+            ..tile_of(Rect::new(12, 0, 8, 5), "b", 1)
         };
         assert_eq!(cells_of(&buf, &last), Rect::new(12, 0, 8, 5));
     }

@@ -175,6 +175,7 @@ mod tests {
     use ratatui::style::Color;
 
     use super::*;
+    use crate::features::treemap::place::tile_of;
     use crate::features::treemap::tests::buffer_row as row;
     use crate::model::snapshot::test_entry;
     use crate::theme::{ColorLevel, Theme};
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn a_tile_is_filled_under_a_header_with_its_name_and_size() {
         let app = app();
-        let tiles = [Tile::of(AREA, "photos", 2048)];
+        let tiles = [tile_of(AREA, "photos", 2048)];
         let buf = filled(&app, &tiles, false);
         assert!(row(&buf, 0).starts_with(" photos "), "{:?}", row(&buf, 0));
         assert!(buf[(1, 0)].modifier.contains(Modifier::BOLD));
@@ -218,7 +219,7 @@ mod tests {
         let node = test_entry(0, "photos", 2048).node;
         let tiles = [Tile {
             entry: Some((node, 0)),
-            ..Tile::of(AREA, "photos", 2048)
+            ..tile_of(AREA, "photos", 2048)
         }];
         let buf = filled(&app, &tiles, true);
         assert_eq!(buf[(0, 1)].symbol(), "┃");
@@ -234,7 +235,7 @@ mod tests {
         let app = app();
         let tiles = [Tile {
             small: 12,
-            ..Tile::of(AREA, "", 4096)
+            ..tile_of(AREA, "", 4096)
         }];
         let buf = filled(&app, &tiles, false);
         assert!(

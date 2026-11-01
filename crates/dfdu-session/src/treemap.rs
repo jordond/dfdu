@@ -1,16 +1,22 @@
 //! Squarified treemap layout (Bruls, Huizing and van Wijk, 2000), in a layout space whose units
-//! the front end chooses ([`Area`]), and the Map view's settings and the levels below its
-//! top-level tiles (`levels`).
+//! the front end chooses ([`Area`]); the Map view's settings and the levels below its top-level
+//! tiles (`levels`); the tile tree laid out from them in the front end's units (`place`); and
+//! the colour each tile takes (`color`).
 
+mod color;
 mod levels;
+mod place;
 
+pub use color::{AGES, age_band, age_token, base};
 pub use levels::{
     ColorBy, Info, Key, Kid, Kids, MAX_DEPTH, MAX_TILES, MIN_DEPTH, MapState, color_shown,
     cycle_color, deeper, key_of, on, read, stale,
 };
+pub use place::{Grid, Inset, Room, Tile, TileTree, Toward, build, peek, select_top, step};
 
-/// A rectangle in layout space, in units the front end chooses: the TUI's are cell columns
-/// across and cell rows times its cell aspect down, so squares there look square on screen.
+/// A rectangle in units the front end chooses. In layout space ([`Grid::layout`]) a unit down
+/// counts the grid's aspect times a unit across, so squares there look square on screen; tiles
+/// ([`Tile::rect`]) are in the front end's own units: cells, or points.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Area {
     pub x: f64,
