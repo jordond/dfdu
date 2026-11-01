@@ -94,7 +94,7 @@ pub struct Info {
 /// What the matches that can be ticked add up to.
 #[derive(Clone, Copy, Debug)]
 pub struct Reclaim {
-    /// The tree's version and number of matches it was counted at ([`count_key`]).
+    /// The tree's version and number of matches it was counted at.
     pub at: (u64, usize),
     pub size: u64,
 }

@@ -1,15 +1,18 @@
 //! What a front end shows besides drawing and input, with no terminal or window types: the
-//! state of a browser (`state`, [`SessionState`]) with its marks (`marks`) and name filter
-//! (`filter`), the directory snapshot copied out of the engine model (`snapshot`), the
-//! directories tree mode expands (`tree`), the order of the rows (`order`) and the fuzzy
-//! matching of what is typed (`fuzzy`). From outside the UI: the scan history (`history_link`) with what grew since the
+//! state of a browser (`state`, [`SessionState`]) with the view shown (`view`), its marks and
+//! the marks pane (`marks`) and name filter (`filter`), the directory snapshot copied out of
+//! the engine model (`snapshot`), the directories tree mode expands (`tree`), the order of the
+//! rows (`order`) and the fuzzy matching of what is typed (`fuzzy`). What the features read
+//! from the model besides the snapshot (`extras`), and what is left to carry out after a key
+//! (`effect`). From outside the UI: the scan history (`history_link`) with what grew since the
 //! last scan (`growth`), the mounts and links the scan did not enter (`outside`), and the file
-//! manager that shows a path (`file_manager`). What is opened and how it starts (`startup`), and
-//! the treemap's layout (`treemap`). The actions with their keys and labels (`actions`), the
-//! duplicates comparison and its keep rules (`dupes`), the largest files below a directory
-//! (`largest`), the details of an entry (`details`), mark by pattern (`mark_pattern`), the
-//! text for numbers (`format`), the theme's tokens, built-in themes and theme files
-//! (`palette`), and the single-line text input (`line`).
+//! manager that shows a path (`file_manager`). What is opened and how it starts (`startup`).
+//! The views: the treemap's layout, depth and lower levels (`treemap`), the cleanup view
+//! (`cleanup`), the duplicates comparison with its keep rules and view (`dupes`), and the
+//! largest files below a directory (`largest`). The actions with their keys and labels
+//! (`actions`), the details of an entry (`details`), the debug counters (`debug`), mark by
+//! pattern (`mark_pattern`), the text for numbers (`format`), the theme's tokens, built-in
+//! themes and theme files (`palette`), and the single-line text input (`line`).
 
 pub mod actions;
 pub mod cleanup;

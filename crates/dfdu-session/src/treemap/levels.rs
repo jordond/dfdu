@@ -100,7 +100,7 @@ pub struct Info {
     /// Shared, so that the copy each snapshot read makes is cheap.
     pub below: Arc<HashMap<NodeRef, Kids>>,
     /// The category colour slot of most of what is matched below each directory under the
-    /// current one ([`dominant`]).
+    /// current one (`dominant`).
     pub dominant: Arc<HashMap<NodeRef, usize>>,
     /// How many nodes the tree had classified: matches found or decided after the read (a scan
     /// classifies as it goes) make it read again.
@@ -136,7 +136,7 @@ pub fn stale(s: &SessionState) -> bool {
 }
 
 /// Reads the levels below the largest top-level directories. Runs under the read lock and
-/// visits at most [`READ_BUDGET`] children; nothing when the view is off or the last read is
+/// visits at most `READ_BUDGET` children; nothing when the view is off or the last read is
 /// still current.
 pub fn read(m: &Model, s: &SessionState) -> Info {
     if !on(s) {

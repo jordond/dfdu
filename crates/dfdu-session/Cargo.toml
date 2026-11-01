@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-session"
-description = "What a front end of dfdu shows besides drawing and input: the state of a browser with its marks and name filter, the directory snapshot, tree mode, row order, fuzzy matching, the scan history, the mounts left out, startup, the treemap layout, the actions, duplicates, the largest files, an entry's details and the theme palette"
+description = "What a front end of dfdu shows besides drawing and input: the state of a browser with the view shown, its marks and name filter, the directory snapshot, tree mode, row order, fuzzy matching, the scan history, the mounts left out, startup, the treemap, the cleanup view, the actions, duplicates, the largest files, an entry's details, the effects of a key and the theme palette"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
