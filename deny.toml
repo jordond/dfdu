@@ -32,6 +32,11 @@ ignore = true
 crate = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
 
+# dfdu-gui: the fonts egui draws with, under the SIL Open Font and Ubuntu Font licences.
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
