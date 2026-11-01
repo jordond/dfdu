@@ -37,6 +37,7 @@ pub mod marks;
 pub mod order;
 pub mod outside;
 pub mod palette;
+pub mod session;
 pub mod snapshot;
 pub mod startup;
 pub mod state;
@@ -47,4 +48,5 @@ pub mod tree;
 pub mod treemap;
 pub mod view;
 
+pub use session::{FrontEnd, Session, SessionOptions, Tick};
 pub use state::SessionState;

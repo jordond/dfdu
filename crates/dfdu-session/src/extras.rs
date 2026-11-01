@@ -78,3 +78,38 @@ pub fn stale(s: &SessionState) -> bool {
         || dupes::stale(s)
         || largest::stale(s)
 }
+
+/// What is read from the model before a frame.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Read {
+    Nothing,
+    /// The extras only.
+    Extras,
+    /// A snapshot of the directory, and the extras with it.
+    Full,
+}
+
+/// `full`: a snapshot is due (scan data, or another directory or size mode). `stale`:
+/// [`stale`].
+pub fn plan(full: bool, stale: bool) -> Read {
+    match (full, stale) {
+        (true, _) => Read::Full,
+        (false, true) => Read::Extras,
+        (false, false) => Read::Nothing,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extras_are_read_only_when_stale() {
+        assert_eq!(plan(false, false), Read::Nothing);
+        assert_eq!(plan(false, true), Read::Extras);
+        // A snapshot read brings the extras along; they are read again only when the refresh
+        // moved the selection.
+        assert_eq!(plan(true, false), Read::Full);
+        assert_eq!(plan(true, true), Read::Full);
+    }
+}

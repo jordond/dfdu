@@ -17,6 +17,8 @@ use dfdu_engine::{Engine, WaitIdle};
 use dfdu_store::history::{self, Growth, Scanned};
 use dfdu_tree::now_secs;
 
+use crate::state::SessionState;
+
 /// How long quitting waits for the record to be written. It cannot be cancelled, and another
 /// dfdu writing the history can hold it up for seconds.
 const QUIT_WAIT: Duration = Duration::from_secs(2);
@@ -205,6 +207,23 @@ impl Recorder {
         }
     }
 
+    /// [`Recorder::poll`], with what it took in put in `s`: the last scan's sizes, and a
+    /// problem in the status line. True when there is something new to draw.
+    pub fn poll_into<B: dfdu_scan::Backend>(
+        &mut self,
+        s: &mut SessionState,
+        engine: &Engine<B>,
+    ) -> bool {
+        let polled = self.poll(engine);
+        if let Some(g) = &polled.growth {
+            s.growth.clone_from(g);
+        }
+        if let Some(p) = &polled.problem {
+            s.status = Some(p.clone());
+        }
+        polled.changed()
+    }
+
     /// The history is still being read or written, so [`Recorder::poll`] has more to take in.
     #[must_use]
     pub fn busy(&self) -> bool {
@@ -260,5 +279,72 @@ mod tests {
         let mut rec = Recorder::new(None);
         rec.writer = Some(writer(|| ()));
         drop(rec);
+    }
+
+    fn poll_until(
+        rec: &mut Recorder,
+        s: &mut SessionState,
+        engine: &Engine<dfdu_scan::PortableBackend>,
+    ) -> bool {
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < Duration::from_secs(10) {
+            if rec.poll_into(s, engine) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// A history that cannot be opened is reported in the status line, not taken for one
+    /// without a previous scan.
+    #[test]
+    fn load_errors_are_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // A directory where the database should be: it exists, but cannot be opened.
+        let db = tmp.path().join("history.db");
+        std::fs::create_dir(&db).expect("mkdir");
+        let link = HistoryLink::start(db.clone(), tmp.path().into(), "k".into());
+        let engine = Engine::portable(2);
+        let mut s = SessionState::new(std::time::Instant::now());
+        let mut rec = Recorder::new(Some(link));
+        assert!(poll_until(&mut rec, &mut s, &engine));
+        let status = s.status.clone().expect("a status");
+        assert!(
+            status.starts_with(&format!("history {}: ", db.display())),
+            "{status}"
+        );
+        assert!(s.growth.is_none());
+        engine.shutdown(Duration::from_millis(200));
+    }
+
+    /// A scan that cannot be recorded is reported in the status line once the writer ends.
+    #[test]
+    fn record_errors_are_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("scanned");
+        std::fs::create_dir(&root).expect("mkdir");
+        std::fs::write(root.join("a"), b"data").expect("write");
+        // The database's directory is a file: there is no history to load, and none to write.
+        let parent = tmp.path().join("state");
+        std::fs::write(&parent, b"").expect("write");
+        let db = parent.join("history.db");
+        let link = HistoryLink::start(db.clone(), root.clone(), "k".into());
+        let engine = Engine::portable(2);
+        engine.send(dfdu_engine::Command::Scan {
+            path: root.into(),
+            opts: dfdu_scan::JobOptions::default(),
+        });
+        assert!(engine.wait_idle(Some(Duration::from_secs(20))).is_idle());
+        let mut s = SessionState::new(std::time::Instant::now());
+        let mut rec = Recorder::new(Some(link));
+        assert!(poll_until(&mut rec, &mut s, &engine));
+        let status = s.status.clone().expect("a status");
+        assert!(
+            status.starts_with(&format!("history {}: ", db.display())),
+            "{status}"
+        );
+        assert!(!rec.busy());
+        engine.shutdown(Duration::from_millis(200));
     }
 }
