@@ -74,6 +74,10 @@ pub(crate) fn opened(
     s.view = view;
     let fx = match view {
         crate::view::View::Cleanup => crate::cleanup::on_open(&mut s, false),
+        crate::view::View::Largest => {
+            crate::largest::on_open(&mut s);
+            Vec::new()
+        }
         _ => Vec::new(),
     };
     sync(&mut s, m);

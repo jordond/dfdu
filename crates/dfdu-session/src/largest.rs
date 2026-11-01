@@ -1,11 +1,19 @@
 //! The largest files below a directory, as broot's whale mode: the largest [`TOP`] files
-//! anywhere under it in one flat list, with their paths relative to it ([`walk`]).
+//! anywhere under it in one flat list, with their paths relative to it ([`walk`]), and the
+//! Largest view that lists them ([`Largest`], [`act`]).
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use dfdu_engine::SizeMode;
 use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
+
+mod view;
+
+pub use view::{
+    Info, Intent, Largest, MIN_INTERVAL, Walked, act, active, apply, listed, on_open, read,
+    selected, stale,
+};
 
 /// The most files the view lists.
 pub const TOP: usize = 1000;

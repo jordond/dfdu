@@ -26,14 +26,16 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     let fit = height.saturating_sub(HEAD).max(1);
     app.list_height = fit;
-    let l = &mut app.largest;
+    let l = &mut app.session.largest;
     l.cursor = l.cursor.min(l.files.len().saturating_sub(1));
-    l.scroll = l
+    let v = &mut app.largest;
+    v.scroll = v
         .scroll
         .min(l.cursor)
         .max((l.cursor + 1).saturating_sub(fit));
+    let scroll = v.scroll;
     let app = &*app;
-    let (t, l) = (&app.theme, &app.largest);
+    let (t, l) = (&app.theme, &app.session.largest);
     let dir = tilde(&app.session.snap.dir_path, app.session.home.as_deref());
     let width = area.width;
     if l.walked.is_none() {
@@ -80,7 +82,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     lines.push(Line::from(header(&cols)).style(t.fg_dim));
     let largest = l.files[0].size.max(1);
     let total = app.session.size_mode.of(&app.session.snap.dir_total).max(1);
-    let shown = l.files.iter().skip(l.scroll).take(fit);
+    let shown = l.files.iter().skip(scroll).take(fit);
     let paths: Vec<String> = shown
         .clone()
         .map(|f| f.path.display().to_string())
@@ -88,7 +90,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let shared = review::shared_prefix(paths.iter().map(String::as_str));
     for (i, (file, path)) in shown.zip(&paths).enumerate() {
         let line = row(app, file, path, shared, &cols, largest, total);
-        lines.push(if l.scroll + i == l.cursor {
+        lines.push(if scroll + i == l.cursor {
             cursor(t, line, width)
         } else {
             line
@@ -227,13 +229,13 @@ mod tests {
     #[test]
     fn before_the_walk_it_says_what_it_reads() {
         let (mut app, _) = browser();
-        app.largest.cursor = 5;
+        app.session.largest.cursor = 5;
         let mut term = Terminal::new(TestBackend::new(60, 4)).expect("terminal");
         term.draw(|f| draw(f, &mut app, f.area())).expect("draw");
         let out = text(term.backend().buffer());
         assert!(out.starts_with(" reading the files below /r…"), "{out}");
         // The list has room for the rows below the summary bar and the column names.
         assert_eq!(app.list_height, 2);
-        assert_eq!(app.largest.cursor, 0, "kept within the files");
+        assert_eq!(app.session.largest.cursor, 0, "kept within the files");
     }
 }

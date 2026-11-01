@@ -1,30 +1,28 @@
 //! What the features read from the engine model besides the directory snapshot: the session's
 //! (`dfdu_session::extras`: the marks, the details of the selected entry, the treemap's lower
-//! levels, the cleanup matches, the nodes of the duplicate files), the debug counters and the
-//! largest files below. Read with every snapshot, and on its own (without copying the directory
+//! levels, the cleanup matches, the largest files below, the nodes of the duplicate files) and
+//! the debug counters. Read with every snapshot, and on its own (without copying the directory
 //! again) when a feature needs it sooner.
 
 use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::features::{debug, largest};
+use crate::features::debug;
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
     pub debug: debug::Info,
-    /// A new walk for the largest files below, when one was due.
-    pub largest: Option<largest::Info>,
 }
 
 /// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
-/// files below while that view is open, at most a tenth of the time ([`largest::read`]).
+/// files below while that view is open, at most a tenth of the time
+/// ([`dfdu_session::largest::read`]).
 /// `counters` are the engine's own, read under the same lock ([`debug::Counters::of`]).
 pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Found {
     let session = dfdu_session::extras::read(m, &app.session);
     let extras = Extras {
         debug: debug::read(m, budget, counters),
-        largest: largest::read(m, app),
     };
     Found { session, extras }
 }
@@ -43,7 +41,6 @@ pub fn apply(app: &mut App, Found { session, extras }: Found) {
         app.details.scroll = 0;
     }
     app.extras = extras;
-    largest::apply(app);
 }
 
 /// What the run loop reads from the model before a frame.

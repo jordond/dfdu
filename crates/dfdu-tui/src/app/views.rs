@@ -7,7 +7,7 @@
 //! scan ([`View::whole_scan`]), which the header's scope line says.
 
 use super::{App, Effect};
-use crate::features::{cleanup, dupes, largest, treemap};
+use crate::features::{cleanup, dupes, treemap};
 use crate::format::human;
 use crate::state::tree;
 
@@ -52,7 +52,7 @@ pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
         }
         View::Cleanup => dfdu_session::cleanup::on_open(&mut app.session, again),
         View::Largest => {
-            largest::on_open(app);
+            dfdu_session::largest::on_open(&mut app.session);
             Vec::new()
         }
     }

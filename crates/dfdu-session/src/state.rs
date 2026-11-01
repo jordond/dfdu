@@ -21,6 +21,7 @@ use crate::details::Details;
 use crate::dupes::Dupes;
 use crate::extras::Extras;
 use crate::filter::Filter;
+use crate::largest::Largest;
 use crate::marks::Marks;
 use crate::order::SortSpec;
 use crate::outside::Outside;
@@ -92,6 +93,8 @@ pub struct SessionState {
     pub details: Details,
     /// The Duplicates view's comparison, cursor, keep rule and open groups.
     pub dupes: Dupes,
+    /// The Largest view's files, cursor and last walk.
+    pub largest: Largest,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
 }
@@ -132,6 +135,7 @@ impl SessionState {
             cleanup: Cleanup::default(),
             details: Details::default(),
             dupes: Dupes::default(),
+            largest: Largest::default(),
             extras: Extras::default(),
         }
     }

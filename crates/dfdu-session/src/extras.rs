@@ -1,14 +1,15 @@
 //! What the features read from the engine model besides the directory snapshot: the marks, the
-//! details of the selected entry, the treemap's lower levels, the cleanup matches, and the
-//! nodes of the duplicate files with how many files a comparison would read. Read with every snapshot, and on its own
-//! (without copying the directory again) when a feature needs it sooner ([`stale`]).
+//! details of the selected entry, the treemap's lower levels, the cleanup matches, the largest
+//! files below, and the nodes of the duplicate files with how many files a comparison would
+//! read. Read with every snapshot, and on its own (without copying the directory again) when a
+//! feature needs it sooner ([`stale`]).
 
 use dfdu_engine::Model;
 
 use crate::marks::{self, Marked};
 use crate::state::SessionState;
 use crate::treemap;
-use crate::{cleanup, details, dupes};
+use crate::{cleanup, details, dupes, largest};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
@@ -16,6 +17,8 @@ pub struct Extras {
     pub details: details::Info,
     pub treemap: treemap::Info,
     pub cleanup: cleanup::Info,
+    /// A new walk for the largest files below, when one was due.
+    pub largest: Option<largest::Info>,
     /// The node of each file of the duplicates found, by path; `None` once a file is gone.
     pub dupes: dupes::Nodes,
     /// How many files a comparison of duplicates would read, when they were counted, and the
@@ -30,6 +33,7 @@ pub fn read(m: &Model, s: &SessionState) -> Extras {
         details: details::read(m, s),
         treemap: treemap::read(m, s),
         cleanup: cleanup::read(m, s),
+        largest: largest::read(m, s),
         dupes: dupes::read(m, s),
         dupe_candidates: dupes::count(m, s),
     }
@@ -52,6 +56,7 @@ pub fn apply(s: &mut SessionState, extras: Extras) -> Applied {
     s.extras.marked = marked;
     let details_moved = details::apply(s);
     cleanup::apply(s);
+    largest::apply(s);
     dupes::apply(s);
     Applied { details_moved }
 }
@@ -65,4 +70,5 @@ pub fn stale(s: &SessionState) -> bool {
         || treemap::stale(s)
         || cleanup::stale(s)
         || dupes::stale(s)
+        || largest::stale(s)
 }
