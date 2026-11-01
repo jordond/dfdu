@@ -3,14 +3,15 @@
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
 //! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
-//! view shown (the list, the largest files, or the map while it has room), the delete dialog and the windows from
-//! its state, then carries out what was clicked or typed. It tells the session the rows the
+//! view shown (the list, the map while it has room, Cleanup or the largest files), the delete
+//! dialog, the native command pane and the windows from its state, then carries out what was
+//! clicked or typed. It tells the session the rows the
 //! view had room for and whether the map was drawn, and asks egui for the next frame when the
 //! session wants to be ticked again ([`Session::wake_at`]), so an idle window does not repaint.
 
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{ErrorList, Mode, tilde};
+use dfdu_engine::{Mode, tilde};
 use dfdu_scan::Backend;
 use dfdu_session::actions::Action;
 use dfdu_session::confirm;
@@ -19,19 +20,23 @@ use dfdu_session::filter::{self, Edited};
 use dfdu_session::line::TextOp;
 use dfdu_session::palette::Token;
 use dfdu_session::startup::Started;
-use dfdu_session::treemap::{self, ColorBy, TileTree, Toward};
-use dfdu_session::type_filter::{self, Row};
+use dfdu_session::treemap;
+use dfdu_session::type_filter;
 use dfdu_session::view::{Then, View};
 use dfdu_session::{
-    FrontEnd, Session, SessionState, error_list, file_manager, largest, selected_path,
+    FrontEnd, Session, SessionState, cleanup, error_list, file_manager, largest, selected_path,
 };
-use dfdu_tree::HostPath;
 
 use crate::bridge::Bridge;
 use crate::theme::Colors;
 use crate::{
-    details, dialog, keys, largest as largest_view, list, map, status_bar, toolbar, windows,
+    cleanup as cleanup_view, details, dialog, keys, largest as largest_view, list, map, review,
+    status_bar, toolbar, windows,
 };
+
+mod state;
+
+pub use state::{Intent, ViewState};
 
 /// How long quitting waits for the engine's threads to stop.
 const SHUTDOWN: Duration = Duration::from_millis(200);
@@ -47,77 +52,6 @@ pub trait Browse {
 
     /// Stops the session and its engine ([`Session::shutdown`]).
     fn shutdown(self: Box<Self>);
-}
-
-/// What the user did in a frame, carried out once it is drawn.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Intent {
-    Act(Action),
-    /// A click on a row.
-    Select(usize),
-    /// A double click on a row.
-    Open(usize),
-    /// A click on the disclosure triangle of a row in tree mode.
-    ToggleRow(usize),
-    /// A click on the mark of a row: marks or unmarks it, the selection staying on it.
-    Mark(usize),
-    /// A click on a breadcrumb: its directory opens with `child`, the one below it on the way
-    /// to the current directory, selected.
-    GoTo {
-        child: HostPath,
-    },
-    /// The filter's text changed.
-    Filter(String),
-    /// `Enter` in the filter.
-    FilterSubmit,
-    /// `Esc` in the filter.
-    FilterCancel,
-    /// Input of the delete dialog.
-    Confirm(confirm::Intent),
-    /// The delete dialog's method chosen.
-    Method(Mode),
-    /// The word typed in the delete dialog changed.
-    Typed(String),
-    /// A row of the type picker chosen or unchosen.
-    Type(Row),
-    /// A click on an entry of the error list: shows it in the list.
-    ShowError(usize),
-    /// An arrow on the map: the selection moves to the nearest tile that way.
-    Toward(Toward),
-    /// A click on top-level tile `top` of the map: selects it, and a double click opens it.
-    Tile {
-        top: usize,
-        open: bool,
-    },
-    /// The map's colouring chosen.
-    MapColor(ColorBy),
-    /// A click in the Largest view.
-    Largest(largest::Intent),
-}
-
-/// What the window keeps beside the session's state.
-#[derive(Debug, Default)]
-pub struct ViewState {
-    /// The filter field's text while it is edited.
-    pub filter_text: String,
-    /// Give the filter field the keyboard in the next frame.
-    pub focus_filter: bool,
-    /// Scroll the list to the selected row in the next frame.
-    pub follow: bool,
-    /// The word typed in the delete dialog, as its field shows it.
-    pub typed: String,
-    /// The estimate of the delete dialog drawn last: a dialog with another one is new, and its
-    /// Cancel button gets the keyboard.
-    pub dialog: Option<u64>,
-    /// The error list, while its window is open.
-    pub errors: Option<ErrorList>,
-    /// The type picker's search, while the picker is open.
-    pub types: Option<String>,
-    /// The undo offered, and when it was first seen: a staged delete is put back only for a
-    /// while.
-    pub undo_seen: Option<(u64, Instant)>,
-    /// The map's tiles as the last frame laid them out.
-    pub map: Option<TileTree>,
 }
 
 /// The session's state and the window's beside it.
@@ -245,6 +179,17 @@ impl<B: Backend> Browser<B> {
                 }
                 Intent::MapColor(color) => treemap::set_color(s, color),
                 Intent::Largest(i) => self.largest(i),
+                Intent::Cleanup(i) => {
+                    s.status = None;
+                    let then = cleanup::act(s, i);
+                    let acted = self.session.follow(then);
+                    self.view().follow |= acted.went.is_some();
+                }
+                Intent::Pane(i) => {
+                    s.status = None;
+                    let fx = cleanup::pane::act(s, i);
+                    let _ = self.session.carry_out(fx);
+                }
                 Intent::ShowError(i) => {
                     let show = self
                         .view()
@@ -297,6 +242,11 @@ impl<B: Backend> Browser<B> {
             && let Some(intent) = largest::intent(s, a)
         {
             self.largest(intent);
+            self.view().follow |= a.moves();
+            return;
+        }
+        if let Some(intent) = review::intent(s, a) {
+            self.apply(vec![intent], now, ctx);
             self.view().follow |= a.moves();
             return;
         }
@@ -401,6 +351,7 @@ fn central(
             (View::Map, rows)
         }
         View::Largest => (View::Largest, largest_view::show(ui, s, colors, view, out)),
+        View::Cleanup => (View::Cleanup, cleanup_view::show(ui, s, colors, view, out)),
         _ => (View::Files, list::show(ui, s, colors, view, out)),
     }
 }
@@ -429,10 +380,14 @@ impl<B: Backend> Browse for Browser<B> {
         if self.bridge.take() {
             self.session.note_change();
         }
-        // The delete dialog takes the keys while it is open.
-        if self.session.state().confirm.is_none() {
-            let s = self.session.state();
-            let pressed = keys::take(&ctx, s.read_only, s.map_drawn());
+        // The delete dialog takes the keys while it is open, and the native command pane its own.
+        let s = self.session.state();
+        if s.confirm.is_none() {
+            let pressed = if s.cleanup.pane.is_some() {
+                cleanup_view::pane::keys(&ctx)
+            } else {
+                keys::take(&ctx, s.read_only, s.map_drawn())
+            };
             self.apply(pressed, now, &ctx);
         }
         if let Err(e) = self.session.tick(now) {
@@ -461,6 +416,7 @@ impl<B: Backend> Browse for Browser<B> {
             .inner;
         windows::errors(&ctx, colors, view, &mut intents);
         windows::types(&ctx, s, colors, view, &mut intents);
+        cleanup_view::pane::show(&ctx, s, colors, &mut intents);
         dialog::show(&ctx, s, colors, view, &mut intents);
         let s = self.session.state_mut();
         s.set_viewport(shown, rows);

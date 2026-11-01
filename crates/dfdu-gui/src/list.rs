@@ -293,15 +293,16 @@ fn name(
 
 /// Where a triangle points.
 #[derive(Copy, Clone)]
-enum Point {
+pub enum Point {
     Up,
     Down,
     Right,
 }
 
 /// A triangle in `rect` pointing to `point`: a directory's in tree mode (down when it is
-/// expanded), or the sorted column's (down for the largest, latest or last first).
-fn triangle(ui: &Ui, color: egui::Color32, rect: Rect, point: Point) {
+/// expanded) or a section's of a review view, or the sorted column's (down for the largest,
+/// latest or last first).
+pub fn triangle(ui: &Ui, color: egui::Color32, rect: Rect, point: Point) {
     let c = rect.center();
     let (r, n) = (rect.height() * 0.25, rect.height() * 0.15);
     let points = match point {

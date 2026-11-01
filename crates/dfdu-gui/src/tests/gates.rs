@@ -1,6 +1,7 @@
 //! The gates of a browser that deletes nothing: a read-only one shows no way to delete, mark or
 //! put back (no button, no key, no menu item), and an imported scan, read-only too, refuses the
-//! commands that would run on this machine (the file manager, a rescan).
+//! commands that would run on this machine (the file manager, a rescan, native cleanup
+//! commands).
 
 use egui::Key;
 use egui_kittest::Harness;
@@ -102,6 +103,17 @@ fn an_imported_scan_refuses_the_commands_of_this_machine() {
     until(&mut h, "the refusal", |h| {
         shown_part(h, "this scan is remote or from a file")
     });
+
+    // No rules classified it: no Cleanup view, and so no native command runs here.
+    h.event(egui::Event::Text("3".into()));
+    until(&mut h, "the refusal", |h| {
+        shown(h, "no rules: the cleanup view needs classification")
+    });
+    h.event(egui::Event::Text("N".into()));
+    until(&mut h, "the refusal", |h| {
+        shown(h, "N works in Cleanup (3)")
+    });
+    assert!(state(&h).cleanup.pane.is_none());
 
     // The engine refuses to rescan it.
     h.event(egui::Event::Text("r".into()));

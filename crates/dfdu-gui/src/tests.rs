@@ -1,16 +1,20 @@
 //! The window driven headless through its accessibility tree (`egui_kittest`), on temporary
 //! directories: browsing (here), marking and deleting with undo (`flows`), the gates of a
 //! read-only browser and of an imported scan (`gates`), the start screen and the history
-//! (`start`), and the map (`views`). Nothing is moved to the system's Trash: the delete flows stage instead, and the
-//! Trash is tried only up to its dialog.
+//! (`start`), the map and the largest files (`views`), and the Cleanup view with its native
+//! command pane (`cleanup`). Nothing is moved to the system's Trash: the delete flows stage
+//! instead, and the Trash is tried only up to its dialog. The native commands the tests run are
+//! harmless ones of rules written for them (`ls`, `sleep`, `true`).
 
+mod cleanup;
 mod flows;
 mod gates;
 mod start;
 mod views;
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use dfdu_engine::EngineOptions;
 use dfdu_session::SessionState;
@@ -49,6 +53,37 @@ fn local(dir: &Path, read_only: bool, journal: Option<PathBuf>) -> Launch {
             record: false,
         },
     }
+}
+
+/// A browser of `dir` as [`local`] makes it, classifying with the rules of `rules`, a rule
+/// file's text, alone.
+fn with_rules(dir: &Path, read_only: bool, journal: Option<PathBuf>, rules: &str) -> Launch {
+    let files = [(dfdu_rules::Source::Builtin, rules.to_owned())];
+    let (set, errors) = dfdu_rules::load_from(&dfdu_rules::Env::current(), &files);
+    assert!(errors.is_empty(), "{errors:?}");
+    let mut l = local(dir, read_only, journal);
+    l.source = Source::Local {
+        path: Some(dir.to_path_buf()),
+        start: launch::local(Some(Arc::new(set))),
+    };
+    l
+}
+
+/// Sets the modification time of `p` (a file or directory) `days` back.
+fn age(p: &Path, days: u64) {
+    let t = SystemTime::now() - Duration::from_secs(days * 86_400);
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    // Windows opens a directory only with FILE_FLAG_BACKUP_SEMANTICS, and setting its times
+    // needs FILE_WRITE_ATTRIBUTES.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.access_mode(0x0100).custom_flags(0x0200_0000);
+    }
+    o.open(p)
+        .and_then(|f| f.set_modified(t))
+        .expect("set the time");
 }
 
 /// The window of `launch`.

@@ -22,7 +22,7 @@ const SEPARATOR: &str = "›";
 /// The filter field's id, to tell whether it has the keyboard.
 const FILTER: &str = "dfdu-filter";
 /// The views the window shows, in the order of their tabs.
-pub const VIEWS: &[View] = &[View::Files, View::Map, View::Largest];
+pub const VIEWS: &[View] = &[View::Files, View::Map, View::Cleanup, View::Largest];
 
 pub fn show(
     ui: &mut Ui,

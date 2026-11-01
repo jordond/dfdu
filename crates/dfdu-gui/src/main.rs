@@ -2,8 +2,9 @@
 //! (`dfdu_session`). The command line (`args`) names what to open, built as `dfdu` builds it
 //! (`launch`); without a directory the start screen (`start`) lists the disks. The window
 //! (`app`) shows the browser (`browser`): the toolbar (`toolbar`) with the tabs of the views,
-//! the list (`list`) with the menu of a row (`menu`), the map (`map`), the largest files
-//! (`largest`), the details panel (`details`), the action and status bars
+//! the list (`list`) with the menu of a row (`menu`), the map (`map`), the cleanup view with its
+//! native command pane (`cleanup`), the largest files (`largest`), the keys and ticks of the
+//! review views (`review`), the details panel (`details`), the action and status bars
 //! (`status_bar`), the delete dialog (`dialog`) and the error list and type picker (`windows`),
 //! coloured by the theme's tokens (`theme`), with the terminal's keys (`keys`). A thread asks
 //! for a frame when the engine's model changes (`bridge`). The theme chosen and how the list
@@ -15,6 +16,7 @@ mod app;
 mod args;
 mod bridge;
 mod browser;
+mod cleanup;
 mod details;
 mod dialog;
 mod keys;
@@ -23,6 +25,7 @@ mod launch;
 mod list;
 mod map;
 mod menu;
+mod review;
 mod settings;
 mod shot;
 mod start;
