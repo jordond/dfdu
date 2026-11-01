@@ -17,10 +17,11 @@ use ratatui::text::{Line, Span};
 use crate::app::{App, Effect, Overlay};
 use crate::format::{count, human};
 use crate::input::line::{Edit, LineInput};
+use crate::input::line_keys;
 use crate::model::outside::rel_text;
 use crate::model::snapshot::{EntryData, Mark};
 use crate::theme::Theme;
-use crate::view::cells;
+use crate::view::{cells, input_spans};
 
 /// The word a typed confirmation asks for.
 const WORD: &str = "delete";
@@ -234,7 +235,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         }
         _ if !c.typing => matches!(k.code, KeyCode::Char('y' | 'Y')),
         KeyCode::Char(_) if c.typed.text().chars().count() >= TYPED_MAX => return Vec::new(),
-        _ => match c.typed.key(&k) {
+        _ => match line_keys::edit(&mut c.typed, &k) {
             Edit::Submit => {
                 if c.typed.text() != WORD {
                     app.status = Some("not deleted: type delete to confirm".into());
@@ -431,7 +432,7 @@ fn method<'a>(lines: &mut Vec<Line<'a>>, c: &'a Confirm, t: &Theme) {
             Span::styled(WORD, t.key),
             Span::raw(" and Enter: "),
         ];
-        spans.extend(c.typed.spans(Style::new(), t.key));
+        spans.extend(input_spans(&c.typed, Style::new(), t.key));
         spans.extend([
             Span::raw("   "),
             Span::styled("Esc", t.key),

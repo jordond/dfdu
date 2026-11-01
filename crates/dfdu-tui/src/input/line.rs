@@ -1,10 +1,30 @@
-//! A single-line text input, for the filter, the palette and typed confirmations.
+//! A single-line text input, for the filter, the palette and typed confirmations. It is edited
+//! by [`TextOp`]s; the terminal's keys map to them in `line_keys`, and the view draws it.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::Style;
-use ratatui::text::Span;
+/// One editing operation on a [`LineInput`]: what a key or a text field event asks for.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TextOp {
+    /// Types a character at the cursor.
+    Insert(char),
+    /// Deletes the character before the cursor.
+    Backspace,
+    /// Deletes the character at the cursor.
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    /// Deletes the blanks before the cursor and the word before them.
+    DeleteWord,
+    /// Deletes the whole text.
+    Clear,
+    /// Done with the input (`Enter`).
+    Submit,
+    /// Leaves the input (`Esc`).
+    Cancel,
+}
 
-/// What a key did to a [`LineInput`].
+/// What a [`TextOp`] did to a [`LineInput`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Edit {
     /// The text changed.
@@ -15,7 +35,7 @@ pub enum Edit {
     Submit,
     /// `Esc`.
     Cancel,
-    /// A key the input does not handle (for example `↑`): the caller may use it.
+    /// A key that is no [`TextOp`] (for example `↑`): the caller may use it.
     Ignored,
 }
 
@@ -64,16 +84,16 @@ impl LineInput {
             .map_or(self.text.len(), |(b, _)| b)
     }
 
-    pub fn key(&mut self, k: &KeyEvent) -> Edit {
-        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        match k.code {
-            KeyCode::Enter => Edit::Submit,
-            KeyCode::Esc => Edit::Cancel,
-            KeyCode::Char('u') if ctrl => {
+    /// Applies `op` and says what it did.
+    pub fn apply(&mut self, op: TextOp) -> Edit {
+        match op {
+            TextOp::Submit => Edit::Submit,
+            TextOp::Cancel => Edit::Cancel,
+            TextOp::Clear => {
                 self.clear();
                 Edit::Changed
             }
-            KeyCode::Char('w') if ctrl => {
+            TextOp::DeleteWord => {
                 let before: Vec<char> = self.text.chars().take(self.cursor).collect();
                 let mut start = before.len();
                 while start > 0 && before[start - 1].is_whitespace() {
@@ -87,56 +107,46 @@ impl LineInput {
                 self.cursor = start;
                 Edit::Changed
             }
-            KeyCode::Char(c) if !ctrl && !k.modifiers.contains(KeyModifiers::ALT) => {
+            TextOp::Insert(c) => {
                 let at = self.byte(self.cursor);
                 self.text.insert(at, c);
                 self.cursor += 1;
                 Edit::Changed
             }
-            KeyCode::Backspace if self.cursor > 0 => {
+            TextOp::Backspace if self.cursor > 0 => {
                 let at = self.byte(self.cursor - 1);
                 self.text.remove(at);
                 self.cursor -= 1;
                 Edit::Changed
             }
-            KeyCode::Delete if self.cursor < self.len() => {
+            TextOp::Delete if self.cursor < self.len() => {
                 let at = self.byte(self.cursor);
                 self.text.remove(at);
                 Edit::Changed
             }
-            KeyCode::Backspace | KeyCode::Delete => Edit::Moved,
-            KeyCode::Left => {
+            TextOp::Backspace | TextOp::Delete => Edit::Moved,
+            TextOp::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
                 Edit::Moved
             }
-            KeyCode::Right => {
+            TextOp::Right => {
                 self.cursor = (self.cursor + 1).min(self.len());
                 Edit::Moved
             }
-            KeyCode::Home => {
+            TextOp::Home => {
                 self.cursor = 0;
                 Edit::Moved
             }
-            KeyCode::End => {
+            TextOp::End => {
                 self.cursor = self.len();
                 Edit::Moved
             }
-            _ => Edit::Ignored,
         }
     }
 
-    /// The text in `style` with a `▌` in `cursor_style` at the cursor.
-    pub fn spans(&self, style: Style, cursor_style: Style) -> Vec<Span<'static>> {
-        let at = self.byte(self.cursor);
-        let mut spans = Vec::with_capacity(3);
-        if at > 0 {
-            spans.push(Span::styled(self.text[..at].to_string(), style));
-        }
-        spans.push(Span::styled("▌", cursor_style));
-        if at < self.text.len() {
-            spans.push(Span::styled(self.text[at..].to_string(), style));
-        }
-        spans
+    /// The text before the cursor and the text after it, for drawing the cursor between them.
+    pub fn split(&self) -> (&str, &str) {
+        self.text.split_at(self.byte(self.cursor))
     }
 }
 
@@ -144,18 +154,10 @@ impl LineInput {
 mod tests {
     use super::*;
 
-    fn press(input: &mut LineInput, code: KeyCode) -> Edit {
-        input.key(&KeyEvent::new(code, KeyModifiers::NONE))
-    }
-
-    fn ctrl(input: &mut LineInput, c: char) -> Edit {
-        input.key(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
-    }
-
     fn typed(s: &str) -> LineInput {
         let mut input = LineInput::default();
         for c in s.chars() {
-            assert_eq!(press(&mut input, KeyCode::Char(c)), Edit::Changed);
+            assert_eq!(input.apply(TextOp::Insert(c)), Edit::Changed);
         }
         input
     }
@@ -164,46 +166,43 @@ mod tests {
     fn typing_and_editing() {
         let mut input = typed("helo");
         assert_eq!((input.text(), input.cursor()), ("helo", 4));
-        press(&mut input, KeyCode::Left);
-        press(&mut input, KeyCode::Char('l'));
+        input.apply(TextOp::Left);
+        input.apply(TextOp::Insert('l'));
         assert_eq!((input.text(), input.cursor()), ("hello", 4));
-        press(&mut input, KeyCode::Home);
-        assert_eq!(press(&mut input, KeyCode::Backspace), Edit::Moved);
-        assert_eq!(press(&mut input, KeyCode::Delete), Edit::Changed);
+        input.apply(TextOp::Home);
+        assert_eq!(input.apply(TextOp::Backspace), Edit::Moved);
+        assert_eq!(input.apply(TextOp::Delete), Edit::Changed);
         assert_eq!(input.text(), "ello");
-        press(&mut input, KeyCode::End);
-        assert_eq!(press(&mut input, KeyCode::Delete), Edit::Moved);
-        press(&mut input, KeyCode::Backspace);
+        input.apply(TextOp::End);
+        assert_eq!(input.apply(TextOp::Delete), Edit::Moved);
+        input.apply(TextOp::Backspace);
         assert_eq!((input.text(), input.cursor()), ("ell", 3));
-        press(&mut input, KeyCode::Left);
-        let spans = input.spans(Style::new(), Style::new());
-        let shown: Vec<&str> = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(shown, ["el", "▌", "l"]);
-        assert_eq!(press(&mut input, KeyCode::Up), Edit::Ignored);
-        assert_eq!(press(&mut input, KeyCode::Enter), Edit::Submit);
-        assert_eq!(press(&mut input, KeyCode::Esc), Edit::Cancel);
+        input.apply(TextOp::Left);
+        assert_eq!(input.split(), ("el", "l"));
+        assert_eq!(input.apply(TextOp::Submit), Edit::Submit);
+        assert_eq!(input.apply(TextOp::Cancel), Edit::Cancel);
         assert_eq!(
             input.text(),
             "ell",
-            "Enter and Esc leave the text to the caller"
+            "Submit and Cancel leave the text to the caller"
         );
     }
 
     #[test]
-    fn ctrl_u_clears_and_ctrl_w_deletes_a_word() {
+    fn clear_and_delete_word() {
         let mut input = typed("sort by  size");
-        assert_eq!(ctrl(&mut input, 'w'), Edit::Changed);
+        assert_eq!(input.apply(TextOp::DeleteWord), Edit::Changed);
         assert_eq!(input.text(), "sort by  ");
-        ctrl(&mut input, 'w');
+        input.apply(TextOp::DeleteWord);
         assert_eq!(input.text(), "sort ");
         // In the middle: only the word before the cursor goes.
         let mut input = typed("one two three");
         for _ in 0..="three".len() {
-            press(&mut input, KeyCode::Left);
+            input.apply(TextOp::Left);
         }
-        ctrl(&mut input, 'w');
+        input.apply(TextOp::DeleteWord);
         assert_eq!((input.text(), input.cursor()), ("one  three", 4));
-        assert_eq!(ctrl(&mut input, 'u'), Edit::Changed);
+        assert_eq!(input.apply(TextOp::Clear), Edit::Changed);
         assert!(input.is_empty());
         assert_eq!(input.cursor(), 0);
     }
@@ -212,19 +211,21 @@ mod tests {
     fn cursor_moves_by_chars_not_bytes() {
         let mut input = typed("naïve 日本");
         assert_eq!(input.cursor(), 8);
-        press(&mut input, KeyCode::Left);
-        press(&mut input, KeyCode::Backspace);
+        input.apply(TextOp::Left);
+        input.apply(TextOp::Backspace);
         assert_eq!(input.text(), "naïve 本");
         for _ in 0..4 {
-            press(&mut input, KeyCode::Left);
+            input.apply(TextOp::Left);
         }
-        press(&mut input, KeyCode::Delete);
+        input.apply(TextOp::Delete);
         assert_eq!(input.text(), "nave 本");
-        press(&mut input, KeyCode::Char('ï'));
+        input.apply(TextOp::Insert('ï'));
         assert_eq!((input.text(), input.cursor()), ("naïve 本", 3));
+        assert_eq!(input.split(), ("naï", "ve 本"));
         input.set("ü");
         assert_eq!(input.cursor(), 1);
-        press(&mut input, KeyCode::Right);
+        input.apply(TextOp::Right);
         assert_eq!(input.cursor(), 1);
+        assert_eq!(input.split(), ("ü", ""));
     }
 }

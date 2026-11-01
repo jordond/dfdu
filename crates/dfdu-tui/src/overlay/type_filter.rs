@@ -22,6 +22,8 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use crate::app::{App, Effect, Overlay};
 use crate::format::{count, human, plural};
 use crate::input::line::{Edit, LineInput};
+use crate::input::line_keys;
+use crate::view::input_spans;
 
 /// Why a directory cannot be marked or deleted while the filter is on.
 pub const NO_FOLDERS: &str = "folders cannot be marked or deleted while the type filter is on: their sizes count only some files (Esc shows all)";
@@ -182,7 +184,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         }
         return Vec::new();
     }
-    match p.input.key(&k) {
+    match line_keys::edit(&mut p.input, &k) {
         Edit::Changed => {
             p.cursor = 0;
             p.scroll.set(0);
@@ -221,7 +223,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     p.scroll.set(top);
 
     let mut prompt = vec![Span::styled(" type or extension:", t.key), Span::raw(" ")];
-    prompt.extend(p.input.spans(Style::new(), t.key));
+    prompt.extend(input_spans(&p.input, Style::new(), t.key));
     let mut lines = vec![Line::from(prompt)];
     if app.snap.breakdown.is_none() {
         lines.push(Line::styled(" reading…", t.fg_dim));

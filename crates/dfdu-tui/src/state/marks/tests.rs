@@ -41,10 +41,6 @@ fn complete(m: &mut Model, dir: Ix) {
     m.tree.dir_mut(dir).expect("directory").state = DirState::Complete;
 }
 
-fn summary_text(app: &App) -> Option<String> {
-    summary(app).map(|s| s.content.into_owned())
-}
-
 fn tempdir() -> tempfile::TempDir {
     tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).expect("temp dir"))
         .expect("tempdir")
@@ -100,34 +96,28 @@ fn space_marks_and_moves_down() {
         test_entry(2, "c", 1000),
     ];
     app.refresh(snap_without_totals(es.clone(), 1), t0);
-    assert_eq!(summary_text(&app), None);
+    assert_eq!(summary(&app), None);
     assert!(!stale(&app));
     assert!(app.key(press(KeyCode::Char(' ')), t0).is_empty());
     assert!(stale(&app), "a new mark needs a read");
     assert_eq!(app.selected_index(), Some(1));
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.selected_index(), Some(2));
-    assert_eq!(
-        summary_text(&app),
-        Some(format!("● 2 marked ({})", human(5000)))
-    );
-    assert_eq!(gutter(&app, &es[0]).content, "●");
-    assert_eq!(gutter(&app, &es[2]).content, " ");
+    assert_eq!(summary(&app), Some(format!("● 2 marked ({})", human(5000))));
+    assert!(is_marked(&app, &es[0]));
+    assert!(!is_marked(&app, &es[2]));
     // On the last row the cursor stays; a second Space unmarks.
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.selected_index(), Some(2));
     app.key(press(KeyCode::Char('g')), t0);
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(
-        summary_text(&app),
-        Some(format!("● 1 marked ({})", human(2000)))
-    );
-    assert_eq!(gutter(&app, &es[0]).content, " ");
-    assert_eq!(gutter(&app, &es[1]).content, "●");
+    assert_eq!(summary(&app), Some(format!("● 1 marked ({})", human(2000))));
+    assert!(!is_marked(&app, &es[0]));
+    assert!(is_marked(&app, &es[1]));
     clear(&mut app);
-    assert_eq!(summary_text(&app), None);
-    assert_eq!(gutter(&app, &es[1]).content, " ");
+    assert_eq!(summary(&app), None);
+    assert!(!is_marked(&app, &es[1]));
 }
 
 #[test]
@@ -162,7 +152,7 @@ fn space_on_shared_row_is_refused() {
     assert!(!stale(&app));
     // The shared row has the directory's reference; marking the directory from its parent
     // must not put a mark on it.
-    assert_eq!(gutter(&app, &shared).content, " ");
+    assert!(!is_marked(&app, &shared));
 }
 
 #[test]
@@ -242,7 +232,7 @@ fn nested_marks_count_once() {
     let a_total = m.tree.total(a).alloc;
     assert_eq!(app.marks.total(), (a_total, false));
     assert_eq!(
-        summary_text(&app),
+        summary(&app),
         Some(format!("● 2 marked ({})", human(a_total)))
     );
     // b marked first, inside a marked after it: still counted once.
@@ -291,21 +281,18 @@ fn totals_follow_live_sizes() {
     sync(&mut app, &m, t);
     assert!(!stale(&app), "a read takes the new mark in");
     let size = |m: &Model| human(m.tree.total(big).alloc);
-    let first = summary_text(&app);
+    let first = summary(&app);
     assert_eq!(first, Some(format!("● 1 marked (at least {})", size(&m))));
     add_file(&mut m.tree, big, "f2", 2_000_000, 4);
     sync(&mut app, &m, t);
     assert_eq!(
-        summary_text(&app),
+        summary(&app),
         Some(format!("● 1 marked (at least {})", size(&m)))
     );
-    assert_ne!(summary_text(&app), first, "the total grew with the scan");
+    assert_ne!(summary(&app), first, "the total grew with the scan");
     complete(&mut m, big);
     sync(&mut app, &m, t);
-    assert_eq!(
-        summary_text(&app),
-        Some(format!("● 1 marked ({})", size(&m)))
-    );
+    assert_eq!(summary(&app), Some(format!("● 1 marked ({})", size(&m))));
     // The size mode of the read decides the size.
     app.size_mode = dfdu_engine::SizeMode::Apparent;
     sync(&mut app, &m, t);

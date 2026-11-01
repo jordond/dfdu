@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use ratatui::crossterm::event::KeyModifiers;
-use ratatui::style::{Color, Modifier};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::{Color, Modifier, Style};
 
 use super::*;
 use crate::app::Overlay;
@@ -45,7 +45,7 @@ fn filter_by(app: &mut App, s: &str, now: Instant) {
 }
 
 fn line_text(app: &App) -> Option<String> {
-    line(app).map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+    crate::view::filter::line(app).map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
 }
 
 #[test]
@@ -56,6 +56,8 @@ fn typing_filters_and_highlights() {
     assert!(editing(&app));
     assert_eq!(row_names(&app), ["Library", "notes.sqlite", "lib64"]);
     assert_eq!(line_text(&app).as_deref(), Some(" / li▌   3 of 7"));
+    assert_eq!(app.filter.indices("Library").as_deref(), Some(&[0, 1][..]));
+    assert_eq!(app.filter.indices("dev").as_deref(), None);
     insta::assert_snapshot!("filter_editing_mono", render(&mut app, t0, 80, 9));
     let buf = render_buffer(&mut app, t0, 80, 9);
     let underlined = |s: Style| s.add_modifier.contains(Modifier::UNDERLINED);

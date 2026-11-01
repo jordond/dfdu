@@ -14,7 +14,9 @@ use crate::app::keys::{self, Action, ActionInfo, Group, first_key, offered};
 use crate::app::{App, Effect, Overlay};
 use crate::input::fuzzy::{Fuzzy, char_pos};
 use crate::input::line::{Edit, LineInput};
+use crate::input::line_keys;
 use crate::theme::Theme;
+use crate::view::input_spans;
 
 /// The groups in the order they are shown, with their headings.
 const GROUPS: [(Group, &str); 6] = [
@@ -169,7 +171,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     }
     if h.searching {
-        match h.search.key(&k) {
+        match line_keys::edit(&mut h.search, &k) {
             Edit::Changed => h.scroll.set(0),
             Edit::Submit => h.searching = false,
             Edit::Cancel => {
@@ -232,7 +234,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     if prompt > 0 {
         let mut spans = vec![Span::styled(" /", t.key), Span::raw(" ")];
         if h.searching {
-            spans.extend(h.search.spans(Style::new(), t.key));
+            spans.extend(input_spans(&h.search, Style::new(), t.key));
         } else {
             spans.push(Span::raw(h.search.text().to_owned()));
         }

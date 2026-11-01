@@ -6,13 +6,13 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::spread;
+use super::{marks, spread};
 use crate::app::keys::{Action, first_key};
 use crate::app::views::{self, View};
 use crate::app::{App, Overlay};
 use crate::features::details;
 use crate::model::snapshot::Mark;
-use crate::state::{filter, marks};
+use crate::state::filter;
 
 /// Drawn only while directories are stalled (the row has no height otherwise).
 pub fn stalled(f: &mut Frame, app: &App, area: Rect) {

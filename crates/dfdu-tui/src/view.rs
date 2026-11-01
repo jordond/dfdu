@@ -2,27 +2,32 @@
 //! after the read lock is released. [`draw`] lays out the screen, draws the header, the list
 //! or the treemap, and the footer (modules here, the treemap in its own), the details pane or the marks pane in its place, the debug panel and the open overlay (each in its
 //! feature's module), and last lets motion effects work on the finished buffer. `empty` draws
-//! the box a view shows when it has nothing to show.
+//! the box a view shows when it has nothing to show; `filter` and `marks` draw what those keep
+//! in `state`, and [`input_spans`] draws a text input.
 
 pub(crate) mod columns;
 pub(crate) mod empty;
+pub(crate) mod filter;
 mod footer;
 mod header;
 mod list;
+mod marks;
 mod selection;
 
 use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::views::{self, View};
 use crate::app::{App, Overlay};
 use crate::features::{debug, details, treemap};
+use crate::input::line::LineInput;
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
-use crate::state::{filter, motion};
+use crate::state::motion;
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
 #[derive(Copy, Clone, Debug, Default)]
@@ -128,4 +133,22 @@ pub(crate) fn spread<'a>(left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) 
     spans.push(Span::raw(" ".repeat(pad)));
     spans.extend(right);
     Line::from(spans)
+}
+
+/// The text of `input` in `style` with a `▌` in `cursor_style` at the cursor.
+pub(crate) fn input_spans(
+    input: &LineInput,
+    style: Style,
+    cursor_style: Style,
+) -> Vec<Span<'static>> {
+    let (before, after) = input.split();
+    let mut spans = Vec::with_capacity(3);
+    if !before.is_empty() {
+        spans.push(Span::styled(before.to_string(), style));
+    }
+    spans.push(Span::styled("▌", cursor_style));
+    if !after.is_empty() {
+        spans.push(Span::styled(after.to_string(), style));
+    }
+    spans
 }

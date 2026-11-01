@@ -8,12 +8,13 @@
 //!
 //! A read-only browser marks nothing, as nothing marked could be deleted: every way of marking
 //! says so on the status line instead.
+//!
+//! The view draws the marks from what this keeps ([`is_marked`], [`summary`]).
 
 use std::collections::{HashMap, HashSet};
 
 use dfdu_engine::{JobKind, JobPhase, Model};
 use dfdu_tree::{DirState, HostPath, Ident, Ix, NodeRef, Target, find_path};
-use ratatui::text::Span;
 
 use crate::app::App;
 use crate::format::human;
@@ -278,30 +279,24 @@ pub fn clear(app: &mut App) {
     }
 }
 
-/// The first cell of a row: `●` when the entry is marked.
-pub fn gutter(app: &App, e: &EntryData) -> Span<'static> {
-    if !e.pseudo && app.marks.contains(e.node) {
-        Span::styled("●", app.theme.mark)
-    } else {
-        Span::raw(" ")
-    }
+/// True when the row of `e` shows as marked. The "shared between entries" row has its
+/// directory's reference, and never does.
+pub fn is_marked(app: &App, e: &EntryData) -> bool {
+    !e.pseudo && app.marks.contains(e.node)
 }
 
-/// How many entries are marked and their total, for the status line.
-pub fn summary(app: &App) -> Option<Span<'static>> {
+/// How many entries are marked and their total, for the status line; `None` when nothing is.
+pub fn summary(app: &App) -> Option<String> {
     let marks = &app.marks;
     if marks.is_empty() {
         return None;
     }
     let (total, scanning) = marks.total();
     let at_least = if scanning { "at least " } else { "" };
-    Some(Span::styled(
-        format!(
-            "● {} marked ({at_least}{})",
-            marks.items.len(),
-            human(total)
-        ),
-        app.theme.mark,
+    Some(format!(
+        "● {} marked ({at_least}{})",
+        marks.items.len(),
+        human(total)
     ))
 }
 

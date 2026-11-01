@@ -16,7 +16,9 @@ use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect, Overlay};
 use crate::format::human;
 use crate::input::line::{Edit, LineInput};
+use crate::input::line_keys;
 use crate::state::marks;
+use crate::view::input_spans;
 
 /// State of the open prompt, held in `Overlay::MarkPattern`.
 #[derive(Clone, Debug, Default)]
@@ -49,7 +51,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     let Overlay::MarkPattern(p) = &mut app.overlay else {
         return Vec::new();
     };
-    match p.input.key(&k) {
+    match line_keys::edit(&mut p.input, &k) {
         Edit::Changed => {
             let text = p.input.text().trim().to_owned();
             let matches = (!text.is_empty()).then(|| glob(&text).map(|g| matched(app, &g).len()));
@@ -104,7 +106,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     };
     let t = &app.theme;
     let mut prompt = vec![Span::styled(" glob", t.key), Span::raw(" ")];
-    prompt.extend(p.input.spans(Style::new(), t.key));
+    prompt.extend(input_spans(&p.input, Style::new(), t.key));
     let note = match &p.matches {
         None => Line::styled(" such as *.log or IMG_????.jpg", t.fg_dim),
         Some(Ok(n)) => Line::styled(

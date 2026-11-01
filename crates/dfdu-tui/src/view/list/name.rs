@@ -8,8 +8,9 @@ use crate::app::App;
 use crate::format::{count, cut_end, truncate_middle};
 use crate::model::outside;
 use crate::model::snapshot::Mark;
-use crate::state::{filter, motion};
+use crate::state::motion;
 use crate::theme::Theme;
+use crate::view::filter;
 
 /// A note is cut only when at least this many cells of it can show, with the `…`.
 const NOTE_MIN: usize = 8;

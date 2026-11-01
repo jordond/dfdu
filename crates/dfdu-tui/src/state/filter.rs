@@ -7,18 +7,18 @@
 //!
 //! In tree mode it matches anywhere in the expanded tree, and the rows a match is inside stay
 //! to show where it is. Fold rows never match.
+//!
+//! The view draws the filter's line and highlights the matched characters of names from what
+//! this keeps ([`Filter::input`], [`Filter::shown`], [`Filter::indices`]).
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::time::Instant;
 
 use dfdu_tree::NodeRef;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
 
 use crate::app::{App, Effect, Selection};
-use crate::input::fuzzy::{Fuzzy, char_pos};
-use crate::input::line::{Edit, LineInput};
+use crate::input::fuzzy::Fuzzy;
+use crate::input::line::{Edit, LineInput, TextOp};
 use crate::model::snapshot::{EntryData, Snapshot};
 
 /// The query, its input line, and which entries of the current directory match it.
@@ -31,7 +31,7 @@ pub struct Filter {
     query: String,
     /// `query` has words; without any, everything matches.
     active: bool,
-    /// Matcher for `query`; a `RefCell` so drawing can highlight with it.
+    /// Matcher for `query`; a `RefCell` so drawing can highlight with it ([`Filter::indices`]).
     fuzzy: RefCell<Fuzzy>,
     /// `hits[i]`: entry `i` matches `query`. Empty while the query has no words.
     hits: Vec<bool>,
@@ -44,7 +44,7 @@ pub struct Filter {
     /// (`None`: no row was left). While that one stays selected, the selection goes back as
     /// soon as the hidden entry shows again.
     restore: Option<(NodeRef, Option<NodeRef>)>,
-    /// Buffer for the matched character indices of a drawn name.
+    /// Buffer for the matched character indices of a drawn name ([`Filter::indices`]).
     indices: RefCell<Vec<u32>>,
 }
 
@@ -144,6 +144,42 @@ impl Filter {
     fn hit(&self, index: usize) -> bool {
         self.hits.get(index).copied().unwrap_or(false)
     }
+
+    /// The input line of the query.
+    pub fn input(&self) -> &LineInput {
+        &self.input
+    }
+
+    /// How many entries pass the filter and how many there are, ghosts left out, and hidden
+    /// files too when `hide_hidden`: for the filter's line.
+    pub fn shown(&self, hide_hidden: bool) -> (usize, usize) {
+        let c = self.counts;
+        if hide_hidden {
+            (c.matched - c.matched_hidden, c.entries - c.hidden)
+        } else {
+            (c.matched, c.entries)
+        }
+    }
+
+    /// The positions of the characters of `name` the query matches, in order, to highlight
+    /// them; `None` while the filter is not active or `name` does not match.
+    pub fn indices(&self, name: &str) -> Option<Ref<'_, [u32]>> {
+        if !self.active {
+            return None;
+        }
+        let mut indices = self.indices.borrow_mut();
+        if self
+            .fuzzy
+            .borrow_mut()
+            .indices(name, &mut indices)
+            .is_none()
+            || indices.is_empty()
+        {
+            return None;
+        }
+        drop(indices);
+        Some(Ref::map(self.indices.borrow(), Vec::as_slice))
+    }
 }
 
 /// Whether `e`'s name matches; a fold row's text is not a name.
@@ -179,32 +215,28 @@ pub fn editing(app: &App) -> bool {
     app.filter.editing
 }
 
-/// A key while editing: typing filters at once, `Enter` keeps the filter and gives the keys
-/// back to the list (and opens the only entry left, when that is a directory, as nnn does),
-/// `Esc` clears it, `↑`/`↓` move the cursor in the list.
-pub fn key(app: &mut App, k: KeyEvent, now: Instant) -> Vec<Effect> {
-    match k.code {
-        KeyCode::Up => app.move_by(-1),
-        KeyCode::Down => app.move_by(1),
-        _ => match app.filter.input.key(&k) {
-            Edit::Changed => refilter(app, now),
-            Edit::Submit => {
-                app.filter.editing = false;
-                if app.filter.input.text().trim().is_empty() {
-                    clear(app);
-                } else if let [only] = app.list.rows[..]
-                    && app.snap.entries[only].is_dir
-                    && !app.snap.entries[only].pseudo
-                {
-                    app.select(0);
-                    return crate::app::keys::run(app, crate::app::keys::Action::Enter);
-                }
-            }
-            Edit::Cancel => {
+/// An edit of the query while editing: typing filters at once, [`TextOp::Submit`] keeps the
+/// filter and gives the keys back to the list (and opens the only entry left, when that is a
+/// directory, as nnn does), [`TextOp::Cancel`] clears it.
+pub fn edit(app: &mut App, op: TextOp, now: Instant) -> Vec<Effect> {
+    match app.filter.input.apply(op) {
+        Edit::Changed => refilter(app, now),
+        Edit::Submit => {
+            app.filter.editing = false;
+            if app.filter.input.text().trim().is_empty() {
                 clear(app);
+            } else if let [only] = app.list.rows[..]
+                && app.snap.entries[only].is_dir
+                && !app.snap.entries[only].pseudo
+            {
+                app.select(0);
+                return crate::app::keys::run(app, crate::app::keys::Action::Enter);
             }
-            Edit::Moved | Edit::Ignored => {}
-        },
+        }
+        Edit::Cancel => {
+            clear(app);
+        }
+        Edit::Moved | Edit::Ignored => {}
     }
     Vec::new()
 }
@@ -261,68 +293,6 @@ pub fn clear(app: &mut App) -> bool {
         app.selected = Some(Selection::of(e));
     }
     had
-}
-
-/// The filter's line above the status line, while it has one: the input while editing, else
-/// the query in force.
-pub fn line(app: &App) -> Option<Line<'static>> {
-    let (f, t) = (&app.filter, &app.theme);
-    if !f.editing && !f.active {
-        return None;
-    }
-    let c = f.counts;
-    let (shown, of) = if app.hide_hidden {
-        (c.matched - c.matched_hidden, c.entries - c.hidden)
-    } else {
-        (c.matched, c.entries)
-    };
-    let spans = if f.editing {
-        let mut spans = vec![Span::styled(" /", t.key), Span::raw(" ")];
-        spans.extend(f.input.spans(Style::new(), t.key));
-        spans.push(Span::styled(format!("   {shown} of {of}"), t.fg_dim));
-        spans
-    } else {
-        vec![
-            Span::styled(" filter: ", t.fg_dim),
-            Span::raw(format!("\"{}\"", f.input.text())),
-            Span::styled(format!(" ({shown} of {of})   "), t.fg_dim),
-            Span::styled("/", t.key),
-            Span::styled(" edit  ", t.fg_dim),
-            Span::styled("Esc", t.key),
-            Span::styled(" clear", t.fg_dim),
-        ]
-    };
-    Some(Line::from(spans))
-}
-
-/// `name` drawn in `style`, with the characters the query matches highlighted.
-pub fn name_spans(app: &App, name: String, style: Style) -> Vec<Span<'static>> {
-    let f = &app.filter;
-    if !f.active {
-        return vec![Span::styled(name, style)];
-    }
-    let mut indices = f.indices.borrow_mut();
-    if f.fuzzy.borrow_mut().indices(&name, &mut indices).is_none() || indices.is_empty() {
-        return vec![Span::styled(name, style)];
-    }
-    let matched = style.patch(app.theme.r#match);
-    let mut spans = Vec::new();
-    let mut run = String::new();
-    let mut run_hit = false;
-    let mut next = indices.iter().copied().peekable();
-    for (i, ch) in name.chars().enumerate() {
-        let hit = next.next_if_eq(&char_pos(i)).is_some();
-        if hit != run_hit && !run.is_empty() {
-            let s = if run_hit { matched } else { style };
-            spans.push(Span::styled(std::mem::take(&mut run), s));
-        }
-        run_hit = hit;
-        run.push(ch);
-    }
-    if !run.is_empty() {
-        spans.push(Span::styled(run, if run_hit { matched } else { style }));
-    }
-    spans
 }
 
 #[cfg(test)]

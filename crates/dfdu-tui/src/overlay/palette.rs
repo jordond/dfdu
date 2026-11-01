@@ -16,7 +16,9 @@ use crate::app::keys::{self, Action, Group};
 use crate::app::{App, Effect, Overlay};
 use crate::input::fuzzy::char_pos;
 use crate::input::line::{Edit, LineInput};
+use crate::input::line_keys;
 use crate::theme::Theme;
+use crate::view::input_spans;
 
 /// State of the open palette, held in `Overlay::Palette`.
 #[derive(Clone, Debug, Default)]
@@ -124,7 +126,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         p.cursor = cursor;
         return Vec::new();
     }
-    match p.input.key(&k) {
+    match line_keys::edit(&mut p.input, &k) {
         Edit::Changed => p.rank(),
         Edit::Submit => {
             let run = p
@@ -171,7 +173,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) -> Rect {
     let rows = usize::from(height.saturating_sub(3)).max(1);
 
     let mut prompt = vec![Span::styled(" :", t.key), Span::raw(" ")];
-    prompt.extend(p.input.spans(Style::new(), t.key));
+    prompt.extend(input_spans(&p.input, Style::new(), t.key));
     let mut lines = vec![Line::from(prompt)];
     if p.shown.is_empty() {
         lines.push(Line::styled(" nothing matches", t.fg_dim));

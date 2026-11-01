@@ -20,7 +20,7 @@ use dfdu_tree::Target;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::features::{debug, details, treemap};
-use crate::input::mouse;
+use crate::input::{line_keys, mouse};
 use crate::model::extras::Extras;
 use crate::model::snapshot::{EntryData, Snapshot};
 
@@ -287,7 +287,17 @@ impl App {
             Overlay::MarkPattern(_) => return mark_pattern::key(self, k),
         }
         if filter::editing(self) {
-            return filter::key(self, k, now);
+            // `↑`/`↓` move the cursor in the list; the other keys edit the query.
+            match k.code {
+                KeyCode::Up => self.move_by(-1),
+                KeyCode::Down => self.move_by(1),
+                _ => {
+                    if let Some(op) = line_keys::op(&k) {
+                        return filter::edit(self, op, now);
+                    }
+                }
+            }
+            return Vec::new();
         }
         if crate::features::marks_pane::is_open(self)
             && let Some(fx) = crate::features::marks_pane::key(self, &k)
