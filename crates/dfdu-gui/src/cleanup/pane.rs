@@ -83,6 +83,7 @@ pub fn show(ctx: &egui::Context, s: &SessionState, colors: &Colors, out: &mut Ve
                         .stick_to_bottom(true)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
                             for l in &output.lines {
                                 ui.label(kit::mono(l, 12.0).color(colors.fg(Token::Fg)));
                             }

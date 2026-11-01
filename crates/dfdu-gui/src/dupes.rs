@@ -271,6 +271,7 @@ fn table(
     out: &mut Vec<Intent>,
 ) {
     let cursor = s.dupes.cursor.min(rows.len() - 1);
+    let across = ui.available_rect_before_wrap().x_range();
     list::whole_rows(ui);
     let mut table = TableBuilder::new(ui)
         .id_salt("dfdu-dupes")
@@ -300,7 +301,7 @@ fn table(
                     &mut row,
                     s,
                     (colors, &ink),
-                    (g, &found.groups[g], root),
+                    (g, &found.groups[g], root, across),
                     i,
                     out,
                 ),
@@ -362,7 +363,7 @@ fn group(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
     (colors, ink): (&Colors, &Ink),
-    (g, group, root): (usize, &Group, &Path),
+    (g, group, root, across): (usize, &Group, &Path, egui::Rangef),
     i: usize,
     out: &mut Vec<Intent>,
 ) -> Tick {
@@ -373,7 +374,6 @@ fn group(
     let dim = ink.of(colors.fg(Token::FgDim));
     let clones = group.all_clones();
     list::cell(row, &COLUMNS, |ui| {
-        review::rule_under(ui, colors.chrome.divider);
         let (rect, r) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
         let open = dupes::open(s, g, group);
         let token = if r.hovered() { Token::Fg } else { Token::FgDim };
@@ -426,6 +426,8 @@ fn group(
         if !clones {
             right(ui, kit::sans("wasted", 12.0).color(dim));
         }
+        // From the last cell, over the row's fill.
+        review::rule_under(ui, across, colors.chrome.divider);
     });
     tick
 }

@@ -56,8 +56,17 @@ pub fn show(
     let n = l.files.len() as u64;
     let word = format!("in {} file{}", count(n), if n == 1 { "" } else { "s" });
     review::summary(ui, colors, (&human(listed), &word), &found, |ui| {
-        kit::hint(ui, colors, first_key(Action::Enter), "show in Files");
-        kit::hint(ui, colors, first_key(Action::ToggleMark), "tick");
+        // Right to left, so each hint's words before its key cap: `[Space] tick`.
+        let dim = colors.fg(Token::FgDim);
+        ui.spacing_mut().item_spacing.x = style::SPACE_1;
+        for (key, what) in [
+            (Action::Enter, "show in Files"),
+            (Action::ToggleMark, "tick"),
+        ] {
+            ui.label(kit::sans(what, 12.0).color(dim));
+            kit::key_cap(ui, colors, first_key(key));
+            ui.add_space(style::SPACE_2);
+        }
     });
     let visible = list::visible_rows(ui);
     table(ui, s, colors, view, out);

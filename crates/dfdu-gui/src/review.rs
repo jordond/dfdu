@@ -132,7 +132,7 @@ pub fn locked(ui: &mut Ui, colors: &Colors, name: &str) -> egui::Response {
     let b = Rect::from_center_size(rect.center(), vec2(14.0, 14.0));
     let radius = CornerRadius::same(style::RADIUS_SM);
     let p = ui.painter();
-    p.rect_filled(b, radius, colors.chrome.hover.gamma_multiply(DISABLED));
+    p.rect_filled(b, radius, colors.chrome.divider);
     let edge = colors.fg(Token::Border).gamma_multiply(DISABLED);
     p.rect_stroke(b, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, name));
@@ -161,8 +161,15 @@ pub fn summary(
                     ui.label(kit::title(word, 20.0).color(header));
                 });
                 ui.add_space(style::SPACE_1);
-                ui.label(kit::sans(line, 12.0).color(colors.fg(Token::FgDim)));
-                ui.with_layout(Layout::right_to_left(Align::Center), right);
+                // The controls first, so the line gets the room left and is cut short in it.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    right(ui);
+                    ui.add_space(style::SPACE_2);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let line = kit::sans(line, 12.0).color(colors.fg(Token::FgDim));
+                        ui.add(egui::Label::new(line).truncate());
+                    });
+                });
             });
         });
     let x = ui.max_rect().x_range();
@@ -198,11 +205,13 @@ pub fn empty(ui: &mut Ui, colors: &Colors, lines: &[&str], then: impl FnOnce(&mu
     });
 }
 
-/// A hairline in `color` under the row whose cell `ui` is, across the table.
-pub fn rule_under(ui: &Ui, color: egui::Color32) {
+/// A hairline in `color` under the row whose cell `ui` is, across `across` (the table's width:
+/// a cell's own painter is clipped to the cell).
+pub fn rule_under(ui: &Ui, across: egui::Rangef, color: egui::Color32) {
     let y = ui.max_rect().bottom() - 0.5;
-    let x = ui.max_rect().left()..=ui.clip_rect().right();
-    ui.painter().hline(x, y, Stroke::new(1.0, color));
+    let clip = Rect::from_x_y_ranges(across, ui.clip_rect().y_range());
+    let p = egui::Painter::new(ui.ctx().clone(), ui.layer_id(), clip);
+    p.hline(across, y, Stroke::new(1.0, color));
 }
 
 /// A safety level's `glyph` of `size` in `color`, in the first of the title's and the data's

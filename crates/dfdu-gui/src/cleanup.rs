@@ -15,7 +15,7 @@ use dfdu_rules::CategoryIx;
 use dfdu_session::SessionState;
 use dfdu_session::actions::{Action, first_key};
 use dfdu_session::cleanup::{self, Intent as Ask, Item, Row};
-use dfdu_session::format::{count, human};
+use dfdu_session::format::{count, human, plural};
 use dfdu_session::palette::Token;
 use dfdu_tree::{Safety, now_secs};
 use egui::{Align, Label, Layout, Sense, Ui, vec2};
@@ -125,10 +125,11 @@ fn summary(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>
         .collect();
     let ticked_size: u64 = ticked.iter().map(|it| it.size).sum();
     let line = format!(
-        "{} ticked ({}) of {} items · {} found",
+        "{} ticked ({}) of {} item{} · {} found",
         count(ticked.len() as u64),
         human(ticked_size),
         count(items.len() as u64),
+        plural(items.len() as u64),
         human(found)
     );
     review::summary(ui, colors, (&human(suggested), "suggested"), &line, |ui| {
@@ -188,6 +189,7 @@ fn table(
     out: &mut Vec<Intent>,
 ) {
     list::whole_rows(ui);
+    let across = ui.available_rect_before_wrap().x_range();
     let category = ui.available_width() > 720.0;
     let mut table = TableBuilder::new(ui)
         .id_salt("dfdu-cleanup")
@@ -216,7 +218,9 @@ fn table(
             row.set_selected(i == cursor);
             let ink = Ink::new(colors, i == cursor);
             let tick = match rows[i] {
-                Row::Section(safety) => section(&mut row, s, colors, &ink, safety, i, out),
+                Row::Section(safety) => {
+                    section(&mut row, s, colors, &ink, (safety, across), i, out)
+                }
                 Row::Group { cat, safety } => {
                     group(&mut row, s, colors, &ink, (cat, safety), i, out)
                 }
@@ -332,7 +336,7 @@ fn section(
     s: &SessionState,
     colors: &Colors,
     ink: &Ink,
-    safety: Safety,
+    (safety, across): (Safety, egui::Rangef),
     i: usize,
     out: &mut Vec<Intent>,
 ) -> Tick {
@@ -342,7 +346,6 @@ fn section(
     let color = ink.of(colors.fg(token));
     let dim = ink.of(colors.fg(Token::FgDim));
     list::cell(row, &COLUMNS, |ui| {
-        review::rule_under(ui, colors.fg(Token::Border));
         opener(ui, s, colors, ink, Row::Section(safety), tick, i, out);
     });
     list::cell(row, &COLUMNS, |ui| {
@@ -368,6 +371,8 @@ fn section(
             ui,
             kit::sans(format!("{} {what}", count(n)), 12.0).color(dim),
         );
+        // From the last cell, over the row's fill.
+        review::rule_under(ui, across, colors.fg(Token::Border));
     });
     tick
 }
