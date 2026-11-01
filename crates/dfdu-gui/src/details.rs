@@ -209,7 +209,7 @@ fn largest(ui: &mut Ui, f: &Facts, colors: &Colors) {
                     ui.label(human(k.size));
                     let name = format!("{}{}", k.name, if k.is_dir { "/" } else { "" });
                     let token = if k.is_dir { Token::Dir } else { Token::Fg };
-                    ui.add(Label::new(colors.text(name, token)).truncate());
+                    ui.label(colors.text(name, token));
                     ui.end_row();
                 }
             });
