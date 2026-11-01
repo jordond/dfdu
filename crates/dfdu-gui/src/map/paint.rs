@@ -1,83 +1,56 @@
-//! Painting the tiles: each filled with a tint of the colour its colouring gives it (its
-//! category, age band or top folder, `dfdu_session::treemap::base`), deeper tiles more strongly
-//! tinted, a tile with room for a label under a header row with its name, and its size below;
-//! cleanup candidates hatched. The selected tile has its header in the focus colour and an
-//! edge; the one under the pointer a thin edge. Labels take black or white, whichever reads
-//! better on their fill.
+//! Painting the tiles, after the Terminal design: each a rounded rectangle with a gutter round
+//! it. A leaf is filled with the colour its colouring gives it (its category, age band or top
+//! folder, `dfdu_session::treemap::base`) with its name and size on it in `on.tile`; a tile
+//! with its children inside is raised, with a header row for its name and size above them; the
+//! tile of the entries merged for being small is an empty bar's colour with their count.
+//! Cleanup candidates are hatched with dark diagonal lines. The selected tile has a focus
+//! outline just outside it; the one under the pointer a thin edge.
 
 use std::sync::Arc;
 
 use dfdu_session::SessionState;
 use dfdu_session::format::{count, human};
 use dfdu_session::palette::{Category, Token};
-use dfdu_session::treemap::{self as map, AGES, ColorBy, Tile, TileTree};
+use dfdu_session::treemap::{self as map, Tile, TileTree};
 use egui::text::{Galley, LayoutJob, TextFormat, TextWrapping};
-use egui::{Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{
+    Color32, CornerRadius, FontFamily, FontId, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2,
+    vec2,
+};
 
-use super::{PAD, rect_of};
+use super::rect_of;
 use crate::theme::Colors;
+use crate::theme::style::{RADIUS_SM, SANS_SEMIBOLD_FAMILY};
 
-/// Half the seam between neighbouring tiles.
-const SEAM: f32 = 0.5;
-/// Rounding of a tile's corners.
-const RADIUS: u8 = 2;
-/// Room between the lines of hatching.
-const HATCH: f32 = 7.0;
-/// How much of the ground a body takes on a dark background, by depth: deeper tiles show more
-/// of their hue.
-const DARK_BODY: [f32; 4] = [0.74, 0.68, 0.62, 0.56];
-/// How much of the ground a body takes on a light background, by depth.
-const LIGHT_BODY: [f32; 4] = [0.6, 0.5, 0.4, 0.3];
-/// How much of the ground a header row takes on a dark background, and how far it goes
-/// towards black on a light one: the hue at its strongest.
-const DARK_HEADER: f32 = 0.56;
-const LIGHT_HEADER: f32 = 0.15;
-/// A name is cut with an ellipsis only where this many text rows fit across; otherwise it is
-/// left out rather than cut to a stub.
-const CUT_NAME_MIN: f32 = 4.0;
+/// Half the gutter between neighbouring tiles: each tile gives up this much on every side.
+pub const HALF_GUTTER: f32 = 2.0;
+/// The header row of a tile with its children inside.
+pub const HEADER: f32 = 18.0;
+/// How far a tile's children sit inside it, below its header and from its other edges.
+pub const INSET: f32 = 3.0;
+/// Room between a tile's edge and its text.
+const PAD: f32 = 5.0;
+/// A leaf with room for its name, and with room for its size below it, across and down.
+const NAME_MIN: Vec2 = vec2(36.0, 18.0);
+const SIZE_MIN: Vec2 = vec2(64.0, 34.0);
+/// Text narrower than this is left out rather than cut to a stub.
+const TEXT_MIN: f32 = 18.0;
+/// Hatching: lines this thick, this far apart across them, in black at a fifth.
+const HATCH_WIDTH: f32 = 2.0;
+const HATCH_GAP: f32 = 6.0;
+const HATCH_INK: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 51);
+/// The side of the legend's hatched square.
+const SWATCH: f32 = 10.0;
 
-/// `a` moved the fraction `t` of the way to `b`, channel by channel.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "a mix of two channels stays within 0..=255"
-)]
-fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let ch = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Color32::from_rgb(ch(a.r(), b.r()), ch(a.g(), b.g()), ch(a.b(), b.b()))
+/// The rectangle tile `tile` is painted in: its place less the gutter.
+pub fn painted(tile: &Tile) -> Rect {
+    rect_of(tile.rect).shrink(HALF_GUTTER)
 }
 
-/// The label colour on `fill`: black or white, whichever contrasts more (WCAG).
-fn ink(fill: Color32) -> Color32 {
-    let c = egui::Rgba::from(fill);
-    let l = 0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b();
-    if 1.05 / (l + 0.05) >= (l + 0.05) / 0.05 {
-        Color32::WHITE
-    } else {
-        Color32::BLACK
-    }
-}
-
-/// The tints of the theme shown: dark ones on a dark background, light ones on a light one.
-#[derive(Copy, Clone, Debug)]
-struct Shades {
-    dark: bool,
-    ground: Color32,
-}
-
-impl Shades {
-    fn header(self, base: Color32) -> Color32 {
-        if self.dark {
-            mix(base, self.ground, DARK_HEADER)
-        } else {
-            mix(base, Color32::BLACK, LIGHT_HEADER)
-        }
-    }
-
-    fn body(self, base: Color32, level: u8) -> Color32 {
-        let by = if self.dark { DARK_BODY } else { LIGHT_BODY };
-        mix(base, self.ground, by[usize::from(level).min(by.len() - 1)])
-    }
+/// What a leaf painted at `size` has room for: its name, and its size below the name.
+pub fn labels(size: Vec2) -> (bool, bool) {
+    let name = size.x >= NAME_MIN.x && size.y >= NAME_MIN.y;
+    (name, name && size.x >= SIZE_MIN.x && size.y >= SIZE_MIN.y)
 }
 
 /// What paints the tiles of one frame.
@@ -86,25 +59,19 @@ pub struct Painter<'a> {
     colors: &'a Colors,
     /// The selected top-level tile.
     sel: Option<usize>,
-    shades: Shades,
-    font: FontId,
-    line: f32,
+    name: FontId,
+    mono: FontId,
     today: i64,
 }
 
 impl<'a> Painter<'a> {
-    pub fn new(ui: &Ui, s: &'a SessionState, colors: &'a Colors, sel: Option<usize>) -> Self {
-        let v = ui.visuals();
+    pub fn new(s: &'a SessionState, colors: &'a Colors, sel: Option<usize>) -> Self {
         Painter {
             s,
             colors,
             sel,
-            shades: Shades {
-                dark: v.dark_mode,
-                ground: v.panel_fill,
-            },
-            font: egui::TextStyle::Body.resolve(ui.style()),
-            line: ui.text_style_height(&egui::TextStyle::Body),
+            name: FontId::new(11.0, FontFamily::Name(SANS_SEMIBOLD_FAMILY.into())),
+            mono: FontId::new(11.0, FontFamily::Monospace),
             today: dfdu_tree::now_secs(),
         }
     }
@@ -114,185 +81,190 @@ impl<'a> Painter<'a> {
         map::base(self.s, tiles, i, self.today)
     }
 
-    /// `text` in `color`, as one line no wider than `room`: whole, or when `cut` and there is
-    /// room for it, cut with an ellipsis; `None` when it does not fit.
-    fn line_of(
+    /// `text` in `font` and `color` as one line no wider than `room`, cut with an ellipsis when
+    /// `cut`; `None` when it does not fit, or there is too little room for more than a stub.
+    fn line(
         &self,
         ui: &Ui,
         text: String,
+        font: &FontId,
         color: Color32,
         room: f32,
         cut: bool,
     ) -> Option<Arc<Galley>> {
-        let mut job = LayoutJob::single_section(text, TextFormat::simple(self.font.clone(), color));
-        let cut = cut && room >= self.line * CUT_NAME_MIN;
+        if room < TEXT_MIN {
+            return None;
+        }
+        let mut job = LayoutJob::single_section(text, TextFormat::simple(font.clone(), color));
         if cut {
             job.wrap = TextWrapping::truncate_at_width(room);
         }
         let g = ui.painter().layout_job(job);
-        // A cut line fits by its cut; the tile's clip keeps the ellipsis inside.
         (cut || g.size().x <= room).then_some(g)
     }
 
     /// Paints tile `i` of `tiles`.
     pub fn tile(&self, ui: &Ui, tiles: &[Tile], i: usize) {
         let tile = &tiles[i];
-        let r = rect_of(tile.rect).shrink(SEAM);
+        let r = painted(tile);
         if r.width() <= 0.0 || r.height() <= 0.0 {
             return;
         }
         let p = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
-        let base = self.colors_of(tiles, i);
-        let room = r.width() - 2.0 * PAD;
-        let at = r.min + vec2(PAD, PAD);
         if tile.small > 0 {
-            let fill = self.shades.body(base, 3);
-            p.rect_filled(r, RADIUS, fill);
-            let text = format!("{} more · {}", count(tile.small), human(tile.size));
-            if tile.room.label
-                && let Some(g) = self.line_of(ui, text, ink(fill), room, false)
-            {
-                p.galley(at, g, ink(fill));
-            }
-            return;
+            self.fold(ui, &p, tile, r);
+        } else if tile.nested {
+            self.parent(ui, &p, tile, r);
+        } else {
+            self.leaf(ui, &p, tiles, i, r);
         }
-        let top_level = tile.level == 0 && tile.entry.is_some();
-        let selected = top_level && self.sel == Some(tile.top);
-        let body = self.shades.body(base, tile.level);
-        p.rect_filled(r, RADIUS, body);
-        let mut free = r.min.y;
-        if tile.room.label {
-            let head = Rect::from_min_size(r.min, vec2(r.width(), self.line + 2.0 * PAD));
-            let fill = if selected {
-                self.colors.fg(Token::BorderFocus)
-            } else {
-                self.shades.header(base)
-            };
-            let corners = CornerRadius {
-                nw: RADIUS,
-                ne: RADIUS,
-                sw: 0,
-                se: 0,
-            };
-            p.rect_filled(head.intersect(r), corners, fill);
-            let marked = tile
-                .entry
-                .is_some_and(|(node, _)| self.s.marks.contains(node));
-            let name_room = if marked { room - self.line } else { room };
-            if marked {
-                let c = pos2(head.max.x - PAD - self.line / 2.0, head.center().y);
-                p.circle_filled(c, self.line * 0.25, self.colors.fg(Token::Mark));
-            }
-            let name = super::name_of(tile);
-            let sizes = self.sizes(tile);
-            let one_line = tile
-                .nested
-                .then(|| format!("{name}  {}", sizes[0]))
-                .and_then(|t| self.line_of(ui, t, ink(fill), name_room, false));
-            if let Some(g) = one_line.or_else(|| self.line_of(ui, name, ink(fill), name_room, true))
-            {
-                p.galley(at, g, ink(fill));
-            }
-            free = head.max.y;
-            if !tile.nested && r.max.y - free >= self.line + PAD {
-                let size =
-                    (sizes.into_iter()).find_map(|t| self.line_of(ui, t, ink(body), room, false));
-                if let Some(g) = size {
-                    p.galley(pos2(at.x, free + 1.0), g, ink(body));
-                    free += self.line + 1.0;
-                }
-                if r.max.y - free >= self.line + PAD
-                    && let Some(text) = third_line(self.s, tile, self.today)
-                    && let Some(g) =
-                        self.line_of(ui, text, ink(body).gamma_multiply(0.7), room, false)
-                {
-                    p.galley(pos2(at.x, free + 1.0), g, ink(body));
-                    free += self.line + 1.0;
-                }
-            }
-        }
+    }
+
+    /// A leaf: filled in its colour, hatched when a cleanup candidate, its name and size on it.
+    fn leaf(&self, ui: &Ui, p: &egui::Painter, tiles: &[Tile], i: usize, r: Rect) {
+        let tile = &tiles[i];
+        let fill = self.colors.fg(self.base(tiles, i).0);
+        p.rect_filled(r, CornerRadius::same(RADIUS_SM), fill);
         if tile.candidate() {
-            let below = Rect::from_min_max(pos2(r.min.x, free), r.max);
-            hatch(&p, below, Stroke::new(1.0, base.gamma_multiply(0.6)));
+            hatch(p, r);
+        }
+        let marked = self.marked(tile);
+        if marked {
+            self.mark(p, pos2(r.max.x - PAD - 3.0, r.min.y + PAD + 2.0));
+        }
+        let (name, size) = labels(r.size());
+        let ink = self.colors.chrome.on_tile;
+        let room = r.width() - 2.0 * PAD - if marked { 10.0 } else { 0.0 };
+        let mut y = r.min.y + 3.0;
+        if name && let Some(g) = self.line(ui, super::name_of(tile), &self.name, ink, room, true) {
+            y += g.size().y;
+            p.galley(pos2(r.min.x + PAD, r.min.y + 3.0), g, ink);
+        }
+        if size {
+            let text = human(tile.live_size(self.s));
+            let room = r.width() - 2.0 * PAD;
+            if let Some(g) = self.line(ui, text, &self.mono, ink, room, false) {
+                p.galley(pos2(r.min.x + PAD, y + 1.0), g, ink);
+            }
         }
     }
 
-    /// The colour tile `i` takes, from its token.
-    fn colors_of(&self, tiles: &[Tile], i: usize) -> Color32 {
-        self.colors.fg(self.base(tiles, i).0)
+    /// A tile with its children inside: raised, its name and size in a header row above them.
+    fn parent(&self, ui: &Ui, p: &egui::Painter, tile: &Tile, r: Rect) {
+        let c = &self.colors.chrome;
+        p.rect_filled(r, CornerRadius::same(RADIUS_SM), c.raised);
+        let head = Rect::from_min_size(r.min, vec2(r.width(), HEADER));
+        let mut right = head.max.x - PAD;
+        if self.marked(tile) {
+            self.mark(p, pos2(right - 3.0, head.center().y));
+            right -= 10.0;
+        }
+        let dim = self.colors.fg(Token::FgDim);
+        let size = human(tile.live_size(self.s));
+        let size = self.line(ui, size, &self.mono, dim, right - head.min.x - PAD, false);
+        let name_room = |taken: f32| right - taken - head.min.x - PAD;
+        // The size goes on the right only when the name keeps room beside it.
+        let size = size.filter(|g| name_room(g.size().x + 8.0) >= 3.0 * TEXT_MIN);
+        if let Some(g) = &size {
+            let at = pos2(right - g.size().x, head.center().y - g.size().y / 2.0);
+            p.galley(at, g.clone(), dim);
+            right -= g.size().x + 8.0;
+        }
+        let header = self.colors.fg(Token::Header);
+        let room = right - head.min.x - PAD;
+        if let Some(g) = self.line(ui, super::name_of(tile), &self.name, header, room, true) {
+            let at = pos2(head.min.x + PAD, head.center().y - g.size().y / 2.0);
+            p.galley(at, g, header);
+        }
     }
 
-    /// A tile's size with its share of what it is in, and the size alone for when that does
-    /// not fit: a cut size would read as another number.
-    fn sizes(&self, tile: &Tile) -> [String; 2] {
-        let size = tile.live_size(self.s);
-        let human = human(size);
-        let share = (size.saturating_mul(100))
-            .checked_div(tile.whole(self.s))
-            .map_or(String::new(), |p| format!("  {p}%"));
-        [format!("{human}{share}"), human]
+    /// The tile of the entries merged for being small: how many, and their size below.
+    fn fold(&self, ui: &Ui, p: &egui::Painter, tile: &Tile, r: Rect) {
+        p.rect_filled(
+            r,
+            CornerRadius::same(RADIUS_SM),
+            self.colors.fg(Token::BarEmpty),
+        );
+        let fg = self.colors.fg(Token::Fg);
+        let room = r.width() - 2.0 * PAD;
+        let (name, size) = labels(r.size());
+        let more = format!("+{}", count(tile.small));
+        let Some(g) = self
+            .line(ui, more, &self.mono, fg, room, false)
+            .filter(|_| name)
+        else {
+            return;
+        };
+        let y = r.min.y + 3.0 + g.size().y;
+        p.galley(pos2(r.min.x + PAD, r.min.y + 3.0), g, fg);
+        if size && let Some(g) = self.line(ui, human(tile.size), &self.mono, fg, room, false) {
+            p.galley(pos2(r.min.x + PAD, y + 1.0), g, fg);
+        }
     }
 
-    /// The edge of the selected top-level tile of `tree`.
+    /// The tile is a top-level one whose row is marked.
+    fn marked(&self, tile: &Tile) -> bool {
+        tile.level == 0
+            && tile
+                .entry
+                .is_some_and(|(node, _)| self.s.marks.contains(node))
+    }
+
+    /// The dot of a marked tile, centred on `at`.
+    fn mark(&self, p: &egui::Painter, at: egui::Pos2) {
+        p.circle(
+            at,
+            3.0,
+            self.colors.fg(Token::Mark),
+            Stroke::new(1.0, self.colors.chrome.on_tile),
+        );
+    }
+
+    /// The focus outline of the selected top-level tile of `tree`, just outside it.
     pub fn outline_selected(&self, ui: &Ui, tree: &TileTree) {
         let Some(top) = self.sel else { return };
-        let r = rect_of(tree.tiles[tree.tops[top]].rect).shrink(SEAM);
+        let r = painted(&tree.tiles[tree.tops[top]]).expand(1.0);
         let stroke = Stroke::new(2.0, self.colors.fg(Token::BorderFocus));
-        (ui.painter()).rect_stroke(r, RADIUS, stroke, StrokeKind::Inside);
+        let radius = CornerRadius::same(RADIUS_SM + 1);
+        (ui.painter()).rect_stroke(r, radius, stroke, StrokeKind::Outside);
     }
 
     /// The thin edge of the top-level tile under the pointer.
     pub fn outline_hovered(&self, ui: &Ui, tile: &Tile) {
-        let r = rect_of(tile.rect).shrink(SEAM);
-        let stroke = Stroke::new(1.0, self.colors.fg(Token::Fg));
-        (ui.painter()).rect_stroke(r, RADIUS, stroke, StrokeKind::Inside);
-    }
-
-    /// A square of the legend in `color`, hatched for cleanup candidates.
-    pub fn swatch(&self, ui: &mut Ui, color: Color32, hatched: bool) {
-        let side = self.line * 0.8;
-        let (r, _) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
-        let p = ui.painter().with_clip_rect(r);
-        if hatched {
-            p.rect_filled(r, RADIUS, self.shades.body(color, 0));
-            hatch(&p, r, Stroke::new(1.0, color));
-        } else {
-            p.rect_filled(r, RADIUS, color);
-        }
+        let stroke = Stroke::new(1.0, self.colors.fg(Token::Fg).gamma_multiply(0.7));
+        let radius = CornerRadius::same(RADIUS_SM);
+        (ui.painter()).rect_stroke(painted(tile), radius, stroke, StrokeKind::Inside);
     }
 }
 
-/// Diagonal lines across `r` in `stroke`, clipped to it.
-fn hatch(p: &egui::Painter, r: Rect, stroke: Stroke) {
+/// The legend's square for cleanup candidates: hatched.
+pub fn candidate_swatch(ui: &mut Ui, colors: &Colors) {
+    let (r, _) = ui.allocate_exact_size(vec2(SWATCH, SWATCH), Sense::hover());
+    let p = ui.painter().with_clip_rect(r);
+    p.rect_filled(r, CornerRadius::same(2), colors.fg(Token::FgDim));
+    hatch(&p, r);
+}
+
+/// The horizontal step between hatching lines `gap` apart across them, at 45 degrees.
+fn hatch_step(gap: f32) -> f32 {
+    gap * std::f32::consts::SQRT_2
+}
+
+/// Dark diagonal lines across `r`, rising to the right, clipped to it.
+fn hatch(p: &egui::Painter, r: Rect) {
     if r.height() <= 0.0 || r.width() <= 0.0 {
         return;
     }
     let p = p.with_clip_rect(p.clip_rect().intersect(r));
+    let stroke = Stroke::new(HATCH_WIDTH, HATCH_INK);
     let h = r.height();
     let mut d = -h;
     while d < r.width() {
-        let from = pos2(r.min.x + d, r.max.y);
-        let to = pos2(r.min.x + d + h, r.min.y);
-        p.line_segment([from, to], stroke);
-        d += HATCH;
-    }
-}
-
-/// The third line of a leaf tile: its age band, or its own match's category and safety.
-pub fn third_line(s: &SessionState, tile: &Tile, today: i64) -> Option<String> {
-    if tile.small > 0 {
-        return None;
-    }
-    match map::color_shown(s) {
-        ColorBy::Age => Some(format!("age: {}", AGES[map::age_band(tile.mtime, today)].1)),
-        ColorBy::Category => {
-            let (rules, tag) = (s.snap.rules.as_ref()?, tile.tag?);
-            (!tag.inherited).then(|| {
-                let safety = tag.class.safety.as_str();
-                format!("{} · {safety}", tag.category(rules).0)
-            })
-        }
-        ColorBy::Folder => None,
+        p.line_segment(
+            [pos2(r.min.x + d, r.max.y), pos2(r.min.x + d + h, r.min.y)],
+            stroke,
+        );
+        d += hatch_step(HATCH_GAP);
     }
 }
 
@@ -315,13 +287,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn labels_read_on_their_fill_and_tints_mix_towards_the_ground() {
-        assert_eq!(ink(Color32::from_rgb(0x10, 0x12, 0x16)), Color32::WHITE);
-        assert_eq!(ink(Color32::from_rgb(0xf0, 0xe0, 0xa0)), Color32::BLACK);
-        let (base, ground) = (Color32::from_rgb(200, 100, 0), Color32::from_rgb(0, 0, 0));
-        assert_eq!(mix(base, ground, 0.5), Color32::from_rgb(100, 50, 0));
-        let dark = Shades { dark: true, ground };
-        assert_ne!(dark.body(base, 0), dark.body(base, 3), "depth shows");
+    fn a_leaf_names_itself_then_gives_its_size_as_room_allows() {
+        assert_eq!(labels(vec2(30.0, 40.0)), (false, false), "too narrow");
+        assert_eq!(labels(vec2(36.0, 18.0)), (true, false), "a name");
+        assert_eq!(labels(vec2(63.0, 60.0)), (true, false), "no room across");
+        assert_eq!(labels(vec2(64.0, 34.0)), (true, true), "a name and a size");
         assert_eq!(category_name(Category::Build), "build");
+    }
+
+    #[test]
+    fn hatching_lines_are_their_gap_apart_across_them() {
+        let across = hatch_step(HATCH_GAP) / std::f32::consts::SQRT_2;
+        assert!((across - HATCH_GAP).abs() < 1e-4);
     }
 }
