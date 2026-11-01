@@ -413,14 +413,14 @@ pub fn apply(s: &mut SessionState, marked: &Marked) {
 /// filter, without the rows tree mode opens below them), and says how many changed. The "shared
 /// between entries" row is not an entry, and directories are left out while a type filter
 /// shows only some of their files. A read-only browser changes nothing, as [`add`] does, and
-/// the other views leave the list's rows alone, as the range mark does. `list_shown`: the
-/// list's rows are drawn.
-pub fn invert(s: &mut SessionState, list_shown: bool) {
+/// the other views leave the list's rows alone, as the range mark does
+/// ([`SessionState::list_shown`]).
+pub fn invert(s: &mut SessionState) {
     if s.read_only {
         s.status = Some(READ_ONLY.into());
         return;
     }
-    if !list_shown {
+    if !s.list_shown() {
         let list = first_key(Action::ViewFiles);
         s.status = Some(format!("marks are inverted in Files ({list})"));
         return;

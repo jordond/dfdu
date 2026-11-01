@@ -1,6 +1,6 @@
-//! The marks pane's state: its cursor over the marks, and the estimate of what deleting them
-//! would free ([`Command::Estimate`]), asked for when the pane opens and again after each change
-//! of the marks ([`ask`]). Whether it is shown is the front end's.
+//! The marks pane's state: whether it is open, its cursor over the marks, and the estimate of
+//! what deleting them would free ([`Command::Estimate`]), asked for when the pane opens and
+//! again after each change of the marks ([`ask`]). It opens in the place of the details pane.
 
 use dfdu_engine::{Command, Estimate};
 use dfdu_tree::NodeRef;
@@ -10,6 +10,8 @@ use crate::state::SessionState;
 
 #[derive(Clone, Debug, Default)]
 pub struct MarksPane {
+    /// The pane is open, in the place of the details pane, with the focus.
+    pub open: bool,
     /// The selected item, an index into the marks.
     pub cursor: usize,
     /// The id of the last estimate asked for, and the outermost marks it was asked for.
@@ -19,8 +21,16 @@ pub struct MarksPane {
 
 /// The pane opens on the first item and asks what the marks would free.
 pub fn open(s: &mut SessionState) -> Vec<Effect> {
-    s.marks_pane = MarksPane::default();
+    s.marks_pane = MarksPane {
+        open: true,
+        ..MarksPane::default()
+    };
     ask(s)
+}
+
+/// Closes the pane; false when it was not open.
+pub fn close(s: &mut SessionState) -> bool {
+    std::mem::replace(&mut s.marks_pane.open, false)
 }
 
 /// The marked nodes a delete would send: the outermost marks.
@@ -85,6 +95,7 @@ mod tests {
                 .collect(),
         );
         assert!(open(&mut s).is_empty(), "nothing marked, nothing to ask");
+        assert!(s.marks_pane.open);
         for _ in 0..3 {
             crate::marks::toggle(&mut s);
         }
@@ -104,5 +115,7 @@ mod tests {
             &ask(&mut s)[..],
             [Effect::Send(Command::Estimate { id: 2, .. })]
         ));
+        assert!(close(&mut s) && !s.marks_pane.open);
+        assert!(!close(&mut s), "closed already");
     }
 }

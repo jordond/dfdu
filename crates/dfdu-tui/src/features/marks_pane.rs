@@ -6,8 +6,8 @@
 //! marked, as in the list.
 //!
 //! What it would free is the engine's estimate (`Command::Estimate`), asked for when the pane
-//! opens and again after each key that changes the marks. The cursor and the estimate are the
-//! session's (`dfdu_session::marks::pane`); whether the pane is open and its scroll stay here.
+//! opens and again after each key that changes the marks. Whether it is open, the cursor and
+//! the estimate are the session's (`dfdu_session::marks::pane`); its scroll stays here.
 
 use dfdu_session::marks::pane as session;
 use ratatui::Frame;
@@ -28,32 +28,28 @@ const HEAD: usize = 3;
 /// Cells of the size column.
 const SIZE: usize = 10;
 
-/// What only the terminal keeps of the pane: whether it is open, and its scroll.
+/// What only the terminal keeps of the pane: its scroll.
 #[derive(Clone, Debug, Default)]
 pub struct MarksPane {
-    open: bool,
     /// First item shown.
     scroll: usize,
 }
 
 /// True while the pane is open. It is open only with the focus.
 pub fn is_open(app: &App) -> bool {
-    app.marks_pane.open
+    app.session.marks_pane.open
 }
 
 /// Opens the pane with the focus, on the first item, and asks what the marks would free. The
 /// caller takes the focus from the details pane.
 pub fn show(app: &mut App) -> Vec<Effect> {
-    app.marks_pane = MarksPane {
-        open: true,
-        ..MarksPane::default()
-    };
+    app.marks_pane = MarksPane::default();
     session::open(&mut app.session)
 }
 
 /// Closes the pane, which gives the focus back to the list; false when it was not open.
 pub fn close(app: &mut App) -> bool {
-    std::mem::replace(&mut app.marks_pane.open, false)
+    session::close(&mut app.session)
 }
 
 /// Items one page moves.

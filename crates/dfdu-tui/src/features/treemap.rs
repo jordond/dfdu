@@ -41,19 +41,13 @@ const MIN_CELLS: f64 = 18.0;
 /// A second click on the same tile within this long zooms into it.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-/// What only the terminal shows of the view: whether it had room, the tiles laid out in cells,
-/// and the last click.
+/// What only the terminal shows of the view: the tiles laid out in cells, and the last click.
+/// Whether the last frame had room for it is the session's viewport
+/// ([`SessionState::map_drawn`](dfdu_session::SessionState::map_drawn)).
 #[derive(Clone, Debug, Default)]
 pub struct Treemap {
-    /// The last frame drew the treemap (the view is on and the terminal is large enough).
-    pub shown: bool,
     layout: Option<Layout>,
     last_click: Option<(Instant, NodeRef)>,
-}
-
-/// The view is the treemap (otherwise the list), also while the terminal is too small for it.
-pub fn on(app: &App) -> bool {
-    dfdu_session::treemap::on(&app.session)
 }
 
 /// What a read of the levels below is for ([`dfdu_session::treemap::key_of`]).
@@ -68,7 +62,7 @@ fn color_shown(app: &App) -> ColorBy {
 
 /// True when keys and the mouse act on the treemap: it is on and was drawn last frame.
 pub fn active(app: &App) -> bool {
-    on(app) && app.treemap.shown
+    app.session.map_drawn()
 }
 
 /// The view was opened ([`views::switch`]): a click before it does not count towards a double

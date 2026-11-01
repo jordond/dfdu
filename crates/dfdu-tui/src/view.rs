@@ -86,13 +86,14 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         .unwrap_or(u64::MAX);
 
     // The header names the treemap's colouring and depth while it is shown.
-    app.treemap.shown = view == View::Map && treemap::fits(area);
+    let map = view == View::Map && treemap::fits(area);
+    app.session.set_map_drawn(map);
     header::draw(f, app, header, now, frame);
     match view {
         View::Largest => crate::features::largest::draw(f, app, list),
         View::Duplicates => crate::features::dupes::draw(f, app, list),
         View::Cleanup => crate::features::cleanup::draw(f, app, list),
-        View::Map if app.treemap.shown => treemap::draw(f, app, list, now),
+        View::Map if map => treemap::draw(f, app, list, now),
         View::Map | View::Files => list::draw(f, app, column_names, list, now, frame),
     }
     if stalled_line > 0 {

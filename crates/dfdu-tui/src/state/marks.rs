@@ -1,6 +1,5 @@
 //! Marked entries (`dfdu_session::marks`), read with the app: the marks' functions on the app's
-//! session, with whether the view shown draws the list's rows. `v` marks a range as the cursor
-//! moves ([`range`]).
+//! session. `v` marks a range as the cursor moves ([`range`]).
 
 use crate::app::App;
 use crate::model::snapshot::EntryData;
@@ -39,8 +38,7 @@ pub fn summary(app: &App) -> Option<String> {
 
 /// `*`: inverts the marks of the current directory's entries as the list shows them.
 pub fn invert(app: &mut App) {
-    let list = crate::app::views::list_shown(app);
-    dfdu_session::marks::invert(&mut app.session, list);
+    dfdu_session::marks::invert(&mut app.session);
 }
 
 #[cfg(test)]

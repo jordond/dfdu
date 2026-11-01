@@ -2,27 +2,27 @@
 //! in the list is marked. `v` again or `Esc` ends it, and so does leaving the directory or the
 //! list. A read-only browser does not start one, as nothing marked could be deleted.
 //!
-//! It works only while the front end draws the list's rows (`list`).
+//! It works only while the front end draws the list's rows ([`SessionState::list_shown`]).
 
 use super::{add, item_of};
 use crate::actions::{Action, first_key};
 use crate::state::{READ_ONLY, SessionState};
 
 /// True while a range mark is on in the directory and view shown.
-pub fn on(s: &SessionState, list: bool) -> bool {
-    s.marks.range.as_ref() == Some(&s.snap.dir_path) && list
+pub fn on(s: &SessionState) -> bool {
+    s.marks.range.as_ref() == Some(&s.snap.dir_path) && s.list_shown()
 }
 
 /// `v`: starts a range mark at the selected row, which it marks, or ends the one that is on.
-pub fn toggle(s: &mut SessionState, list: bool) {
-    if end(s, list) {
+pub fn toggle(s: &mut SessionState) {
+    if end(s) {
         return;
     }
     if s.read_only {
         s.status = Some(READ_ONLY.into());
         return;
     }
-    if !list {
+    if !s.list_shown() {
         let files = first_key(Action::ViewFiles);
         s.status = Some(format!("a range is marked in Files ({files})"));
         return;
@@ -39,8 +39,8 @@ pub fn toggle(s: &mut SessionState, list: bool) {
 }
 
 /// Ends the range mark that is on; false when none was.
-pub fn end(s: &mut SessionState, list: bool) -> bool {
-    let was = on(s, list);
+pub fn end(s: &mut SessionState) -> bool {
+    let was = on(s);
     s.marks.range = None;
     if was {
         s.status = Some("range mark ended".into());
@@ -50,8 +50,8 @@ pub fn end(s: &mut SessionState, list: bool) -> bool {
 
 /// After a move of the cursor from row `before`: marks the rows from there to the row selected
 /// now, both included, while a range mark is on.
-pub fn follow(s: &mut SessionState, before: Option<usize>, list: bool) {
-    if !on(s, list) {
+pub fn follow(s: &mut SessionState, before: Option<usize>) {
+    if !on(s) {
         s.marks.range = None;
         return;
     }
@@ -88,10 +88,6 @@ mod tests {
     use crate::snapshot::{EntryData, test_entry};
     use crate::state::tests::{browser, marked_names};
 
-    /// Files, with the rows a flat list.
-    /// The list's rows are drawn.
-    const FILES: bool = true;
-
     /// A browser of `/r` with the directory `d0` (the largest), the files `f1` to `f4`, and the
     /// "shared between entries" row last.
     fn files() -> SessionState {
@@ -111,15 +107,15 @@ mod tests {
     fn move_to(s: &mut SessionState, to: usize) {
         let before = s.selected_index();
         s.move_to(to);
-        follow(s, before, FILES);
+        follow(s, before);
     }
 
     #[test]
     fn v_marks_the_rows_passed_until_it_ends() {
         let mut s = files();
         s.move_to(1);
-        toggle(&mut s, FILES);
-        assert!(on(&s, FILES));
+        toggle(&mut s);
+        assert!(on(&s));
         assert_eq!(marked_names(&s), ["f1"]);
         move_to(&mut s, 3);
         assert_eq!(marked_names(&s), ["f1", "f2", "f3"]);
@@ -130,26 +126,26 @@ mod tests {
         // Back up over rows marked already, and on past the start.
         move_to(&mut s, 0);
         assert_eq!(marked_names(&s), ["f1", "f2", "f3", "d0"]);
-        toggle(&mut s, FILES);
-        assert!(!on(&s, FILES));
+        toggle(&mut s);
+        assert!(!on(&s));
         assert_eq!(s.status.as_deref(), Some("range mark ended"));
         move_to(&mut s, 4);
         assert_eq!(s.marks.items().len(), 4, "moves after the end mark nothing");
-        assert!(!end(&mut s, FILES), "none to end");
+        assert!(!end(&mut s), "none to end");
     }
 
     #[test]
     fn rows_that_are_no_entries_or_folders_hidden_by_types_are_left_out() {
         let mut s = files();
         s.move_to(3);
-        toggle(&mut s, FILES);
+        toggle(&mut s);
         move_to(&mut s, 5);
         assert_eq!(marked_names(&s), ["f3", "f4"], "not the shared row");
-        end(&mut s, FILES);
+        end(&mut s);
         crate::marks::clear(&mut s);
         s.types = TypeFilter::parse("video").expect("types");
         s.move_to(0);
-        toggle(&mut s, FILES);
+        toggle(&mut s);
         move_to(&mut s, 1);
         assert_eq!(
             marked_names(&s),
@@ -162,13 +158,14 @@ mod tests {
     fn a_range_starts_only_where_the_list_is_shown_in_a_browser_that_deletes() {
         let mut s = files();
         s.read_only = true;
-        toggle(&mut s, FILES);
-        assert!(!on(&s, FILES));
+        toggle(&mut s);
+        assert!(!on(&s));
         assert_eq!(s.status.as_deref(), Some(READ_ONLY));
         s.read_only = false;
-        let map = false;
-        toggle(&mut s, map);
-        assert!(!on(&s, map));
+        s.view = crate::view::View::Map;
+        s.set_map_drawn(true);
+        toggle(&mut s);
+        assert!(!on(&s));
         assert_eq!(s.status.as_deref(), Some("a range is marked in Files (1)"));
         assert!(s.marks.is_empty());
     }

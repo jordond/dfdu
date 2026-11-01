@@ -1,34 +1,29 @@
-//! The range mark (`v`, `dfdu_session::marks::range`), with whether the view shown draws the
-//! list's rows.
+//! The range mark (`v`, `dfdu_session::marks::range`).
 
 use dfdu_session::marks::range;
 
 use crate::app::App;
-use crate::app::views::list_shown;
 
 /// True while a range mark is on in the directory and view shown.
 #[cfg(test)]
 pub(crate) fn on(app: &App) -> bool {
-    range::on(&app.session, list_shown(app))
+    range::on(&app.session)
 }
 
 /// `v`: starts a range mark at the selected row, which it marks, or ends the one that is on.
 pub fn toggle(app: &mut App) {
-    let list = list_shown(app);
-    range::toggle(&mut app.session, list);
+    range::toggle(&mut app.session);
 }
 
 /// Ends the range mark that is on; false when none was.
 pub fn end(app: &mut App) -> bool {
-    let list = list_shown(app);
-    range::end(&mut app.session, list)
+    range::end(&mut app.session)
 }
 
 /// After a move of the cursor from row `before`: marks the rows passed while a range mark is
 /// on.
 pub fn follow(app: &mut App, before: Option<usize>) {
-    let list = list_shown(app);
-    range::follow(&mut app.session, before, list);
+    range::follow(&mut app.session, before);
 }
 
 #[cfg(test)]
@@ -58,7 +53,7 @@ mod tests {
         app.session.read_only = false;
         crate::app::views::switch(&mut app, crate::app::views::View::Map);
         // As a frame with room for the map sets it.
-        app.treemap.shown = true;
+        app.session.set_map_drawn(true);
         toggle(&mut app);
         assert!(!on(&app));
         assert_eq!(

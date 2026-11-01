@@ -167,13 +167,13 @@ fn small_terminals_get_the_list() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     let frame = render(&mut app, t0, 59, 20);
-    assert!(!app.treemap.shown);
+    assert!(!app.session.viewport.map);
     assert!(!frame.contains("colour:"), "{frame}");
     // Arrows move the list rows then.
     app.key(press(KeyCode::Down), t0);
     assert_eq!(selected(&app), "mid");
     render(&mut app, t0, 60, 17);
-    assert!(app.treemap.shown);
+    assert!(app.session.viewport.map);
 }
 
 /// Every tile with a frame keeps its frame: no label runs over it, at any size.

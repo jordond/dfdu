@@ -103,7 +103,7 @@ pub struct SessionState {
     pub dupes: Dupes,
     /// The Largest view's files, cursor and last walk.
     pub largest: Largest,
-    /// The marks pane's cursor and the estimate it asked for.
+    /// Whether the marks pane is open, its cursor and the estimate it asked for.
     pub marks_pane: MarksPane,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,

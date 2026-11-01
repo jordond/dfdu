@@ -19,16 +19,6 @@ pub fn current(app: &App) -> View {
     app.session.current_view()
 }
 
-/// The list's rows are drawn, where the range mark and inverting the marks work: in Files, and
-/// in Map while the last frame had no room for the map.
-pub fn list_shown(app: &App) -> bool {
-    match current(app) {
-        View::Files => true,
-        View::Map => !treemap::active(app),
-        View::Cleanup | View::Duplicates | View::Largest => false,
-    }
-}
-
 /// Switches to `view`, and opens it: Largest walks again, Cleanup reads its matches again (and,
 /// switched to from another view, asks for the native sizes), and the map switched to from the
 /// tree opens on the directory the selected row is in. Cleanup without rules says so and
