@@ -82,6 +82,9 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           HOME: ${{ runner.temp }}/install-home
+          # The runners set XDG_CONFIG_HOME; empty, install.sh falls back to $HOME.
+          XDG_CONFIG_HOME: ""
+          XDG_DATA_HOME: ""
         run: |
           mkdir -p "$HOME"
           dash install.sh
