@@ -3,13 +3,13 @@
 //! (`launch`); without a directory the start screen (`start`) lists the disks. The window
 //! (`app`) shows the browser (`browser`): the toolbar (`toolbar`) with the tabs of the views,
 //! the list (`list`) with the menu of a row (`menu`), the map (`map`), the cleanup view with its
-//! native command pane (`cleanup`), the duplicates (`dupes`), the largest files (`largest`),
-//! the keys and ticks of the
-//! review views (`review`), the details panel (`details`), the action and status bars
-//! (`status_bar`), the delete dialog (`dialog`) and the error list and type picker (`windows`),
-//! coloured by the theme's tokens (`theme`), with the terminal's keys (`keys`). A thread asks
-//! for a frame when the engine's model changes (`bridge`). The theme chosen and how the list
-//! was shown are kept between runs (`settings`).
+//! native command pane (`cleanup`), the duplicates (`dupes`), the largest files (`largest`), the
+//! keys and ticks of the review views (`review`), the details panel (`details`), the action and
+//! status bars (`status_bar`), the delete dialog (`dialog`), the error list and type picker
+//! (`windows`), the help (`help`) and the command palette (`palette`), coloured by the theme's
+//! tokens (`theme`), with the terminal's keys (`keys`). A thread asks for a frame when the
+//! engine's model changes (`bridge`). The theme chosen and how the list was shown are kept
+//! between runs (`settings`).
 //!
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start.
 
@@ -21,12 +21,14 @@ mod cleanup;
 mod details;
 mod dialog;
 mod dupes;
+mod help;
 mod keys;
 mod largest;
 mod launch;
 mod list;
 mod map;
 mod menu;
+mod palette;
 mod review;
 mod settings;
 mod shot;

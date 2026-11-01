@@ -74,6 +74,20 @@ fn the_platform_shortcuts_trash_copy_and_filter() {
         action(&key(Key::F, Modifiers::COMMAND)),
         Some(Action::Filter)
     );
+    assert_eq!(
+        action(&key(Key::K, Modifiers::COMMAND)),
+        Some(Action::Palette)
+    );
+}
+
+#[test]
+fn the_help_and_the_palette_have_the_terminal_s_keys() {
+    assert_eq!(action(&text("?")), Some(Action::Help));
+    assert_eq!(action(&key(Key::F1, Modifiers::NONE)), Some(Action::Help));
+    assert_eq!(action(&text(":")), Some(Action::Palette));
+    assert_eq!(action(&key(Key::P, Modifiers::CTRL)), Some(Action::Palette));
+    assert_eq!(shown("← h Backspace <"), "Left h Backspace <");
+    assert_eq!(shown("↑ k"), "Up k");
 }
 
 #[test]
@@ -147,8 +161,8 @@ fn the_views_shown_and_the_map_keys_are_read() {
 }
 
 #[test]
-fn the_help_the_palette_and_quitting_are_left_out() {
-    for left_out in ["q", "?", ":", "c", "m", "u"] {
+fn quitting_and_the_terminal_s_own_keys_are_left_out() {
+    for left_out in ["q", "c", "m", "u"] {
         assert_eq!(action(&text(left_out)), None, "{left_out:?}");
     }
     assert_eq!(action(&key(Key::C, Modifiers::CTRL)), None);

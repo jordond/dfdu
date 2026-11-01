@@ -10,6 +10,9 @@ use dfdu_session::type_filter::Row;
 use dfdu_session::{cleanup, confirm, dupes, largest};
 use dfdu_tree::HostPath;
 
+use crate::help::Help;
+use crate::palette::Palette;
+
 /// What the user did in a frame, carried out once it is drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Intent {
@@ -62,6 +65,8 @@ pub enum Intent {
     Dupes(dupes::Intent),
     /// The comparison of duplicates that runs is stopped.
     DupesCancel,
+    /// Theme `i` of [`ViewState::themes`] chosen in the palette.
+    Theme(usize),
 }
 
 /// What the window keeps beside the session's state.
@@ -87,4 +92,12 @@ pub struct ViewState {
     pub undo_seen: Option<(u64, Instant)>,
     /// The map's tiles as the last frame laid them out.
     pub map: Option<TileTree>,
+    /// The command palette, while it is open.
+    pub palette: Option<Palette>,
+    /// The help, while it is open.
+    pub help: Option<Help>,
+    /// The names of the themes the palette offers, as the window lists them.
+    pub themes: Vec<String>,
+    /// The theme chosen in the palette, by its index in `themes`, for the window to apply.
+    pub theme_pick: Option<usize>,
 }

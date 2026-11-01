@@ -30,10 +30,12 @@ use dfdu_session::{
 };
 
 use crate::bridge::Bridge;
+use crate::help::Help;
+use crate::palette::Palette;
 use crate::theme::Colors;
 use crate::{
-    cleanup as cleanup_view, details, dialog, dupes as dupes_view, keys, largest as largest_view,
-    list, map, review, status_bar, toolbar, windows,
+    cleanup as cleanup_view, details, dialog, dupes as dupes_view, help, keys,
+    largest as largest_view, list, map, palette, review, status_bar, toolbar, windows,
 };
 
 mod state;
@@ -51,6 +53,9 @@ pub trait Browse {
     fn state(&self) -> &SessionState;
 
     fn state_mut(&mut self) -> &mut SessionState;
+
+    /// What the window keeps beside the session's state.
+    fn view_mut(&mut self) -> &mut ViewState;
 
     /// Stops the session and its engine ([`Session::shutdown`]).
     fn shutdown(self: Box<Self>);
@@ -193,6 +198,7 @@ impl<B: Backend> Browser<B> {
                     let acted = self.session.follow(then);
                     self.view().follow |= acted.went.is_some();
                 }
+                Intent::Theme(i) => self.view().theme_pick = Some(i),
                 Intent::DupesCancel => {
                     if dupes::cancel(s) {
                         s.status = Some("duplicates: the comparison was stopped".into());
@@ -246,7 +252,11 @@ impl<B: Backend> Browser<B> {
     fn act(&mut self, a: Action, now: Instant, ctx: &egui::Context) {
         if a == Action::Close {
             let view = self.view();
-            if view.errors.take().is_some() || view.types.take().is_some() {
+            if view.errors.take().is_some()
+                || view.types.take().is_some()
+                || view.help.take().is_some()
+                || view.palette.take().is_some()
+            {
                 return;
             }
         }
@@ -285,8 +295,9 @@ impl<B: Backend> Browser<B> {
         view.follow |= a.moves() || acted.entered.is_some() || acted.went.is_some();
     }
 
-    /// The actions the session leaves to the window: copying the selected path and the type
-    /// picker. The others (help, palette, columns...) are not offered in this version.
+    /// The actions the session leaves to the window: copying the selected path, the type
+    /// picker, the help and the command palette. The others (columns, quitting...) are not
+    /// offered in this version.
     fn front_end(&mut self, a: Action, ctx: &egui::Context) {
         match a {
             Action::CopyPath => {
@@ -306,6 +317,14 @@ impl<B: Backend> Browser<B> {
                     None => Some(String::new()),
                 };
             }
+            Action::Help => {
+                let view = self.view();
+                view.help = match view.help {
+                    Some(_) => None,
+                    None => Some(Help::new()),
+                };
+            }
+            Action::Palette => self.view().palette = Some(Palette::new()),
             _ => {}
         }
     }
@@ -430,6 +449,8 @@ impl<B: Backend> Browse for Browser<B> {
             .inner;
         windows::errors(&ctx, colors, view, &mut intents);
         windows::types(&ctx, s, colors, view, &mut intents);
+        help::show(&ctx, s.read_only, colors, view);
+        palette::show(&ctx, s.read_only, colors, view, &mut intents);
         cleanup_view::pane::show(&ctx, s, colors, &mut intents);
         dialog::show(&ctx, s, colors, view, &mut intents);
         let s = self.session.state_mut();
@@ -451,6 +472,10 @@ impl<B: Backend> Browse for Browser<B> {
 
     fn state_mut(&mut self) -> &mut SessionState {
         self.session.state_mut()
+    }
+
+    fn view_mut(&mut self) -> &mut ViewState {
+        self.view()
     }
 
     fn shutdown(self: Box<Self>) {

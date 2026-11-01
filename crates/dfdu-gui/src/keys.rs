@@ -5,7 +5,8 @@
 //! ([`OFFERED`]) are read, and in a read-only browser none that deletes or puts back.
 //!
 //! The platform's own shortcuts are read too: `Delete` moves to the Trash as `d` does, the
-//! system's copy shortcut copies the selected path and Cmd-F (Ctrl-F) opens the filter.
+//! system's copy shortcut copies the selected path, Cmd-F (Ctrl-F) opens the filter and Cmd-K
+//! (Ctrl-K) the command palette. The keys are shown with their arrows named ([`shown`]).
 //!
 //! While the map is drawn the arrows and `hjkl` move between its tiles ([`toward`]), as in the
 //! terminal.
@@ -19,8 +20,9 @@ use crate::browser::Intent;
 /// The actions the window offers: moving, opening, sorting, what the list shows, rescans, the
 /// filters, marks, the details, the error list, the selected path, deleting with its undo, and
 /// the views (`1` to `5`, `[` and `]`) with the map's depth and colours, Cleanup's levels,
-/// suggestions and native commands and the keep rule and comparison of Duplicates. The help
-/// and the command palette are left out of this version.
+/// suggestions and native commands, the keep rule and comparison of Duplicates, the help and
+/// the command palette. Quitting (the window's own), the list's columns, the debug overlay, the
+/// focus of panes, the mounts not scanned and mark by pattern are left out of this version.
 pub const OFFERED: &[Action] = &[
     Action::Up,
     Action::Down,
@@ -57,6 +59,8 @@ pub const OFFERED: &[Action] = &[
     Action::Types,
     Action::Details,
     Action::Errors,
+    Action::Help,
+    Action::Palette,
     Action::Close,
     Action::ViewFiles,
     Action::ViewMap,
@@ -105,6 +109,7 @@ fn binding(name: &str) -> Option<Binding> {
         "Backspace" => named(Key::Backspace),
         "Esc" => named(Key::Escape),
         "Space" => named(Key::Space),
+        "F1" => named(Key::F1),
         _ => {
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {
@@ -131,8 +136,29 @@ fn shortcut(event: &Event) -> Option<Action> {
             modifiers,
             ..
         } if modifiers.command_only() => Some(Action::Filter),
+        Event::Key {
+            key: Key::K,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command_only() => Some(Action::Palette),
         _ => None,
     }
+}
+
+/// The keys of the registry (`↑ k`) as the window shows them: its font has no arrows, so they
+/// are named.
+pub fn shown(keys: &str) -> String {
+    let names: Vec<&str> = (keys.split_whitespace())
+        .map(|k| match k {
+            "↑" => "Up",
+            "↓" => "Down",
+            "←" => "Left",
+            "→" => "Right",
+            k => k,
+        })
+        .collect();
+    names.join(" ")
 }
 
 /// The action offered that `event` runs, if any; in a `read_only` browser none that deletes.

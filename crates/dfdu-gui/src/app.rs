@@ -67,7 +67,15 @@ impl Gui {
                     ui.ctx().request_repaint();
                 }
             }
-            Screen::Browse(b) => b.show(ui, &colors),
+            Screen::Browse(b) => {
+                b.show(ui, &colors);
+                if let Some(i) = b.view_mut().theme_pick.take()
+                    && let Some(&choice) = ThemeChoice::ALL.get(i)
+                {
+                    self.prefs.theme = choice;
+                    ui.ctx().set_theme(choice.preference());
+                }
+            }
             Screen::Failed(e) => {
                 egui::CentralPanel::default().show(ui, |ui| {
                     ui.label(colors.text(e.as_str(), Token::StatusError));
@@ -77,9 +85,19 @@ impl Gui {
         }
     }
 
-    /// The menu bar: the theme.
+    /// The menu bar: the theme, and the help and the command palette of a browser.
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
+            if let Screen::Browse(b) = &mut self.screen {
+                ui.menu_button("Go", |ui| {
+                    if ui.button("Command palette…").clicked() {
+                        b.view_mut().palette = Some(crate::palette::Palette::new());
+                    }
+                    if ui.button("Keys").clicked() {
+                        b.view_mut().help = Some(crate::help::Help::new());
+                    }
+                });
+            }
             ui.menu_button("View", |ui| {
                 ui.label("Theme");
                 for choice in ThemeChoice::ALL {
@@ -148,6 +166,7 @@ impl Gui {
                 if self.prefs.details {
                     dfdu_session::details::toggle(s);
                 }
+                b.view_mut().themes = ThemeChoice::ALL.map(|t| t.name().to_owned()).to_vec();
                 Screen::Browse(b)
             }
             Err(e) => Screen::Failed(format!("Cannot open it: {e}")),
