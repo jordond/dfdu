@@ -1,7 +1,8 @@
 //! The five views (`1`-`5`, `dfdu_session::view`): switching between them, and what the header's
 //! tab bar says of each. The view shown is one field of the session
-//! ([`SessionState::view`](dfdu_session::SessionState::view)), and [`switch`] is the one place
-//! that changes it, so `1`-`5`, `[`/`]`, `Esc` and a click on a tab switch the same way.
+//! ([`SessionState::view`](dfdu_session::SessionState::view)), and the session's
+//! `view::switch` is the one place that changes it, so `1`-`5`, `[`/`]`, `Esc` and a click on
+//! a tab switch the same way ([`switch`]).
 //!
 //! Files, Map and Largest show the current directory; Cleanup and Duplicates cover the whole
 //! scan ([`View::whole_scan`]), which the header's scope line says.
@@ -9,8 +10,8 @@
 use super::{App, Effect};
 use crate::features::{cleanup, dupes, treemap};
 use crate::format::human;
-use crate::state::tree;
 
+use dfdu_session::view as session;
 pub use dfdu_session::view::View;
 use dfdu_session::view::{Show, Then};
 
@@ -19,38 +20,22 @@ pub fn current(app: &App) -> View {
     app.session.current_view()
 }
 
-/// Switches to `view`, and opens it: Largest walks again, Cleanup reads its matches again (and,
-/// switched to from another view, asks for the native sizes), and the map switched to from the
-/// tree opens on the directory the selected row is in. Cleanup without rules says so and
-/// changes nothing else.
+/// Switches to `view` ([`session::switch`]); the map opened forgets the last click.
 pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
-    if view == View::Cleanup && app.session.snap.rules.is_none() {
-        app.session.status = Some("no rules: the cleanup view needs classification".into());
-        return Vec::new();
-    }
+    let then = session::switch(&mut app.session, view);
     if view == View::Map {
-        // Before the switch, while the rows are still the tree's.
-        tree::act::treemap_dir(app);
+        treemap::on_open(app);
     }
-    let again = app.session.view == view;
-    app.session.view = view;
-    match view {
-        View::Files | View::Duplicates => Vec::new(),
-        View::Map => {
-            treemap::on_open(app);
-            Vec::new()
-        }
-        View::Cleanup => dfdu_session::cleanup::on_open(&mut app.session, again),
-        View::Largest => {
-            dfdu_session::largest::on_open(&mut app.session);
-            Vec::new()
-        }
-    }
+    carry(app, then)
 }
 
-/// Carries out what an intent of a view left to the TUI: shows a path in Files, which moves
-/// the list's scroll too, and returns the effects for the run loop.
+/// Carries out what an intent of a view left to the TUI: moves the list's scroll with a move to
+/// another directory, shows a path in Files, which moves the scroll too, and returns the effects
+/// for the run loop.
 pub fn carry(app: &mut App, then: Then) -> Vec<Effect> {
+    if let Some(m) = then.moved {
+        app.went(m);
+    }
     if let Some(Show { path, root }) = then.show {
         switch(app, View::Files);
         app.go_to(&path, &root);
@@ -58,19 +43,14 @@ pub fn carry(app: &mut App, then: Then) -> Vec<Effect> {
     then.effects
 }
 
-/// `[` and `]`: the view `by` places before or after the current one, round the end. Cleanup
-/// is passed over without rules, as it cannot be shown.
+/// `[` and `]`: the view `by` places before or after the current one, round the end
+/// ([`session::step`]).
 pub fn step(app: &mut App, by: isize) -> Vec<Effect> {
-    let n = View::ALL.len();
-    let mut at = current(app).index();
-    for _ in 0..n {
-        at = (at + n).saturating_add_signed(by) % n;
-        let view = View::ALL[at];
-        if view != View::Cleanup || app.session.snap.rules.is_some() {
-            return switch(app, view);
-        }
+    let then = session::step(&mut app.session, by);
+    if current(app) == View::Map {
+        treemap::on_open(app);
     }
-    Vec::new()
+    carry(app, then)
 }
 
 /// What the scope line adds after `whole scan: <root>` for `view`: which files Duplicates

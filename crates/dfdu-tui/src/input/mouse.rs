@@ -163,7 +163,7 @@ fn click_list(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> 
 fn click_row(app: &mut App, row: usize, x: u16, now: Instant) -> Vec<Effect> {
     if on_glyph(app, row, x) {
         app.mouse.last_click = None;
-        crate::state::tree::act::toggle_row(app, row);
+        crate::state::tree::act::toggle_row(&mut app.session, row);
         return Vec::new();
     }
     let node = app.session.snap.entries[app.session.list.rows[row]].node;

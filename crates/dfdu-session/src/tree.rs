@@ -1,5 +1,6 @@
 //! Tree mode: the directories expanded below the current one, the fold threshold, and the
-//! helpers the keys and the list use on the rows of a tree snapshot.
+//! helpers the keys and the list use on the rows of a tree snapshot. What the keys do in it is
+//! in [`act`].
 //!
 //! The read ([`crate::snapshot::build_view`]) walks the current directory and the children of every expanded directory, folding the small children of each into one row. It
 //! reports what it found of the expanded set ([`Found`]), and [`TreeState::apply`] takes that
@@ -204,6 +205,8 @@ pub fn target_of(snap: &Snapshot, i: usize) -> Target {
         }),
     }
 }
+
+pub mod act;
 
 #[cfg(test)]
 mod tests;

@@ -2,6 +2,9 @@
 //! Largest show the current directory; Cleanup and Duplicates cover the whole scan
 //! ([`View::whole_scan`]).
 //!
+//! [`switch`] is the one place that changes the view, so every way to switch does it the same
+//! way, and [`step`] goes round the views in order.
+//!
 //! An intent of a view can leave the front end something to do ([`Then`]): carry out effects,
 //! or show a path in Files, which moves the front end's scroll too.
 
@@ -9,7 +12,7 @@ use dfdu_tree::HostPath;
 
 use crate::actions::Action;
 use crate::effect::Effect;
-use crate::state::SessionState;
+use crate::state::{Moved, SessionState};
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum View {
@@ -81,6 +84,53 @@ impl SessionState {
     }
 }
 
+/// Switches to `view`, and opens it: Largest walks again, Cleanup reads its matches again (and,
+/// switched to from another view, asks for the native sizes), and the map switched to from the
+/// tree opens on the directory the selected row is in. Cleanup without rules says so and
+/// changes nothing else.
+pub fn switch(s: &mut SessionState, view: View) -> Then {
+    if view == View::Cleanup && s.snap.rules.is_none() {
+        s.status = Some("no rules: the cleanup view needs classification".into());
+        return Then::nothing();
+    }
+    // Before the switch, while the rows are still the tree's.
+    let moved = if view == View::Map {
+        crate::tree::act::treemap_dir(s)
+    } else {
+        None
+    };
+    let again = s.view == view;
+    s.view = view;
+    let effects = match view {
+        View::Files | View::Map | View::Duplicates => Vec::new(),
+        View::Cleanup => crate::cleanup::on_open(s, again),
+        View::Largest => {
+            crate::largest::on_open(s);
+            Vec::new()
+        }
+    };
+    Then {
+        effects,
+        show: None,
+        moved,
+    }
+}
+
+/// The view `by` places before or after the current one, round the end, switched to. Cleanup
+/// is passed over without rules, as it cannot be shown.
+pub fn step(s: &mut SessionState, by: isize) -> Then {
+    let n = View::ALL.len();
+    let mut at = s.current_view().index();
+    for _ in 0..n {
+        at = (at + n).saturating_add_signed(by) % n;
+        let view = View::ALL[at];
+        if view != View::Cleanup || s.snap.rules.is_some() {
+            return switch(s, view);
+        }
+    }
+    Then::nothing()
+}
+
 /// What an intent of a view leaves to the front end.
 #[derive(Debug, Default)]
 #[must_use]
@@ -89,6 +139,9 @@ pub struct Then {
     pub effects: Vec<Effect>,
     /// Show this path in Files: switch to Files, open the path's directory and select it.
     pub show: Option<Show>,
+    /// The browser went to another directory, with its entry to show selected: the front end
+    /// keeps its scroll of the directory left and shows the one opened from the top.
+    pub moved: Option<Moved>,
 }
 
 /// A path to show in Files, below `root` (the scan root, or the directory the path is
@@ -109,15 +162,47 @@ impl Then {
     pub fn effects(effects: Vec<Effect>) -> Self {
         Then {
             effects,
-            show: None,
+            ..Then::default()
         }
     }
 
     /// `path` to show in Files, below `root`.
     pub fn show(path: HostPath, root: HostPath) -> Self {
         Then {
-            effects: Vec::new(),
             show: Some(Show { path, root }),
+            ..Then::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snapshot::test_entry;
+    use crate::state::tests::browser;
+
+    #[test]
+    fn without_rules_cleanup_is_neither_switched_to_nor_stepped_to() {
+        let mut s = browser(vec![test_entry(0, "a", 10)]);
+        assert!(switch(&mut s, View::Cleanup).effects.is_empty());
+        assert_eq!(s.view, View::Files);
+        assert!((s.status.as_deref()).is_some_and(|m| m.starts_with("no rules")));
+        let mut seen = Vec::new();
+        for by in [1, 1, -1, -1, -1] {
+            let _ = step(&mut s, by);
+            seen.push(s.view);
+        }
+        assert_eq!(
+            seen,
+            [
+                View::Map,
+                View::Duplicates,
+                View::Map,
+                View::Files,
+                View::Largest
+            ]
+        );
+        s.view = View::Cleanup;
+        assert_eq!(s.current_view(), View::Files);
     }
 }

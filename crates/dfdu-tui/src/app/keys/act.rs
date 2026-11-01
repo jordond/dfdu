@@ -34,7 +34,7 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::Last => app
             .session
             .move_to(app.session.list.rows.len().saturating_sub(1)),
-        Action::Open if tree::act::right(app) => {}
+        Action::Open if tree::act::right(&mut app.session) => {}
         Action::Open | Action::Enter => {
             let dir = app
                 .session
@@ -44,7 +44,7 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
                 app.enter(i);
             }
         }
-        Action::Parent if tree::act::left(app) => {}
+        Action::Parent if tree::act::left(&mut app.session) => {}
         Action::Parent => app.up(),
         Action::SortSize => sort_by(app, SortKey::Size),
         Action::SortName => sort_by(app, SortKey::Name),
@@ -61,9 +61,9 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
             app.columns = app.columns.next();
             app.session.status = Some(app.columns.describe().into());
         }
-        Action::ToggleTree => tree::act::toggle(app),
-        Action::ExpandChain => tree::act::chain(app),
-        Action::CycleFold => tree::act::cycle_fold(app),
+        Action::ToggleTree => tree::act::toggle(&mut app.session),
+        Action::ExpandChain => tree::act::chain(&mut app.session),
+        Action::CycleFold => tree::act::cycle_fold(&mut app.session),
         Action::Rescan => {
             let node = match app.session.selected_entry() {
                 Some(e) if e.is_dir => Some(e.node),

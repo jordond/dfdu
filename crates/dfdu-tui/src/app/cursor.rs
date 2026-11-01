@@ -33,9 +33,15 @@ impl App {
     /// with the list scrolled to the top.
     pub(crate) fn go_to(&mut self, path: &HostPath, root: &HostPath) {
         if let Some(m) = self.session.go_to(path, root) {
-            self.scrolls.insert(m.left, self.scroll);
-            self.scroll = 0;
+            self.went(m);
         }
+    }
+
+    /// After the session went to an entry in another directory: keeps the scroll of the
+    /// directory left, and shows the one opened from the top.
+    pub(crate) fn went(&mut self, m: Moved) {
+        self.scrolls.insert(m.left, self.scroll);
+        self.scroll = 0;
     }
 }
 

@@ -1,6 +1,5 @@
-//! Tree mode: the state and the helpers on the rows of a tree snapshot are in
-//! [`dfdu_session::tree`], re-exported here; what the keys do is in `act`, and the guide drawn
-//! before each name is here.
+//! Tree mode: the state, the helpers on the rows of a tree snapshot and what the keys do (`act`)
+//! are in [`dfdu_session::tree`], re-exported here; the guide drawn before each name is here.
 
 use std::collections::HashSet;
 
@@ -39,8 +38,6 @@ pub fn guide(entries: &[EntryData], last: &[bool], i: usize) -> String {
     }
     parts.iter().rev().copied().collect()
 }
-
-pub(crate) mod act;
 
 #[cfg(test)]
 pub(crate) mod tests;
