@@ -5,7 +5,6 @@ use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 
 use super::*;
-use crate::app::Overlay;
 use crate::app::keys::READ_ONLY;
 use crate::features::details;
 use crate::model::snapshot::{EntryData, Snapshot, test_entry};
@@ -228,7 +227,7 @@ fn d_asks_to_delete_the_marks_as_the_list_does() {
     mark(&mut app, 2, t0);
     app.key(press(KeyCode::Tab), t0);
     let fx = app.key(press(KeyCode::Char('D')), t0);
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+    assert!(app.session.confirm.is_some());
     assert_eq!(asked(&fx).map(|a| a.1), Some(2), "{fx:?}");
     let out = render(&mut app, t0, 100, 24);
     assert!(out.contains("Permanently delete 2 entries?"), "{out}");

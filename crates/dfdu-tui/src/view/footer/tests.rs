@@ -68,7 +68,7 @@ fn hints_change_with_context() {
          / filter  : commands  ? help  q quit"
     );
     list.key(press(KeyCode::Char('D')), t0);
-    assert!(matches!(list.overlay, Overlay::ConfirmDelete(_)));
+    assert!(list.session.confirm.is_some());
     assert_eq!(shown(&list, 120), " p permanent  s stage  Esc cancel");
     list.key(press(KeyCode::Esc), t0);
 
@@ -89,7 +89,7 @@ fn hints_change_with_context() {
     assert_eq!(frame.lines().last(), Some(shown(&list, 120).trim_end()));
     // An overlay takes the keys before the pane, and so do the hints.
     list.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(list.overlay, Overlay::ConfirmDelete(_)));
+    assert!(list.session.confirm.is_some());
     assert!(details::focused(&list));
     assert_eq!(shown(&list, 120), " p permanent  s stage  Esc cancel");
     list.key(press(KeyCode::Esc), t0);
@@ -155,7 +155,7 @@ fn hints_never_cut_a_key() {
     assert!(details::focused(&focused));
     let mut dialog = app(false, 0, t0);
     dialog.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(dialog.overlay, Overlay::ConfirmDelete(_)));
+    assert!(dialog.session.confirm.is_some());
     let mut apps = vec![
         app(false, 0, t0),
         app(true, 1, t0),

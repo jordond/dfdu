@@ -17,6 +17,7 @@ use dfdu_tree::Target;
 use dfdu_tree::filetype::TypeFilter;
 
 use crate::cleanup::Cleanup;
+use crate::confirm::Confirm;
 use crate::details::Details;
 use crate::dupes::Dupes;
 use crate::extras::Extras;
@@ -100,6 +101,8 @@ pub struct SessionState {
     pub marks_pane: MarksPane,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
+    /// The delete confirmation, while it is open.
+    pub confirm: Option<Confirm>,
 }
 
 /// Whether `e` gets a row when no filter hides it.
@@ -141,6 +144,7 @@ impl SessionState {
             largest: Largest::default(),
             marks_pane: MarksPane::default(),
             extras: Extras::default(),
+            confirm: None,
         }
     }
 

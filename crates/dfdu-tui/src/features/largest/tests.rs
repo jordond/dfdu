@@ -5,7 +5,6 @@ use dfdu_engine::test_support::{add_dir, add_file};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::*;
-use crate::app::Overlay;
 
 /// The view needs a walk at once ([`session::stale`]).
 fn stale(app: &App) -> bool {
@@ -158,7 +157,7 @@ fn keys_move_mark_and_refuse() {
         "{frame}"
     );
     app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+    assert!(app.session.confirm.is_some());
     app.key(press(KeyCode::Esc), t0);
     // `X` unticks every file.
     app.key(press(KeyCode::Char('X')), t0);

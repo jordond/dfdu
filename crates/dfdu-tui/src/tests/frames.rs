@@ -221,24 +221,29 @@ fn overlays_fit_a_small_terminal() {
         total: 60,
         kinds: vec![(dfdu_tree::ErrKind::PermissionDenied, 60)],
     };
-    for overlay in [
-        crate::app::Overlay::Help(crate::overlay::help::Help::default()),
-        crate::app::Overlay::Errors { list, cursor: 49 },
-        crate::app::Overlay::ConfirmDelete(crate::overlay::confirm::Confirm::new(
-            vec![crate::overlay::confirm::Item {
-                node,
-                name: "junk".into(),
-                size: 5 << 20,
-                items: 1,
-                shared_out: 1 << 20,
-                is_dir: true,
-                scanning: false,
-                inside: false,
-            }],
-            dfdu_engine::Mode::Permanent,
-        )),
+    let confirm = crate::overlay::confirm::Confirm::new(
+        vec![crate::overlay::confirm::Item {
+            node,
+            name: "junk".into(),
+            size: 5 << 20,
+            items: 1,
+            shared_out: 1 << 20,
+            is_dir: true,
+            scanning: false,
+            inside: false,
+        }],
+        dfdu_engine::Mode::Permanent,
+    );
+    for (overlay, confirm) in [
+        (
+            crate::app::Overlay::Help(crate::overlay::help::Help::default()),
+            None,
+        ),
+        (crate::app::Overlay::Errors { list, cursor: 49 }, None),
+        (crate::app::Overlay::None, Some(confirm)),
     ] {
         app.overlay = overlay;
+        app.session.confirm = confirm;
         // Smaller than either dialog: the dialog is clamped to the screen.
         let out = render(&mut app, t0, 40, 8);
         assert_eq!(out.lines().count(), 8, "{out}");

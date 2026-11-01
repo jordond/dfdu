@@ -45,6 +45,7 @@ pub fn status(f: &mut Frame, app: &App, area: Rect, list_view: bool) {
     if msg.is_empty()
         && list_view
         && matches!(app.overlay, Overlay::None)
+        && !crate::overlay::confirm::is_open(app)
         && let Some(line) = super::selection::line(app, area.width)
     {
         f.render_widget(Paragraph::new(line), area);
@@ -109,6 +110,13 @@ fn offered_now(app: &App) -> Vec<Hint> {
         "views",
         3,
     );
+    if crate::overlay::confirm::is_open(app) {
+        return vec![
+            hint("p", "permanent", 0),
+            hint("s", "stage", 1),
+            hint("Esc", "cancel", 0),
+        ];
+    }
     if let Some(hints) = overlay_hints(&app.overlay, &arrows) {
         return hints;
     }
@@ -250,13 +258,6 @@ fn editing(arrows: &str, arrows_do: &'static str) -> Vec<Hint> {
 fn overlay_hints(overlay: &Overlay, arrows: &str) -> Option<Vec<Hint>> {
     Some(match overlay {
         Overlay::None => return None,
-        Overlay::ConfirmDelete(_) => {
-            vec![
-                hint("p", "permanent", 0),
-                hint("s", "stage", 1),
-                hint("Esc", "cancel", 0),
-            ]
-        }
         Overlay::Help(h) if h.searching() => editing(arrows, "scroll"),
         Overlay::Help(_) => {
             vec![

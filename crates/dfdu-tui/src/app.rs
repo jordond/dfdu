@@ -42,7 +42,6 @@ pub enum Overlay {
         list: ErrorList,
         cursor: usize,
     },
-    ConfirmDelete(confirm::Confirm),
     Palette(palette::Palette),
     /// The file type picker.
     Types(type_filter::TypePicker),
@@ -150,7 +149,7 @@ impl App {
         self.overlay = Overlay::Errors { list, cursor: 0 };
     }
 
-    /// Handles a key: the open overlay takes it first, then the filter input while it is
+    /// Handles a key: the delete confirmation or the open overlay takes it first, then the filter input while it is
     /// edited, then the marks pane while it is open, then the details pane while it has the
     /// focus, then the view shown (the treemap's moves between tiles once it is drawn), and
     /// otherwise the action bound to it in `keys::ACTIONS`.
@@ -163,11 +162,13 @@ impl App {
             self.quit = true;
             return Vec::new();
         }
+        if confirm::is_open(self) {
+            return confirm::key(self, k);
+        }
         match self.overlay {
             Overlay::None => {}
             Overlay::Help(_) => return help::key(self, k),
             Overlay::Errors { .. } => return error_list::key(self, k),
-            Overlay::ConfirmDelete { .. } => return confirm::key(self, k),
             Overlay::Palette { .. } => return palette::key(self, k),
             Overlay::Types(_) => return type_filter::key(self, k),
             Overlay::MarkPattern(_) => return mark_pattern::key(self, k),

@@ -153,9 +153,7 @@ fn frame(state: State, theme: Theme) -> Buffer {
     let reached = match state {
         State::MidScan => app.session.snap.busy && matches!(app.overlay, Overlay::None),
         State::Details => unreachable!("returned above"),
-        State::Delete => {
-            app.session.marks.items().len() == 2 && matches!(app.overlay, Overlay::ConfirmDelete(_))
-        }
+        State::Delete => app.session.marks.items().len() == 2 && app.session.confirm.is_some(),
         State::Filter => filter::editing(&app) && app.session.list.rows.len() == 2,
         State::Help => matches!(app.overlay, Overlay::Help(_)),
         State::Palette => matches!(app.overlay, Overlay::Palette(_)),

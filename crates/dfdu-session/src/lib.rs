@@ -10,12 +10,14 @@
 //! The views: the treemap's layout, depth and lower levels (`treemap`), the cleanup view
 //! (`cleanup`), the duplicates comparison with its keep rules and view (`dupes`), and the
 //! largest files below a directory (`largest`). The actions with their keys and labels
-//! (`actions`), the details of an entry (`details`), the debug counters (`debug`), mark by
-//! pattern (`mark_pattern`), the text for numbers (`format`), the theme's tokens, built-in
-//! themes and theme files (`palette`), and the single-line text input (`line`).
+//! (`actions`), the delete confirmation (`confirm`), the details of an entry (`details`), the
+//! debug counters (`debug`), mark by pattern (`mark_pattern`), the text for numbers
+//! (`format`), the theme's tokens, built-in themes and theme files (`palette`), and the
+//! single-line text input (`line`).
 
 pub mod actions;
 pub mod cleanup;
+pub mod confirm;
 pub mod debug;
 pub mod details;
 pub mod dupes;

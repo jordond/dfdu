@@ -1,17 +1,18 @@
+//! The dialog drawn, and the keys that turn into its intents; the gate itself is tested in
+//! `dfdu_session::confirm`.
+
 use std::time::Instant;
 
+use dfdu_engine::Command;
 use dfdu_tree::HostPath;
 
 use super::*;
-use crate::model::snapshot::{Snapshot, test_entry};
+use crate::model::snapshot::{EntryData, Mark, Snapshot, test_entry};
 use crate::tests::{press, render, snap_without_totals};
 use crate::theme::Theme;
 
 fn dialog(app: &App) -> &Confirm {
-    match &app.overlay {
-        Overlay::ConfirmDelete(c) => c,
-        other => panic!("no dialog: {other:?}"),
-    }
+    app.session.confirm.as_ref().expect("the dialog is open")
 }
 
 fn type_word(app: &mut App, t: Instant) {
@@ -47,14 +48,10 @@ fn trash_delete_sends_a_plan_after_y() {
         ),
         "the dialog asks what the delete frees: {fx:?}"
     );
-    assert!(matches!(
-        app.overlay,
-        Overlay::ConfirmDelete(Confirm {
-            mode: Mode::Trash,
-            typing: false,
-            ..
-        })
-    ));
+    assert_eq!(
+        (dialog(&app).mode(), dialog(&app).typing()),
+        (Mode::Trash, false)
+    );
     let fx = app.key(press(KeyCode::Char('y')), t0);
     assert!(matches!(
         fx.as_slice(),
@@ -63,31 +60,25 @@ fn trash_delete_sends_a_plan_after_y() {
             ..
         })]
     ));
-    assert!(matches!(app.overlay, Overlay::None));
+    assert!(app.session.confirm.is_none());
 }
 
 #[test]
-fn permanent_delete_needs_the_word_delete() {
+fn with_the_word_asked_for_the_keys_type_it() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     app.refresh(snap_without_totals(vec![test_entry(0, "a", 10)], 1), t0);
     app.key(press(KeyCode::Char('D')), t0);
-    // 'y' alone does nothing for a permanent delete.
+    // 'y' is typed, and Backspace takes it back.
     assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
+    assert_eq!(dialog(&app).typed().text(), "y");
+    // 's' switches the method only before anything is typed.
+    app.key(press(KeyCode::Char('s')), t0);
+    assert_eq!(dialog(&app).typed().text(), "ys");
     app.key(press(KeyCode::Backspace), t0);
-    for c in "delet".chars() {
-        assert!(app.key(press(KeyCode::Char(c)), t0).is_empty());
-    }
-    assert!(
-        app.key(press(KeyCode::Enter), t0).is_empty(),
-        "incomplete word must not delete"
-    );
-    assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(
-        app.session.status.as_deref(),
-        Some("not deleted: type delete to confirm")
-    );
-    app.key(press(KeyCode::Char('D')), t0);
+    app.key(press(KeyCode::Backspace), t0);
+    assert!(app.key(press(KeyCode::Up), t0).is_empty(), "no text op");
+    assert!(app.session.confirm.is_some());
     type_word(&mut app, t0);
     let fx = app.key(press(KeyCode::Enter), t0);
     assert!(matches!(
@@ -97,6 +88,10 @@ fn permanent_delete_needs_the_word_delete() {
             ..
         })]
     ));
+    // Without the word asked for, a key other than 'y', 'p' and 's' cancels.
+    app.key(press(KeyCode::Char('d')), t0);
+    assert!(app.key(press(KeyCode::Enter), t0).is_empty());
+    assert!(app.session.confirm.is_none());
 }
 
 #[test]
@@ -155,7 +150,7 @@ fn s_switches_to_staging() {
     app.key(press(KeyCode::Char('d')), t);
     assert!(app.key(press(KeyCode::Char('s')), t).is_empty());
     assert_eq!(
-        (dialog(&app).mode, dialog(&app).typing),
+        (dialog(&app).mode(), dialog(&app).typing()),
         (Mode::Stage, false)
     );
     let out = render(&mut app, t, 100, 30);
@@ -183,7 +178,7 @@ fn p_switches_method() {
     app.key(press(KeyCode::Char('d')), t);
     assert!(app.key(press(KeyCode::Char('p')), t).is_empty());
     assert_eq!(
-        (dialog(&app).mode, dialog(&app).typing),
+        (dialog(&app).mode(), dialog(&app).typing()),
         (Mode::Permanent, true)
     );
     let out = render(&mut app, t, 100, 30);
@@ -191,14 +186,14 @@ fn p_switches_method() {
     assert!(out.contains("p move to the Trash  s stage"), "{out}");
     // Permanent now: 'y' is only typed.
     assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+    assert!(app.session.confirm.is_some());
     // Back to the Trash: the typed text is dropped and 'y' confirms again.
     app.key(press(KeyCode::Char('p')), t);
     assert_eq!(
-        (dialog(&app).mode, dialog(&app).typing),
+        (dialog(&app).mode(), dialog(&app).typing()),
         (Mode::Trash, false)
     );
-    assert!(dialog(&app).typed.is_empty());
+    assert!(dialog(&app).typed().is_empty());
     let fx = app.key(press(KeyCode::Char('y')), t);
     assert!(matches!(
         fx.as_slice(),
@@ -210,9 +205,9 @@ fn p_switches_method() {
     // From D, p goes to the Trash.
     app.key(press(KeyCode::Char('D')), t);
     app.key(press(KeyCode::Char('p')), t);
-    assert_eq!(dialog(&app).mode, Mode::Trash);
+    assert_eq!(dialog(&app).mode(), Mode::Trash);
     assert!(app.key(press(KeyCode::Char('n')), t).is_empty());
-    assert!(matches!(app.overlay, Overlay::None));
+    assert!(app.session.confirm.is_none());
 }
 
 #[test]
@@ -231,7 +226,7 @@ fn large_trash_delete_needs_typing() {
         t,
     );
     app.key(press(KeyCode::Char('d')), t);
-    assert!(dialog(&app).typing);
+    assert!(dialog(&app).typing());
     let out = render(&mut app, t, 100, 30);
     assert!(out.contains("Move big to the Trash?"), "{out}");
     assert!(
@@ -239,29 +234,6 @@ fn large_trash_delete_needs_typing() {
         "{out}"
     );
     assert!(out.contains("type delete and Enter"), "{out}");
-    assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
-    app.key(press(KeyCode::Backspace), t);
-    type_word(&mut app, t);
-    let fx = app.key(press(KeyCode::Enter), t);
-    assert!(matches!(
-        fx.as_slice(),
-        [Effect::Send(Command::Delete {
-            mode: Mode::Trash,
-            ..
-        })]
-    ));
-    // Just under the threshold, 'y' is enough.
-    app.key(press(KeyCode::Down), t);
-    app.key(press(KeyCode::Char('d')), t);
-    assert!(!dialog(&app).typing);
-    assert_eq!(app.key(press(KeyCode::Char('y')), t).len(), 1);
-    // Marked entries count together.
-    app.key(press(KeyCode::Char(' ')), t);
-    app.key(press(KeyCode::Up), t);
-    app.key(press(KeyCode::Char(' ')), t);
-    app.key(press(KeyCode::Char('d')), t);
-    assert!(dialog(&app).typing);
 }
 
 #[test]
@@ -278,37 +250,27 @@ fn trash_delete_while_scanning_needs_typing() {
         t,
     );
     app.key(press(KeyCode::Char('d')), t);
-    assert!(dialog(&app).typing);
+    assert!(dialog(&app).typing());
     let out = render(&mut app, t, 100, 30);
     assert!(out.contains("at least 40.0 GiB (still scanning)"), "{out}");
     assert!(
         out.contains("Still scanning, may be 50.0 GiB or more: confirm by typing the word."),
         "{out}"
     );
-    assert!(app.key(press(KeyCode::Char('y')), t).is_empty());
-    app.key(press(KeyCode::Backspace), t);
-    type_word(&mut app, t);
-    let fx = app.key(press(KeyCode::Enter), t);
-    assert!(matches!(
-        fx.as_slice(),
-        [Effect::Send(Command::Delete {
-            mode: Mode::Trash,
-            ..
-        })]
-    ));
+    app.key(press(KeyCode::Esc), t);
     // Marked together with a finished entry, it still needs the word; the finished one
     // alone does not.
     app.key(press(KeyCode::Char(' ')), t);
     app.key(press(KeyCode::Char(' ')), t);
     app.key(press(KeyCode::Char('d')), t);
-    assert!(dialog(&app).typing);
+    assert!(dialog(&app).typing());
     let out = render(&mut app, t, 100, 30);
     assert!(out.contains("Move 2 entries to the Trash?"), "{out}");
     assert!(out.contains("Still scanning, may be"), "{out}");
     app.key(press(KeyCode::Esc), t);
     crate::state::marks::clear(&mut app);
     app.key(press(KeyCode::Char('d')), t);
-    assert!(!dialog(&app).typing);
+    assert!(!dialog(&app).typing());
 }
 
 #[test]
@@ -377,6 +339,6 @@ fn dialog_fits_a_small_terminal() {
         assert!(out.contains('┌') && out.contains('┘'), "{out}");
         assert!(out.contains("and 4 more"), "{out}");
         app.key(press(KeyCode::Esc), t);
-        assert!(matches!(app.overlay, Overlay::None));
+        assert!(app.session.confirm.is_none());
     }
 }

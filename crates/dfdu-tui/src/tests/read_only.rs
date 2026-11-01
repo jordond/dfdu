@@ -48,7 +48,7 @@ fn delete_keys_open_no_dialog() {
     // The same key opens the dialog in a browser that deletes.
     let (mut rw, t0) = app(false);
     rw.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(rw.overlay, Overlay::ConfirmDelete(_)));
+    assert!(rw.session.confirm.is_some());
 }
 
 #[test]
@@ -90,5 +90,5 @@ fn help_and_palette_leave_out_deletion() {
     let palette = render(&mut ro, t0, 100, 30);
     assert!(!palette.contains("move to Trash"), "{palette}");
     ro.key(press(KeyCode::Enter), t0);
-    assert!(!matches!(ro.overlay, Overlay::ConfirmDelete(_)));
+    assert!(!ro.session.confirm.is_some());
 }

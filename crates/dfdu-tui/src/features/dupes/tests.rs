@@ -391,7 +391,7 @@ fn deleting_every_copy_of_a_group_is_refused() {
     app.session.dupes.cursor = 1;
     app.key(press(KeyCode::Char(' ')), t0);
     app.key(press(KeyCode::Char('d')), t0);
-    assert!(matches!(app.overlay, crate::app::Overlay::ConfirmDelete(_)));
+    assert!(app.session.confirm.is_some());
 }
 
 /// The footer keeps every key of the view at 120 columns, and at 80 lets `q quit` go before

@@ -113,10 +113,10 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
     }
     app.areas.debug = debug::draw(f, app, body);
     app.areas.overlay = match &app.overlay {
+        _ if confirm::is_open(app) => Some(confirm::draw(f, app, area)),
         Overlay::None => None,
         Overlay::Help(_) => Some(help::draw(f, app, area)),
         Overlay::Errors { .. } => Some(error_list::draw(f, app, area)),
-        Overlay::ConfirmDelete { .. } => Some(confirm::draw(f, app, area)),
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
         Overlay::Types(_) => Some(type_filter::draw(f, app, area)),
         Overlay::MarkPattern(_) => Some(mark_pattern::draw(f, app, area)),

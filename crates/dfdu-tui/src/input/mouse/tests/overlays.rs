@@ -50,12 +50,12 @@ fn click_never_touches_the_delete_dialog() {
     let mut app = browser(t0);
     app.key(press(KeyCode::Char('D')), t0);
     render(&mut app, t0, 80, 12);
-    assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+    assert!(app.session.confirm.is_some());
     let r = app.areas.overlay.expect("the dialog's area");
     let wheel = mouse(MouseEventKind::ScrollDown, 0, TOP);
     for m in [left(0, 0), left(0, TOP + 5), left(r.x + 1, r.y + 1), wheel] {
         assert!(event(&mut app, m, t0).is_none());
-        assert!(matches!(app.overlay, Overlay::ConfirmDelete(_)));
+        assert!(app.session.confirm.is_some());
     }
     assert_eq!(selected(&app).as_deref(), Some("d0"));
 }

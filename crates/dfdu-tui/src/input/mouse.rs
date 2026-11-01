@@ -65,7 +65,10 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
         _ => return None,
     };
     app.session.note_input(now);
-    if !matches!(app.overlay, Overlay::None) || over_debug(app, at) {
+    if !matches!(app.overlay, Overlay::None)
+        || crate::overlay::confirm::is_open(app)
+        || over_debug(app, at)
+    {
         return None;
     }
     let step = if up {
@@ -94,9 +97,11 @@ fn over_debug(app: &App, at: Position) -> bool {
 }
 
 fn click(app: &mut App, at: Position, now: Instant) -> Option<Vec<Effect>> {
+    if crate::overlay::confirm::is_open(app) {
+        return None;
+    }
     match app.overlay {
         Overlay::None => {}
-        Overlay::ConfirmDelete(_) => return None,
         _ if app.areas.overlay.is_some_and(|r| r.contains(at)) => return None,
         _ => {
             app.overlay = Overlay::None;

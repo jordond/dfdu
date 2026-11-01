@@ -25,8 +25,6 @@ use crate::input::line::{Edit, LineInput};
 use crate::input::line_keys;
 use crate::view::input_spans;
 
-pub use dfdu_session::state::NO_FOLDERS;
-
 /// Extensions listed at most, largest first; chosen ones are always listed.
 const MAX_EXTS: usize = 300;
 
@@ -406,7 +404,10 @@ mod tests {
         app.session.move_to(films.unwrap());
         app.key(press(KeyCode::Char(' ')), t0);
         assert!(app.session.marks.is_empty());
-        assert_eq!(app.session.status.as_deref(), Some(NO_FOLDERS));
+        assert_eq!(
+            app.session.status.as_deref(),
+            Some(dfdu_session::state::NO_FOLDERS)
+        );
         app.key(press(KeyCode::Char('d')), t0);
         assert!(matches!(app.overlay, Overlay::None));
 
