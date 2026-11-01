@@ -13,7 +13,7 @@ use dfdu_scan::{JobOptions, NativeBackend};
 use dfdu_tree::Target;
 use ratatui::crossterm::event::KeyCode;
 
-use crate::app::{App, Effect, Overlay};
+use crate::app::{App, Effect};
 use crate::format::human;
 use crate::model::snapshot;
 use crate::tests::{press, render, select};
