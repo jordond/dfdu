@@ -13,8 +13,9 @@
 //! twice. `A` marks the recommended items again and `f` shows only the safer levels; like `N`,
 //! they are registry actions (`app::keys`) that act only while the view is shown.
 //!
-//! The rows, the ticks and what they mark are the session's (`dfdu_session::cleanup`): the keys
-//! turn into its intents ([`Intent`]). The native pane and the scroll stay here.
+//! The rows, the ticks, what they mark and the native pane are the session's
+//! (`dfdu_session::cleanup`): the keys turn into its intents ([`Intent`]). The scroll stays
+//! here.
 
 use std::collections::HashSet;
 
@@ -38,12 +39,10 @@ pub use pane::command;
 /// The rows the page keys move the view's cursor by.
 const PAGE: usize = 10;
 
-/// What only the terminal keeps of the view between frames: the scroll and the native pane.
+/// What only the terminal keeps of the view between frames: the scroll.
 #[derive(Clone, Debug, Default)]
 pub struct Cleanup {
     scroll: usize,
-    pane: Option<pane::Pane>,
-    commands: u64,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
@@ -99,7 +98,7 @@ pub fn listed(app: &App) -> HashSet<NodeRef> {
 /// takes every key while it is open; otherwise the registry's moves, `Enter`/`→`, `←` and
 /// `Space` become the session's intents.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
-    if app.cleanup.pane.is_some() {
+    if app.session.cleanup.pane.is_some() {
         return Some(pane::key(app, k));
     }
     // What the first opening ticked is said until the next key.

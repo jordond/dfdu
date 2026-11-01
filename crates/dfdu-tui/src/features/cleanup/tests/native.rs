@@ -49,7 +49,7 @@ fn native_commands_start_with_their_dry_run() {
     );
     // While it runs, `y` does nothing.
     assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
-    let id = app.cleanup.pane.as_ref().unwrap().id;
+    let id = app.session.cleanup.pane.as_ref().unwrap().id;
     app.session.extras.cleanup.native = Some(NativeView {
         id,
         lines: vec!["Summary 3 files".into()],
@@ -100,7 +100,7 @@ fn read_only_runs_only_the_dry_run() {
         ),
         "{out:?}"
     );
-    let id = app.cleanup.pane.as_ref().unwrap().id;
+    let id = app.session.cleanup.pane.as_ref().unwrap().id;
     app.session.extras.cleanup.native = Some(NativeView {
         id,
         lines: vec!["Summary 3 files".into()],

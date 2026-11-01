@@ -6,7 +6,8 @@
 //! `safe` items above their rule's minimum size, `regenerable` ones only when stale, never
 //! `review` or worse, and nothing changed in the last 7 days or in use ([`recommended`]). A
 //! read-only browser marks nothing, as nothing marked could be deleted. What a front end's keys
-//! ask of the view arrives as an [`Intent`].
+//! ask of the view arrives as an [`Intent`], and of the native command pane as a
+//! [`pane::Intent`].
 
 use std::collections::HashSet;
 
@@ -23,6 +24,7 @@ use crate::marks;
 use crate::state::{READ_ONLY, SessionState};
 use crate::view::{Then, View};
 
+pub mod pane;
 mod rows;
 
 pub use rows::{Row, enter_does, group_items, is_open, rows, section_items, selected, set_open};
@@ -52,6 +54,10 @@ pub struct Cleanup {
     reclaimable: Option<u64>,
     /// The tree's version and number of matches the last total was counted at.
     counted_at: Option<(u64, usize)>,
+    /// The native command pane, while it is open: it takes the view's input.
+    pub pane: Option<pane::Pane>,
+    /// Native commands run from the view so far, for their ids.
+    commands: u64,
 }
 
 /// One match, as the last read found it.
