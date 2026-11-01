@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "boon",
  "clap",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-clean"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-demofs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-dupes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-sys",
  "dfdu-tree",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-hangfs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fuser",
  "rustix 1.1.6",
@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-rules"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-tree",
  "serde",
@@ -1399,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-scan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-deque",
  "dfdu-rules",
@@ -1415,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-clean",
  "dfdu-engine",
@@ -1447,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "dfdu-engine",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-tree",
  "etcetera",
@@ -1477,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tree"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fixedbitset",
  "os_str_bytes",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -6644,7 +6644,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
