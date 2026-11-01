@@ -11,7 +11,7 @@ use crossbeam_channel::Receiver;
 use dfdu_session::format::{human, ratio};
 use dfdu_session::palette::Token;
 use dfdu_sys::{Disk, FsClass, Role};
-use egui::{Button, ProgressBar, TextEdit, Ui};
+use egui::{Button, Label, ProgressBar, TextEdit, Ui};
 
 use crate::theme::Colors;
 
@@ -158,7 +158,7 @@ fn disk(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
     let clicked = ui
         .add_enabled(d.space.is_some(), Button::new(colors.text(at, Token::Dir)))
         .clicked();
-    ui.label(colors.text(&d.fstype, Token::FgDim));
+    cell(ui, colors, &d.fstype);
     match d.space {
         Some(s) => {
             let frac = ratio(s.used, s.total.max(1));
@@ -173,8 +173,8 @@ fn disk(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
         }
         None => {
             ui.label(colors.text("not responding", Token::StatusWarn));
-            ui.label("");
-            ui.label("");
+            cell(ui, colors, "");
+            cell(ui, colors, "");
         }
     }
     let mut notes = Vec::new();
@@ -184,6 +184,16 @@ fn disk(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
     if let Some(role) = d.role {
         notes.push(role.label());
     }
-    ui.label(colors.text(notes.join(" · "), Token::FgDim));
+    cell(ui, colors, &notes.join(" · "));
     clicked.then(|| d.mount_point.clone())
+}
+
+/// A dim cell of the grid. An empty one is not selectable: egui's labels are, and a screen
+/// reader would then meet a control with no name.
+fn cell(ui: &mut Ui, colors: &Colors, text: &str) {
+    if text.is_empty() {
+        ui.add(Label::new("").selectable(false));
+    } else {
+        ui.label(colors.text(text, Token::FgDim));
+    }
 }
