@@ -13,6 +13,12 @@ use super::{
 #[test]
 fn the_map_selects_a_tile_on_a_click_and_opens_it_on_a_double_click() {
     let tmp = files();
+    // NTFS keeps a 5-byte file inside its record, so `sub/` would use no disk and get no tile.
+    std::fs::write(
+        tmp.path().join("sub").join("inner.txt"),
+        vec![1u8; 16 * 1024],
+    )
+    .expect("write");
     let mut h = window(tmp.path());
     until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
 
