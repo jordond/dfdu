@@ -1,16 +1,25 @@
-//! The window driven headless through its accessibility tree (`egui_kittest`): it scans a small
-//! directory, shows its rows by name, and opens a directory with the keys.
+//! The window driven headless through its accessibility tree (`egui_kittest`), on temporary
+//! directories: browsing (here), marking and deleting with undo (`flows`), the gates of a
+//! read-only browser and of an imported scan (`gates`), and the start screen and the history
+//! (`start`). Nothing is moved to the system's Trash: the delete flows stage instead, and the
+//! Trash is tried only up to its dialog.
 
-use std::path::Path;
+mod flows;
+mod gates;
+mod start;
+
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dfdu_engine::EngineOptions;
+use dfdu_session::SessionState;
 use dfdu_session::startup::Source;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 
 use crate::app::Gui;
 use crate::launch::{self, Launch, Settings};
+use crate::settings::Prefs;
 
 /// The longest a test waits for the window to show something.
 const PATIENCE: Duration = Duration::from_secs(30);
@@ -22,41 +31,51 @@ struct Window {
     gui: Option<Gui>,
 }
 
-/// A window browsing `dir`, scanned without rules, recording nothing, and read-only.
-fn window(dir: &Path) -> Harness<'static, Window> {
-    let launch = Launch {
+/// A browser of `dir`, scanned without rules and recording nothing; it deletes, journalled in
+/// `journal`, unless `read_only`.
+fn local(dir: &Path, read_only: bool, journal: Option<PathBuf>) -> Launch {
+    Launch {
         source: Source::Local {
             path: Some(dir.to_path_buf()),
             start: launch::local(None),
         },
         settings: Settings {
             engine: EngineOptions {
-                read_only: true,
-                journal_dir: None,
+                read_only,
+                journal_dir: journal,
                 ..EngineOptions::default()
             },
             record: false,
         },
-    };
+    }
+}
+
+/// The window of `launch`.
+fn harness(launch: Launch) -> Harness<'static, Window> {
     let state = Window {
         launch: Some(launch),
         gui: None,
     };
     Harness::builder()
-        .with_size(egui::vec2(900.0, 600.0))
+        .with_size(egui::vec2(1000.0, 640.0))
         .build_ui_state(
             |ui, w: &mut Window| {
                 let gui = match &mut w.gui {
                     Some(gui) => gui,
                     None => {
                         let launch = w.launch.take().expect("a launch");
-                        w.gui.insert(Gui::new(launch, ui.ctx()))
+                        w.gui.insert(Gui::new(launch, Prefs::default(), ui.ctx()))
                     }
                 };
                 gui.show(ui);
             },
             state,
         )
+}
+
+/// A window browsing `dir` read-only.
+fn window(dir: &Path) -> Harness<'static, Window> {
+    harness(local(dir, true, None))
 }
 
 /// Runs frames until `done` holds for the harness, as the window does: the bridge thread and
@@ -73,22 +92,57 @@ fn until(h: &mut Harness<'static, Window>, what: &str, done: impl Fn(&Harness<Wi
     }
 }
 
-/// Something on screen is named `label`: a row, or the selected entry in the status bar.
+/// Something on screen is named `label`: a row, a button, or the selected entry in the status
+/// bar.
 fn shown(h: &Harness<Window>, label: &str) -> bool {
     h.query_all_by_label(label).next().is_some()
+}
+
+/// Something on screen has `part` in its name.
+fn shown_part(h: &Harness<Window>, part: &str) -> bool {
+    h.query_all_by_label_contains(part).next().is_some()
 }
 
 fn scan_done(h: &Harness<Window>) -> bool {
     h.state().gui.as_ref().is_some_and(Gui::scan_done)
 }
 
-#[test]
-fn the_window_scans_a_directory_and_opens_one_with_the_keys() {
+/// The browser's state.
+fn state<'h>(h: &'h Harness<Window>) -> &'h SessionState {
+    let gui = h.state().gui.as_ref().expect("the window");
+    gui.browser().expect("a browser").state()
+}
+
+/// The name of the selected entry.
+fn selected(h: &Harness<Window>) -> Option<Vec<u8>> {
+    state(h).selected_entry().map(|e| e.name.to_vec())
+}
+
+/// Stops the window's browser.
+fn close(h: Harness<'static, Window>) {
+    let mut gui = h.into_state().gui.expect("the window");
+    gui.close();
+}
+
+/// Runs a few frames, for a window whose size changed to settle where it is drawn.
+fn settle(h: &mut Harness<'static, Window>) {
+    for _ in 0..3 {
+        h.step();
+    }
+}
+
+/// A directory with a large file and a directory with a file in it.
+fn files() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("temp dir");
     std::fs::write(tmp.path().join("big.bin"), vec![1u8; 64 * 1024]).expect("write");
     std::fs::create_dir(tmp.path().join("sub")).expect("mkdir");
     std::fs::write(tmp.path().join("sub").join("inner.txt"), b"hello").expect("write");
+    tmp
+}
 
+#[test]
+fn the_window_scans_a_directory_and_opens_one_with_the_keys() {
+    let tmp = files();
     let mut h = window(tmp.path());
     until(&mut h, "the scan", |h| {
         scan_done(h) && shown(h, "big.bin") && shown(h, "sub/")
@@ -97,11 +151,6 @@ fn the_window_scans_a_directory_and_opens_one_with_the_keys() {
 
     // The largest entry is first, and selected; `j` moves down to the directory, `Enter`
     // opens it.
-    let selected = |h: &Harness<Window>| {
-        let gui = h.state().gui.as_ref().expect("the window");
-        let s = gui.browser().expect("a browser").state();
-        s.selected_entry().map(|e| e.name.to_vec())
-    };
     assert_eq!(selected(&h).as_deref(), Some(&b"big.bin"[..]));
     h.event(egui::Event::Text("j".into()));
     h.step();
@@ -122,7 +171,25 @@ fn the_window_scans_a_directory_and_opens_one_with_the_keys() {
     until(&mut h, "the expanded directory", |h| {
         shown(h, "inner.txt") && shown(h, "Collapse")
     });
+    close(h);
+}
 
-    let mut gui = h.into_state().gui.expect("the window");
-    gui.close();
+#[test]
+fn the_details_panel_shows_the_selected_entry() {
+    let tmp = files();
+    let mut h = window(tmp.path());
+    until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
+    h.event(egui::Event::Text("i".into()));
+    until(&mut h, "the details", |h| {
+        shown(h, "big.bin") && shown_part(h, "on disk") && shown_part(h, "apparent")
+    });
+    // On a directory: its largest children.
+    h.event(egui::Event::Text("j".into()));
+    until(&mut h, "the directory's details", |h| {
+        shown(h, "sub/") && shown_part(h, "Largest by")
+    });
+    // The toolbar's box closes it again.
+    h.get_by_label("Details").click();
+    until(&mut h, "no details", |h| !shown_part(h, "Largest by"));
+    close(h);
 }
