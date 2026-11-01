@@ -2,8 +2,6 @@
 //! (secondary, primary in the accent, danger in `status.error`), segmented controls, key caps,
 //! category chips, safety badges, size bars, status dots, hairlines and sheets.
 
-#![allow(dead_code, reason = "parts the review views and dialogs are moving to")]
-
 use egui::{
     Align2, Button, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, Rect, Response,
     RichText, Sense, Stroke, StrokeKind, Ui, WidgetInfo, pos2, vec2,
@@ -200,15 +198,6 @@ pub fn key_cap(ui: &mut Ui, colors: &Colors, key: &str) -> Response {
     let at = rect.center() - g.size() / 2.0 - vec2(0.0, 0.5);
     p.galley(at, g, Color32::PLACEHOLDER);
     r
-}
-
-/// A key cap and what the key does after it: `[d] move`.
-pub fn hint(ui: &mut Ui, colors: &Colors, key: &str, what: &str) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        key_cap(ui, colors, key);
-        ui.label(sans(what, 12.0).color(colors.fg(Token::FgDim)));
-    });
 }
 
 /// A category: an 8px square in its colour, then its name in it.

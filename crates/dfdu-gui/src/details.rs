@@ -276,7 +276,17 @@ fn rule_match(ui: &mut Ui, c: &Matched, colors: &Colors) {
     }
     let (glyph, token) = safety(c.safety);
     let name = crate::cleanup::section_name(c.safety).0;
-    kit::badge(ui, &format!("{glyph} {name}"), colors.fg(token));
+    // The bundled fonts lack some glyphs (⊘, ⚒): the name says the level without them.
+    let font = egui::FontId::new(
+        12.0,
+        egui::FontFamily::Name(crate::theme::style::SANS_MEDIUM_FAMILY.into()),
+    );
+    let text = if ui.ctx().fonts_mut(|f| f.has_glyphs(&font, glyph)) {
+        format!("{glyph} {name}")
+    } else {
+        name.to_owned()
+    };
+    kit::badge(ui, &text, colors.fg(token));
 }
 
 /// Its largest children, with bars relative to its own size.
