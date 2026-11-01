@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use dfdu_engine::Model;
 use dfdu_engine::test_support::{add_dir, add_file};
+use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 use super::*;

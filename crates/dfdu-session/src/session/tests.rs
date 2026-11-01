@@ -188,3 +188,28 @@ fn shutting_down_stops_the_comparison_of_duplicates() {
     assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
     engine.shutdown(Duration::from_millis(200));
 }
+
+#[test]
+fn an_action_is_carried_out_or_left_to_the_front_end() {
+    use crate::actions::Action;
+
+    let engine = Engine::portable(1);
+    let mut s = browser(vec![test_entry(0, "a", 10), test_entry(1, "b", 5)]);
+    s.status = Some("old news".into());
+    let mut session = Session::over(&engine, s, SessionOptions::default());
+    let now = Instant::now();
+    let acted = session.act(Action::Down, now);
+    assert!(!acted.front_end && acted.outputs.is_empty());
+    assert_eq!(session.state().selected_index(), Some(1));
+    assert_eq!(session.state().status, None, "a key clears the status line");
+    let due = session.state().sort_schedule.due_at();
+    assert!(due >= now + IDLE_BEFORE_SORT, "input holds off the re-sort");
+    assert!(session.act(Action::Help, now).front_end);
+    let acted = session.act(Action::Errors, now);
+    assert!(matches!(
+        acted.outputs[..],
+        [crate::effect::Output::Errors(_)]
+    ));
+    session.shutdown(Duration::ZERO);
+    engine.shutdown(Duration::from_millis(200));
+}

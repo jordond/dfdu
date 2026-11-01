@@ -268,7 +268,7 @@ fn trash_delete_while_scanning_needs_typing() {
     assert!(out.contains("Move 2 entries to the Trash?"), "{out}");
     assert!(out.contains("Still scanning, may be"), "{out}");
     app.key(press(KeyCode::Esc), t);
-    crate::state::marks::clear(&mut app);
+    dfdu_session::marks::clear(&mut app.session);
     app.key(press(KeyCode::Char('d')), t);
     assert!(!dialog(&app).typing());
 }

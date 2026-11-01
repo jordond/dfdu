@@ -17,12 +17,10 @@
 //! (`dfdu_session::cleanup`): the keys turn into its intents ([`Intent`]). The scroll stays
 //! here.
 
-use std::collections::HashSet;
-
 use dfdu_engine::Verdict;
 use dfdu_rules::CategoryIx;
 use dfdu_session::cleanup as session;
-use dfdu_tree::{NodeRef, Safety};
+use dfdu_tree::Safety;
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
@@ -34,7 +32,6 @@ mod draw;
 mod pane;
 
 pub use draw::draw;
-pub use pane::command;
 
 /// The rows the page keys move the view's cursor by.
 const PAGE: usize = 10;
@@ -86,12 +83,6 @@ fn group_items(app: &App, cat: CategoryIx, safety: Safety) -> Vec<usize> {
 
 fn section_items(app: &App, safety: Safety) -> Vec<usize> {
     session::section_items(&app.session, safety)
-}
-
-/// The nodes of the matches the view lists and of what ticking them ticks
-/// ([`session::listed`]).
-pub fn listed(app: &App) -> HashSet<NodeRef> {
-    session::listed(&app.session)
 }
 
 /// Keys the view takes before the action registry; `None` passes the key on. The native pane

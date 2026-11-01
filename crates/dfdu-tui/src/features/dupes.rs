@@ -14,9 +14,6 @@
 //! the keep rules, the rows and what the keys ask ([`Intent`]) are in `dfdu_session::dupes`;
 //! the scroll stays here.
 
-use std::collections::HashSet;
-use std::path::PathBuf;
-
 #[cfg(test)]
 use dfdu_dupes::Found;
 use dfdu_dupes::{Candidate, Group};
@@ -39,21 +36,6 @@ pub struct Dupes {
     scroll: usize,
 }
 
-/// The nodes of the files the view lists ([`session::listed`]).
-pub fn listed(app: &App) -> HashSet<NodeRef> {
-    session::listed(&app.session)
-}
-
-/// A group whose every copy still in the tree is ticked ([`session::whole_group_ticked`]).
-pub fn whole_group_ticked(app: &App) -> Option<String> {
-    session::whole_group_ticked(&app.session)
-}
-
-/// True when the view is shown, and so takes the keys it knows.
-pub fn active(app: &App) -> bool {
-    session::active(&app.session)
-}
-
 #[cfg(test)]
 pub(crate) fn found(app: &App) -> Option<&Found> {
     session::found(&app.session)
@@ -67,11 +49,6 @@ pub fn groups(app: &App) -> Option<Groups> {
 /// A comparison was asked for: it runs or it is done.
 pub fn compared(app: &App) -> bool {
     session::compared(&app.session)
-}
-
-/// The path of the selected file, for `y` and `o`; `None` on a group's row.
-pub fn selected(app: &App) -> Option<PathBuf> {
-    session::selected(&app.session)
 }
 
 /// A file still in the tree.

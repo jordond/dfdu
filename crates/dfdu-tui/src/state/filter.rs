@@ -9,11 +9,6 @@ use crate::app::keys::{self, Action};
 use crate::app::{App, Effect};
 use crate::input::line::TextOp;
 
-/// Starts editing the filter, with the cursor after the query in force.
-pub fn open(app: &mut App) {
-    filter::open(&mut app.session);
-}
-
 /// True while the filter input takes the keys.
 pub fn editing(app: &App) -> bool {
     filter::editing(&app.session)
@@ -33,11 +28,6 @@ pub fn edit(app: &mut App, op: TextOp, now: Instant) -> Vec<Effect> {
         Edited::Done => {}
     }
     Vec::new()
-}
-
-/// Clears an active filter. False if there was none.
-pub fn clear(app: &mut App) -> bool {
-    filter::clear(&mut app.session)
 }
 
 #[cfg(test)]

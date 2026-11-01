@@ -12,7 +12,6 @@ use ratatui::style::Modifier;
 use super::*;
 use crate::app::views::View;
 use crate::model::snapshot;
-use crate::state::marks;
 use crate::tests::{press, render};
 use crate::theme::Theme;
 
@@ -225,7 +224,7 @@ fn the_keep_rule_picks_the_copy_marking_leaves() {
         ]],
     );
     let kept_after_a = |app: &mut App| {
-        marks::clear(app);
+        dfdu_session::marks::clear(&mut app.session);
         app.key(press(KeyCode::Char('A')), t0);
         let marked: Vec<String> = (app.session.marks.items().iter())
             .map(|i| i.target.path.display().to_string())
@@ -322,7 +321,7 @@ fn nothing_is_compared_until_asked() {
     );
     insta::assert_snapshot!("dupes_not_compared_100x20", frame);
     app.key(press(KeyCode::Esc), t0);
-    assert!(!active(&app));
+    assert!(!dfdu_session::dupes::active(&app.session));
     app.key(press(KeyCode::Char('4')), t0);
     // Counted once for this tree: coming back, or passing through, counts nothing again.
     assert!(!stale(&app));

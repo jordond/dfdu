@@ -10,13 +10,14 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
-use crate::app::keys::{self, Action, ActionInfo, Group, first_key, offered};
+use crate::app::keys::{self, Action, Group, first_key, offered};
 use crate::app::{App, Effect, Overlay};
-use crate::input::fuzzy::{Fuzzy, char_pos};
+use crate::input::fuzzy::char_pos;
 use crate::input::line::{Edit, LineInput};
 use crate::input::line_keys;
 use crate::theme::Theme;
 use crate::view::input_spans;
+use dfdu_session::actions::{Found, search};
 
 /// The groups in the order they are shown, with their headings.
 const GROUPS: [(Group, &str); 6] = [
@@ -90,11 +91,7 @@ pub struct Help {
 }
 
 /// An action that matches the search, with the matched characters of its keys and its label.
-struct Row {
-    info: &'static ActionInfo,
-    key_hits: Vec<u32>,
-    label_hits: Vec<u32>,
-}
+type Row = Found;
 
 impl Help {
     /// True while the search line is shown: the search is being typed, or it filters.
@@ -108,28 +105,14 @@ impl Help {
     }
 
     /// The groups with the actions offered that match the search (all of them without one), in
-    /// registry order. A query matches the keys and the label of an action together.
+    /// registry order, under their headings ([`search`]).
     fn rows(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let mut fuzzy = Fuzzy::new(self.search.text());
-        let mut hits = Vec::new();
-        GROUPS
-            .iter()
-            .filter_map(|&(group, heading)| {
-                let rows: Vec<Row> = offered(self.read_only)
-                    .filter(|info| info.group == group)
-                    .filter_map(|info| {
-                        let keys = char_pos(info.keys.chars().count());
-                        fuzzy.indices(&format!("{}  {}", info.keys, info.label), &mut hits)?;
-                        let (key_hits, label_hits): (Vec<u32>, Vec<u32>) =
-                            hits.iter().partition(|&&i| i < keys);
-                        Some(Row {
-                            info,
-                            key_hits,
-                            label_hits: label_hits.iter().map(|i| i - keys - 2).collect(),
-                        })
-                    })
-                    .collect();
-                (!rows.is_empty()).then_some((heading, rows))
+        let groups = GROUPS.map(|(g, _)| g);
+        search(self.search.text(), self.read_only, &groups)
+            .into_iter()
+            .map(|(g, rows)| {
+                let heading = GROUPS.iter().find(|(x, _)| *x == g).map_or("", |(_, h)| h);
+                (heading, rows)
             })
             .collect()
     }

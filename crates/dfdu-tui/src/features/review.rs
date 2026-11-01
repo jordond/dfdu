@@ -13,18 +13,14 @@
 //! everything. `d` and `D` delete what is ticked among what the view lists, the marks made
 //! elsewhere left alone, so the delete matches the summary bar; with nothing ticked there they
 //! say how to tick instead of deleting the list's selection hidden behind the view
-//! ([`delete`], which the registry runs, from a key or from the palette alike).
+//! (`dfdu_session::act::delete`, which the registry runs, from a key or from the palette alike).
 
-use dfdu_engine::Mode;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::app::App;
 use crate::app::keys::{Action, first_key};
-use crate::app::views::{self, View};
-use crate::app::{App, Effect};
-use crate::features::{cleanup, dupes, largest};
 use crate::format::{human, truncate_middle};
-use crate::overlay::confirm;
 use crate::theme::Theme;
 
 mod detail;
@@ -136,40 +132,6 @@ pub fn tick_of(ticked: usize, of: usize) -> Tick {
         n if n >= of => Tick::On,
         _ => Tick::Partial,
     }
-}
-
-/// `d` and `D` (in `mode`): in a review view, the delete dialog for what is ticked among what
-/// the view lists, and only that; with nothing ticked there, or in Duplicates with every copy
-/// of a group ticked, the status line says why instead. In the other views, the list's delete.
-pub fn delete(app: &mut App, mode: Mode) -> Vec<Effect> {
-    let listed = match views::current(app) {
-        View::Files | View::Map => return confirm::open(app, mode),
-        View::Largest => largest::listed(app),
-        View::Cleanup => cleanup::listed(app),
-        View::Duplicates => dupes::listed(app),
-    };
-    let ticked = (app.session.marks.items().iter())
-        .filter_map(|m| m.target.node)
-        .any(|n| listed.contains(&n));
-    if !ticked {
-        app.session.status = Some(format!(
-            "tick items with {} first: {} and {} delete the ticked ones",
-            first_key(Action::ToggleMark),
-            first_key(Action::Trash),
-            first_key(Action::DeletePermanent)
-        ));
-        return Vec::new();
-    }
-    if views::current(app) == View::Duplicates
-        && let Some(name) = dupes::whole_group_ticked(app)
-    {
-        app.session.status = Some(format!(
-            "every copy of {name} is ticked: untick one to keep it ({} unticks)",
-            first_key(Action::ToggleMark)
-        ));
-        return Vec::new();
-    }
-    confirm::open_only(app, mode, &listed)
 }
 
 #[cfg(test)]

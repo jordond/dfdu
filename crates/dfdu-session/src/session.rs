@@ -27,13 +27,16 @@ use crossbeam_channel::Receiver;
 use dfdu_engine::Engine;
 use dfdu_scan::Backend;
 
+use crate::act::{self, Ran};
+use crate::actions::Action;
 use crate::cache_link::{CacheLink, Cacher};
 use crate::debug;
 use crate::effect::{self, Effect, Output};
 use crate::extras::{self, Applied, Read};
 use crate::history_link::{HistoryLink, Recorder};
 use crate::snapshot::{self, Snapshot};
-use crate::state::SessionState;
+use crate::state::{Moved, SessionState};
+use crate::view::{self, Then};
 use pacing::Pacing;
 pub use pacing::{DATA_FRAME, spinning};
 
@@ -96,6 +99,21 @@ pub struct Tick {
     /// When to tick again, `None` when nothing is due until the engine changes or the user
     /// acts. It counts a frame shown now when `changed`.
     pub wake_at: Option<Instant>,
+}
+
+/// What [`Session::act`] did, for the front end to follow.
+#[derive(Debug, Default)]
+#[must_use]
+pub struct Acted {
+    /// What only the front end can do: copy, show in the file manager, list the errors.
+    pub outputs: Vec<Output>,
+    /// The action is the front end's own ([`Ran::FrontEnd`]): the session did nothing.
+    pub front_end: bool,
+    /// The browser went into a directory or up out of it ([`Then::entered`]).
+    pub entered: Option<Moved>,
+    /// The browser went to another directory to show an entry, which the front end shows from
+    /// the top ([`Then::moved`]).
+    pub went: Option<Moved>,
 }
 
 /// The engine, owned by the session or by its caller.
@@ -236,6 +254,39 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
     /// Carries out `fx` ([`effect::carry_out`]) and returns what only the front end can do.
     pub fn carry_out(&mut self, fx: Vec<Effect>) -> Vec<Output> {
         effect::carry_out(self.front.state_mut(), self.engine.get(), fx)
+    }
+
+    /// Carries out action `a` at `now`, as its key does ([`act::run`]): the user's input holds
+    /// off the automatic re-sort, the status line is cleared first, and what the action leaves
+    /// is followed ([`Session::follow`]).
+    pub fn act(&mut self, a: Action, now: Instant) -> Acted {
+        let s = self.front.state_mut();
+        s.note_input(now);
+        s.status = None;
+        match act::run(s, a) {
+            Ran::Done(then) => self.follow(then),
+            Ran::FrontEnd => Acted {
+                front_end: true,
+                ..Acted::default()
+            },
+        }
+    }
+
+    /// Follows what an action or an intent of a view left: shows a path in Files and carries
+    /// out the effects.
+    pub fn follow(&mut self, then: Then) -> Acted {
+        let mut went = then.moved;
+        if let Some(show) = &then.show
+            && let Some(m) = view::show(self.front.state_mut(), show)
+        {
+            went = Some(m);
+        }
+        Acted {
+            outputs: self.carry_out(then.effects),
+            front_end: false,
+            entered: then.entered,
+            went,
+        }
     }
 
     /// Stops what runs beside the engine: stops a comparison of duplicates, cancels a save to the

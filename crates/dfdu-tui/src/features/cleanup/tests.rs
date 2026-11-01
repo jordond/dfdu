@@ -5,7 +5,6 @@ use dfdu_tree::{Class, HostPath, Kind, Safety, now_secs};
 use ratatui::crossterm::event::KeyCode;
 
 use super::*;
-use crate::state::marks;
 use crate::tests::{classified, classified_app, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
@@ -150,7 +149,7 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     app.key(press(KeyCode::Down), t0);
     assert_eq!(app.session.status, None);
     // Unmarked, it stays so: through later reads, and when the view opens again.
-    marks::clear(&mut app);
+    dfdu_session::marks::clear(&mut app.session);
     sync(&mut app, &fx.m, t0);
     app.key(press(KeyCode::Char('1')), t0);
     app.key(press(KeyCode::Char('3')), t0);

@@ -1,5 +1,8 @@
-//! The error list overlay: what could not be read, with a cursor; `Enter` goes to the entry.
+//! The error list overlay: what could not be read, with a cursor; `Enter` goes to the entry. The
+//! cursor's moves and the entry it goes to are in `dfdu_session::error_list`.
 
+use dfdu_session::error_list::{self as session, Move};
+use dfdu_session::view::Show;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -16,17 +19,15 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     };
     let (n, page) = (list.items.len(), app.session.page_rows());
-    let cursor = *cursor;
-    let next = match k.code {
-        KeyCode::Up | KeyCode::Char('k') => cursor.saturating_sub(1),
-        KeyCode::Down | KeyCode::Char('j') => cursor + 1,
-        KeyCode::PageUp => cursor.saturating_sub(page),
-        KeyCode::PageDown => cursor + page,
-        KeyCode::Home | KeyCode::Char('g') => 0,
-        KeyCode::End | KeyCode::Char('G') => n,
+    let m = match k.code {
+        KeyCode::Up | KeyCode::Char('k') => Move::Up,
+        KeyCode::Down | KeyCode::Char('j') => Move::Down,
+        KeyCode::PageUp => Move::PageUp,
+        KeyCode::PageDown => Move::PageDown,
+        KeyCode::Home | KeyCode::Char('g') => Move::First,
+        KeyCode::End | KeyCode::Char('G') => Move::Last,
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-            if let Some(e) = list.items.get(cursor) {
-                let (path, root) = (e.path.clone(), list.root.clone());
+            if let Some(Show { path, root }) = session::entry(list, *cursor) {
                 app.overlay = Overlay::None;
                 app.go_to(&path, &root);
             }
@@ -38,7 +39,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         }
     };
     if let Overlay::Errors { cursor, .. } = &mut app.overlay {
-        *cursor = next.min(n.saturating_sub(1));
+        *cursor = session::moved(*cursor, n, page, m);
     }
     Vec::new()
 }

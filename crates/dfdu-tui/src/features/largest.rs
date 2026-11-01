@@ -10,10 +10,7 @@
 //! `dfdu_session::largest`. It is one of the review views (`features::review`): `Space` ticks a file (marks it, as in the
 //! list), `Enter` shows it in Files, in its directory, and `d` deletes what is ticked.
 
-use std::collections::HashSet;
-
 use dfdu_session::largest as session;
-use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
@@ -37,11 +34,6 @@ fn active(app: &App) -> bool {
     session::active(&app.session)
 }
 
-/// The selected file, its path joined to the directory shown.
-pub fn selected(app: &App) -> Option<(HostPath, &File)> {
-    session::selected(&app.session)
-}
-
 /// Keys the view takes before the action registry; `None` passes the key on. The keys that
 /// delete act on what is marked, never on the list's selection hidden behind the view.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
@@ -58,11 +50,6 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     };
     let then = session::act(&mut app.session, intent);
     Some(views::carry(app, then))
-}
-
-/// The nodes of the files the view lists, for `d` to act on its ticks only.
-pub fn listed(app: &App) -> HashSet<NodeRef> {
-    session::listed(&app.session)
 }
 
 #[cfg(test)]

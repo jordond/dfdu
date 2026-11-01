@@ -115,8 +115,8 @@ pub fn switch(s: &mut SessionState, view: View) -> Then {
     };
     Then {
         effects,
-        show: None,
         moved,
+        ..Then::default()
     }
 }
 
@@ -135,6 +135,13 @@ pub fn step(s: &mut SessionState, by: isize) -> Then {
     Then::nothing()
 }
 
+/// Shows `show` in Files: switches to Files, opens the path's directory and selects it. The
+/// move to another directory, for the front end's scroll, which shows it from the top.
+pub fn show(s: &mut SessionState, show: &Show) -> Option<Moved> {
+    let _ = switch(s, View::Files);
+    s.go_to(&show.path, &show.root)
+}
+
 /// What an intent of a view leaves to the front end.
 #[derive(Debug, Default)]
 #[must_use]
@@ -146,6 +153,10 @@ pub struct Then {
     /// The browser went to another directory, with its entry to show selected: the front end
     /// keeps its scroll of the directory left and shows the one opened from the top.
     pub moved: Option<Moved>,
+    /// The browser went into a directory or up out of it: the front end keeps its scroll of the
+    /// directory left and puts back the one of the directory opened, as the session does with
+    /// the selection.
+    pub entered: Option<Moved>,
 }
 
 /// A path to show in Files, below `root` (the scan root, or the directory the path is

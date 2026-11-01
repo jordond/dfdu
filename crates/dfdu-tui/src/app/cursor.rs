@@ -9,23 +9,10 @@ use super::App;
 
 impl App {
     /// Keeps the scroll of the directory left, and puts back that of the directory opened.
-    fn moved(&mut self, m: Moved) {
+    pub(crate) fn moved(&mut self, m: Moved) {
         self.scrolls.insert(m.left, self.scroll);
         if let Some(dir) = m.opened {
             self.scroll = self.scrolls.get(&dir).copied().unwrap_or(0);
-        }
-    }
-
-    /// Opens the directory of entry `index` of the snapshot: in tree mode a row at any depth,
-    /// and the expanded directories stay expanded.
-    pub(super) fn enter(&mut self, index: usize) {
-        let m = self.session.enter(index);
-        self.moved(m);
-    }
-
-    pub(super) fn up(&mut self) {
-        if let Some(m) = self.session.up() {
-            self.moved(m);
         }
     }
 
@@ -123,7 +110,7 @@ mod tests {
     fn the_cursor_of_a_directory_left_comes_back() {
         let (mut app, t0) = browser();
         app.session.move_to(2);
-        app.enter(app.session.list.rows[2]);
+        crate::app::keys::run(&mut app, crate::app::keys::Action::Enter);
         assert_eq!(app.session.target.path, HostPath::from("/r").join(b"d2"));
         assert!(
             app.session.selected.is_none(),
@@ -136,7 +123,7 @@ mod tests {
         };
         app.refresh(inside, t0);
         // Up selects the directory come from, by name until the rows are read.
-        app.up();
+        crate::app::keys::run(&mut app, crate::app::keys::Action::Parent);
         assert_eq!(app.session.target.path, HostPath::from("/r"));
         let sel = app.session.selected.as_ref().expect("a selection");
         assert_eq!((sel.node, &sel.name[..]), (None, &b"d2"[..]));

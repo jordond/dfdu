@@ -4,8 +4,8 @@
 //! and Windows, where file names usually ignore it. The glob and what it matches are in
 //! `dfdu_session::mark_pattern`.
 
-use dfdu_rules::{Glob, GlobError};
-use dfdu_session::mark_pattern::glob;
+use dfdu_rules::GlobError;
+use dfdu_session::mark_pattern as session;
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -14,10 +14,8 @@ use ratatui::text::{Line, Span};
 
 use crate::app::keys::READ_ONLY;
 use crate::app::{App, Effect, Overlay};
-use crate::format::human;
 use crate::input::line::{Edit, LineInput};
 use crate::input::line_keys;
-use crate::state::marks;
 use crate::view::input_spans;
 
 /// State of the open prompt, held in `Overlay::MarkPattern`.
@@ -27,19 +25,6 @@ pub struct Prompt {
     /// How many names the glob typed matches, or what is wrong with it; counted as it is typed,
     /// not with every frame.
     matches: Option<Result<usize, GlobError>>,
-}
-
-/// The entries the list shows that `g` matches, by index into the snapshot's entries
-/// ([`dfdu_session::mark_pattern::matched`]). Directories are left out while a type filter
-/// shows only some of their files.
-fn matched(app: &App, g: &Glob) -> Vec<usize> {
-    let folders = !crate::overlay::type_filter::active(app);
-    dfdu_session::mark_pattern::matched(
-        &app.session.snap.entries,
-        &app.session.list.rows,
-        folders,
-        g,
-    )
 }
 
 /// Opens the prompt, empty. A read-only browser marks nothing, so it says so instead.
@@ -58,8 +43,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
     };
     match line_keys::edit(&mut p.input, &k) {
         Edit::Changed => {
-            let text = p.input.text().trim().to_owned();
-            let matches = (!text.is_empty()).then(|| glob(&text).map(|g| matched(app, &g).len()));
+            let matches = session::count(&app.session, p.input.text());
             if let Overlay::MarkPattern(p) = &mut app.overlay {
                 p.matches = matches;
             }
@@ -67,40 +51,12 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
         Edit::Submit => {
             let text = p.input.text().trim().to_owned();
             app.overlay = Overlay::None;
-            mark(app, &text);
+            session::mark(&mut app.session, &text);
         }
         Edit::Cancel => app.overlay = Overlay::None,
         Edit::Moved | Edit::Ignored => {}
     }
     Vec::new()
-}
-
-/// Marks the entries `pattern` matches, and says how many on the status line.
-fn mark(app: &mut App, pattern: &str) {
-    let g = match glob(pattern) {
-        Ok(g) => g,
-        Err(e) => {
-            app.session.status = Some(format!("mark by pattern: {e}"));
-            return;
-        }
-    };
-    let hits = matched(app, &g);
-    if hits.is_empty() {
-        app.session.status = Some(format!("nothing here matches {pattern}"));
-        return;
-    }
-    let items: Vec<marks::Item> = (hits.iter()).map(|&i| marks::item_of(app, i)).collect();
-    let size: u64 = items.iter().map(|it| it.size).sum();
-    let n = items.len();
-    let added = marks::add(app, items);
-    app.session.status = Some(match added {
-        0 => format!("everything matching {pattern} is marked already"),
-        _ => format!(
-            "marked {added} of {n} entr{} matching {pattern} ({})",
-            if n == 1 { "y" } else { "ies" },
-            human(size)
-        ),
-    });
 }
 
 /// Draws the prompt centred in `area` and returns the rectangle it covers: the glob, and below

@@ -119,7 +119,7 @@ fn space_marks_and_moves_down() {
     assert_eq!(summary(&app), Some(format!("● 1 marked ({})", human(2000))));
     assert!(!is_marked(&app, &es[0]));
     assert!(is_marked(&app, &es[1]));
-    clear(&mut app);
+    dfdu_session::marks::clear(&mut app.session);
     assert_eq!(summary(&app), None);
     assert!(!is_marked(&app, &es[1]));
 }

@@ -425,6 +425,43 @@ pub fn offered(read_only: bool) -> impl Iterator<Item = &'static ActionInfo> {
         .filter(move |info| !(read_only && info.action.deletes()))
 }
 
+/// An action offered that matches a search ([`search`]), with the matched characters of its
+/// keys and of its label.
+#[derive(Clone, Debug)]
+pub struct Found {
+    pub info: &'static ActionInfo,
+    pub key_hits: Vec<u32>,
+    pub label_hits: Vec<u32>,
+}
+
+/// The groups, in `groups` order, with the actions offered (as [`offered`]) that match `query`,
+/// all of them for an empty one, in registry order. A query matches the keys and the label of
+/// an action together; groups without a match are left out.
+pub fn search(query: &str, read_only: bool, groups: &[Group]) -> Vec<(Group, Vec<Found>)> {
+    let mut fuzzy = crate::fuzzy::Fuzzy::new(query);
+    let mut hits = Vec::new();
+    groups
+        .iter()
+        .filter_map(|&group| {
+            let found: Vec<Found> = offered(read_only)
+                .filter(|info| info.group == group)
+                .filter_map(|info| {
+                    let keys = crate::fuzzy::char_pos(info.keys.chars().count());
+                    fuzzy.indices(&format!("{}  {}", info.keys, info.label), &mut hits)?;
+                    let (key_hits, label_hits): (Vec<u32>, Vec<u32>) =
+                        hits.iter().partition(|&&i| i < keys);
+                    Some(Found {
+                        info,
+                        key_hits,
+                        label_hits: label_hits.iter().map(|i| i - keys - 2).collect(),
+                    })
+                })
+                .collect();
+            (!found.is_empty()).then_some((group, found))
+        })
+        .collect()
+}
+
 /// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
 pub fn first_key(a: Action) -> &'static str {
     ACTIONS

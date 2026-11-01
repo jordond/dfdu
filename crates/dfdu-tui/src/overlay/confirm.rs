@@ -24,20 +24,6 @@ pub use session::{Confirm, Item};
 /// Targets listed before "and N more".
 const SHOWN: usize = 8;
 
-/// Asks to delete the marked entries or the selected one ([`session::open`]).
-pub fn open(app: &mut App, mode: Mode) -> Vec<Effect> {
-    session::open(&mut app.session, mode)
-}
-
-/// Asks to delete the marked entries among `only` ([`session::open_only`]).
-pub fn open_only(
-    app: &mut App,
-    mode: Mode,
-    only: &std::collections::HashSet<dfdu_tree::NodeRef>,
-) -> Vec<Effect> {
-    session::open_only(&mut app.session, mode, only)
-}
-
 /// True while the dialog is open: it takes every key and is drawn over everything else.
 pub fn is_open(app: &App) -> bool {
     app.session.confirm.is_some()

@@ -1,9 +1,9 @@
 //! The selected path handed to the rest of the desktop: `y` copies it to the clipboard and `o`
 //! shows it in the file manager. The selected path is that of the view shown: the list's (and
 //! the treemap's) selected entry, the cleanup view's item, the duplicate file or the largest
-//! file under the cursor.
+//! file under the cursor (`dfdu_session::selected_path`).
 //!
-//! Both go through the run loop as effects. The copy is an OSC 52 escape written to the
+//! Both go through the run loop as effects; the session words and asks for `o`. The copy is an OSC 52 escape written to the
 //! terminal, which puts the text on the clipboard of the machine the terminal runs on, also
 //! over SSH, in terminals that allow it. The file manager is started without waiting for it:
 //! `open` on macOS, `explorer` on Windows and `xdg-open` elsewhere, a file shown in its folder
@@ -14,40 +14,12 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use dfdu_tree::HostPath;
-
-use crate::app::views::{self, View};
 use crate::app::{App, Effect};
-use crate::features::{cleanup, dupes, largest};
 use crate::model::outside::tilde;
-
-/// The path of what is selected in the view shown, and whether it is a directory.
-fn selected(app: &App) -> Option<(HostPath, bool)> {
-    match views::current(app) {
-        View::Largest => return largest::selected(app).map(|(path, _)| (path, false)),
-        View::Duplicates => {
-            return dupes::selected(app).map(|p| (HostPath::local(&p), false));
-        }
-        View::Cleanup => {
-            let it = cleanup::selected(app)?;
-            return Some((it.path.clone(), it.kind == dfdu_tree::Kind::Dir));
-        }
-        View::Files | View::Map => {}
-    }
-    let index = app.session.list.rows[app.session.selected_index()?];
-    let e = &app.session.snap.entries[index];
-    if e.pseudo {
-        return None;
-    }
-    Some((
-        crate::state::tree::path_of(&app.session.snap, index),
-        e.is_dir,
-    ))
-}
 
 /// `y`: copies the selected path, and says so.
 pub fn copy(app: &mut App) -> Option<Effect> {
-    let Some((path, _)) = selected(app) else {
+    let Some((path, _)) = dfdu_session::selected_path::selected(&app.session) else {
         app.session.status = Some("nothing selected to copy".into());
         return None;
     };
@@ -55,25 +27,6 @@ pub fn copy(app: &mut App) -> Option<Effect> {
     let shown = tilde(&path, app.session.home.as_deref());
     app.session.status = Some(format!("copied {shown} (through the terminal, OSC 52)"));
     Some(Effect::Copy(text))
-}
-
-/// `o`: shows the selected entry in the file manager, unless the scan is not of this machine.
-pub fn open(app: &mut App) -> Option<Effect> {
-    if !app.session.outside.local {
-        app.session.status =
-            Some("o opens this machine's file manager; this scan is remote or from a file".into());
-        return None;
-    }
-    let Some((path, is_dir)) = selected(app) else {
-        app.session.status = Some("nothing selected to open".into());
-        return None;
-    };
-    let shown = tilde(&path, app.session.home.as_deref());
-    app.session.status = Some(format!("opening {shown} in the file manager…"));
-    Some(Effect::Open {
-        path: path.to_local(),
-        is_dir,
-    })
 }
 
 /// Starts the file manager on `path` without waiting for it

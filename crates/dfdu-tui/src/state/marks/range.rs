@@ -1,32 +1,14 @@
-//! The range mark (`v`, `dfdu_session::marks::range`).
+//! The range mark (`v`, `dfdu_session::marks::range`), read with the app in tests.
 
 use dfdu_session::marks::range;
 
 use crate::app::App;
 
 /// True while a range mark is on in the directory and view shown.
-#[cfg(test)]
 pub(crate) fn on(app: &App) -> bool {
     range::on(&app.session)
 }
 
-/// `v`: starts a range mark at the selected row, which it marks, or ends the one that is on.
-pub fn toggle(app: &mut App) {
-    range::toggle(&mut app.session);
-}
-
-/// Ends the range mark that is on; false when none was.
-pub fn end(app: &mut App) -> bool {
-    range::end(&mut app.session)
-}
-
-/// After a move of the cursor from row `before`: marks the rows passed while a range mark is
-/// on.
-pub fn follow(app: &mut App, before: Option<usize>) {
-    range::follow(&mut app.session, before);
-}
-
-#[cfg(test)]
 mod tests {
     use std::time::Instant;
 
@@ -47,14 +29,14 @@ mod tests {
         entries.extend((1..5).map(|i| test_entry(i, &format!("f{i}"), 100 - u64::from(i))));
         app.refresh(snap_with_totals(entries, 1), t0);
         app.session.read_only = true;
-        toggle(&mut app);
+        range::toggle(&mut app.session);
         assert!(!on(&app));
         assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
         app.session.read_only = false;
         crate::app::views::switch(&mut app, crate::app::views::View::Map);
         // As a frame with room for the map sets it.
         app.session.set_map_drawn(true);
-        toggle(&mut app);
+        range::toggle(&mut app.session);
         assert!(!on(&app));
         assert_eq!(
             app.session.status.as_deref(),

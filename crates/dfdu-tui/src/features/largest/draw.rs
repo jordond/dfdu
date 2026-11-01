@@ -223,7 +223,7 @@ mod tests {
         );
         assert!(line.spans.iter().any(|s| s.content == "big.iso"));
         app.session.move_to(0);
-        crate::state::marks::toggle(&mut app);
+        dfdu_session::marks::toggle(&mut app.session);
         assert!(joined(&row_of(&app).spans).starts_with(" [x] "));
     }
 

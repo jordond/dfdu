@@ -104,7 +104,7 @@ fn inactive_filter_counts_nothing_until_opened() {
     let t0 = Instant::now();
     let mut app = app_with(Theme::no_color(), entries(), t0);
     assert_eq!(app.session.filter.shown(false), (0, 0));
-    open(&mut app);
+    dfdu_session::filter::open(&mut app.session);
     assert_eq!(app.session.filter.shown(false), (7, 7));
     assert_eq!(app.session.filter.shown(true), (6, 6), "one is hidden");
     assert_eq!(line_text(&app).as_deref(), Some(" / ▌   7 of 7"));
@@ -190,7 +190,7 @@ fn esc_in_list_clears_before_closing() {
     app.reorder(t0);
     assert_eq!(app.session.list.rows.len(), 7);
     assert_eq!(line_text(&app), None);
-    assert!(!clear(&mut app));
+    assert!(!dfdu_session::filter::clear(&mut app.session));
 }
 
 #[test]

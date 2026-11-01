@@ -61,7 +61,7 @@ fn marks_the_names_the_glob_matches() {
             .as_deref()
             .is_some_and(|s| s.contains("marked already"))
     );
-    crate::state::marks::clear(&mut app);
+    dfdu_session::marks::clear(&mut app.session);
     open_from_palette(&mut app, t0);
     typed(&mut app, "notes.tx?", t0);
     app.key(press(KeyCode::Enter), t0);
@@ -113,7 +113,7 @@ fn read_only_does_not_open_it() {
     assert!(matches!(app.overlay, Overlay::None));
     assert_eq!(app.session.status.as_deref(), Some(READ_ONLY));
     // Nor does anything else mark through the bulk path.
-    let items = vec![marks::item_of(&app, 0)];
-    assert_eq!(marks::add(&mut app, items), 0);
+    let items = vec![dfdu_session::marks::item_of(&app.session, 0)];
+    assert_eq!(dfdu_session::marks::add(&mut app.session, items), 0);
     assert!(app.session.marks.is_empty());
 }

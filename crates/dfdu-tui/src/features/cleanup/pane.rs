@@ -13,12 +13,6 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Effect};
 
-/// `N` ([`Action::CleanupCommand`](crate::app::keys::Action)): opens the selected item's
-/// native command ([`session::open`]).
-pub fn command(app: &mut App) -> Vec<Effect> {
-    session::open(&mut app.session)
-}
-
 /// A key while the pane is open: `Esc` and `q` close it, `v` picks another form and `y` runs
 /// it; the other keys do nothing.
 pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {

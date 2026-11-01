@@ -3,15 +3,16 @@
 //!
 //! While the filter is on, the snapshot counts only the matching files: a directory's size and
 //! items are those of the matching files inside it, and entries without any are left out
-//! ([`crate::model::snapshot::build_view`]). The picker lists the current directory's files by type and
-//! by extension, read with the snapshot while it is open; toggling a row applies at once.
+//! ([`crate::model::snapshot::build_view`]). The picker lists the current directory's files by
+//! type and by extension, read with the snapshot while it is open; toggling a row applies at
+//! once. Its rows and what toggling one does are in `dfdu_session::type_filter`.
 //! Directories cannot be marked or deleted while the filter is on, since the size shown is not
 //! what deleting one would remove.
 
 use std::cell::Cell;
 
+use dfdu_session::type_filter::{self as session, Row, chosen};
 use dfdu_tree::Totals;
-use dfdu_tree::filetype::{Ext, FileType, TypeFilter};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Rect};
@@ -25,9 +26,6 @@ use crate::input::line::{Edit, LineInput};
 use crate::input::line_keys;
 use crate::view::input_spans;
 
-/// Extensions listed at most, largest first; chosen ones are always listed.
-const MAX_EXTS: usize = 300;
-
 /// State of the open picker, held in `Overlay::Types`.
 #[derive(Clone, Debug, Default)]
 pub struct TypePicker {
@@ -40,121 +38,19 @@ pub struct TypePicker {
     toggled: bool,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Row {
-    /// Every file: choosing it clears the filter.
-    All,
-    Type(FileType),
-    Ext(Ext),
-}
-
-/// Whether the type filter is on.
-pub fn active(app: &App) -> bool {
-    !app.session.types.is_empty()
-}
-
 /// Opens the picker.
 pub fn open(app: &mut App) {
     app.overlay = Overlay::Types(TypePicker::default());
 }
 
-/// Turns the filter off; false when it was off.
-pub fn clear(app: &mut App) -> bool {
-    if app.session.types.is_empty() {
-        return false;
-    }
-    app.session.types = TypeFilter::default();
-    app.session.status = Some("showing all files".into());
-    true
-}
-
-/// The rows for `query`: every file, then the types and the extensions below the directory,
-/// largest first, with their totals. Chosen types and extensions are listed even when the
-/// directory has none, and a query that is an extension the directory lacks is offered too.
+/// The rows for `query` ([`session::rows`]).
 fn rows(app: &App, query: &str) -> Vec<(Row, Totals)> {
-    let q = query.trim().to_ascii_lowercase();
-    let size = |t: &Totals| app.session.size_mode.of(t);
-    let mut out = Vec::new();
-    let all = app
-        .session
-        .snap
-        .breakdown
-        .as_ref()
-        .map(|b| {
-            let mut t = Totals::default();
-            for x in &b.by_type {
-                t.add(x);
-            }
-            t
-        })
-        .unwrap_or_default();
-    if q.is_empty() || "all files".contains(&q) {
-        out.push((Row::All, all));
-    }
-    let wanted = |label: &str| q.is_empty() || label.contains(&q);
-    let mut types: Vec<(Row, Totals)> = FileType::ALL
-        .iter()
-        .map(|&t| {
-            let tot = app
-                .session
-                .snap
-                .breakdown
-                .as_ref()
-                .map(|b| b.by_type[t as usize]);
-            (Row::Type(t), tot.unwrap_or_default())
-        })
-        .filter(|(r, t)| {
-            let Row::Type(ty) = r else { return false };
-            (t.items > 0 || app.session.types.has_type(*ty)) && wanted(ty.name())
-        })
-        .collect();
-    types.sort_by_key(|(_, t)| std::cmp::Reverse(size(t)));
-    out.extend(types);
-    let mut exts: Vec<(Row, Totals)> = app
-        .session
-        .snap
-        .breakdown
-        .as_ref()
-        .map(|b| b.exts_by(size))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(e, _)| wanted(&format!(".{e}")))
-        .take(MAX_EXTS)
-        .map(|(e, t)| (Row::Ext(e), t))
-        .collect();
-    for e in app.session.types.exts() {
-        if !exts.iter().any(|(r, _)| *r == Row::Ext(*e)) && wanted(&format!(".{e}")) {
-            exts.push((Row::Ext(*e), Totals::default()));
-        }
-    }
-    if let Some(e) = Ext::new(q.as_bytes())
-        && !exts.iter().any(|(r, _)| *r == Row::Ext(e))
-    {
-        exts.push((Row::Ext(e), Totals::default()));
-    }
-    out.extend(exts);
-    out
+    session::rows(&app.session, query)
 }
 
-fn chosen(f: &TypeFilter, r: Row) -> bool {
-    match r {
-        Row::All => f.is_empty(),
-        Row::Type(t) => f.has_type(t),
-        Row::Ext(e) => f.has_ext(&e),
-    }
-}
-
+/// Chooses `r`, or unchooses it ([`session::toggle`]).
 fn toggle(app: &mut App, r: Row) {
-    match r {
-        Row::All => app.session.types = TypeFilter::default(),
-        Row::Type(t) => app.session.types.toggle_type(t),
-        Row::Ext(e) => app.session.types.toggle_ext(e),
-    }
-    app.session.status = Some(if app.session.types.is_empty() {
-        "showing all files".into()
-    } else {
-        format!("showing only {}", app.session.types)
-    });
+    session::toggle(&mut app.session, r);
 }
 
 /// Typing searches the rows; `↑`/`↓`/`PgUp`/`PgDn` move, `Space` toggles the row, `Enter`

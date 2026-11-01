@@ -12,8 +12,8 @@ use crate::features::{cleanup, dupes, treemap};
 use crate::format::human;
 
 use dfdu_session::view as session;
+use dfdu_session::view::Then;
 pub use dfdu_session::view::View;
-use dfdu_session::view::{Show, Then};
 
 /// The view shown ([`SessionState::current_view`](dfdu_session::SessionState::current_view)).
 pub fn current(app: &App) -> View {
@@ -29,28 +29,22 @@ pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
     carry(app, then)
 }
 
-/// Carries out what an intent of a view left to the TUI: moves the list's scroll with a move to
-/// another directory, shows a path in Files, which moves the scroll too, and returns the effects
-/// for the run loop.
+/// Carries out what an action or an intent of a view left to the TUI: moves the list's scroll
+/// with a move to another directory, shows a path in Files ([`session::show`]), which moves the
+/// scroll too, and returns the effects for the run loop.
 pub fn carry(app: &mut App, then: Then) -> Vec<Effect> {
+    if let Some(m) = then.entered {
+        app.moved(m);
+    }
     if let Some(m) = then.moved {
         app.went(m);
     }
-    if let Some(Show { path, root }) = then.show {
-        switch(app, View::Files);
-        app.go_to(&path, &root);
+    if let Some(show) = &then.show
+        && let Some(m) = session::show(&mut app.session, show)
+    {
+        app.went(m);
     }
     then.effects
-}
-
-/// `[` and `]`: the view `by` places before or after the current one, round the end
-/// ([`session::step`]).
-pub fn step(app: &mut App, by: isize) -> Vec<Effect> {
-    let then = session::step(&mut app.session, by);
-    if current(app) == View::Map {
-        treemap::on_open(app);
-    }
-    carry(app, then)
 }
 
 /// What the scope line adds after `whole scan: <root>` for `view`: which files Duplicates

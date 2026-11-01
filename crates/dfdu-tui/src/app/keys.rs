@@ -5,7 +5,7 @@ mod act;
 mod lookup;
 
 pub use act::run;
-pub use dfdu_session::actions::{ACTIONS, Action, ActionInfo, Group, first_key, offered};
+pub use dfdu_session::actions::{ACTIONS, Action, Group, first_key, offered};
 #[cfg(test)]
 pub(crate) use lookup::parse;
 pub use lookup::{action_for, cursor_after, half_page};
