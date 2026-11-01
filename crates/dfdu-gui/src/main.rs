@@ -12,7 +12,8 @@
 //! engine's model changes (`bridge`). The theme chosen and how the list was shown are kept
 //! between runs (`settings`).
 //!
-//! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start.
+//! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start, with dfdu's mark as
+//! its icon.
 
 mod access;
 mod app;
@@ -57,6 +58,8 @@ use crate::settings::ThemeChoice;
 
 /// The window's title and the application's name.
 const NAME: &str = "dfdu";
+/// The window's and the application's icon: dfdu's mark, as the website shows it.
+const ICON: &[u8] = include_bytes!("../../../assets/logo/dfdu-mark-512.png");
 
 fn main() -> ExitCode {
     let args = args::Args::parse();
@@ -104,14 +107,19 @@ fn run(
     pending: &Cell<Option<Launch>>,
     theme: Option<&(ThemeChoice, Option<ThemeFile>)>,
 ) -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(NAME)
+        .with_app_id(NAME)
+        .with_inner_size([1100.0, 720.0])
+        .with_min_inner_size([480.0, 320.0])
+        .with_drag_and_drop(true);
+    // Without it, eframe's own icon is shown.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON) {
+        viewport = viewport.with_icon(icon);
+    }
     let opts = eframe::NativeOptions {
         renderer,
-        viewport: egui::ViewportBuilder::default()
-            .with_title(NAME)
-            .with_app_id(NAME)
-            .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([480.0, 320.0])
-            .with_drag_and_drop(true),
+        viewport,
         persistence_path: settings::path(),
         ..eframe::NativeOptions::default()
     };
@@ -143,4 +151,13 @@ fn run(
             })
         }),
     )
+}
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn the_icon_reads() {
+        let icon = eframe::icon_data::from_png_bytes(super::ICON).expect("a PNG");
+        assert_eq!((icon.width, icon.height), (512, 512));
+    }
 }
