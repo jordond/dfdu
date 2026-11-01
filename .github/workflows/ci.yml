@@ -73,6 +73,23 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check bans licenses sources
+      # install.sh must run under any POSIX sh, not only bash: linted as sh, run with dash.
+      - name: Check install.sh with shellcheck
+        if: ${{ !cancelled() }}
+        run: shellcheck --shell=sh install.sh
+      # Installs the latest release, so a change to the archive layout breaks this.
+      - name: Install the latest release with install.sh
+        if: ${{ !cancelled() }}
+        env:
+          HOME: ${{ runner.temp }}/install-home
+        run: |
+          mkdir -p "$HOME"
+          dash install.sh
+          "$HOME/.local/bin/dfdu" --version
+          for f in .local/share/man/man1/dfdu.1 .local/share/bash-completion/completions/dfdu \
+            .local/share/zsh/site-functions/_dfdu .config/fish/completions/dfdu.fish; do
+            test -f "$HOME/$f" || { echo "::error::install.sh did not install ~/$f"; exit 1; }
+          done
       - name: Find unused dependencies
         if: ${{ !cancelled() }}
         run: cargo xtask machete

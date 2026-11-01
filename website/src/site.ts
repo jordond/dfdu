@@ -1,6 +1,7 @@
 export const SITE_NAME = 'dfdu'
 export const REPO = 'https://github.com/jordond/dfdu'
 export const BREW = 'brew install jordond/tap/dfdu'
+export const INSTALL_SH = 'curl -fsSL https://dfdu.app/install.sh | sh'
 
 /** A function, not a constant, so the client script can import this module. */
 export const isPreview = () => process.env.DFDU_SITE_ENV === 'preview'

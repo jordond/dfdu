@@ -13,8 +13,8 @@ export const llms = {
 \`\`\`sh
 # macOS, Linux (Homebrew)
 brew install jordond/tap/dfdu
-# macOS, Linux, without a package manager
-curl -LsSf ${repo}/releases/latest/download/dfdu-installer.sh | sh
+# macOS, Linux, without a package manager (into ~/.local/bin)
+curl -fsSL ${site}/install.sh | sh
 # prebuilt, through cargo
 cargo binstall --git ${repo} dfdu
 # Nix flake, without installing

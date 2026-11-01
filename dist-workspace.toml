@@ -5,7 +5,8 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.33.1"
 ci = "github"
-installers = ["shell", "powershell", "homebrew"]
+# Shell installs on macOS and Linux go through install.sh at the repo root.
+installers = ["powershell", "homebrew"]
 tap = "jordond/homebrew-tap"
 # "./publish-homebrew" is dist's Homebrew job with the man pages and completions linked.
 publish-jobs = ["./publish-homebrew"]

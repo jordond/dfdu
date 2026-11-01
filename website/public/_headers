@@ -10,6 +10,11 @@
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
 
+# Readable in a browser before piping it to sh, and picked up soon after a change.
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
 # Not immutable: re-recorded demos keep their names.
 /demos/*
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800

@@ -2,7 +2,7 @@
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { BREW } from '../site'
+import { BREW, INSTALL_SH } from '../site'
 
 /** A colour from the TUI palette (src/styles/landing.css). */
 export type Tone =
@@ -115,7 +115,7 @@ const INSTALL: Spec[] = [
   { label: 'cargo binstall', tone: 'build', cols: ['any'], sub: 'prebuilt, through cargo', lines: [L('Downloads the release binary instead of compiling.')], cmd: 'cargo binstall --git https://github.com/jordond/dfdu dfdu' },
   { label: 'Nix', tone: 'tool', cols: ['macOS, Linux'], sub: 'flake', lines: [L('Runs dfdu from the flake without installing it.')], cmd: 'nix run github:jordond/dfdu' },
   S('Installers', 'one line, no package manager'),
-  { label: 'Shell script', tone: 'media', cols: ['macOS, Linux'], sub: 'dfdu-installer.sh', lines: [L('Installs into ~/.cargo/bin.')], cmd: 'curl -LsSf https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.sh | sh' },
+  { label: 'Shell script', tone: 'media', cols: ['macOS, Linux'], sub: 'dfdu.app/install.sh', lines: [L('Installs into ~/.local/bin, with the man pages and shell completions. Run it again to update.'), L('--bin-dir DIR to install elsewhere, --version VER to pin a release.', 'dim')], cmd: INSTALL_SH },
   { label: 'PowerShell', tone: 'vm', cols: ['Windows'], sub: 'dfdu-installer.ps1', lines: [L('Installs into %USERPROFILE%\\.cargo\\bin.')], cmd: 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.ps1 | iex"' },
   { label: 'Release binaries', tone: 'download', cols: ['all'], sub: 'github releases', lines: [L('macOS (arm64, x86_64), Linux musl (arm64, x86_64), Windows x86_64.'), L('With man pages and shell completions.', 'dim'), L('github.com/jordond/dfdu/releases', 'key')] },
   S('From source', 'Rust 1.95+'),

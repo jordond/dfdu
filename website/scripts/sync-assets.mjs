@@ -1,4 +1,5 @@
-// Copies the demo recordings and icons from ../assets into public/, so git holds one copy.
+// Copies the demo recordings and icons from ../assets, and ../install.sh, into public/, so git
+// holds one copy.
 
 import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -22,4 +23,7 @@ const icons = {
 }
 for (const [from, to] of Object.entries(icons)) cpSync(join(assets, 'logo', from), join(pub, to))
 
-console.log(`synced ${recordings.length} demo recordings and ${Object.keys(icons).length} icons from assets/`)
+// Served as https://dfdu.app/install.sh.
+cpSync(join(site, '..', 'install.sh'), join(pub, 'install.sh'))
+
+console.log(`synced ${recordings.length} demo recordings, ${Object.keys(icons).length} icons and install.sh`)

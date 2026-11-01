@@ -35,11 +35,13 @@ Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB fo
 ## Install
 
 ```sh
-brew install jordond/tap/dfdu                                            # macOS, Linux
-curl -LsSf https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.sh | sh
+curl -fsSL https://dfdu.app/install.sh | sh                 # macOS, Linux
+brew install jordond/tap/dfdu                               # macOS, Linux
 cargo binstall --git https://github.com/jordond/dfdu dfdu
 nix run github:jordond/dfdu
 ```
+
+The install script puts `dfdu` in `~/.local/bin` with its man pages and shell completions, and updates it when run again. Add `-s -- --bin-dir DIR` to install elsewhere or `--version VER` to pin a release; [the install docs](https://dfdu.app/docs/install/) have the details.
 
 Windows:
 
