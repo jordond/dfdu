@@ -1,28 +1,18 @@
-//! Marked entries (`dfdu_session::marks`), read with the app: what the view shows that marking
-//! depends on ([`shown`]), and the marks' functions on the app's session. `v` marks a range as
-//! the cursor moves ([`range`]).
+//! Marked entries (`dfdu_session::marks`), read with the app: the marks' functions on the app's
+//! session, with whether the view shown draws the list's rows. `v` marks a range as the cursor
+//! moves ([`range`]).
 
 use dfdu_engine::Model;
 
 use crate::app::App;
 use crate::model::snapshot::EntryData;
-pub use dfdu_session::marks::{Item, Marked, Shown};
+pub use dfdu_session::marks::{Item, Marked};
 
 pub(crate) mod range;
 
-/// What the view shown leaves to the marks: whether the list's rows are drawn, and whether they
-/// are a tree.
-pub fn shown(app: &App) -> Shown {
-    Shown {
-        list: crate::app::views::list_shown(app),
-        tree: app.tree_shown().is_some(),
-    }
-}
-
 /// Marks or unmarks the selected entry and moves the cursor down a row.
 pub fn toggle(app: &mut App) {
-    let tree = app.tree_shown().is_some();
-    dfdu_session::marks::toggle(&mut app.session, tree);
+    dfdu_session::marks::toggle(&mut app.session);
 }
 
 /// The mark of entry `index` of the snapshot.
@@ -37,8 +27,7 @@ pub fn set(app: &mut App, item: Item, on: bool) {
 
 /// Marks every one of `items` not marked yet and returns how many it marked.
 pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
-    let tree = app.tree_shown().is_some();
-    dfdu_session::marks::add(&mut app.session, items, tree)
+    dfdu_session::marks::add(&mut app.session, items)
 }
 
 pub fn clear(app: &mut App) {

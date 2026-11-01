@@ -10,7 +10,8 @@
 //! says so on the status line instead.
 //!
 //! The front end draws the marks from what this keeps ([`is_marked`], [`summary`]), and says
-//! what it shows that marking depends on ([`Shown`]).
+//! whether it draws the list's rows, where the range mark and inverting the marks work. Whether
+//! the rows are a tree comes from the view shown ([`SessionState::tree_shown`]).
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,15 +24,6 @@ use crate::snapshot::{EntryData, Mark};
 use crate::state::{NO_FOLDERS, READ_ONLY, SessionState};
 
 pub mod range;
-
-/// What the front end shows that marking depends on.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct Shown {
-    /// The list's rows are drawn, where the range mark and inverting the marks work.
-    pub list: bool,
-    /// The rows are a tree, where a directory and what is inside it are never both marked.
-    pub tree: bool,
-}
 
 /// One marked entry: how to find it again, and its sizes as the last read found them.
 #[derive(Clone, Debug)]
@@ -142,9 +134,9 @@ struct Found {
 }
 
 /// Marks or unmarks the selected entry and moves the cursor down a row. The "shared between
-/// entries" row, fold rows and deleted rows are not entries and cannot be marked. `tree`: the
-/// rows are a tree.
-pub fn toggle(s: &mut SessionState, tree: bool) {
+/// entries" row, fold rows and deleted rows are not entries and cannot be marked.
+pub fn toggle(s: &mut SessionState) {
+    let tree = s.tree_shown().is_some();
     if s.read_only {
         s.status = Some(READ_ONLY.into());
         return;
@@ -241,9 +233,10 @@ pub fn set(s: &mut SessionState, item: Item, on: bool) {
 
 /// Marks every one of `items` not marked yet, with one look-up each, and returns how many it
 /// marked: for a range or a pattern, which can mark a whole directory at once. A read-only
-/// browser marks nothing, as [`set`] does. In tree mode (`tree`) the outermost win: an item
+/// browser marks nothing, as [`set`] does. While the rows are a tree the outermost win: an item
 /// inside a marked directory is left out, and marks inside a directory marked now are dropped.
-pub fn add(s: &mut SessionState, items: Vec<Item>, tree: bool) -> usize {
+pub fn add(s: &mut SessionState, items: Vec<Item>) -> usize {
+    let tree = s.tree_shown().is_some();
     if s.read_only {
         s.status = Some(READ_ONLY.into());
         return 0;

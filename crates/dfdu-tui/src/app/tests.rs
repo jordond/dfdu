@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 use crate::model::snapshot::test_entry;
 use crate::tests::{press, snap_without_totals};

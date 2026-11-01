@@ -131,7 +131,7 @@ pub(super) fn found_in(app: &mut App, groups: &[&[(&str, i64)]]) {
             ..Found::default()
         })
         .unwrap();
-    app.view = View::Duplicates;
+    app.session.view = View::Duplicates;
     app.dupes = Dupes {
         run: Some(Run {
             root: "/r".into(),

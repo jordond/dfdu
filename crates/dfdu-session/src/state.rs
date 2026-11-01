@@ -1,7 +1,7 @@
-//! What a browser of a scan holds besides how it is drawn: the directory opened and its
-//! snapshot, the rows, the selection and the cursor of each directory left, the sort and size
-//! mode, tree mode, the marks, the filters, the status line, and what the scan history and the
-//! lookups outside the scan found. A front end keeps its own view state (scroll, overlays,
+//! What a browser of a scan holds besides how it is drawn: the view shown, the directory opened
+//! and its snapshot, the rows, the selection and the cursor of each directory left, the sort and
+//! size mode, tree mode, the marks, the filters, the status line, and what the scan history and
+//! the lookups outside the scan found. A front end keeps its own view state (scroll, overlays,
 //! layout) next to a [`SessionState`].
 
 mod cursor;
@@ -22,6 +22,7 @@ use crate::order::SortSpec;
 use crate::outside::Outside;
 use crate::snapshot::{EntryData, Snapshot};
 use crate::tree::TreeState;
+use crate::view::View;
 pub use cursor::{Moved, Selection};
 pub use list::List;
 pub use schedule::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, SortSchedule};
@@ -43,6 +44,8 @@ pub enum Cached {
 }
 
 pub struct SessionState {
+    /// The view shown; Cleanup without rules shows as Files ([`SessionState::current_view`]).
+    pub view: View,
     pub target: Target,
     pub snap: Snapshot,
     /// The Files list's order and rows, and the cursor of each directory left.
@@ -88,6 +91,7 @@ impl SessionState {
     #[must_use]
     pub fn new(now: Instant) -> Self {
         SessionState {
+            view: View::default(),
             target: Target::root(),
             snap: Snapshot::default(),
             list: List::default(),

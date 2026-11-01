@@ -122,7 +122,7 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     let mut app = App::new(Theme::no_color(), t0);
     sync(&mut app, &fx.m, t0);
     // On without the user opening the view: the read takes the matches in, and marks nothing.
-    app.view = crate::app::views::View::Cleanup;
+    app.session.view = crate::app::views::View::Cleanup;
     sync(&mut app, &fx.m, t0);
     assert_eq!(app.extras.cleanup.items.len(), 3);
     assert!(app.session.marks.is_empty());

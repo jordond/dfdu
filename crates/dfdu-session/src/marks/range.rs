@@ -2,37 +2,36 @@
 //! in the list is marked. `v` again or `Esc` ends it, and so does leaving the directory or the
 //! list. A read-only browser does not start one, as nothing marked could be deleted.
 //!
-//! What the front end shows ([`Shown`]) decides where it works: only while the list's rows are
-//! drawn.
+//! It works only while the front end draws the list's rows (`list`).
 
-use super::{Shown, add, item_of};
+use super::{add, item_of};
 use crate::actions::{Action, first_key};
 use crate::state::{READ_ONLY, SessionState};
 
 /// True while a range mark is on in the directory and view shown.
-pub fn on(s: &SessionState, shown: Shown) -> bool {
-    s.marks.range.as_ref() == Some(&s.snap.dir_path) && shown.list
+pub fn on(s: &SessionState, list: bool) -> bool {
+    s.marks.range.as_ref() == Some(&s.snap.dir_path) && list
 }
 
 /// `v`: starts a range mark at the selected row, which it marks, or ends the one that is on.
-pub fn toggle(s: &mut SessionState, shown: Shown) {
-    if end(s, shown) {
+pub fn toggle(s: &mut SessionState, list: bool) {
+    if end(s, list) {
         return;
     }
     if s.read_only {
         s.status = Some(READ_ONLY.into());
         return;
     }
-    if !shown.list {
-        let list = first_key(Action::ViewFiles);
-        s.status = Some(format!("a range is marked in Files ({list})"));
+    if !list {
+        let files = first_key(Action::ViewFiles);
+        s.status = Some(format!("a range is marked in Files ({files})"));
         return;
     }
     let Some(sel) = s.selected_index() else {
         return;
     };
     s.marks.range = Some(s.snap.dir_path.clone());
-    mark_rows(s, sel, sel, shown);
+    mark_rows(s, sel, sel);
     s.status = Some(format!(
         "range mark: moving marks every row passed; {} or Esc ends it",
         first_key(Action::RangeMark)
@@ -40,8 +39,8 @@ pub fn toggle(s: &mut SessionState, shown: Shown) {
 }
 
 /// Ends the range mark that is on; false when none was.
-pub fn end(s: &mut SessionState, shown: Shown) -> bool {
-    let was = on(s, shown);
+pub fn end(s: &mut SessionState, list: bool) -> bool {
+    let was = on(s, list);
     s.marks.range = None;
     if was {
         s.status = Some("range mark ended".into());
@@ -51,15 +50,15 @@ pub fn end(s: &mut SessionState, shown: Shown) -> bool {
 
 /// After a move of the cursor from row `before`: marks the rows from there to the row selected
 /// now, both included, while a range mark is on.
-pub fn follow(s: &mut SessionState, before: Option<usize>, shown: Shown) {
-    if !on(s, shown) {
+pub fn follow(s: &mut SessionState, before: Option<usize>, list: bool) {
+    if !on(s, list) {
         s.marks.range = None;
         return;
     }
     let (Some(from), Some(to)) = (before, s.selected_index()) else {
         return;
     };
-    mark_rows(s, from.min(to), from.max(to), shown);
+    mark_rows(s, from.min(to), from.max(to));
     s.status = Some(format!(
         "range mark: {} marked; {} or Esc ends it",
         s.marks.items().len(),
@@ -69,7 +68,7 @@ pub fn follow(s: &mut SessionState, before: Option<usize>, shown: Shown) {
 
 /// Marks the rows `from..=to` of the list. The "shared between entries" row is not an entry,
 /// and directories are left out while a type filter shows only some of their files.
-fn mark_rows(s: &mut SessionState, from: usize, to: usize, shown: Shown) {
+fn mark_rows(s: &mut SessionState, from: usize, to: usize) {
     let folders = !s.types_active();
     let items = (s.list.rows.get(from..=to).unwrap_or_default().iter())
         .filter(|&&i| {
@@ -78,7 +77,7 @@ fn mark_rows(s: &mut SessionState, from: usize, to: usize, shown: Shown) {
         })
         .map(|&i| item_of(s, i))
         .collect();
-    add(s, items, shown.tree);
+    add(s, items);
 }
 
 #[cfg(test)]
@@ -90,10 +89,8 @@ mod tests {
     use crate::state::tests::{browser, marked_names};
 
     /// Files, with the rows a flat list.
-    const FILES: Shown = Shown {
-        list: true,
-        tree: false,
-    };
+    /// The list's rows are drawn.
+    const FILES: bool = true;
 
     /// A browser of `/r` with the directory `d0` (the largest), the files `f1` to `f4`, and the
     /// "shared between entries" row last.
@@ -169,10 +166,7 @@ mod tests {
         assert!(!on(&s, FILES));
         assert_eq!(s.status.as_deref(), Some(READ_ONLY));
         s.read_only = false;
-        let map = Shown {
-            list: false,
-            tree: false,
-        };
+        let map = false;
         toggle(&mut s, map);
         assert!(!on(&s, map));
         assert_eq!(s.status.as_deref(), Some("a range is marked in Files (1)"));

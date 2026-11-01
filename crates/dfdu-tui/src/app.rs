@@ -14,10 +14,9 @@ mod refresh;
 pub(crate) mod views;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Instant;
 
-use dfdu_engine::{Command, ErrorList};
+use dfdu_engine::ErrorList;
 use dfdu_session::SessionState;
 use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -33,21 +32,7 @@ use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
 pub use dfdu_session::state::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection};
 
-#[derive(Debug)]
-pub enum Effect {
-    Send(Command),
-    /// Read the error list from the engine and pass it to [`App::show_errors`].
-    ShowErrors,
-    /// Read the duplicate candidates and start comparing them (`dupes::begin`).
-    FindDupes,
-    /// Put the text on the clipboard through the terminal (`selected_path::copy`).
-    Copy(String),
-    /// Show the path in the file manager, without waiting for it (`selected_path::open`).
-    Open {
-        path: PathBuf,
-        is_dir: bool,
-    },
-}
+pub use dfdu_session::effect::Effect;
 
 #[derive(Clone, Debug)]
 pub enum Overlay {
@@ -94,8 +79,6 @@ pub struct App {
     pub debug: debug::Debug,
     pub motion: Motion,
     pub mouse: mouse::Mouse,
-    /// The view shown (`1`-`5`); `views::switch` changes it.
-    pub view: views::View,
     pub treemap: treemap::Treemap,
     pub cleanup: crate::features::cleanup::Cleanup,
     pub dupes: crate::features::dupes::Dupes,
@@ -127,7 +110,6 @@ impl App {
             debug: debug::Debug::default(),
             motion: Motion::default(),
             mouse: mouse::Mouse::default(),
-            view: views::View::default(),
             treemap: treemap::Treemap::default(),
             cleanup: crate::features::cleanup::Cleanup::default(),
             dupes: crate::features::dupes::Dupes::default(),
@@ -167,13 +149,9 @@ impl App {
             || crate::features::largest::stale(self)
     }
 
-    /// The tree mode state while the rows are a tree: tree mode is on and the treemap, whose
-    /// tiles are the rows of one directory, is off.
+    /// The tree mode state while the rows are a tree ([`SessionState::tree_shown`]).
     pub fn tree_shown(&self) -> Option<&crate::state::tree::TreeState> {
-        self.session
-            .tree
-            .as_ref()
-            .filter(|_| self.view != views::View::Map)
+        self.session.tree_shown()
     }
 
     /// Opens the error list read by the run loop for [`Effect::ShowErrors`].

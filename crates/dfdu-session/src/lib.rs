@@ -14,6 +14,7 @@
 pub mod actions;
 pub mod details;
 pub mod dupes;
+pub mod effect;
 pub mod file_manager;
 pub mod filter;
 pub mod format;
@@ -35,5 +36,6 @@ pub mod state;
 pub mod test_support;
 pub mod tree;
 pub mod treemap;
+pub mod view;
 
 pub use state::SessionState;

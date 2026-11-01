@@ -1,33 +1,34 @@
-//! The range mark (`v`, `dfdu_session::marks::range`) with what the view shown leaves to it.
+//! The range mark (`v`, `dfdu_session::marks::range`), with whether the view shown draws the
+//! list's rows.
 
 use dfdu_session::marks::range;
 
-use super::shown;
 use crate::app::App;
+use crate::app::views::list_shown;
 
 /// True while a range mark is on in the directory and view shown.
 #[cfg(test)]
 pub(crate) fn on(app: &App) -> bool {
-    range::on(&app.session, shown(app))
+    range::on(&app.session, list_shown(app))
 }
 
 /// `v`: starts a range mark at the selected row, which it marks, or ends the one that is on.
 pub fn toggle(app: &mut App) {
-    let shown = shown(app);
-    range::toggle(&mut app.session, shown);
+    let list = list_shown(app);
+    range::toggle(&mut app.session, list);
 }
 
 /// Ends the range mark that is on; false when none was.
 pub fn end(app: &mut App) -> bool {
-    let shown = shown(app);
-    range::end(&mut app.session, shown)
+    let list = list_shown(app);
+    range::end(&mut app.session, list)
 }
 
 /// After a move of the cursor from row `before`: marks the rows passed while a range mark is
 /// on.
 pub fn follow(app: &mut App, before: Option<usize>) {
-    let shown = shown(app);
-    range::follow(&mut app.session, before, shown);
+    let list = list_shown(app);
+    range::follow(&mut app.session, before, list);
 }
 
 #[cfg(test)]

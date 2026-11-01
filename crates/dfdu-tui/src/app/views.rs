@@ -1,76 +1,21 @@
-//! The five views (`1`-`5`) as one list: which one is shown, switching between them, and what
-//! the header's tab bar says of each. The view shown is one field, [`App::view`], and
-//! [`switch`] is the one place that changes it, so `1`-`5`, `[`/`]`, `Esc` and a click on a tab
-//! switch the same way.
+//! The five views (`1`-`5`, `dfdu_session::view`): switching between them, and what the header's
+//! tab bar says of each. The view shown is one field of the session
+//! ([`SessionState::view`](dfdu_session::SessionState::view)), and [`switch`] is the one place
+//! that changes it, so `1`-`5`, `[`/`]`, `Esc` and a click on a tab switch the same way.
 //!
 //! Files, Map and Largest show the current directory; Cleanup and Duplicates cover the whole
 //! scan ([`View::whole_scan`]), which the header's scope line says.
 
-use super::keys::Action;
 use super::{App, Effect};
 use crate::features::{cleanup, dupes, largest, treemap};
 use crate::format::human;
 use crate::state::tree;
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum View {
-    #[default]
-    Files,
-    Map,
-    Cleanup,
-    Duplicates,
-    Largest,
-}
+pub use dfdu_session::view::View;
 
-impl View {
-    /// In the order of their keys and tabs.
-    pub const ALL: [View; 5] = [
-        View::Files,
-        View::Map,
-        View::Cleanup,
-        View::Duplicates,
-        View::Largest,
-    ];
-
-    /// The name on its tab, in help and in the footer.
-    pub fn name(self) -> &'static str {
-        match self {
-            View::Files => "Files",
-            View::Map => "Map",
-            View::Cleanup => "Cleanup",
-            View::Duplicates => "Duplicates",
-            View::Largest => "Largest",
-        }
-    }
-
-    /// The registry action that switches to it, whose key its tab shows.
-    pub fn action(self) -> Action {
-        match self {
-            View::Files => Action::ViewFiles,
-            View::Map => Action::ViewMap,
-            View::Cleanup => Action::ViewCleanup,
-            View::Duplicates => Action::ViewDupes,
-            View::Largest => Action::ViewLargest,
-        }
-    }
-
-    /// It covers the whole scan rather than the current directory.
-    pub fn whole_scan(self) -> bool {
-        matches!(self, View::Cleanup | View::Duplicates)
-    }
-
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|&v| v == self).unwrap_or(0)
-    }
-}
-
-/// The view shown. The map counts while it is on, also when the terminal is too small for it
-/// and the list is drawn in its place. Cleanup needs the rules: without them it is Files.
+/// The view shown ([`SessionState::current_view`](dfdu_session::SessionState::current_view)).
 pub fn current(app: &App) -> View {
-    match app.view {
-        View::Cleanup if app.session.snap.rules.is_none() => View::Files,
-        view => view,
-    }
+    app.session.current_view()
 }
 
 /// The list's rows are drawn, where the range mark and inverting the marks work: in Files, and
@@ -96,8 +41,8 @@ pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
         // Before the switch, while the rows are still the tree's.
         tree::act::treemap_dir(app);
     }
-    let again = app.view == view;
-    app.view = view;
+    let again = app.session.view == view;
+    app.session.view = view;
     match view {
         View::Files | View::Duplicates => Vec::new(),
         View::Map => {
@@ -240,14 +185,14 @@ mod tests {
         let mut app = App::new(Theme::no_color(), t0);
         app.refresh(library_snap(), t0);
         assert!(switch(&mut app, View::Cleanup).is_empty());
-        assert_eq!(app.view, View::Files);
+        assert_eq!(app.session.view, View::Files);
         assert!(
             app.session
                 .status
                 .as_deref()
                 .is_some_and(|s| s.starts_with("no rules"))
         );
-        app.view = View::Cleanup;
+        app.session.view = View::Cleanup;
         assert_eq!(current(&app), View::Files);
     }
 
