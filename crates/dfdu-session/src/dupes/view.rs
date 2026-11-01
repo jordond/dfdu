@@ -44,6 +44,9 @@ pub struct Dupes {
     /// The groups with two files left, counted when the files' nodes were last read; `None`
     /// while the view is closed.
     live_groups: Option<usize>,
+    /// The suggested copies were asked for before the result's files had nodes: they are
+    /// marked once a read brings them ([`apply`]).
+    tick_waits: bool,
 }
 
 /// What a front end's keys ask of the view.
@@ -146,6 +149,12 @@ pub fn apply(s: &mut SessionState) {
         f.groups.iter().filter(left).count()
     });
     s.dupes.live_groups = live_groups;
+    if s.dupes.tick_waits && (!active(s) || nodes_read(s)) {
+        s.dupes.tick_waits = false;
+        if active(s) {
+            tick_suggested(s);
+        }
+    }
 }
 
 /// Why a comparison cannot start now, as the status line says it; `None` when it can.
@@ -175,6 +184,7 @@ fn start(s: &mut SessionState) -> Vec<Effect> {
     }
     s.dupes.cursor = 0;
     s.dupes.toggled.clear();
+    s.dupes.tick_waits = false;
     s.extras.dupes.clear();
     vec![Effect::FindDupes]
 }
@@ -191,14 +201,16 @@ pub fn begin(s: &mut SessionState, root: PathBuf, cands: Vec<Candidate>) {
 /// The view needs a read: the files to compare are to be counted, or a result's files have no
 /// nodes yet.
 pub fn stale(s: &SessionState) -> bool {
-    wants_count(s)
-        || active(s)
-            && found(s).is_some_and(|f| {
-                f.groups
-                    .iter()
-                    .flat_map(|g| &g.files)
-                    .any(|c| !s.extras.dupes.contains_key(&c.path))
-            })
+    wants_count(s) || active(s) && found(s).is_some() && !nodes_read(s)
+}
+
+/// Every file of the result has been looked up in the tree ([`read`]); true without a result.
+fn nodes_read(s: &SessionState) -> bool {
+    found(s).is_none_or(|f| {
+        (f.groups.iter())
+            .flat_map(|g| &g.files)
+            .all(|c| s.extras.dupes.contains_key(&c.path))
+    })
 }
 
 /// Under the read lock: the node of every file of the result, found once by path and then
@@ -391,10 +403,17 @@ pub fn cancel(s: &mut SessionState) -> bool {
     true
 }
 
-/// Marks every copy but the one kept in each group that frees something.
+/// Marks every copy but the one kept in each group that frees something. Asked for in the
+/// moment between the result arriving and the read that finds its files in the tree, it waits
+/// for that read ([`apply`]) rather than mark nothing.
 fn tick_suggested(s: &mut SessionState) {
     if s.read_only {
         s.status = Some(READ_ONLY.into());
+        return;
+    }
+    if !nodes_read(s) {
+        s.dupes.tick_waits = true;
+        s.status = Some("marking the copies once their files are found in the tree".into());
         return;
     }
     let n = mark_all(s);

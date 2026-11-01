@@ -115,6 +115,24 @@ fn open_groups_list_their_files_and_clones_come_last_closed() {
     assert!(!rows(&s).contains(&Row::Group(1)));
 }
 
+/// Asked for between the result arriving and the read that finds its files, the suggested
+/// copies are marked once that read comes, not left unmarked.
+#[test]
+fn ticking_before_the_files_are_found_marks_them_once_they_are() {
+    let mut s = two_groups();
+    let nodes = std::mem::take(&mut s.extras.dupes);
+    assert!(stale(&s));
+    let _ = act(&mut s, Intent::TickSuggested);
+    assert!(marked_paths(&s).is_empty());
+    s.extras.dupes = nodes;
+    apply(&mut s);
+    assert_eq!(marked_paths(&s), ["/r/bb/b", "/r/c", "/r/y"]);
+    // Once done, a later read does not mark again what was unmarked since.
+    crate::marks::clear(&mut s);
+    apply(&mut s);
+    assert!(marked_paths(&s).is_empty());
+}
+
 #[test]
 fn marking_all_leaves_the_kept_copies_and_the_clones() {
     let mut s = two_groups();
