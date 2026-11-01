@@ -132,6 +132,7 @@ fn run(
                     gui,
                     path: Some(path.into()),
                     keys: std::env::var(shot::KEYS).ok(),
+                    typed: None,
                     opened: Instant::now(),
                     done: None,
                 }),

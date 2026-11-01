@@ -1,8 +1,10 @@
 //! `DFDU_GUI_SCREENSHOT=FILE`: a hidden switch for checking the window by eye and in CI. Once
 //! the scan is done (or after a few seconds on the start screen), the window writes what it
 //! shows to FILE as a binary PPM image and closes. `DFDU_GUI_SCREENSHOT_KEYS` names keys typed
-//! once the scan is done, before the picture: each character as typed, a space as `Space`
-//! (`i` opens the details panel, a space marks the selected entry, `d` opens the delete dialog).
+//! once the scan is done, before the picture, one every [`KEY_GAP`] so what a key opens is read
+//! before the next: each character as typed, a space as `Space` and a newline as `Enter` (`i`
+//! opens the details panel, a space marks the selected entry, `d` opens the delete dialog, `4`
+//! then a newline compares the duplicates).
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,6 +17,8 @@ pub const VAR: &str = "DFDU_GUI_SCREENSHOT";
 pub const KEYS: &str = "DFDU_GUI_SCREENSHOT_KEYS";
 /// How long after the scan is done, or the window opened, the picture is taken.
 const SETTLE: Duration = Duration::from_secs(1);
+/// Between two keys typed.
+const KEY_GAP: Duration = Duration::from_millis(400);
 /// The longest the window waits for a scan.
 const LONGEST: Duration = Duration::from_secs(30);
 
@@ -24,6 +28,8 @@ pub struct Shot {
     pub path: Option<PathBuf>,
     /// The keys still to type.
     pub keys: Option<String>,
+    /// When the last key was typed.
+    pub typed: Option<Instant>,
     pub opened: Instant,
     /// When the scan was first seen done.
     pub done: Option<Instant>,
@@ -32,15 +38,19 @@ pub struct Shot {
 /// The events that type `keys`.
 fn events(keys: &str) -> Vec<egui::Event> {
     keys.chars()
-        .map(|c| match c {
-            ' ' => egui::Event::Key {
-                key: egui::Key::Space,
+        .map(|c| {
+            let key = |key| egui::Event::Key {
+                key,
                 physical_key: None,
                 pressed: true,
                 repeat: false,
                 modifiers: egui::Modifiers::NONE,
-            },
-            c => egui::Event::Text(c.into()),
+            };
+            match c {
+                ' ' => key(egui::Key::Space),
+                '\n' => key(egui::Key::Enter),
+                c => egui::Event::Text(c.into()),
+            }
         })
         .collect()
 }
@@ -51,8 +61,10 @@ impl Shot {
         if self.gui.scan_done() {
             self.done.get_or_insert(now);
         }
+        let typing = self.keys.as_ref().is_some_and(|k| !k.is_empty());
         let at = match (self.gui.browsing(), self.done) {
-            (true, Some(done)) => done + SETTLE,
+            (true, Some(_)) if typing => now + SETTLE,
+            (true, Some(done)) => self.typed.unwrap_or(done).max(done) + SETTLE,
             (true, None) => self.opened + LONGEST,
             // The start screen lists the disks first.
             (false, _) => self.opened + SETTLE * 3,
@@ -81,10 +93,15 @@ impl Shot {
 impl eframe::App for Shot {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if self.done.is_some()
-            && let Some(keys) = self.keys.take()
+        let now = Instant::now();
+        if let Some(done) = self.done
+            && now >= self.typed.map_or(done, |t| t + KEY_GAP)
+            && let Some(keys) = &mut self.keys
+            && !keys.is_empty()
         {
-            ctx.input_mut(|i| i.events.extend(events(&keys)));
+            let key = keys.remove(0);
+            ctx.input_mut(|i| i.events.extend(events(&key.to_string())));
+            self.typed = Some(now);
         }
         self.gui.show(ui);
         if self.path.is_some() {
