@@ -50,10 +50,18 @@ pub fn show(
             filter(ui, s, colors, view, out);
             size_mode(ui, s, colors, out);
             scan_state(ui, s, colors, now, out);
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                breadcrumbs(ui, s, colors, out);
-            });
+            // What is left of the row, less a gap before the scan's state.
+            let mut room = ui.available_rect_before_wrap();
+            room.max.x -= 12.0;
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(room)
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| {
+                    ui.set_clip_rect(room.intersect(ui.clip_rect()));
+                    breadcrumbs(ui, s, colors, out);
+                },
+            );
         });
     });
 }
@@ -519,15 +527,67 @@ pub fn segments(dir: &HostPath, root: &HostPath, home: Option<&Path>) -> Vec<Seg
     out
 }
 
+/// Which breadcrumbs fit in `room` when each is `widths[i]` wide and a separator `sep`:
+/// the first and the last ones always, the middle ones from the end while they fit, the
+/// others one `…` (`None`).
+pub fn fitting(widths: &[f32], sep: f32, ellipsis: f32, room: f32) -> Vec<Option<usize>> {
+    let n = widths.len();
+    let total: f32 = widths.iter().sum::<f32>() + sep * n.saturating_sub(1) as f32;
+    if total <= room || n <= 2 {
+        return (0..n).map(Some).collect();
+    }
+    let mut used = widths[0] + widths[n - 1] + 2.0 * sep + ellipsis + sep;
+    let mut kept = Vec::new();
+    for i in (1..n - 1).rev() {
+        if used + widths[i] + sep > room {
+            break;
+        }
+        used += widths[i] + sep;
+        kept.push(i);
+    }
+    kept.reverse();
+    let mut out = vec![Some(0)];
+    if kept.first() != Some(&1) {
+        out.push(None);
+    }
+    out.extend(kept.into_iter().map(Some));
+    out.push(Some(n - 1));
+    out
+}
+
 /// The breadcrumbs in mono: the directories above as dim links, the current one in `dir`.
+/// When they do not fit, the middle ones fold into `…` and the current one is cut short.
 fn breadcrumbs(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
     let snap = &s.snap;
     let segs = segments(&snap.dir_path, &snap.root_path, s.home.as_deref());
     let last = segs.len() - 1;
-    ui.spacing_mut().item_spacing.x = 6.0;
-    for (i, seg) in segs.iter().enumerate() {
+    let gap = 6.0;
+    ui.spacing_mut().item_spacing.x = gap;
+    let font = egui::FontId::new(13.0, egui::FontFamily::Monospace);
+    let width = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    };
+    let widths: Vec<f32> = segs.iter().map(|g| width(&g.text)).collect();
+    let sep = width(SEPARATOR) + 2.0 * gap;
+    let room = ui.available_width();
+    let shown = fitting(&widths, sep, width("…"), room);
+    for (k, at) in shown.iter().enumerate() {
+        if k > 0 {
+            ui.label(kit::mono(SEPARATOR, 13.0).color(colors.fg(Token::Border)));
+        }
+        let Some(i) = *at else {
+            ui.label(kit::mono("…", 13.0).color(colors.fg(Token::FgDim)));
+            continue;
+        };
+        let seg = &segs[i];
         if i == last {
-            ui.label(kit::mono_bold(&seg.text, 13.0).color(colors.fg(Token::Dir)));
+            let label =
+                egui::Label::new(kit::mono_bold(&seg.text, 13.0).color(colors.fg(Token::Dir)))
+                    .truncate();
+            ui.add(label).on_hover_text(seg.text.as_str());
             break;
         }
         let link = egui::Link::new(kit::mono(&seg.text, 13.0).color(colors.fg(Token::FgDim)));
@@ -536,7 +596,6 @@ fn breadcrumbs(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Int
                 child: segs[i + 1].dir.clone(),
             });
         }
-        ui.label(kit::mono(SEPARATOR, 13.0).color(colors.fg(Token::Border)));
     }
 }
 
@@ -558,5 +617,17 @@ mod tests {
         let segs = segments(&dir, &HostPath::from(""), Some(home));
         assert_eq!(segs.len(), 1);
         assert_eq!(mmss(Duration::from_secs(75)), "01:15");
+    }
+
+    #[test]
+    fn breadcrumbs_that_do_not_fit_fold_the_middle_ones() {
+        let w = [50.0, 30.0, 30.0, 30.0, 40.0];
+        assert_eq!(fitting(&w, 10.0, 10.0, 1000.0).len(), 5);
+        // Room for the ends, the ellipsis and one more.
+        assert_eq!(
+            fitting(&w, 10.0, 10.0, 50.0 + 40.0 + 30.0 + 10.0 + 4.0 * 10.0),
+            [Some(0), None, Some(3), Some(4)]
+        );
+        assert_eq!(fitting(&w, 10.0, 10.0, 0.0), [Some(0), None, Some(4)]);
     }
 }
