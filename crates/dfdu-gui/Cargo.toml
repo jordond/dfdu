@@ -1,0 +1,43 @@
+[package]
+name = "dfdu-gui"
+description = "Desktop browser for dfdu, in a window"
+# Its own version: the GUI is released on its own tags (`gui-v*`), apart from the CLI.
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-tree.workspace = true
+dfdu-scan.workspace = true
+dfdu-rules.workspace = true
+dfdu-engine.workspace = true
+dfdu-session.workspace = true
+dfdu-store.workspace = true
+dfdu-sys.workspace = true
+clap.workspace = true
+crossbeam-channel.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+winit.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
+
+# Not part of the CLI's release (`dist`): the GUI ships its own installers.
+[package.metadata.dist]
+dist = false
+
+# winit is a dependency only for its features (Wayland loaded at run time), never named in code.
+[package.metadata.cargo-machete]
+ignored = ["winit"]
