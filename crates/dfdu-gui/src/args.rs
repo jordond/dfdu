@@ -1,5 +1,5 @@
-//! The command line: `dfdu-gui [PATH] [--read-only] [--import FILE] [--no-rules]`, the flags of
-//! `dfdu` a launcher or a test needs, spelled as `dfdu` spells them.
+//! The command line: `dfdu-gui [PATH] [--read-only] [--import FILE] [--no-rules] [--theme NAME]`,
+//! the flags of `dfdu` a launcher or a test needs, spelled as `dfdu` spells them.
 
 use std::path::PathBuf;
 
@@ -21,6 +21,11 @@ pub struct Args {
     /// Do not classify entries: no categories, no cleanup candidates.
     #[arg(long)]
     pub no_rules: bool,
+    /// Colour theme: auto (the system's dark or light), dark, light, or NAME for the theme file
+    /// NAME.toml in dfdu/themes in the configuration directory. A terminal's ansi, mono and
+    /// high-contrast follow the system, as auto does. Without it, the theme chosen last.
+    #[arg(long, value_name = "NAME")]
+    pub theme: Option<String>,
 }
 
 #[cfg(test)]
@@ -41,6 +46,7 @@ mod tests {
                 read_only: false,
                 import: None,
                 no_rules: false,
+                theme: None,
             }
         );
     }
@@ -50,6 +56,8 @@ mod tests {
         let a = parse(&["/tmp/x", "--read-only", "--no-rules"]).expect("parses");
         assert_eq!(a.path.as_deref(), Some(std::path::Path::new("/tmp/x")));
         assert!(a.read_only && a.no_rules && a.import.is_none());
+        let a = parse(&["--theme", "nord"]).expect("parses");
+        assert_eq!(a.theme.as_deref(), Some("nord"));
         let a = parse(&["--import", "scan.json"]).expect("parses");
         assert_eq!(a.import.as_deref(), Some(std::path::Path::new("scan.json")));
     }

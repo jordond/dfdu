@@ -237,3 +237,41 @@ fn buttons(ui: &mut Ui, c: &Confirm, new: bool, out: &mut Vec<Intent>) {
         }
     });
 }
+
+/// The intent that switches the dialog's method from `from` to `to`, if they differ.
+pub fn switch(from: Mode, to: Mode) -> Option<Ask> {
+    if from == to {
+        None
+    } else if to == Mode::Permanent || from == Mode::Permanent && to == Mode::Trash {
+        Some(Ask::SwitchPermanent)
+    } else {
+        Some(Ask::SwitchStage)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_method_is_reached_from_each_other_in_one_switch() {
+        let all = [Mode::Trash, Mode::Stage, Mode::Permanent];
+        for from in all {
+            for to in all {
+                let mode = match switch(from, to) {
+                    None => from,
+                    Some(Ask::SwitchPermanent) => match from {
+                        Mode::Trash | Mode::Stage => Mode::Permanent,
+                        Mode::Permanent => Mode::Trash,
+                    },
+                    Some(Ask::SwitchStage) => match from {
+                        Mode::Stage => Mode::Trash,
+                        _ => Mode::Stage,
+                    },
+                    Some(other) => panic!("{other:?}"),
+                };
+                assert_eq!(mode, to, "{from:?} to {to:?}");
+            }
+        }
+    }
+}

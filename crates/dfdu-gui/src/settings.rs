@@ -1,7 +1,7 @@
 //! The settings kept between runs in eframe's storage, beside the window's size and position
-//! (which eframe keeps itself): the theme chosen, and how the last browser showed its list
-//! (tree mode, the details panel). They are one line of `key=value` pairs under [`KEY`]; a
-//! value that does not read is left at its default.
+//! (which eframe keeps itself): the theme chosen (a built-in one, or a theme file by its name),
+//! and how the last browser showed its list (tree mode, the details panel). They are one line
+//! of `key=value` pairs under [`KEY`]; a value that does not read is left at its default.
 //!
 //! The storage is `gui.ron` in dfdu's state directory (`DFDU_STATE_DIR` when set), beside the
 //! scan history ([`path`]).
@@ -12,51 +12,53 @@ use std::path::PathBuf;
 pub const KEY: &str = "dfdu-gui";
 
 /// Which theme the window draws with.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum ThemeChoice {
     /// The system's dark or light setting.
     #[default]
     System,
     Dark,
     Light,
+    /// The theme file `NAME.toml` in dfdu's theme directory, by `NAME`.
+    File(String),
 }
 
 impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::System, ThemeChoice::Dark, ThemeChoice::Light];
+    /// The built-in choices, in the order the menu lists them.
+    pub const BUILTIN: [ThemeChoice; 3] =
+        [ThemeChoice::System, ThemeChoice::Dark, ThemeChoice::Light];
 
-    /// The name stored, and shown in the menu in capitals.
-    pub fn name(self) -> &'static str {
+    /// The name stored: a built-in's, or `file:NAME` for a theme file.
+    pub fn name(&self) -> String {
+        match self {
+            ThemeChoice::System => "system".into(),
+            ThemeChoice::Dark => "dark".into(),
+            ThemeChoice::Light => "light".into(),
+            ThemeChoice::File(name) => format!("file:{name}"),
+        }
+    }
+
+    /// What the menu and the palette call it: a theme file by its name.
+    pub fn label(&self) -> &str {
         match self {
             ThemeChoice::System => "system",
             ThemeChoice::Dark => "dark",
             ThemeChoice::Light => "light",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ThemeChoice::System => "System",
-            ThemeChoice::Dark => "Dark",
-            ThemeChoice::Light => "Light",
+            ThemeChoice::File(name) => name,
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|t| t.name() == name)
-    }
-
-    /// egui's preference for it.
-    pub fn preference(self) -> egui::ThemePreference {
-        match self {
-            ThemeChoice::System => egui::ThemePreference::System,
-            ThemeChoice::Dark => egui::ThemePreference::Dark,
-            ThemeChoice::Light => egui::ThemePreference::Light,
+        match name.strip_prefix("file:") {
+            Some(file) if !file.is_empty() => Some(ThemeChoice::File(file.to_owned())),
+            Some(_) => None,
+            None => Self::BUILTIN.into_iter().find(|t| t.name() == name),
         }
     }
 }
 
 /// The settings kept between runs.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Prefs {
     pub theme: ThemeChoice,
     /// The list was in tree mode.
@@ -122,10 +124,13 @@ mod tests {
 
     #[test]
     fn settings_read_back_as_written() {
-        for theme in ThemeChoice::ALL {
+        let themes = ThemeChoice::BUILTIN
+            .into_iter()
+            .chain([ThemeChoice::File("nord".into())]);
+        for theme in themes {
             for (tree, details) in [(false, false), (true, false), (false, true), (true, true)] {
                 let p = Prefs {
-                    theme,
+                    theme: theme.clone(),
                     tree,
                     details,
                 };
@@ -146,6 +151,11 @@ mod tests {
     #[test]
     fn what_does_not_read_is_left_at_its_default() {
         assert_eq!(Prefs::decode(""), Prefs::default());
+        assert_eq!(Prefs::decode("theme=file:").theme, ThemeChoice::System);
+        assert_eq!(
+            Prefs::decode("theme=file:nord").theme,
+            ThemeChoice::File("nord".into())
+        );
         let p = Prefs::decode("theme=sepia tree=yes details=1 font=12 junk");
         assert_eq!(
             p,

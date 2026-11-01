@@ -156,7 +156,11 @@ impl<B: Backend> Browser<B> {
                 }
                 Intent::Confirm(i) => self.confirm(i),
                 Intent::Method(mode) => {
-                    if let Some(i) = s.confirm.as_ref().and_then(|c| switch(c.mode(), mode)) {
+                    if let Some(i) = s
+                        .confirm
+                        .as_ref()
+                        .and_then(|c| dialog::switch(c.mode(), mode))
+                    {
                         self.confirm(i);
                     }
                 }
@@ -389,17 +393,6 @@ fn central(
     }
 }
 
-/// The intent that switches the dialog's method from `from` to `to`, if they differ.
-fn switch(from: Mode, to: Mode) -> Option<confirm::Intent> {
-    if from == to {
-        None
-    } else if to == Mode::Permanent || from == Mode::Permanent && to == Mode::Trash {
-        Some(confirm::Intent::SwitchPermanent)
-    } else {
-        Some(confirm::Intent::SwitchStage)
-    }
-}
-
 impl<B: Backend> Browse for Browser<B> {
     fn show(&mut self, ui: &mut egui::Ui, colors: &Colors) {
         let ctx = ui.ctx().clone();
@@ -480,32 +473,5 @@ impl<B: Backend> Browse for Browser<B> {
 
     fn shutdown(self: Box<Self>) {
         self.session.shutdown(SHUTDOWN);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn each_method_is_reached_from_each_other_in_one_switch() {
-        let all = [Mode::Trash, Mode::Stage, Mode::Permanent];
-        for from in all {
-            for to in all {
-                let mode = match switch(from, to) {
-                    None => from,
-                    Some(confirm::Intent::SwitchPermanent) => match from {
-                        Mode::Trash | Mode::Stage => Mode::Permanent,
-                        Mode::Permanent => Mode::Trash,
-                    },
-                    Some(confirm::Intent::SwitchStage) => match from {
-                        Mode::Stage => Mode::Trash,
-                        _ => Mode::Stage,
-                    },
-                    Some(other) => panic!("{other:?}"),
-                };
-                assert_eq!(mode, to, "{from:?} to {to:?}");
-            }
-        }
     }
 }

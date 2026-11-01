@@ -106,6 +106,7 @@ fn inner_record() {
         read_only: false,
         import: None,
         no_rules: true,
+        theme: None,
     };
     let launched = launch::prepare(&args).expect("prepares");
     assert!(

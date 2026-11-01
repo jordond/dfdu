@@ -2,8 +2,8 @@
 //! directories: browsing (here), marking and deleting with undo (`flows`), the gates of a
 //! read-only browser and of an imported scan (`gates`), the start screen and the history
 //! (`start`), the map and the largest files (`views`), the Cleanup view with its native command
-//! pane (`cleanup`), the Duplicates view (`dupes`), and the command palette, the help and the
-//! platform's shortcuts (`palette`). Nothing is moved to the system's Trash: the delete flows stage
+//! pane (`cleanup`), the Duplicates view (`dupes`), the command palette, the help and the
+//! platform's shortcuts (`palette`), and the themes (`theme`). Nothing is moved to the system's Trash: the delete flows stage
 //! instead, and the Trash is tried only up to its dialog. The native commands the tests run are
 //! harmless ones of rules written for them (`ls`, `sleep`, `true`).
 
@@ -13,6 +13,7 @@ mod flows;
 mod gates;
 mod palette;
 mod start;
+mod theme;
 mod views;
 
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use dfdu_engine::EngineOptions;
 use dfdu_session::SessionState;
+use dfdu_session::palette::ThemeFile;
 use dfdu_session::startup::Source;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -35,7 +37,7 @@ const PATIENCE: Duration = Duration::from_secs(30);
 /// The window's state in the harness: the launch until the first frame creates the window with
 /// the harness's context.
 struct Window {
-    launch: Option<Launch>,
+    launch: Option<(Launch, Prefs, Option<ThemeFile>)>,
     gui: Option<Gui>,
 }
 
@@ -91,8 +93,13 @@ fn age(p: &Path, days: u64) {
 
 /// The window of `launch`.
 fn harness(launch: Launch) -> Harness<'static, Window> {
+    harness_with(launch, Prefs::default(), None)
+}
+
+/// The window of `launch` with the settings `prefs` and the theme file `file` read for them.
+fn harness_with(launch: Launch, prefs: Prefs, file: Option<ThemeFile>) -> Harness<'static, Window> {
     let state = Window {
-        launch: Some(launch),
+        launch: Some((launch, prefs, file)),
         gui: None,
     };
     Harness::builder()
@@ -104,8 +111,8 @@ fn harness(launch: Launch) -> Harness<'static, Window> {
                 let gui = match &mut w.gui {
                     Some(gui) => gui,
                     None => {
-                        let launch = w.launch.take().expect("a launch");
-                        w.gui.insert(Gui::new(launch, Prefs::default(), ui.ctx()))
+                        let (launch, prefs, file) = w.launch.take().expect("a launch");
+                        w.gui.insert(Gui::new(launch, prefs, file, ui.ctx()))
                     }
                 };
                 gui.show(ui);

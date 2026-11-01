@@ -47,8 +47,11 @@ use std::time::Instant;
 
 use clap::Parser;
 
+use dfdu_session::palette::ThemeFile;
+
 use crate::app::Gui;
 use crate::launch::Launch;
+use crate::settings::ThemeChoice;
 
 /// The window's title and the application's name.
 const NAME: &str = "dfdu";
@@ -62,14 +65,25 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let themes = dfdu_sys::dirs::theme_dir();
+    let theme = match args.theme.as_deref() {
+        Some(name) => match theme::named(name, themes.as_deref()) {
+            Ok(theme) => Some(theme),
+            Err(e) => {
+                eprintln!("dfdu-gui: theme {name}: {e}");
+                return ExitCode::from(1);
+            }
+        },
+        None => None,
+    };
     let pending = Cell::new(Some(launch));
-    let mut result = run(eframe::Renderer::Wgpu, &pending);
+    let mut result = run(eframe::Renderer::Wgpu, &pending, theme.as_ref());
     if let Err(eframe::Error::Wgpu(e)) = &result {
         // The window was not created: nothing was started yet.
         if let Some(launch) = pending.take() {
             eprintln!("dfdu-gui: wgpu cannot draw here ({e}); using OpenGL");
             pending.set(Some(launch));
-            result = run(eframe::Renderer::Glow, &pending);
+            result = run(eframe::Renderer::Glow, &pending, theme.as_ref());
         }
     }
     match result {
@@ -82,8 +96,12 @@ fn main() -> ExitCode {
 }
 
 /// Opens the window with `renderer` on the launch in `pending`, which it takes once the window
-/// is created.
-fn run(renderer: eframe::Renderer, pending: &Cell<Option<Launch>>) -> eframe::Result {
+/// is created, with the theme `--theme` chose, or else the one chosen last.
+fn run(
+    renderer: eframe::Renderer,
+    pending: &Cell<Option<Launch>>,
+    theme: Option<&(ThemeChoice, Option<ThemeFile>)>,
+) -> eframe::Result {
     let opts = eframe::NativeOptions {
         renderer,
         viewport: egui::ViewportBuilder::default()
@@ -100,8 +118,15 @@ fn run(renderer: eframe::Renderer, pending: &Cell<Option<Launch>>) -> eframe::Re
         opts,
         Box::new(|cc| {
             let launch = pending.take().ok_or("the window was opened twice")?;
-            let prefs = settings::Prefs::load(cc.storage);
-            let gui = Gui::new(launch, prefs, &cc.egui_ctx);
+            let mut prefs = settings::Prefs::load(cc.storage);
+            let file = match theme.cloned() {
+                Some((choice, file)) => {
+                    prefs.theme = choice;
+                    file
+                }
+                None => theme::saved(&mut prefs.theme, dfdu_sys::dirs::theme_dir().as_deref()),
+            };
+            let gui = Gui::new(launch, prefs, file, &cc.egui_ctx);
             Ok(match std::env::var_os(shot::VAR) {
                 Some(path) => Box::new(shot::Shot {
                     gui,

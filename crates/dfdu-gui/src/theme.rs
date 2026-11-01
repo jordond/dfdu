@@ -1,9 +1,14 @@
 //! The theme's tokens as egui colours and text styles. The built-in dark and light palettes of
-//! `dfdu_session::palette` follow the system's setting; a token without an RGB value (the
+//! `dfdu_session::palette` follow the system's setting, or the one chosen; a theme file
+//! (`file`) sets the tokens it gives an RGB value over them. A token without an RGB value (the
 //! terminal's own colours) takes egui's colour for text or for the background.
 
-use dfdu_session::palette::{BuiltinTheme, Modifiers, Palette, Rgb, Token};
+use dfdu_session::palette::{BuiltinTheme, Modifiers, Palette, Rgb, ThemeFile, Token};
 use egui::{Color32, RichText, Visuals};
+
+mod file;
+
+pub use file::{named, preference, saved};
 
 /// The palette of one of egui's themes, resolved to colours.
 #[derive(Clone, Debug)]
@@ -18,14 +23,31 @@ fn color((r, g, b): Rgb) -> Color32 {
 }
 
 impl Colors {
-    /// The built-in palette for `theme`.
-    pub fn of(theme: egui::Theme) -> Self {
+    /// The built-in palette for `theme`, with the tokens `file` gives an RGB value set from it:
+    /// a colour without one (an ANSI colour, a terminal's) is the built-in palette's.
+    pub fn new(theme: egui::Theme, file: Option<&ThemeFile>) -> Self {
         let (builtin, base) = match theme {
             egui::Theme::Dark => (BuiltinTheme::Dark, Visuals::dark()),
             egui::Theme::Light => (BuiltinTheme::Light, Visuals::light()),
         };
+        let mut palette = builtin.palette();
+        if let Some(file) = file {
+            let theirs = file.palette();
+            for t in Token::ALL {
+                let (mine, theirs) = (&mut palette[t], theirs[t]);
+                if theirs.fg.rgb.is_some() {
+                    mine.fg = theirs.fg;
+                }
+                if theirs.bg.rgb.is_some() {
+                    mine.bg = theirs.bg;
+                }
+                if theirs.fg.rgb.is_some() || theirs.bg.rgb.is_some() {
+                    mine.modifiers = theirs.modifiers;
+                }
+            }
+        }
         Colors {
-            palette: builtin.palette(),
+            palette,
             text: base.text_color(),
         }
     }
@@ -77,14 +99,15 @@ impl Colors {
     }
 }
 
-/// Gives both of egui's themes the palette's colours; egui shows the one the system asks for.
-pub fn apply(ctx: &egui::Context) {
+/// Gives both of egui's themes the palette's colours, with those of `file`; egui shows the one
+/// the system asks for, or the one chosen.
+pub fn apply(ctx: &egui::Context, file: Option<&ThemeFile>) {
     for theme in [egui::Theme::Dark, egui::Theme::Light] {
         let base = match theme {
             egui::Theme::Dark => Visuals::dark(),
             egui::Theme::Light => Visuals::light(),
         };
-        ctx.set_visuals_of(theme, Colors::of(theme).visuals(base));
+        ctx.set_visuals_of(theme, Colors::new(theme, file).visuals(base));
     }
 }
 
@@ -94,8 +117,8 @@ mod tests {
 
     #[test]
     fn tokens_take_the_palette_rgb_and_fall_back_to_egui_text() {
-        let dark = Colors::of(egui::Theme::Dark);
-        let light = Colors::of(egui::Theme::Light);
+        let dark = Colors::new(egui::Theme::Dark, None);
+        let light = Colors::new(egui::Theme::Light, None);
         assert_eq!(dark.fg(Token::Dir), Color32::from_rgb(0x8f, 0xbc, 0xf0));
         assert_eq!(light.fg(Token::Dir), Color32::from_rgb(0x1d, 0x5e, 0xa8));
         // `bg` is the terminal's own background: no colour of its own.
@@ -107,5 +130,17 @@ mod tests {
         let v = dark.visuals(Visuals::dark());
         assert_eq!(v.override_text_color, Some(dark.fg(Token::Fg)));
         assert_eq!(v.selection.bg_fill, Color32::from_rgb(0x4c, 0x56, 0x6a));
+    }
+
+    #[test]
+    fn a_theme_file_sets_its_rgb_tokens_and_leaves_its_ansi_ones_to_the_built_in() {
+        let file = ThemeFile::parse("base = \"ansi\"\n[tokens]\ndir = \"#123456\"\nfg = \"red\"\n")
+            .expect("parses");
+        let dark = Colors::new(egui::Theme::Dark, None);
+        let mine = Colors::new(egui::Theme::Dark, Some(&file));
+        assert_eq!(mine.fg(Token::Dir), Color32::from_rgb(0x12, 0x34, 0x56));
+        // A named ANSI colour, and the ANSI base's tokens, are the built-in dark theme's.
+        assert_eq!(mine.fg(Token::Fg), dark.fg(Token::Fg));
+        assert_eq!(mine.fg(Token::Mark), dark.fg(Token::Mark));
     }
 }
