@@ -1,13 +1,14 @@
 //! The Cleanup view (`3`): every match of the rules in the whole scan, as the terminal's view
-//! lists them. Sections by safety level, each saying what the level means, hold the categories
-//! found at that level, which open to their items: the tick, size, entries, day modified, why
-//! it is suggested or not, and the path. The first opening ticks the suggested items (not in a
-//! read-only browser); `f` (or the level picked above the table) shows only the safer levels,
-//! `A` ticks the suggested items again and `N` opens the selected item's native command
-//! (`pane`). A right click opens a row's menu (`menu::review`). Below the table, the selected
-//! row's rule: what it is, what deleting it loses and
-//! why it is suggested or not. What is listed, ticked and run is the session's
-//! (`dfdu_session::cleanup`): a click or a key here is one of its intents.
+//! lists them. A summary bar says what is suggested and ticked, with the levels shown and the
+//! button that ticks the suggestion. Sections by safety level, each saying what the level
+//! means, hold the categories found at that level, which open to their items: the tick, the
+//! path, why it is suggested or not, the category, the size and the day modified. The first
+//! opening ticks the suggested items (not in a read-only browser); `f` (or the level picked in
+//! the summary bar) shows only the safer levels, `A` ticks the suggested items again and `N`
+//! opens the selected item's native command (`pane`). A right click opens a row's menu
+//! (`menu::review`). Below the table, the selected row's rule (`detail`). What is listed,
+//! ticked and run is the session's (`dfdu_session::cleanup`): a click or a key here is one of
+//! its intents.
 
 use dfdu_engine::{Verdict, tilde};
 use dfdu_rules::CategoryIx;
@@ -15,17 +16,19 @@ use dfdu_session::SessionState;
 use dfdu_session::actions::{Action, first_key};
 use dfdu_session::cleanup::{self, Intent as Ask, Item, Row};
 use dfdu_session::format::{count, human};
-use dfdu_session::palette::{Category, Token};
-use dfdu_tree::{ClassFlags, Safety, now_secs};
-use egui::{Align, Button, Label, Layout, RichText, Sense, Ui, vec2};
+use dfdu_session::palette::Token;
+use dfdu_tree::{Safety, now_secs};
+use egui::{Align, Label, Layout, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder, TableRow};
 
 use crate::browser::{Intent, ViewState};
-use crate::list::{self, Point};
+use crate::kit::{self, Kind};
+use crate::list::{self, Ink, Point};
 use crate::menu;
-use crate::review::{self, Tick};
-use crate::theme::Colors;
+use crate::review::{self, ROW, Tick, right};
+use crate::theme::{Colors, style};
 
+mod detail;
 pub mod pane;
 
 /// The levels the filter shows, in the order `f` steps through them, with their names.
@@ -59,23 +62,11 @@ fn chip(v: Verdict) -> &'static str {
     }
 }
 
-/// The same as a sentence.
-fn reason(v: Verdict) -> String {
-    match v {
-        Verdict::Safe => "Suggested: safe to delete.".into(),
-        Verdict::Stale(d) => format!("Suggested: unchanged for over {d} days."),
-        Verdict::Level(s) => format!("Not suggested: {} items never are.", s.as_str()),
-        Verdict::InUse => "Not suggested: in use.".into(),
-        Verdict::Tracked => "Not suggested: tracked by git.".into(),
-        Verdict::VcsUnknown => "Not suggested: git could not tell if it is tracked.".into(),
-        Verdict::Scanning => "Not suggested until its scan finishes.".into(),
-        Verdict::Newer(d) => format!("Not suggested: changed in the last {d} days."),
-        Verdict::Below(min) => format!("Not suggested: below the rule's {}.", human(min)),
-    }
-}
-
 /// The names of the table's columns, as the accessibility tree has them.
-const COLUMNS: [&str; 6] = ["Ticked", "Size", "Items", "Modified", "Why", "Path"];
+const COLUMNS: [&str; 6] = ["Ticked", "Path", "Why", "Category", "Size", "Modified"];
+
+/// The height of a section's row: a header, with room above it.
+const SECTION: f32 = 34.0;
 
 /// Draws the view and returns how many rows it had room for.
 pub fn show(
@@ -87,100 +78,88 @@ pub fn show(
 ) -> usize {
     let rows = cleanup::rows(s);
     if rows.is_empty() && s.cleanup.filter.is_none() {
-        let dim = |t: &str| colors.text(t, Token::FgDim);
-        ui.label(dim(
+        let visible = list::visible_rows(ui);
+        let lines = [
             "Lists what the rules recognise in the whole scan (caches, build output, \
              dependencies), by how safe it is to delete.",
-        ));
-        ui.label(dim(if s.snap.busy {
-            "Nothing matched yet; the scan is still running."
-        } else {
-            "Nothing the rules know about was found."
-        }));
-        return list::visible_rows(ui);
+            if s.snap.busy {
+                "Nothing matched yet; the scan is still running."
+            } else {
+                "Nothing the rules know about was found."
+            },
+        ];
+        review::empty(ui, colors, &lines, |_| {});
+        return visible;
     }
-    controls(ui, s, colors, out);
+    summary(ui, s, colors, out);
     notes(ui, s, colors);
     let cursor = s.cleanup.cursor.min(rows.len().saturating_sub(1));
     egui::Panel::bottom("dfdu-cleanup-detail")
         .resizable(false)
-        .show(ui, |ui| detail(ui, s, colors, rows.get(cursor).copied()));
+        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 10)))
+        .show(ui, |ui| {
+            detail::show(ui, s, colors, rows.get(cursor).copied(), out);
+        });
     let visible = list::visible_rows(ui);
     if rows.is_empty() {
-        ui.label(colors.text("Nothing at these levels.", Token::FgDim));
+        review::empty(ui, colors, &["Nothing at these levels."], |_| {});
         return visible;
     }
     table(ui, s, colors, view, &rows, cursor, out);
     visible
 }
 
-/// What the ticks add up to, the levels shown, and the buttons of the view.
-fn controls(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
-    let can: Vec<&Item> = (s.extras.cleanup.items.iter())
+/// The summary bar: what is suggested, what is ticked of what was found, the levels shown and
+/// the button that ticks the suggestion.
+fn summary(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
+    let items = &s.extras.cleanup.items;
+    let now = now_secs();
+    let found: u64 = items.iter().map(|it| it.size).sum();
+    let suggested: u64 = (items.iter())
         .filter(|it| cleanup::markable(it))
+        .filter(|it| cleanup::recommended(s, it, now).is_some_and(Verdict::recommended))
+        .map(|it| it.size)
+        .sum();
+    let ticked: Vec<&Item> = (items.iter())
+        .filter(|it| cleanup::markable(it) && cleanup::is_marked(s, it))
         .collect();
-    let all: u64 = can.iter().map(|it| it.size).sum();
-    let ticked: Vec<&&Item> = can.iter().filter(|it| cleanup::is_marked(s, it)).collect();
     let ticked_size: u64 = ticked.iter().map(|it| it.size).sum();
-    ui.horizontal(|ui| {
-        ui.label(colors.text(
-            format!("{} in {} items", human(all), count(can.len() as u64)),
-            Token::Header,
-        ));
-        let token = if ticked.is_empty() {
-            Token::FgDim
-        } else {
-            Token::Mark
-        };
-        ui.label(colors.text(
-            format!(
-                "{} ticked ({})",
-                count(ticked.len() as u64),
-                human(ticked_size)
-            ),
-            token,
-        ));
-        ui.separator();
+    let line = format!(
+        "{} ticked ({}) of {} items · {} found",
+        count(ticked.len() as u64),
+        human(ticked_size),
+        count(items.len() as u64),
+        human(found)
+    );
+    review::summary(ui, colors, (&human(suggested), "suggested"), &line, |ui| {
+        if !s.read_only {
+            let key = first_key(Action::TickSuggested);
+            if kit::button(
+                ui,
+                colors,
+                Kind::Secondary,
+                "Tick suggested",
+                Some(key),
+                true,
+            )
+            .clicked()
+            {
+                out.push(Intent::Act(Action::TickSuggested));
+            }
+        }
+        kit::key_cap(ui, colors, first_key(Action::CleanupFilter));
         let at = LEVELS
             .iter()
             .position(|(f, _)| *f == s.cleanup.filter)
             .unwrap_or(0);
-        for (i, (_, name)) in LEVELS.iter().enumerate() {
-            let r = ui.selectable_label(i == at, *name);
-            if r.on_hover_text(format!("key {}", first_key(Action::CleanupFilter)))
-                .clicked()
-                && i != at
-            {
-                // The session steps through the levels in this order, round the end.
-                let steps = (i + LEVELS.len() - at) % LEVELS.len();
-                for _ in 0..steps {
-                    out.push(Intent::Cleanup(Ask::CycleFilter));
-                }
+        let names = LEVELS.map(|(_, name)| name);
+        if let Some(i) = kit::segmented(ui, colors, "Levels shown", &names, at) {
+            // The session steps through the levels in this order, round the end.
+            for _ in 0..(i + LEVELS.len() - at) % LEVELS.len() {
+                out.push(Intent::Cleanup(Ask::CycleFilter));
             }
         }
-        ui.separator();
-        if !s.read_only
-            && ui
-                .button("Tick suggested")
-                .on_hover_text(format!("key {}", first_key(Action::TickSuggested)))
-                .clicked()
-        {
-            out.push(Intent::Act(Action::TickSuggested));
-        }
-        let native = cleanup::selected(s).is_some_and(|it| has_native(s, it));
-        if ui
-            .add_enabled(native, Button::new("Native command…"))
-            .on_hover_text(format!("key {}", first_key(Action::CleanupCommand)))
-            .clicked()
-        {
-            out.push(Intent::Act(Action::CleanupCommand));
-        }
     });
-}
-
-/// The rule of `it` has a native command.
-fn has_native(s: &SessionState, it: &Item) -> bool {
-    (s.snap.rules.as_ref()).is_some_and(|r| r.rule(it.class.rule).action.native().is_some())
 }
 
 /// What native commands count themselves, under the summary.
@@ -195,7 +174,7 @@ fn notes(ui: &mut Ui, s: &SessionState, colors: &Colors) {
             Err(e) => format!("{name}: {e}"),
         })
         .collect();
-    ui.label(colors.text(parts.join(" · "), Token::FgDim));
+    review::note(ui, colors, &parts.join(" · "));
 }
 
 /// The rows, in a table that lays out only those on screen.
@@ -208,59 +187,55 @@ fn table(
     cursor: usize,
     out: &mut Vec<Intent>,
 ) {
-    let row_h = list::row_height(ui);
     list::whole_rows(ui);
+    let category = ui.available_width() > 720.0;
     let mut table = TableBuilder::new(ui)
         .id_salt("dfdu-cleanup")
-        .striped(true)
+        .striped(false)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(row_h * 3.0))
-        .column(Column::auto().at_least(70.0))
-        .column(Column::auto().at_least(50.0))
-        .column(Column::auto().at_least(80.0))
-        .column(Column::auto().at_least(70.0))
-        .column(Column::remainder())
+        .column(Column::exact(64.0))
+        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::exact(80.0).clip(true))
+        .column(Column::exact(if category { 170.0 } else { 0.0 }).clip(true))
+        .column(Column::exact(96.0))
+        .column(Column::exact(96.0))
         .min_scrolled_height(0.0)
         .auto_shrink(false);
     if std::mem::take(&mut view.follow) {
         table = table.scroll_to_row(cursor, None);
     }
     let now = now_secs();
-    table
-        .header(row_h, |mut h| {
-            for label in COLUMNS {
-                h.col(|ui| {
-                    list::name_column(ui, label);
-                    if label != "Ticked" {
-                        ui.label(colors.text(label, Token::Header));
-                    }
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(row_h, rows.len(), |mut row| {
-                let i = row.index();
-                row.set_selected(i == cursor);
-                let tick = match rows[i] {
-                    Row::Section(safety) => section(&mut row, s, colors, safety, i, out),
-                    Row::Group { cat, safety } => group(&mut row, s, colors, cat, safety, i, out),
-                    Row::Item(ix) => item(&mut row, s, colors, ix, i, now, out),
-                };
-                let r = row.response();
-                list::name_row(&r, i == cursor, row_name(s, rows[i]));
-                if r.double_clicked() {
-                    out.push(Intent::Cleanup(Ask::Select(i)));
-                    out.push(Intent::Cleanup(Ask::Activate));
-                } else if r.clicked() || r.secondary_clicked() {
-                    out.push(Intent::Cleanup(Ask::Select(i)));
+    let heights = rows.iter().map(|r| match r {
+        Row::Section(_) => SECTION,
+        Row::Group { .. } | Row::Item(_) => ROW,
+    });
+    table.body(|body| {
+        body.heterogeneous_rows(heights, |mut row| {
+            let i = row.index();
+            row.set_selected(i == cursor);
+            let ink = Ink::new(colors, i == cursor);
+            let tick = match rows[i] {
+                Row::Section(safety) => section(&mut row, s, colors, &ink, safety, i, out),
+                Row::Group { cat, safety } => {
+                    group(&mut row, s, colors, &ink, (cat, safety), i, out)
                 }
-                let path = matches!(rows[i], Row::Item(_));
-                r.context_menu(|ui| {
-                    menu::review(ui, s, path, (tick, &toggle(i)), out);
-                });
+                Row::Item(ix) => item(&mut row, s, colors, &ink, (ix, category), i, now, out),
+            };
+            let r = row.response();
+            list::name_row(&r, i == cursor, row_name(s, rows[i]));
+            if r.double_clicked() {
+                out.push(Intent::Cleanup(Ask::Select(i)));
+                out.push(Intent::Cleanup(Ask::Activate));
+            } else if r.clicked() || r.secondary_clicked() {
+                out.push(Intent::Cleanup(Ask::Select(i)));
+            }
+            let path = matches!(rows[i], Row::Item(_));
+            r.context_menu(|ui| {
+                menu::review(ui, s, path, (tick, &toggle(i)), out);
             });
         });
+    });
 }
 
 /// What row `row` is called in the accessibility tree: its level, category or path, and its
@@ -307,24 +282,25 @@ fn tick_of_items(s: &SessionState, ix: &[usize]) -> Tick {
 
 /// The first cell of a section or category on row `i`, ticked as `tick` says: its triangle,
 /// which opens or closes it, and its tick, which ticks every item in it; a category's indented.
+#[expect(clippy::too_many_arguments, reason = "a row's state")]
 fn opener(
     ui: &mut Ui,
     s: &SessionState,
     colors: &Colors,
+    ink: &Ink,
     row: Row,
     tick: Tick,
     i: usize,
     out: &mut Vec<Intent>,
 ) {
-    let h = ui.text_style_height(&egui::TextStyle::Body);
     if matches!(row, Row::Group { .. }) {
-        ui.add_space(0.8 * h);
+        ui.add_space(style::SPACE_3);
     }
-    let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
+    let (rect, r) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
     let open = cleanup::is_open(s, row);
     let token = if r.hovered() { Token::Fg } else { Token::FgDim };
     let point = if open { Point::Down } else { Point::Right };
-    list::triangle(ui, colors.fg(token), rect, point);
+    list::triangle(ui, ink.of(colors.fg(token)), rect, point);
     let what = if open { "Collapse" } else { "Expand" };
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, what));
     if r.clicked() {
@@ -337,83 +313,112 @@ fn opener(
     }
 }
 
-/// The size and the count of items `ix`, in the size and items columns.
-fn totals(row: &mut TableRow<'_, '_>, s: &SessionState, colors: &Colors, ix: &[usize]) {
-    let size: u64 = ix.iter().map(|&i| s.extras.cleanup.items[i].size).sum();
-    list::cell(row, &COLUMNS, |ui| {
-        right(ui, colors.text(human(size), Token::Fg))
-    });
-    list::cell(row, &COLUMNS, |ui| {
-        right(ui, colors.text(count(ix.len() as u64), Token::FgDim))
-    });
+/// The size of items `ix`.
+fn total(s: &SessionState, ix: &[usize]) -> u64 {
+    ix.iter().map(|&i| s.extras.cleanup.items[i].size).sum()
 }
 
-/// `text` aligned to the right of its cell.
-fn right(ui: &mut Ui, text: RichText) {
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.label(text);
-    });
+/// Adds `n` empty cells to `row`.
+fn skip(row: &mut TableRow<'_, '_>, n: usize) {
+    for _ in 0..n {
+        list::cell(row, &COLUMNS, |_| {});
+    }
 }
 
-/// A safety level's row: `Safe to delete · caches the owning program recreates`; returns its
-/// tick.
+/// A safety level's row, a header in its colour with its glyph: `✓ Safe to delete`, what the
+/// level means, and its total; a rule in `border` under it. Returns its tick.
 fn section(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
     colors: &Colors,
+    ink: &Ink,
     safety: Safety,
     i: usize,
     out: &mut Vec<Intent>,
 ) -> Tick {
     let ix = cleanup::section_items(s, safety);
     let tick = tick_of_items(s, &ix);
+    let (glyph, token) = crate::details::safety(safety);
+    let color = ink.of(colors.fg(token));
+    let dim = ink.of(colors.fg(Token::FgDim));
     list::cell(row, &COLUMNS, |ui| {
-        opener(ui, s, colors, Row::Section(safety), tick, i, out)
+        review::rule_under(ui, colors.fg(Token::Border));
+        opener(ui, s, colors, ink, Row::Section(safety), tick, i, out);
     });
-    totals(row, s, colors, &ix);
-    list::cell(row, &COLUMNS, |_| {});
-    list::cell(row, &COLUMNS, |_| {});
     list::cell(row, &COLUMNS, |ui| {
         let (name, meaning) = section_name(safety);
-        ui.label(colors.text(name, Token::Title));
-        ui.add(Label::new(colors.text(format!("· {meaning}"), Token::FgDim)).truncate());
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(kit::title(glyph, 14.0).color(color));
+        ui.label(kit::title(name, 14.0).color(color));
+        ui.add_space(style::SPACE_1);
+        ui.add(
+            Label::new(kit::sans(meaning, 12.0).color(dim))
+                .selectable(false)
+                .truncate(),
+        );
+    });
+    skip(row, 2);
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, kit::mono_bold(human(total(s, &ix)), 12.0).color(dim));
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        let n = ix.len() as u64;
+        let what = if n == 1 { "item" } else { "items" };
+        right(
+            ui,
+            kit::sans(format!("{} {what}", count(n)), 12.0).color(dim),
+        );
     });
     tick
 }
 
-/// A category's row in its section, in the category's colour; returns its tick.
+/// A category's row in its section: its chip, how many items, and their total. Returns its
+/// tick.
 fn group(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
     colors: &Colors,
-    cat: CategoryIx,
-    safety: Safety,
+    ink: &Ink,
+    (cat, safety): (CategoryIx, Safety),
     i: usize,
     out: &mut Vec<Intent>,
 ) -> Tick {
     let ix = cleanup::group_items(s, cat, safety);
     let r = Row::Group { cat, safety };
     let tick = tick_of_items(s, &ix);
-    list::cell(row, &COLUMNS, |ui| opener(ui, s, colors, r, tick, i, out));
-    totals(row, s, colors, &ix);
-    list::cell(row, &COLUMNS, |_| {});
-    list::cell(row, &COLUMNS, |_| {});
+    let dim = ink.of(colors.fg(Token::FgDim));
+    list::cell(row, &COLUMNS, |ui| {
+        opener(ui, s, colors, ink, r, tick, i, out)
+    });
     list::cell(row, &COLUMNS, |ui| {
         let category = cat.get();
-        let token =
-            (Category::ALL.get(category.color as usize)).map_or(Token::CatOther, |c| c.token());
-        ui.label(colors.text(category.name, token));
+        let color = ink.of(colors.fg(list::category(category.color as usize)));
+        kit::chip(ui, category.name, color);
+    });
+    skip(row, 2);
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, kit::mono(human(total(s, &ix)), 13.0).color(dim));
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        let n = ix.len() as u64;
+        let what = if n == 1 { "item" } else { "items" };
+        right(
+            ui,
+            kit::sans(format!("{} {what}", count(n)), 12.0).color(dim),
+        );
     });
     tick
 }
 
-/// An item's row: its tick, size, entries, day modified, why it is suggested or not, and path;
-/// returns its tick.
+/// An item's row: its tick (disabled when it cannot be ticked), path, why it is suggested or
+/// not, category, size and day modified. Returns its tick.
+#[expect(clippy::too_many_arguments, reason = "a row's state")]
 fn item(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
     colors: &Colors,
-    ix: usize,
+    ink: &Ink,
+    (ix, category): (usize, bool),
     i: usize,
     now: i64,
     out: &mut Vec<Intent>,
@@ -427,118 +432,50 @@ fn item(
     } else {
         Tick::Off
     };
+    let dim = ink.of(colors.fg(Token::FgDim));
     list::cell(row, &COLUMNS, |ui| {
-        let h = ui.text_style_height(&egui::TextStyle::Body);
-        ui.add_space(2.6 * h);
-        if !s.read_only && review::tick(ui, colors, tick).clicked() {
+        ui.add_space(44.0);
+        if s.read_only {
+            return;
+        }
+        if tick == Tick::Locked {
+            review::tick(ui, colors, tick);
+        } else if review::tick(ui, colors, tick).clicked() {
             out.extend(toggle(i));
         }
     });
-    let token = if marked { Token::Mark } else { Token::Fg };
-    list::cell(row, &COLUMNS, |ui| {
-        right(ui, colors.text(human(it.size), token))
-    });
-    list::cell(row, &COLUMNS, |ui| {
-        right(ui, colors.text(count(it.items), Token::FgDim))
-    });
-    list::cell(row, &COLUMNS, |ui| {
-        if it.mtime > 0 {
-            ui.label(colors.text(dfdu_tree::day(it.mtime), Token::FgDim));
-        }
-    });
-    list::cell(row, &COLUMNS, |ui| {
-        let verdict = cleanup::recommended(s, it, now);
-        let token = match verdict {
-            Some(v) if v.recommended() => Token::StatusOk,
-            Some(Verdict::InUse) => Token::StatusWarn,
-            _ => Token::FgDim,
-        };
-        ui.label(colors.text(verdict.map_or("", chip), token));
-    });
     list::cell(row, &COLUMNS, |ui| {
         let path = tilde(&it.path, s.home.as_deref());
+        let token = if marked { Token::Mark } else { Token::Fg };
         // Not selectable, so a click on the path reaches the row.
         ui.add(
-            Label::new(colors.text(path, Token::Fg))
+            Label::new(kit::mono(path, 13.0).color(ink.of(colors.fg(token))))
                 .selectable(false)
                 .truncate(),
         );
     });
-    tick
-}
-
-/// Below the table: the selected item's rule, what deleting it loses and why it is or is not
-/// suggested. On a category, the rule of its first item; on a section, what its level means.
-fn detail(ui: &mut Ui, s: &SessionState, colors: &Colors, row: Option<Row>) {
-    let text = |ui: &mut Ui, t: RichText| {
-        ui.add(Label::new(t).wrap());
-    };
-    let i = match row {
-        Some(Row::Item(i)) => Some(i),
-        Some(Row::Group { cat, safety }) => cleanup::group_items(s, cat, safety).first().copied(),
-        Some(Row::Section(safety)) => {
-            let (name, meaning) = section_name(safety);
-            let n = cleanup::section_items(s, safety).len();
-            text(ui, colors.text(name, Token::Title));
-            text(
-                ui,
-                colors.text(
-                    format!("{meaning}; {n} match{}", if n == 1 { "" } else { "es" }),
-                    Token::FgDim,
-                ),
-            );
-            return;
-        }
-        None => None,
-    };
-    let (Some(i), Some(rules)) = (i, &s.snap.rules) else {
-        return;
-    };
-    let it = &s.extras.cleanup.items[i];
-    let r = rules.rule(it.class.rule);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(colors.text(&r.name, Token::Title));
-        ui.label(colors.text(format!("· {}", it.class.safety.as_str()), Token::FgDim));
+    list::cell(row, &COLUMNS, |ui| {
+        let verdict = cleanup::recommended(s, it, now);
+        ui.label(kit::sans(verdict.map_or("", chip), 12.0).color(dim));
     });
-    text(ui, RichText::new(&r.explanation));
-    text(
-        ui,
-        colors.text(format!("You lose: {}", r.lost), Token::FgDim),
-    );
-    if !matches!(row, Some(Row::Item(_))) {
-        return;
-    }
-    let warnings: Vec<&str> = [
-        (ClassFlags::IN_USE, "in use"),
-        (ClassFlags::VCS_TRACKED, "tracked by git"),
-        (
-            ClassFlags::VCS_UNKNOWN,
-            "git could not tell if it is tracked",
-        ),
-    ]
-    .into_iter()
-    .filter(|&(flag, _)| it.class.has(flag))
-    .map(|(_, what)| what)
-    .collect();
-    if !warnings.is_empty() {
-        let w = format!("Warning: {}.", warnings.join(", "));
-        text(ui, colors.text(w, Token::StatusWarn));
-    }
-    if let Some(v) = cleanup::recommended(s, it, now_secs()) {
-        text(ui, colors.text(reason(v), Token::FgDim));
-    }
-    if r.action.native().is_some() {
-        let key = first_key(Action::CleanupCommand);
-        text(
+    list::cell(row, &COLUMNS, |ui| {
+        if let (true, Some(rules)) = (category, &s.snap.rules) {
+            let c = rules.rule(it.class.rule).category();
+            let color = ink.of(colors.fg(list::category(c.color as usize)));
+            kit::chip(ui, c.name, color);
+        }
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        let token = if marked { Token::Mark } else { Token::SizeBig };
+        right(
             ui,
-            colors.text(
-                if s.read_only {
-                    format!("{key} shows its own cleanup command and runs its dry run")
-                } else {
-                    format!("{key} runs its own cleanup command (dry run first)")
-                },
-                Token::FgDim,
-            ),
+            kit::mono_bold(human(it.size), 13.0).color(ink.of(colors.fg(token))),
         );
-    }
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        if it.mtime > 0 {
+            right(ui, kit::sans(dfdu_tree::day(it.mtime), 12.0).color(dim));
+        }
+    });
+    tick
 }
