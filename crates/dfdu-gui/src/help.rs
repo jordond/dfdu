@@ -86,7 +86,7 @@ pub fn show(ctx: &egui::Context, read_only: bool, colors: &Colors, view: &mut Vi
         .id(Id::unique("dfdu-help"))
         .frame(windows::frame(ctx))
         .open(&mut open)
-        .default_size([460.0, 520.0])
+        .default_size([520.0, 560.0])
         .collapsible(false)
         .show(ctx, |ui| {
             let width = ui.available_width();
@@ -145,7 +145,12 @@ pub fn caps(ui: &mut Ui, colors: &Colors, keys: &str) {
     let r = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_1;
-            for key in keys.split_whitespace() {
+            let mut all: Vec<&str> = keys.split_whitespace().collect();
+            // Laid out from the right, they are written in reverse to read in order.
+            if ui.layout().main_dir() == egui::Direction::RightToLeft {
+                all.reverse();
+            }
+            for key in all {
                 kit::key_cap(ui, colors, key);
             }
         })

@@ -116,18 +116,20 @@ impl Gui {
         }
         // The browser's toolbar has its own View menu.
         if !self.browsing() {
-            self.menu(ui.ctx());
+            self.menu(ui.ctx(), &colors);
         }
     }
 
     /// The View menu of the screens without a browser, quiet in the window's top right corner:
     /// the theme.
-    fn menu(&mut self, ctx: &egui::Context) {
+    fn menu(&mut self, ctx: &egui::Context, colors: &Colors) {
+        let quiet = egui::Button::new(kit::label("View", 12.0).color(colors.fg(Token::FgDim)))
+            .frame_when_inactive(false);
         egui::Area::new(egui::Id::unique("dfdu-view-menu"))
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 12.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.menu_button(kit::label("View", 12.0), |ui| {
+                egui::containers::menu::MenuButton::from_button(quiet).ui(ui, |ui| {
                     ui.label(kit::label("Theme", 11.0).weak());
                     for choice in self.themes() {
                         if ui

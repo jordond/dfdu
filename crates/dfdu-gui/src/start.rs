@@ -28,7 +28,7 @@ use crate::theme::style::{
 };
 
 /// A disk's card.
-const CARD: egui::Vec2 = vec2(260.0, 118.0);
+const CARD: egui::Vec2 = vec2(268.0, 134.0);
 /// Between the lines of the background grid.
 const GRID: f32 = 24.0;
 
@@ -297,49 +297,48 @@ fn card(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
     let g = line(ui, &at, mono(11.0), dim, w);
     p.galley(pos2(inner.left(), y), g, Color32::PLACEHOLDER);
     y += 22.0;
+    // The free space beside what is used when both fit, else beside the notes.
+    let mut low_right = None;
     match d.space {
         Some(s) => {
             let bar = Rect::from_min_size(pos2(inner.left(), y), vec2(w, 8.0));
             kit::paint_bar(ui, colors, bar, ratio(s.used, s.total.max(1)));
-            y += 16.0;
+            y += 18.0;
             let used = format!("{} of {}", human(s.used), human(s.total));
-            p.text(
-                pos2(inner.left(), y),
-                Align2::LEFT_TOP,
-                used,
-                mono(12.0),
-                colors.fg(Token::Fg),
-            );
+            let used = line(ui, &used, mono(12.0), colors.fg(Token::Fg), w);
             let free = format!("{} free", human(s.available));
-            p.text(
-                pos2(inner.right(), y),
-                Align2::RIGHT_TOP,
-                free,
-                mono(12.0),
-                dim,
-            );
+            let free = line(ui, &free, mono(12.0), dim, w);
+            let used_w = used.size().x;
+            p.galley(pos2(inner.left(), y), used, Color32::PLACEHOLDER);
+            if used_w + SPACE_3 + free.size().x <= w {
+                let at = pos2(inner.right() - free.size().x, y);
+                p.galley(at, free, Color32::PLACEHOLDER);
+            } else {
+                low_right = Some(free);
+            }
         }
         None => {
             let warn = colors.fg(Token::StatusWarn);
             let font = FontId::new(12.0, FontFamily::Proportional);
-            p.text(
-                pos2(inner.left(), y),
-                Align2::LEFT_TOP,
-                "Not responding",
-                font,
-                warn,
-            );
+            let at = pos2(inner.left(), y);
+            p.text(at, Align2::LEFT_TOP, "Not responding", font, warn);
         }
+    }
+    let mut room = w;
+    if let Some(free) = low_right {
+        room -= free.size().x + SPACE_3;
+        let at = pos2(
+            inner.right() - free.size().x,
+            inner.bottom() - free.size().y,
+        );
+        p.galley(at, free, Color32::PLACEHOLDER);
     }
     let notes = notes(d);
     if !notes.is_empty() {
         let font = FontId::new(11.0, FontFamily::Proportional);
-        let g = line(ui, &notes, font, dim, w);
-        p.galley(
-            pos2(inner.left(), inner.bottom() - g.size().y),
-            g,
-            Color32::PLACEHOLDER,
-        );
+        let g = line(ui, &notes, font, dim, room);
+        let at = pos2(inner.left(), inner.bottom() - g.size().y - 1.0);
+        p.galley(at, g, Color32::PLACEHOLDER);
     }
     r.clicked().then(|| d.mount_point.clone())
 }
