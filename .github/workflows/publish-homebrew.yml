@@ -13,7 +13,7 @@ on:
 jobs:
   formula:
     name: Publish the Homebrew formula
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     if: ${{ !fromJson(inputs.plan).announcement_is_prerelease || fromJson(inputs.plan).publish_prereleases }}
     timeout-minutes: 15
     env:

@@ -32,4 +32,6 @@ include = ["assets/man/", "assets/completions/"]
 
 # dist 0.32 builds aarch64-apple-darwin on macos-14, which GitHub retires on 2026-11-02.
 [dist.github-custom-runners]
+# plan, host and announce: dist defaults these to ubuntu-22.04.
+global = "ubuntu-26.04"
 aarch64-apple-darwin = "macos-26"

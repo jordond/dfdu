@@ -29,6 +29,11 @@
       "automerge": false
     },
     {
+      "description": "dist generates release.yml: change runners and action pins in dist-workspace.toml, then run `dist generate`",
+      "matchFileNames": [".github/workflows/release.yml"],
+      "enabled": false
+    },
+    {
       "description": "MSRV is bumped by hand",
       "matchManagers": ["cargo"],
       "matchDepNames": ["rust"],
