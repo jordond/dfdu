@@ -34,6 +34,9 @@ use crate::theme::Colors;
 /// Copies of a group listed below the table before "and N more".
 const SHOWN: usize = 6;
 
+/// The names of the table's columns, as the accessibility tree has them.
+const COLUMNS: [&str; 4] = ["Ticked", "Size", "Modified", "Path"];
+
 /// Draws the view and returns how many rows it had room for.
 pub fn show(
     ui: &mut Ui,
@@ -282,9 +285,12 @@ fn table(
     }
     table
         .header(row_h, |mut h| {
-            for label in ["", "Size", "Modified", "Path"] {
+            for label in COLUMNS {
                 h.col(|ui| {
-                    ui.label(colors.text(label, Token::Header));
+                    list::name_column(ui, label);
+                    if label != "Ticked" {
+                        ui.label(colors.text(label, Token::Header));
+                    }
                 });
             }
         })
@@ -301,6 +307,25 @@ fn table(
                     }
                 };
                 let r = row.response();
+                let name = match rows[i] {
+                    Row::Group(g) => {
+                        let group = &found.groups[g];
+                        let live = (group.files.iter())
+                            .filter(|c| dupes::live(&s.extras.dupes, c).is_some())
+                            .count();
+                        format!(
+                            "{live} copies of {}, frees {}",
+                            human(group.size),
+                            human(group.wasted())
+                        )
+                    }
+                    Row::File(g, f) => {
+                        let c = &found.groups[g].files[f];
+                        let path = relative_to_root(&c.path, root);
+                        format!("{}, {}", path.display(), human(c.size))
+                    }
+                };
+                list::name_row(&r, i == cursor, name);
                 if r.double_clicked() {
                     out.push(Intent::Dupes(Ask::Select(i)));
                     out.push(Intent::Dupes(Ask::Activate));
@@ -337,7 +362,7 @@ fn group(
     let copies = dupes::copies(group, s.dupes.keep, nodes);
     let ticked = copies.iter().filter(|(_, n)| s.marks.contains(*n)).count();
     let tick = review::tick_of(ticked, copies.len());
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
         let open = dupes::open(s, g, group);
@@ -354,9 +379,11 @@ fn group(
             out.extend(toggle(i));
         }
     });
-    row.col(|ui| right(ui, colors.text(human(group.size), Token::Fg)));
-    row.col(|_| {});
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(human(group.size), Token::Fg))
+    });
+    list::cell(row, &COLUMNS, |_| {});
+    list::cell(row, &COLUMNS, |ui| {
         let n = group
             .files
             .iter()
@@ -414,7 +441,7 @@ fn file(
         (_, true) => Tick::On,
         (false, false) => Tick::Off,
     };
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         ui.add_space(1.4 * h);
         if tick == Tick::Locked {
@@ -425,11 +452,13 @@ fn file(
         }
     });
     let token = if ticked { Token::Mark } else { Token::Fg };
-    row.col(|ui| right(ui, colors.text(human(c.size), token)));
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(human(c.size), token))
+    });
+    list::cell(row, &COLUMNS, |ui| {
         ui.label(colors.text(dfdu_tree::day(c.mtime), Token::FgDim));
     });
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let path = relative_to_root(&c.path, root).display().to_string();
         let token = if group.all_clones() {
             Token::FgDim

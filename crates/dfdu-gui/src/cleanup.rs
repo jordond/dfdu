@@ -74,6 +74,9 @@ fn reason(v: Verdict) -> String {
     }
 }
 
+/// The names of the table's columns, as the accessibility tree has them.
+const COLUMNS: [&str; 6] = ["Ticked", "Size", "Items", "Modified", "Why", "Path"];
+
 /// Draws the view and returns how many rows it had room for.
 pub fn show(
     ui: &mut Ui,
@@ -226,9 +229,12 @@ fn table(
     let now = now_secs();
     table
         .header(row_h, |mut h| {
-            for label in ["", "Size", "Items", "Modified", "Why", "Path"] {
+            for label in COLUMNS {
                 h.col(|ui| {
-                    ui.label(colors.text(label, Token::Header));
+                    list::name_column(ui, label);
+                    if label != "Ticked" {
+                        ui.label(colors.text(label, Token::Header));
+                    }
                 });
             }
         })
@@ -242,6 +248,7 @@ fn table(
                     Row::Item(ix) => item(&mut row, s, colors, ix, i, now, out),
                 };
                 let r = row.response();
+                list::name_row(&r, i == cursor, row_name(s, rows[i]));
                 if r.double_clicked() {
                     out.push(Intent::Cleanup(Ask::Select(i)));
                     out.push(Intent::Cleanup(Ask::Activate));
@@ -254,6 +261,25 @@ fn table(
                 });
             });
         });
+}
+
+/// What row `row` is called in the accessibility tree: its level, category or path, and its
+/// size.
+fn row_name(s: &SessionState, row: Row) -> String {
+    let items = &s.extras.cleanup.items;
+    let (name, ix) = match row {
+        Row::Section(safety) => (
+            section_name(safety).0.to_owned(),
+            cleanup::section_items(s, safety),
+        ),
+        Row::Group { cat, safety } => (
+            cat.get().name.to_owned(),
+            cleanup::group_items(s, cat, safety),
+        ),
+        Row::Item(i) => (tilde(&items[i].path, s.home.as_deref()), vec![i]),
+    };
+    let size: u64 = ix.iter().map(|&i| items[i].size).sum();
+    format!("{name}, {}", human(size))
 }
 
 /// What ticking row `i` asks, as its tick does: the cursor stays on the row.
@@ -314,8 +340,12 @@ fn opener(
 /// The size and the count of items `ix`, in the size and items columns.
 fn totals(row: &mut TableRow<'_, '_>, s: &SessionState, colors: &Colors, ix: &[usize]) {
     let size: u64 = ix.iter().map(|&i| s.extras.cleanup.items[i].size).sum();
-    row.col(|ui| right(ui, colors.text(human(size), Token::Fg)));
-    row.col(|ui| right(ui, colors.text(count(ix.len() as u64), Token::FgDim)));
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(human(size), Token::Fg))
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(count(ix.len() as u64), Token::FgDim))
+    });
 }
 
 /// `text` aligned to the right of its cell.
@@ -337,11 +367,13 @@ fn section(
 ) -> Tick {
     let ix = cleanup::section_items(s, safety);
     let tick = tick_of_items(s, &ix);
-    row.col(|ui| opener(ui, s, colors, Row::Section(safety), tick, i, out));
+    list::cell(row, &COLUMNS, |ui| {
+        opener(ui, s, colors, Row::Section(safety), tick, i, out)
+    });
     totals(row, s, colors, &ix);
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |_| {});
+    list::cell(row, &COLUMNS, |_| {});
+    list::cell(row, &COLUMNS, |ui| {
         let (name, meaning) = section_name(safety);
         ui.label(colors.text(name, Token::Title));
         ui.add(Label::new(colors.text(format!("· {meaning}"), Token::FgDim)).truncate());
@@ -362,11 +394,11 @@ fn group(
     let ix = cleanup::group_items(s, cat, safety);
     let r = Row::Group { cat, safety };
     let tick = tick_of_items(s, &ix);
-    row.col(|ui| opener(ui, s, colors, r, tick, i, out));
+    list::cell(row, &COLUMNS, |ui| opener(ui, s, colors, r, tick, i, out));
     totals(row, s, colors, &ix);
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |_| {});
+    list::cell(row, &COLUMNS, |_| {});
+    list::cell(row, &COLUMNS, |ui| {
         let category = cat.get();
         let token =
             (Category::ALL.get(category.color as usize)).map_or(Token::CatOther, |c| c.token());
@@ -395,7 +427,7 @@ fn item(
     } else {
         Tick::Off
     };
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let h = ui.text_style_height(&egui::TextStyle::Body);
         ui.add_space(2.6 * h);
         if !s.read_only && review::tick(ui, colors, tick).clicked() {
@@ -403,14 +435,18 @@ fn item(
         }
     });
     let token = if marked { Token::Mark } else { Token::Fg };
-    row.col(|ui| right(ui, colors.text(human(it.size), token)));
-    row.col(|ui| right(ui, colors.text(count(it.items), Token::FgDim)));
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(human(it.size), token))
+    });
+    list::cell(row, &COLUMNS, |ui| {
+        right(ui, colors.text(count(it.items), Token::FgDim))
+    });
+    list::cell(row, &COLUMNS, |ui| {
         if it.mtime > 0 {
             ui.label(colors.text(dfdu_tree::day(it.mtime), Token::FgDim));
         }
     });
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let verdict = cleanup::recommended(s, it, now);
         let token = match verdict {
             Some(v) if v.recommended() => Token::StatusOk,
@@ -419,7 +455,7 @@ fn item(
         };
         ui.label(colors.text(verdict.map_or("", chip), token));
     });
-    row.col(|ui| {
+    list::cell(row, &COLUMNS, |ui| {
         let path = tilde(&it.path, s.home.as_deref());
         // Not selectable, so a click on the path reaches the row.
         ui.add(

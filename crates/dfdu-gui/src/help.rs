@@ -81,6 +81,7 @@ pub fn show(ctx: &egui::Context, read_only: bool, colors: &Colors, view: &mut Vi
     let mut open = true;
     let mut close = false;
     Window::new("Keys")
+        .id(Id::unique("dfdu-help"))
         .open(&mut open)
         .default_size([460.0, 520.0])
         .collapsible(false)
@@ -115,6 +116,7 @@ pub fn show(ctx: &egui::Context, read_only: bool, colors: &Colors, view: &mut Vi
                 }
             });
         });
+    crate::windows::name_title_bar(ctx, "dfdu-help", "Keys");
     if !open || close {
         view.help = None;
     }

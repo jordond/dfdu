@@ -21,6 +21,8 @@ use crate::browser::{Intent, ViewState};
 use crate::menu;
 use crate::theme::Colors;
 
+/// The names of the list's columns, as the accessibility tree has them.
+const COLUMNS: [&str; 6] = ["Marked", "Size", "Size bar", "Items", "Modified", "Name"];
 /// Width of the size bar.
 pub const BAR_WIDTH: f32 = 80.0;
 /// Indent of each tree level, in units of the row height.
@@ -63,15 +65,18 @@ pub fn show(
     let new_row = usize::from(s.list.new_count > 0);
     table
         .header(row_h, |mut h| {
-            for (key, label) in [
-                (None, ""),
-                (Some(SortKey::Size), "Size"),
-                (None, ""),
-                (Some(SortKey::Items), "Items"),
-                (Some(SortKey::Mtime), "Modified"),
-                (Some(SortKey::Name), "Name"),
+            for (key, label, name) in [
+                (None, "", "Marked"),
+                (Some(SortKey::Size), "Size", "Size"),
+                (None, "", "Size bar"),
+                (Some(SortKey::Items), "Items", "Items"),
+                (Some(SortKey::Mtime), "Modified", "Modified"),
+                (Some(SortKey::Name), "Name", "Name"),
             ] {
-                h.col(|ui| header(ui, s, colors, key, label, out));
+                h.col(|ui| {
+                    name_column(ui, name);
+                    header(ui, s, colors, key, label, out);
+                });
             }
         })
         .body(|body| {
@@ -85,6 +90,13 @@ pub fn show(
                 let e = &s.snap.entries[s.list.rows[i]];
                 entry(&mut row, s, colors, e, i, out);
                 let r = row.response();
+                let slash = if e.is_dir && !e.pseudo { "/" } else { "" };
+                let name = String::from_utf8_lossy(&e.name);
+                name_row(
+                    &r,
+                    selected == Some(i),
+                    format!("{name}{slash}, {}", human(e.size)),
+                );
                 if r.double_clicked() {
                     out.push(Intent::Open(i));
                 } else if r.clicked() || r.secondary_clicked() {
@@ -100,6 +112,30 @@ pub fn show(
 /// anywhere on a table's row reaches the row.
 pub fn whole_rows(ui: &mut Ui) {
     ui.style_mut().interaction.selectable_labels = false;
+}
+
+/// Adds the next cell of `row` with `add`, named for its column in `columns` in the
+/// accessibility tree: the table's cells take clicks, so each must have a name.
+pub fn cell(row: &mut TableRow<'_, '_>, columns: &[&str], add: impl FnOnce(&mut Ui)) {
+    let name = columns.get(row.col_index()).copied().unwrap_or_default();
+    row.col(|ui| {
+        let r = ui.response();
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Cell, true, name));
+        add(ui);
+    });
+}
+
+/// Names the header cell `ui` of a column `name` in the accessibility tree, a column without a
+/// title too: the table's cells take clicks, so each must have a name.
+pub fn name_column(ui: &Ui, name: &str) {
+    let r = ui.response();
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ColumnHeader, true, name));
+}
+
+/// Names the row whose response is `r` in the accessibility tree: what it shows, in `label`,
+/// and whether it is `selected`.
+pub fn name_row(r: &egui::Response, selected: bool, label: String) {
+    r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Row, true, selected, &label));
 }
 
 /// The height of a row of the list and of the other views' tables.
@@ -177,26 +213,28 @@ fn entry(
         _ => Token::Fg,
     };
     let marked = marks::is_marked(s, e);
-    row.col(|ui| mark(ui, s, colors, e, marked, i, out));
-    row.col(|ui| {
+    cell(row, &COLUMNS, |ui| mark(ui, s, colors, e, marked, i, out));
+    cell(row, &COLUMNS, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let token = if marked { Token::Mark } else { size_token };
             ui.label(colors.text(human(e.size), token));
         });
     });
-    row.col(|ui| bar(ui, colors, ratio(e.size, s.list.rows_largest.max(1))));
-    row.col(|ui| {
+    cell(row, &COLUMNS, |ui| {
+        bar(ui, colors, ratio(e.size, s.list.rows_largest.max(1)))
+    });
+    cell(row, &COLUMNS, |ui| {
         // The data shared between entries has no items of its own.
         if !(e.pseudo && e.fold == 0) {
             ui.label(dim(count(e.items)));
         }
     });
-    row.col(|ui| {
+    cell(row, &COLUMNS, |ui| {
         if e.mtime > 0 && !e.pseudo {
             ui.label(dim(dfdu_tree::day(e.mtime)));
         }
     });
-    row.col(|ui| name(ui, s, colors, e, i, out));
+    cell(row, &COLUMNS, |ui| name(ui, s, colors, e, i, out));
 }
 
 /// The mark of entry `e` on row `i`: a dot when it is marked, a ring under the pointer; a click
@@ -261,8 +299,15 @@ fn name(
     let h = ui.text_style_height(&egui::TextStyle::Body);
     if let Some(tree) = &s.tree {
         ui.add_space(f32::from(e.depth) * h * INDENT);
-        let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
-        if e.is_dir && !e.pseudo {
+        // Only a directory's triangle takes clicks; a file has room for one, and nothing in it.
+        let opens = e.is_dir && !e.pseudo;
+        let sense = if opens {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, r) = ui.allocate_exact_size(vec2(h, h), sense);
+        if opens {
             let open = tree.is_expanded(e.node);
             let token = if r.hovered() { Token::Fg } else { Token::FgDim };
             let point = if open { Point::Down } else { Point::Right };
@@ -374,16 +419,16 @@ fn new_entries(
     out: &mut Vec<Intent>,
 ) {
     let n = s.list.new_count as u64;
-    row.col(|_| {});
-    row.col(|ui| {
+    cell(row, &COLUMNS, |_| {});
+    cell(row, &COLUMNS, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(colors.text(human(s.list.new_largest), Token::FgDim));
         });
     });
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|_| {});
-    row.col(|ui| {
+    cell(row, &COLUMNS, |_| {});
+    cell(row, &COLUMNS, |_| {});
+    cell(row, &COLUMNS, |_| {});
+    cell(row, &COLUMNS, |ui| {
         let text = format!(
             "{} new entr{} since the last sort ({} sorts them in)",
             count(n),
@@ -392,7 +437,9 @@ fn new_entries(
         );
         ui.label(colors.text(text, Token::FgDim).italics());
     });
-    if row.response().clicked() {
+    let r = row.response();
+    name_row(&r, false, format!("{} new since the last sort", count(n)));
+    if r.clicked() {
         out.push(Intent::Act(Action::Resort));
     }
 }

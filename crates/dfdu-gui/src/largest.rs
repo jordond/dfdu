@@ -18,6 +18,9 @@ use crate::browser::{Intent, ViewState};
 use crate::list::{self, BAR_WIDTH};
 use crate::theme::Colors;
 
+/// The names of the table's columns, as the accessibility tree has them.
+const COLUMNS: [&str; 5] = ["Marked", "Size", "Size bar", "Share", "Path"];
+
 /// Draws the view and returns how many rows it had room for.
 pub fn show(
     ui: &mut Ui,
@@ -70,11 +73,18 @@ pub fn show(
     };
     table
         .header(row_h, |mut h| {
-            h.col(|_| {});
-            h.col(|ui| head(ui, "Size".into()));
-            h.col(|_| {});
-            h.col(|ui| head(ui, "Share".into()));
+            h.col(|ui| list::name_column(ui, "Marked"));
             h.col(|ui| {
+                list::name_column(ui, "Size");
+                head(ui, "Size".into());
+            });
+            h.col(|ui| list::name_column(ui, "Size bar"));
+            h.col(|ui| {
+                list::name_column(ui, "Share");
+                head(ui, "Share".into());
+            });
+            h.col(|ui| {
+                list::name_column(ui, "Path");
                 ui.label(colors.text("Path", Token::Header));
             });
         })
@@ -84,33 +94,37 @@ pub fn show(
                 let f = &l.files[i];
                 row.set_selected(cursor == i);
                 let marked = s.marks.contains(f.node);
-                row.col(|ui| {
+                list::cell(&mut row, &COLUMNS, |ui| {
                     if !s.read_only && list::dot(ui, colors, marked).clicked() {
                         out.push(Intent::Largest(Largest::Select(i)));
                         out.push(Intent::Largest(Largest::Toggle));
                         out.push(Intent::Largest(Largest::Select(i)));
                     }
                 });
-                row.col(|ui| {
+                list::cell(&mut row, &COLUMNS, |ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let token = if marked { Token::Mark } else { Token::Fg };
                         ui.label(colors.text(human(f.size), token));
                     });
                 });
-                row.col(|ui| list::bar(ui, colors, ratio(f.size, largest)));
-                row.col(|ui| {
+                list::cell(&mut row, &COLUMNS, |ui| {
+                    list::bar(ui, colors, ratio(f.size, largest))
+                });
+                list::cell(&mut row, &COLUMNS, |ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let share = format!("{:.1}%", percent(f.size, total));
                         ui.label(colors.text(share, Token::FgDim));
                     });
                 });
-                row.col(|ui| {
+                list::cell(&mut row, &COLUMNS, |ui| {
                     let path = f.path.display().to_string();
                     let label = colors.text(path, Token::Fg);
                     // Not selectable, so a click on the path reaches the row.
                     ui.add(egui::Label::new(label).selectable(false).truncate());
                 });
                 let r = row.response();
+                let name = format!("{}, {}", f.path.display(), human(f.size));
+                list::name_row(&r, cursor == i, name);
                 if r.double_clicked() {
                     out.push(Intent::Largest(Largest::Select(i)));
                     out.push(Intent::Largest(Largest::Activate));

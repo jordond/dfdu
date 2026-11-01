@@ -13,11 +13,16 @@ use egui::{Label, ScrollArea, TextEdit, Window};
 use crate::browser::{Intent, ViewState};
 use crate::theme::Colors;
 
+/// The ids of the windows.
+const ERRORS: &str = "dfdu-errors";
+const TYPES: &str = "dfdu-types";
+
 /// The error list, while it is open.
 pub fn errors(ctx: &egui::Context, colors: &Colors, view: &mut ViewState, out: &mut Vec<Intent>) {
     let Some(list) = &view.errors else { return };
     let mut open = true;
     Window::new("Errors")
+        .id(egui::Id::unique(ERRORS))
         .open(&mut open)
         .default_size([520.0, 360.0])
         .collapsible(false)
@@ -63,6 +68,7 @@ pub fn errors(ctx: &egui::Context, colors: &Colors, view: &mut ViewState, out: &
                 },
             );
         });
+    name_title_bar(ctx, ERRORS, "Errors");
     if !open {
         view.errors = None;
     }
@@ -80,6 +86,7 @@ pub fn types(
     let Some(query) = &mut view.types else { return };
     let mut open = true;
     Window::new("File types")
+        .id(egui::Id::unique(TYPES))
         .open(&mut open)
         .default_size([360.0, 420.0])
         .collapsible(false)
@@ -104,9 +111,17 @@ pub fn types(
                 });
             });
         });
+    name_title_bar(ctx, TYPES, "File types");
     if !open {
         view.types = None;
     }
+}
+
+/// Names the title bar of the window whose id is `Id::unique(id)` with its title `title` in the
+/// accessibility tree: egui leaves it unnamed, though it takes clicks (a double click, a drag).
+pub fn name_title_bar(ctx: &egui::Context, id: &str, title: &str) {
+    let bar = egui::Id::unique(id).with("__title_click");
+    ctx.accesskit_node_builder(bar, |node| node.set_label(title));
 }
 
 /// What a row of the picker is called.

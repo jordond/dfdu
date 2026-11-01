@@ -10,8 +10,9 @@ use std::sync::atomic::Ordering;
 use dfdu_session::dupes;
 use dfdu_session::view::View;
 use egui::Key;
+use egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 
 use super::{
     Window, age, close, files, harness, local, scan_done, shown, shown_part, state, state_mut,
@@ -132,7 +133,10 @@ fn duplicates_never_tick_the_copy_kept() {
     h.get_by_label("Copy path").click();
     until(&mut h, "the copy", |h| shown_part(h, "copied "));
     assert!(shown_part(&h, "b2.bin"));
-    h.get_by_label_contains("3 copies of ").click_secondary();
+    let group = h
+        .query_all_by_role(Role::Row)
+        .find(|n| (n.accesskit_node().label()).is_some_and(|l| l.starts_with("3 copies of ")));
+    group.expect("the group's row").click_secondary();
     until(&mut h, "the group's menu", |h| {
         shown(h, "Delete permanently…")
     });
