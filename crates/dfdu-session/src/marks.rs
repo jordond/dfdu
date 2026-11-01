@@ -1,5 +1,5 @@
 //! Marked entries: `Space` marks, the footer shows their live total, and a delete acts on them.
-//! `v` marks a range as the cursor moves ([`range`]).
+//! `v` marks a range as the cursor moves ([`range`]); the marks pane lists them ([`pane`]).
 //!
 //! In the list a marked directory can hold marked entries, which count and go with it. In tree
 //! mode, where both show at once, a directory and something inside it are never both marked:
@@ -23,6 +23,7 @@ use crate::format::human;
 use crate::snapshot::{EntryData, Mark};
 use crate::state::{NO_FOLDERS, READ_ONLY, SessionState};
 
+pub mod pane;
 pub mod range;
 
 /// One marked entry: how to find it again, and its sizes as the last read found them.

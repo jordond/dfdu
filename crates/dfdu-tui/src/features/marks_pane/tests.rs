@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use dfdu_engine::Estimate;
+use dfdu_engine::{Command, Estimate};
 use dfdu_tree::HostPath;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 
@@ -162,7 +162,10 @@ fn space_unmarks_the_selected_item_and_asks_again() {
         .map(|it| String::from_utf8_lossy(it.target.path.file_name().expect("name")).into_owned())
         .collect();
     assert_eq!(names, ["target", "node_modules"]);
-    assert_eq!(app.marks_pane.cursor, 1, "the cursor stays on the row");
+    assert_eq!(
+        app.session.marks_pane.cursor, 1,
+        "the cursor stays on the row"
+    );
     let (again, n) = asked(&fx).expect("asked again");
     assert!(again > first);
     assert_eq!(n, 2);
@@ -170,7 +173,7 @@ fn space_unmarks_the_selected_item_and_asks_again() {
     assert_eq!(app.session.selected_index(), Some(3));
     // The last one unmarked leaves the cursor on the new last row.
     app.key(press(KeyCode::Char(' ')), t0);
-    assert_eq!(app.marks_pane.cursor, 0);
+    assert_eq!(app.session.marks_pane.cursor, 0);
     app.key(press(KeyCode::Char(' ')), t0);
     assert!(app.session.marks.is_empty());
     assert!(render(&mut app, t0, 100, 24).contains("Nothing is marked."));
@@ -253,7 +256,7 @@ fn the_wheel_moves_the_cursor_wherever_the_pointer_is() {
     };
     let selected = app.session.selected_index();
     crate::input::mouse::event(&mut app, down, t0).expect("redraw");
-    assert_eq!(app.marks_pane.cursor, 3);
+    assert_eq!(app.session.marks_pane.cursor, 3);
     assert_eq!(app.session.selected_index(), selected, "the list stays");
 }
 

@@ -23,6 +23,7 @@ use crate::extras::Extras;
 use crate::filter::Filter;
 use crate::largest::Largest;
 use crate::marks::Marks;
+use crate::marks::pane::MarksPane;
 use crate::order::SortSpec;
 use crate::outside::Outside;
 use crate::snapshot::{EntryData, Snapshot};
@@ -95,6 +96,8 @@ pub struct SessionState {
     pub dupes: Dupes,
     /// The Largest view's files, cursor and last walk.
     pub largest: Largest,
+    /// The marks pane's cursor and the estimate it asked for.
+    pub marks_pane: MarksPane,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
 }
@@ -136,6 +139,7 @@ impl SessionState {
             details: Details::default(),
             dupes: Dupes::default(),
             largest: Largest::default(),
+            marks_pane: MarksPane::default(),
             extras: Extras::default(),
         }
     }

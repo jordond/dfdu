@@ -119,7 +119,11 @@ fn the_tally_counts_the_copies_but_the_kept_ones_unless_ticked() {
     let group = found(&app).expect("a result").groups[0].clone();
     let c = &group.files[0];
     let node = super::live(&app, c).expect("in the tree");
-    crate::state::marks::set(&mut app, dfdu_session::dupes::mark_of(c, node), true);
+    dfdu_session::marks::set(
+        &mut app.session,
+        dfdu_session::dupes::mark_of(c, node),
+        true,
+    );
     let (t, _) = tally(&app, found(&app).expect("a result"));
     assert_eq!((t.items, t.ticked, t.ticked_size), (4, 1, 1 << 20));
 }

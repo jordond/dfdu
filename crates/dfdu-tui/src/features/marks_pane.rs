@@ -5,11 +5,11 @@
 //! item, `*` inverts the marks of the current directory, and `d` and `D` ask to delete what is
 //! marked, as in the list.
 //!
-//! What it would free is the engine's estimate ([`Command::Estimate`]), asked for when the pane
-//! opens and again after each key that changes the marks.
+//! What it would free is the engine's estimate (`Command::Estimate`), asked for when the pane
+//! opens and again after each key that changes the marks. The cursor and the estimate are the
+//! session's (`dfdu_session::marks::pane`); whether the pane is open and its scroll stay here.
 
-use dfdu_engine::Command;
-use dfdu_tree::NodeRef;
+use dfdu_session::marks::pane as session;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -28,16 +28,12 @@ const HEAD: usize = 3;
 /// Cells of the size column.
 const SIZE: usize = 10;
 
+/// What only the terminal keeps of the pane: whether it is open, and its scroll.
 #[derive(Clone, Debug, Default)]
 pub struct MarksPane {
     open: bool,
-    /// The selected item, an index into the marks.
-    cursor: usize,
     /// First item shown.
     scroll: usize,
-    /// The id of the last estimate asked for, and the outermost marks it was asked for.
-    estimate: u64,
-    asked: Vec<NodeRef>,
 }
 
 /// True while the pane is open. It is open only with the focus.
@@ -52,47 +48,12 @@ pub fn show(app: &mut App) -> Vec<Effect> {
         open: true,
         ..MarksPane::default()
     };
-    ask(app)
+    session::open(&mut app.session)
 }
 
 /// Closes the pane, which gives the focus back to the list; false when it was not open.
 pub fn close(app: &mut App) -> bool {
     std::mem::replace(&mut app.marks_pane.open, false)
-}
-
-/// The marked nodes a delete would send: the outermost marks.
-fn outermost(app: &App) -> Vec<NodeRef> {
-    (app.session.marks.items().iter())
-        .filter(|it| !it.inside)
-        .filter_map(|it| it.target.node)
-        .collect()
-}
-
-/// Asks the engine what deleting the outermost marks would free, when they changed since the
-/// last ask.
-fn ask(app: &mut App) -> Vec<Effect> {
-    let items = outermost(app);
-    if items.is_empty() || items == app.marks_pane.asked {
-        return Vec::new();
-    }
-    app.session.estimates += 1;
-    app.marks_pane.estimate = app.session.estimates;
-    app.marks_pane.asked.clone_from(&items);
-    vec![Effect::Send(Command::Estimate {
-        id: app.session.estimates,
-        items,
-    })]
-}
-
-/// The estimate for the marks as they are now: the one the pane asked for, or a later one (the
-/// delete dialog asks for the same marks), while the marks are those asked for.
-fn estimate(app: &App) -> Option<&dfdu_engine::Estimate> {
-    let p = &app.marks_pane;
-    app.session
-        .snap
-        .estimate
-        .as_ref()
-        .filter(|e| p.estimate > 0 && e.id >= p.estimate && outermost(app) == p.asked)
 }
 
 /// Items one page moves.
@@ -115,9 +76,7 @@ pub fn scroll(app: &mut App, delta: i32) -> bool {
 }
 
 fn move_by(app: &mut App, delta: isize) {
-    let last = app.session.marks.items().len().saturating_sub(1);
-    let p = &mut app.marks_pane;
-    p.cursor = p.cursor.saturating_add_signed(delta).min(last);
+    session::move_by(&mut app.session, delta);
 }
 
 /// Inverts the marks of the current directory, in this pane only: elsewhere `*` expands the
@@ -142,13 +101,13 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         Action::PageDown => move_by(app, page),
         Action::HalfPageUp => move_by(app, -(page / 2).max(1)),
         Action::HalfPageDown => move_by(app, (page / 2).max(1)),
-        Action::First => app.marks_pane.cursor = 0,
+        Action::First => app.session.marks_pane.cursor = 0,
         Action::Last => move_by(app, isize::MAX),
         Action::FocusDetails | Action::Close => {
             close(app);
             return Some(fx);
         }
-        Action::ToggleMark => unmark(app),
+        Action::ToggleMark => session::unmark(&mut app.session),
         Action::InvertMarks => {
             app.session.status = None;
             marks::invert(app);
@@ -165,21 +124,8 @@ pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
         _ => return None,
     }
     move_by(app, 0);
-    fx.extend(ask(app));
+    fx.extend(session::ask(&mut app.session));
     Some(fx)
-}
-
-/// Unmarks the selected item; the cursor stays on the row, now the next item.
-fn unmark(app: &mut App) {
-    if let Some(it) = app
-        .session
-        .marks
-        .items()
-        .get(app.marks_pane.cursor)
-        .cloned()
-    {
-        marks::set(app, it, false);
-    }
 }
 
 /// The path of a mark relative to the scan root, `/` after a directory.
@@ -205,7 +151,7 @@ fn head(app: &App) -> Vec<Line<'static>> {
         Span::styled("● ", t.mark),
         Span::raw(format!("{n} marked, {at_least}{}", human(total))),
     ]);
-    let frees = match estimate(app) {
+    let frees = match session::estimate(&app.session) {
         Some(e) => {
             let stays = e.linked_out + e.shared_out;
             let mut s = format!(
@@ -259,11 +205,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let fit = (inner.height as usize).saturating_sub(HEAD).max(1);
     move_by(app, 0);
+    let at = app.session.marks_pane.cursor;
     let p = &mut app.marks_pane;
-    p.scroll = p
-        .scroll
-        .min(p.cursor)
-        .max((p.cursor + 1).saturating_sub(fit));
+    p.scroll = p.scroll.min(at).max((at + 1).saturating_sub(fit));
     let app = &*app;
     let (t, p) = (&app.theme, &app.marks_pane);
     let width = inner.width;
@@ -279,7 +223,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             line
         };
-        lines.push(if i == p.cursor {
+        lines.push(if i == at {
             cursor(t, line, width)
         } else {
             line
@@ -288,7 +232,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     if p.scroll + fit < items.len() {
         block = block.title_bottom(Line::styled(" ↓ more ", t.fg_dim).right_aligned());
     }
-    let shown = format!(" {}/{} ", p.cursor + 1, items.len());
+    let shown = format!(" {}/{} ", at + 1, items.len());
     block = block.title_bottom(Line::styled(shown, t.fg_dim).left_aligned());
     f.render_widget(Paragraph::new(lines).block(block), area);
 }

@@ -18,11 +18,6 @@ pub(crate) fn item_of(app: &App, index: usize) -> Item {
     dfdu_session::marks::item_of(&app.session, index)
 }
 
-/// Marks `item` or unmarks it (found by its node or path).
-pub fn set(app: &mut App, item: Item, on: bool) {
-    dfdu_session::marks::set(&mut app.session, item, on);
-}
-
 /// Marks every one of `items` not marked yet and returns how many it marked.
 pub(crate) fn add(app: &mut App, items: Vec<Item>) -> usize {
     dfdu_session::marks::add(&mut app.session, items)
