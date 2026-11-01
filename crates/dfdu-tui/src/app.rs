@@ -26,8 +26,8 @@ use crate::input::{line_keys, mouse};
 use crate::model::extras::Extras;
 
 use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
+use crate::state::filter;
 use crate::state::motion::Motion;
-use crate::state::{filter, marks};
 use crate::theme::{ColorLevel, Rgb, Theme};
 use crate::view::Areas;
 pub use dfdu_session::state::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL, Selection};
@@ -141,9 +141,8 @@ impl App {
     /// new snapshot is due. A read must make it false: while it is true, the run loop reads
     /// again at once.
     pub fn extras_stale(&self) -> bool {
-        marks::stale(self)
+        dfdu_session::extras::stale(&self.session)
             || details::stale(self)
-            || treemap::stale(self)
             || crate::features::cleanup::stale(self)
             || crate::features::dupes::stale(self)
             || crate::features::largest::stale(self)

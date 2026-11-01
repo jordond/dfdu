@@ -6,7 +6,7 @@ use dfdu_engine::{Command, Mode, SizeMode};
 use super::{Action, READ_ONLY, first_key};
 use crate::app::views::{self, View};
 use crate::app::{App, Effect, Overlay};
-use crate::features::{cleanup, debug, details, dupes, review, selected_path, treemap};
+use crate::features::{cleanup, debug, details, dupes, review, selected_path};
 use crate::model::snapshot::Mark;
 use crate::overlay::{help, mark_pattern, palette, type_filter};
 use crate::state::order::{SortKey, SortSpec};
@@ -136,9 +136,9 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::CleanupCommand if cleanup::active(app) => fx.extend(cleanup::command(app)),
         Action::CompareAgain => only_in(app, a, &[View::Duplicates]),
         Action::CleanupFilter | Action::CleanupCommand => only_in(app, a, &[View::Cleanup]),
-        Action::TreemapDeeper => treemap::deeper(app, 1),
-        Action::TreemapShallower => treemap::deeper(app, -1),
-        Action::TreemapColor => treemap::cycle_color(app),
+        Action::TreemapDeeper => dfdu_session::treemap::deeper(&mut app.session, 1),
+        Action::TreemapShallower => dfdu_session::treemap::deeper(&mut app.session, -1),
+        Action::TreemapColor => dfdu_session::treemap::cycle_color(&mut app.session),
     }
     if a.moves() {
         marks::range::follow(app, before);

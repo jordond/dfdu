@@ -2,11 +2,9 @@
 //! session, with whether the view shown draws the list's rows. `v` marks a range as the cursor
 //! moves ([`range`]).
 
-use dfdu_engine::Model;
-
 use crate::app::App;
 use crate::model::snapshot::EntryData;
-pub use dfdu_session::marks::{Item, Marked};
+pub use dfdu_session::marks::Item;
 
 pub(crate) mod range;
 
@@ -42,21 +40,6 @@ pub fn is_marked(app: &App, e: &EntryData) -> bool {
 /// How many entries are marked and their total, for the status line; `None` when nothing is.
 pub fn summary(app: &App) -> Option<String> {
     dfdu_session::marks::summary(&app.session)
-}
-
-/// True when the marks changed since [`read`] last ran.
-pub fn stale(app: &App) -> bool {
-    dfdu_session::marks::stale(&app.session)
-}
-
-/// Resolves the marks in the model; runs under the read lock.
-pub fn read(m: &Model, app: &App) -> Marked {
-    dfdu_session::marks::read(m, &app.session)
-}
-
-/// Takes in what [`read`] found, now in `app.extras.marked`.
-pub fn apply(app: &mut App) {
-    dfdu_session::marks::apply(&mut app.session, &app.extras.marked);
 }
 
 /// `*`: inverts the marks of the current directory's entries as the list shows them.

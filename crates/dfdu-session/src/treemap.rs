@@ -1,5 +1,13 @@
 //! Squarified treemap layout (Bruls, Huizing and van Wijk, 2000), in a layout space whose units
-//! the front end chooses ([`Area`]).
+//! the front end chooses ([`Area`]), and the Map view's settings and the levels below its
+//! top-level tiles (`levels`).
+
+mod levels;
+
+pub use levels::{
+    ColorBy, Info, Key, Kid, Kids, MAX_DEPTH, MAX_TILES, MIN_DEPTH, MapState, color_shown,
+    cycle_color, deeper, key_of, on, read, stale,
+};
 
 /// A rectangle in layout space, in units the front end chooses: the TUI's are cell columns
 /// across and cell rows times its cell aspect down, so squares there look square on screen.

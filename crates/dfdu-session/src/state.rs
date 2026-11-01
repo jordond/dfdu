@@ -16,12 +16,14 @@ use dfdu_engine::SizeMode;
 use dfdu_tree::Target;
 use dfdu_tree::filetype::TypeFilter;
 
+use crate::extras::Extras;
 use crate::filter::Filter;
 use crate::marks::Marks;
 use crate::order::SortSpec;
 use crate::outside::Outside;
 use crate::snapshot::{EntryData, Snapshot};
 use crate::tree::TreeState;
+use crate::treemap::MapState;
 use crate::view::View;
 pub use cursor::{Moved, Selection};
 pub use list::List;
@@ -79,6 +81,10 @@ pub struct SessionState {
     pub read_only: bool,
     /// When the rows are sorted again.
     pub sort_schedule: SortSchedule,
+    /// The Map view's depth and colouring.
+    pub map: MapState,
+    /// What the features read from the engine model with the last read.
+    pub extras: Extras,
 }
 
 /// Whether `e` gets a row when no filter hides it.
@@ -113,6 +119,8 @@ impl SessionState {
             outside: Outside::default(),
             read_only: false,
             sort_schedule: SortSchedule::new(now),
+            map: MapState::default(),
+            extras: Extras::default(),
         }
     }
 

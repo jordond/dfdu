@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use dfdu_engine::Model;
@@ -55,7 +56,7 @@ fn read_finds_the_levels_below_the_largest_directories() {
     let fx = tree();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    let below = &app.extras.treemap.below;
+    let below = &app.session.extras.treemap.below;
     assert_eq!(below.len(), 2, "big and mid");
     let big = app
         .session
@@ -82,7 +83,7 @@ fn read_finds_the_levels_below_the_largest_directories() {
         .iter()
         .find(|e| e.name == b"big")
         .expect("big");
-    let a = &app.extras.treemap.below[&big.node].items[0];
+    let a = &app.session.extras.treemap.below[&big.node].items[0];
     let a_kids = a.kids.as_ref().expect("depth 3 reads a/");
     assert_eq!(a_kids.items.len(), 2);
     assert_eq!(a_kids.items[0].size, 30_000);
@@ -100,7 +101,7 @@ fn read_skips_hidden_entries_when_they_are_hidden_and_keeps_the_rest_total() {
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
     let node = app.session.snap.entries[0].node;
-    let kids = &app.extras.treemap.below[&node];
+    let kids = &app.session.extras.treemap.below[&node];
     assert_eq!(kids.items.len(), MAX_TILES);
     assert_eq!(kids.items[0].name, b".dot");
     let shown: u64 = kids.items.iter().map(|k| k.size).sum();
@@ -109,29 +110,8 @@ fn read_skips_hidden_entries_when_they_are_hidden_and_keeps_the_rest_total() {
 
     app.key(press(KeyCode::Char('e')), t0);
     sync(&mut app, &fx.m, t0);
-    let kids = &app.extras.treemap.below[&node];
+    let kids = &app.session.extras.treemap.below[&node];
     assert!(kids.items.iter().all(|k| k.name[0] != b'.'));
-}
-
-#[test]
-fn read_stops_at_the_budget() {
-    let (mut fx, root) = Fixture::new();
-    let d = fx.dir(root, "d");
-    fx.file(d, "x", 10);
-    let mut budget = 0;
-    let key = Key {
-        dir: None,
-        sort_gen: 0,
-        depth: 2,
-        mode: SizeMode::Disk,
-        hide_hidden: false,
-        types: 0,
-    };
-    let all = TypeFilter::default();
-    assert!(read_kids(&fx.m, d, None, 1, &key, &all, &mut budget).is_none());
-    budget = 1;
-    assert!(read_kids(&fx.m, d, None, 1, &key, &all, &mut budget).is_some());
-    assert_eq!(budget, 0);
 }
 
 #[test]
@@ -140,7 +120,7 @@ fn nothing_is_read_while_the_list_is_shown() {
     let t0 = Instant::now();
     let mut app = App::new(Theme::no_color(), t0);
     sync(&mut app, &fx.m, t0);
-    assert!(app.extras.treemap.below.is_empty());
+    assert!(app.session.extras.treemap.below.is_empty());
     assert!(!app.extras_stale());
 }
 
@@ -535,7 +515,7 @@ fn depth_one_peeks_into_the_selected_tile() {
     let fx = tree();
     let t0 = Instant::now();
     let mut app = treemap_app(&fx.m, t0);
-    assert_eq!(app.treemap.depth, 1);
+    assert_eq!(app.session.map.depth, 1);
     let frame = render(&mut app, t0, 100, 30);
     assert_eq!(selected(&app), "big");
     assert!(frame.contains(" a/") && !frame.contains(" m0"), "{frame}");

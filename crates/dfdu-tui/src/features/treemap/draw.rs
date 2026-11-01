@@ -42,7 +42,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     let paint = Paint::of(&app.theme);
     let framed = paint == Paint::Glyphs;
     let key = key_of(app);
-    let below = &app.extras.treemap;
+    let below = &app.session.extras.treemap;
     let current = app.treemap.layout.as_ref().is_some_and(|l| {
         l.key == key
             && l.area == map
@@ -76,7 +76,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, now: Instant) {
     let sel = selected_top(app);
     // At depth 1 the selected tile shows what is in it, in place of its tile.
     let peeked = sel
-        .filter(|_| app.treemap.depth == 1)
+        .filter(|_| app.session.map.depth == 1)
         .map(|s| (l.tops[s], peek(app, l, l.tops[s])))
         .filter(|(_, tiles)| !tiles.is_empty());
     let mut slots = Vec::new();
@@ -185,7 +185,7 @@ fn draw_legend(f: &mut Frame, app: &App, area: Rect, slots: &[usize]) {
     let right = vec![Span::styled(
         format!(
             "depth {}  {} {} ",
-            app.treemap.depth,
+            app.session.map.depth,
             first_key(Action::TreemapDeeper),
             first_key(Action::TreemapShallower)
         ),

@@ -222,7 +222,7 @@ impl Placer<'_> {
 pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
     let key = key_of(app);
     let entries = &app.session.snap.entries;
-    let below = &app.extras.treemap.below;
+    let below = &app.session.extras.treemap.below;
     let items = app
         .session
         .list
@@ -246,15 +246,15 @@ pub(super) fn build(app: &App, area: Rect, framed: bool) -> Layout {
     let mut p = Placer {
         tiles: Vec::new(),
         tops: Vec::new(),
-        depth: app.treemap.depth,
+        depth: app.session.map.depth,
         framed,
-        dominant: &app.extras.treemap.dominant,
+        dominant: &app.session.extras.treemap.dominant,
     };
     p.place(items, (0, 0), area, 0, None);
     Layout {
         key,
-        below: app.extras.treemap.key,
-        classes: app.extras.treemap.classes,
+        below: app.session.extras.treemap.key,
+        classes: app.session.extras.treemap.classes,
         area,
         framed,
         tiles: p.tiles,
@@ -270,7 +270,7 @@ pub(super) fn peek(app: &App, l: &Layout, at: usize) -> Vec<Tile> {
     let Some((node, _)) = tile.entry else {
         return Vec::new();
     };
-    let Some(kids) = app.extras.treemap.below.get(&node) else {
+    let Some(kids) = app.session.extras.treemap.below.get(&node) else {
         return Vec::new();
     };
     if kids.items.is_empty() || tile.rect.width < NEST_MIN.0 || tile.rect.height < NEST_MIN.1 {
@@ -284,7 +284,7 @@ pub(super) fn peek(app: &App, l: &Layout, at: usize) -> Vec<Tile> {
         tops: Vec::new(),
         depth: 2,
         framed: l.framed,
-        dominant: &app.extras.treemap.dominant,
+        dominant: &app.session.extras.treemap.dominant,
     };
     let inner = p.inner(tile.rect);
     p.place(

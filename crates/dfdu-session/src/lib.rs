@@ -15,6 +15,7 @@ pub mod actions;
 pub mod details;
 pub mod dupes;
 pub mod effect;
+pub mod extras;
 pub mod file_manager;
 pub mod filter;
 pub mod format;

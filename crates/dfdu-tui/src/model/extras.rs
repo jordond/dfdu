@@ -1,22 +1,19 @@
-//! What the features read from the engine model besides the directory snapshot: the marks, the
-//! details of the selected entry, the debug counters, the treemap's lower levels, the cleanup
-//! matches, the nodes of the duplicate files and the largest files below. Read with every
-//! snapshot, and on its own
-//! (without copying the directory again) when a feature needs it sooner.
+//! What the features read from the engine model besides the directory snapshot: the session's
+//! (`dfdu_session::extras`: the marks, the treemap's lower levels), the details of the selected
+//! entry, the debug counters, the cleanup matches, the nodes of the duplicate files and the
+//! largest files below. Read with every snapshot, and on its own (without copying the directory
+//! again) when a feature needs it sooner.
 
 use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::features::{cleanup, debug, details, largest, treemap};
-use crate::state::marks;
+use crate::features::{cleanup, debug, details, largest};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
-    pub marked: marks::Marked,
     pub details: details::Info,
     pub debug: debug::Info,
-    pub treemap: treemap::Info,
     pub cleanup: cleanup::Info,
     /// The node of each file of the duplicates found, by path; `None` once a file is gone.
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
@@ -30,24 +27,30 @@ pub struct Extras {
 /// Runs under the read lock; costs no walk of the directory or the tree, but for the largest
 /// files below while that view is open, at most a tenth of the time ([`largest::read`]).
 /// `counters` are the engine's own, read under the same lock ([`debug::Counters::of`]).
-pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Extras {
-    Extras {
-        marked: marks::read(m, app),
+pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) -> Found {
+    let session = dfdu_session::extras::read(m, &app.session);
+    let extras = Extras {
         details: details::read(m, app),
         debug: debug::read(m, budget, counters),
-        treemap: treemap::read(m, app),
         cleanup: cleanup::read(m, app),
         dupes: crate::features::dupes::read(m, app),
         largest: largest::read(m, app),
         dupe_candidates: crate::features::dupes::count(m, app),
-    }
+    };
+    Found { session, extras }
+}
+
+/// What [`read`] found: the session's part and the rest.
+pub struct Found {
+    pub session: dfdu_session::extras::Extras,
+    pub extras: Extras,
 }
 
 /// Stores what [`read`] found in `app.extras` and lets the features take it in. Called after
 /// every read, after [`App::refresh`] when the read brought a new snapshot.
-pub fn apply(app: &mut App, extras: Extras) {
+pub fn apply(app: &mut App, Found { session, extras }: Found) {
+    dfdu_session::extras::apply(&mut app.session, session);
     app.extras = extras;
-    marks::apply(app);
     details::apply(app);
     cleanup::apply(app);
     largest::apply(app);

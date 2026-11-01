@@ -23,11 +23,10 @@ use crate::theme::Theme;
 fn sync(app: &mut App, m: &Model, now: Instant) {
     let mut target = app.session.target.clone();
     let snap = snapshot::build(m, &mut target, app.session.size_mode);
-    let marked = read(m, app);
+    let marked = dfdu_session::marks::read(m, &app.session);
     app.session.target = target;
     app.refresh(snap, now);
-    app.extras.marked = marked;
-    apply(app);
+    dfdu_session::marks::apply(&mut app.session, &marked);
 }
 
 /// The line of `frame` that shows `name`.
@@ -99,9 +98,12 @@ fn space_marks_and_moves_down() {
     ];
     app.refresh(snap_without_totals(es.clone(), 1), t0);
     assert_eq!(summary(&app), None);
-    assert!(!stale(&app));
+    assert!(!dfdu_session::marks::stale(&app.session));
     assert!(app.key(press(KeyCode::Char(' ')), t0).is_empty());
-    assert!(stale(&app), "a new mark needs a read");
+    assert!(
+        dfdu_session::marks::stale(&app.session),
+        "a new mark needs a read"
+    );
     assert_eq!(app.session.selected_index(), Some(1));
     app.key(press(KeyCode::Char(' ')), t0);
     assert_eq!(app.session.selected_index(), Some(2));
@@ -154,7 +156,7 @@ fn space_on_shared_row_is_refused() {
             Some("only entries can be marked")
         );
     }
-    assert!(!stale(&app));
+    assert!(!dfdu_session::marks::stale(&app.session));
     // The shared row has the directory's reference; marking the directory from its parent
     // must not put a mark on it.
     assert!(!is_marked(&app, &shared));
@@ -179,7 +181,7 @@ fn marks_survive_navigation_and_rescan_swap() {
     let old = app.session.marks.items()[0].target.node;
     app.key(press(KeyCode::Left), t);
     e.read(|m| sync(&mut app, m, t));
-    assert!(!stale(&app));
+    assert!(!dfdu_session::marks::stale(&app.session));
     let out = render(&mut app, t, 90, 8);
     assert!(line(&out, "sub/").starts_with("  "), "{out}");
     assert!(line(&out, "1 marked").contains("● 1 marked"), "{out}");
@@ -283,9 +285,12 @@ fn totals_follow_live_sizes() {
     sync(&mut app, &m, t);
     select(&mut app, "big");
     app.key(press(KeyCode::Char(' ')), t);
-    assert!(stale(&app));
+    assert!(dfdu_session::marks::stale(&app.session));
     sync(&mut app, &m, t);
-    assert!(!stale(&app), "a read takes the new mark in");
+    assert!(
+        !dfdu_session::marks::stale(&app.session),
+        "a read takes the new mark in"
+    );
     let size = |m: &Model| human(m.tree.total(big).alloc);
     let first = summary(&app);
     assert_eq!(first, Some(format!("● 1 marked (at least {})", size(&m))));
