@@ -204,22 +204,31 @@ fn dropped(ctx: &egui::Context) -> Option<Result<PathBuf, String>> {
     })
 }
 
-/// What a disk is called on its card: the last name of its mount point, or the mount point.
+/// What a disk is called on its card: macOS's sealed system volume is `System`, the root of
+/// another system `Root`; any other disk the last name of its mount point, or the mount point
+/// itself (`C:\`).
 fn name(d: &Disk) -> String {
+    if d.role == Some(Role::System) {
+        return "System".into();
+    }
+    if d.mount_point == std::path::Path::new("/") {
+        return "Root".into();
+    }
     d.mount_point.file_name().map_or_else(
         || d.mount_point.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     )
 }
 
-/// What a disk's card notes of it: its filesystem, a network one, its role.
+/// What a disk's card notes of it: its filesystem, a network one, and that the system volume
+/// is read-only (its name already says the role).
 fn notes(d: &Disk) -> String {
     let mut notes = vec![d.fstype.as_str()];
     if d.class == FsClass::Network {
         notes.push("network");
     }
-    if let Some(role) = d.role {
-        notes.push(role.label());
+    if d.role == Some(Role::System) {
+        notes.push("read-only");
     }
     notes.retain(|n| !n.is_empty());
     notes.join(" · ")
@@ -341,4 +350,37 @@ fn card(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
         p.galley(at, g, Color32::PLACEHOLDER);
     }
     r.clicked().then(|| d.mount_point.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn disk(at: &str, role: Option<Role>) -> Disk {
+        Disk {
+            mount_point: PathBuf::from(at),
+            also_at: Vec::new(),
+            fstype: "apfs".into(),
+            source: String::new(),
+            class: FsClass::Local,
+            space: None,
+            role,
+            shares_space_with: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cards_name_the_root_and_the_system_volume_by_what_they_are() {
+        let system = disk("/", Some(Role::System));
+        assert_eq!(
+            (name(&system), notes(&system)),
+            ("System".into(), "apfs · read-only".into())
+        );
+        let data = disk("/System/Volumes/Data", Some(Role::Data));
+        assert_eq!((name(&data), notes(&data)), ("Data".into(), "apfs".into()));
+        assert_eq!(name(&disk("/", None)), "Root");
+        assert_eq!(name(&disk("/mnt/backup", None)), "backup");
+    }
 }

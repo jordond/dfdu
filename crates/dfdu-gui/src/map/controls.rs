@@ -36,9 +36,10 @@ fn mode_name(c: ColorBy) -> &'static str {
     }
 }
 
-/// The colourings offered: by category only with the rules.
+/// The colourings offered, in the order `p` steps through them: by category only with the
+/// rules.
 fn modes(s: &SessionState) -> Vec<ColorBy> {
-    [ColorBy::Category, ColorBy::Folder, ColorBy::Age]
+    [ColorBy::Category, ColorBy::Age, ColorBy::Folder]
         .into_iter()
         .filter(|&c| c != ColorBy::Category || s.snap.rules.is_some())
         .collect()
