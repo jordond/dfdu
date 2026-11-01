@@ -3,7 +3,8 @@
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
 //! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
-//! view shown (the list, the map while it has room, Cleanup or the largest files), the delete
+//! view shown (the list, the map while it has room, Cleanup, Duplicates or the largest files),
+//! the delete
 //! dialog, the native command pane and the windows from its state, then carries out what was
 //! clicked or typed. It tells the session the rows the
 //! view had room for and whether the map was drawn, and asks egui for the next frame when the
@@ -24,14 +25,15 @@ use dfdu_session::treemap;
 use dfdu_session::type_filter;
 use dfdu_session::view::{Then, View};
 use dfdu_session::{
-    FrontEnd, Session, SessionState, cleanup, error_list, file_manager, largest, selected_path,
+    FrontEnd, Session, SessionState, cleanup, dupes, error_list, file_manager, largest,
+    selected_path,
 };
 
 use crate::bridge::Bridge;
 use crate::theme::Colors;
 use crate::{
-    cleanup as cleanup_view, details, dialog, keys, largest as largest_view, list, map, review,
-    status_bar, toolbar, windows,
+    cleanup as cleanup_view, details, dialog, dupes as dupes_view, keys, largest as largest_view,
+    list, map, review, status_bar, toolbar, windows,
 };
 
 mod state;
@@ -184,6 +186,17 @@ impl<B: Backend> Browser<B> {
                     let then = cleanup::act(s, i);
                     let acted = self.session.follow(then);
                     self.view().follow |= acted.went.is_some();
+                }
+                Intent::Dupes(i) => {
+                    s.status = None;
+                    let then = dupes::act(s, i);
+                    let acted = self.session.follow(then);
+                    self.view().follow |= acted.went.is_some();
+                }
+                Intent::DupesCancel => {
+                    if dupes::cancel(s) {
+                        s.status = Some("duplicates: the comparison was stopped".into());
+                    }
                 }
                 Intent::Pane(i) => {
                     s.status = None;
@@ -352,6 +365,7 @@ fn central(
         }
         View::Largest => (View::Largest, largest_view::show(ui, s, colors, view, out)),
         View::Cleanup => (View::Cleanup, cleanup_view::show(ui, s, colors, view, out)),
+        View::Duplicates => (View::Duplicates, dupes_view::show(ui, s, colors, view, out)),
         _ => (View::Files, list::show(ui, s, colors, view, out)),
     }
 }

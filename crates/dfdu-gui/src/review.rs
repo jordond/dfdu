@@ -1,10 +1,10 @@
-//! What the review views share: the keys that act on their own rows ([`intent`]), as the
-//! terminal's do, and the tick drawn on a row ([`tick`]).
+//! What the review views (Cleanup and Duplicates) share: the keys that act on their own rows
+//! ([`intent`]), as the terminal's do, and the tick drawn on a row ([`tick`]).
 
 use dfdu_session::SessionState;
 use dfdu_session::actions::{Action, cursor_after};
-use dfdu_session::cleanup;
 use dfdu_session::palette::Token;
+use dfdu_session::{cleanup, dupes};
 use egui::{Rect, Sense, Stroke, Ui, vec2};
 
 use crate::browser::Intent;
@@ -31,7 +31,8 @@ pub fn tick_of(ticked: usize, of: usize) -> Tick {
 }
 
 /// What action `a` asks of the review view shown, if it acts on the view's own rows: the moves
-/// move its cursor, `Enter` and `→` open a row, `←` closes the row's section and `Space` ticks.
+/// move its cursor, `Enter` and `→` open a row (before the first comparison of duplicates,
+/// `Enter` starts it), `←` closes the row's section or group and `Space` ticks.
 pub fn intent(s: &SessionState, a: Action) -> Option<Intent> {
     let page = s.page_rows();
     if cleanup::active(s) {
@@ -47,6 +48,23 @@ pub fn intent(s: &SessionState, a: Action) -> Option<Intent> {
             },
         };
         return Some(Intent::Cleanup(i));
+    }
+    if dupes::active(s) {
+        use dupes::Intent as D;
+        if s.dupes.run.is_none() && a == Action::Enter {
+            return Some(Intent::Dupes(D::Compare));
+        }
+        let last = dupes::rows(s).len().saturating_sub(1);
+        let i = match cursor_after(a, s.dupes.cursor, last, page) {
+            Some(c) => D::Select(c),
+            None => match a {
+                Action::Open | Action::Enter => D::Activate,
+                Action::Parent => D::CloseUp,
+                Action::ToggleMark => D::Toggle,
+                _ => return None,
+            },
+        };
+        return Some(Intent::Dupes(i));
     }
     None
 }

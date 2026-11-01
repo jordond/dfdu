@@ -3,7 +3,8 @@
 //! (`launch`); without a directory the start screen (`start`) lists the disks. The window
 //! (`app`) shows the browser (`browser`): the toolbar (`toolbar`) with the tabs of the views,
 //! the list (`list`) with the menu of a row (`menu`), the map (`map`), the cleanup view with its
-//! native command pane (`cleanup`), the largest files (`largest`), the keys and ticks of the
+//! native command pane (`cleanup`), the duplicates (`dupes`), the largest files (`largest`),
+//! the keys and ticks of the
 //! review views (`review`), the details panel (`details`), the action and status bars
 //! (`status_bar`), the delete dialog (`dialog`) and the error list and type picker (`windows`),
 //! coloured by the theme's tokens (`theme`), with the terminal's keys (`keys`). A thread asks
@@ -19,6 +20,7 @@ mod browser;
 mod cleanup;
 mod details;
 mod dialog;
+mod dupes;
 mod keys;
 mod largest;
 mod launch;

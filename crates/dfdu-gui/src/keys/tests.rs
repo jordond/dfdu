@@ -124,7 +124,12 @@ fn the_views_shown_and_the_map_keys_are_read() {
     assert_eq!(action(&text("1")), Some(Action::ViewFiles));
     assert_eq!(action(&text("2")), Some(Action::ViewMap));
     assert_eq!(action(&text("3")), Some(Action::ViewCleanup));
+    assert_eq!(action(&text("4")), Some(Action::ViewDupes));
     assert_eq!(action(&text("5")), Some(Action::ViewLargest));
+    assert_eq!(action(&text("[")), Some(Action::PrevView));
+    assert_eq!(action(&text("]")), Some(Action::NextView));
+    assert_eq!(action(&text("K")), Some(Action::DupesKeep));
+    assert_eq!(action(&text("R")), Some(Action::CompareAgain));
     assert_eq!(action(&text("f")), Some(Action::CleanupFilter));
     assert_eq!(action(&text("N")), Some(Action::CleanupCommand));
     assert_eq!(action(&text("A")), Some(Action::TickSuggested));
@@ -142,8 +147,8 @@ fn the_views_shown_and_the_map_keys_are_read() {
 }
 
 #[test]
-fn the_other_views_the_help_and_quitting_are_left_out() {
-    for left_out in ["q", "4", "[", "]", "?", ":", "c", "K", "R"] {
+fn the_help_the_palette_and_quitting_are_left_out() {
+    for left_out in ["q", "?", ":", "c", "m", "u"] {
         assert_eq!(action(&text(left_out)), None, "{left_out:?}");
     }
     assert_eq!(action(&key(Key::C, Modifiers::CTRL)), None);

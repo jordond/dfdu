@@ -7,7 +7,7 @@ use dfdu_engine::{ErrorList, Mode};
 use dfdu_session::actions::Action;
 use dfdu_session::treemap::{ColorBy, TileTree, Toward};
 use dfdu_session::type_filter::Row;
-use dfdu_session::{cleanup, confirm, largest};
+use dfdu_session::{cleanup, confirm, dupes, largest};
 use dfdu_tree::HostPath;
 
 /// What the user did in a frame, carried out once it is drawn.
@@ -58,6 +58,10 @@ pub enum Intent {
     Cleanup(cleanup::Intent),
     /// A click or a key in the native command pane.
     Pane(cleanup::pane::Intent),
+    /// A click or a key in the Duplicates view.
+    Dupes(dupes::Intent),
+    /// The comparison of duplicates that runs is stopped.
+    DupesCancel,
 }
 
 /// What the window keeps beside the session's state.

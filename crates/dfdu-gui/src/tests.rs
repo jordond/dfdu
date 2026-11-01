@@ -1,12 +1,13 @@
 //! The window driven headless through its accessibility tree (`egui_kittest`), on temporary
 //! directories: browsing (here), marking and deleting with undo (`flows`), the gates of a
 //! read-only browser and of an imported scan (`gates`), the start screen and the history
-//! (`start`), the map and the largest files (`views`), and the Cleanup view with its native
-//! command pane (`cleanup`). Nothing is moved to the system's Trash: the delete flows stage
+//! (`start`), the map and the largest files (`views`), the Cleanup view with its native command
+//! pane (`cleanup`), and the Duplicates view (`dupes`). Nothing is moved to the system's Trash: the delete flows stage
 //! instead, and the Trash is tried only up to its dialog. The native commands the tests run are
 //! harmless ones of rules written for them (`ls`, `sleep`, `true`).
 
 mod cleanup;
+mod dupes;
 mod flows;
 mod gates;
 mod start;
