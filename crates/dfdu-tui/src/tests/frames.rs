@@ -365,6 +365,7 @@ fn disk_picker() {
         also_at: vec![],
         fstype: fstype.into(),
         source: String::new(),
+        label: None,
         class,
         space,
         role: None,

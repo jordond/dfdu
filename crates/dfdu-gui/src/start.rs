@@ -204,10 +204,13 @@ fn dropped(ctx: &egui::Context) -> Option<Result<PathBuf, String>> {
     })
 }
 
-/// What a disk is called on its card: macOS's sealed system volume is `System`, the root of
-/// another system `Root`; any other disk the last name of its mount point, or the mount point
-/// itself (`C:\`).
+/// What a disk is called on its card: its label (`Macintosh HD`) when it has one. Without one,
+/// macOS's sealed system volume is `System`, the root of another system `Root`; any other disk
+/// the last name of its mount point, or the mount point itself (`C:\`).
 fn name(d: &Disk) -> String {
+    if let Some(label) = d.label.as_deref().filter(|l| !l.is_empty()) {
+        return label.into();
+    }
     if d.role == Some(Role::System) {
         return "System".into();
     }
@@ -221,14 +224,19 @@ fn name(d: &Disk) -> String {
 }
 
 /// What a disk's card notes of it: its filesystem, a network one, and that the system volume
-/// is read-only (its name already says the role).
+/// is read-only. A labelled data volume is noted as such: macOS gives it the system volume's
+/// label, and this tells their cards apart (without a label, its name says `Data`).
 fn notes(d: &Disk) -> String {
     let mut notes = vec![d.fstype.as_str()];
     if d.class == FsClass::Network {
         notes.push("network");
     }
-    if d.role == Some(Role::System) {
-        notes.push("read-only");
+    match d.role {
+        Some(Role::System) => notes.push("read-only"),
+        Some(Role::Data) if d.label.as_deref().is_some_and(|l| !l.is_empty()) => {
+            notes.push("Data");
+        }
+        _ => {}
     }
     notes.retain(|n| !n.is_empty());
     notes.join(" · ")
@@ -364,6 +372,7 @@ mod tests {
             also_at: Vec::new(),
             fstype: "apfs".into(),
             source: String::new(),
+            label: None,
             class: FsClass::Local,
             space: None,
             role,
@@ -382,5 +391,32 @@ mod tests {
         assert_eq!((name(&data), notes(&data)), ("Data".into(), "apfs".into()));
         assert_eq!(name(&disk("/", None)), "Root");
         assert_eq!(name(&disk("/mnt/backup", None)), "backup");
+    }
+
+    /// A labelled disk goes by its label, and the data volume that shares the system volume's
+    /// label is noted as the data volume.
+    #[test]
+    fn cards_name_labelled_disks_by_their_labels() {
+        let labelled = |d: Disk, label: &str| Disk {
+            label: Some(label.into()),
+            ..d
+        };
+        let system = labelled(disk("/", Some(Role::System)), "Macintosh HD");
+        assert_eq!(
+            (name(&system), notes(&system)),
+            ("Macintosh HD".into(), "apfs · read-only".into())
+        );
+        let data = labelled(
+            disk("/System/Volumes/Data", Some(Role::Data)),
+            "Macintosh HD",
+        );
+        assert_eq!(
+            (name(&data), notes(&data)),
+            ("Macintosh HD".into(), "apfs · Data".into())
+        );
+        let usb = labelled(disk("/media/me/sdb1", None), "My Disk");
+        assert_eq!((name(&usb), notes(&usb)), ("My Disk".into(), "apfs".into()));
+        // An empty label is no label.
+        assert_eq!(name(&labelled(disk("/", None), "")), "Root");
     }
 }

@@ -218,6 +218,7 @@ mod tests {
             also_at: vec![],
             fstype: "apfs".into(),
             source: String::new(),
+            label: None,
             class: FsClass::Local,
             space: Some(Space {
                 total: 926 * gib,

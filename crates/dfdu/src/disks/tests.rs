@@ -8,6 +8,7 @@ fn disk(at: &str, purgeable: Option<u64>) -> Disk {
         also_at: vec![],
         fstype: "apfs".into(),
         source: String::new(),
+        label: None,
         class: FsClass::Local,
         space: Some(Space {
             total: 1000 << 20,

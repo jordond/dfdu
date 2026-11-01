@@ -37,6 +37,7 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
                 also_at: vec![],
                 fstype: v.fstype.clone(),
                 source: v.from.clone(),
+                label: None,
                 class: crate::classify_fs(&v.fstype),
                 space: None,
                 role: None,
@@ -45,8 +46,29 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
             (disk, rx)
         })
         .collect();
+    // The names are asked for on threads of their own, like the sizes, by the same deadline.
+    let mut names: Vec<_> = listed(&volumes)
+        .map(|v| {
+            let at = v.mount_point.clone();
+            (
+                v.mount_point.clone(),
+                on_thread(move || crate::macos::volume_name(&at)),
+            )
+        })
+        .collect();
     let mut out = gather(pending, deadline);
     describe_volumes(&mut out, &volumes);
+    for d in &mut out {
+        let Some(i) = names.iter().position(|(at, _)| *at == d.mount_point) else {
+            continue;
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        d.label = names
+            .swap_remove(i)
+            .1
+            .and_then(|rx| rx.recv_timeout(left).ok())
+            .flatten();
+    }
     Ok(out)
 }
 
@@ -148,6 +170,7 @@ mod tests {
             also_at: vec![],
             fstype: fstype.into(),
             source: String::new(),
+            label: None,
             class: FsClass::Local,
             space: None,
             role: None,
@@ -306,5 +329,8 @@ mod tests {
             assert_eq!(s.used + s.available, s.total, "{s:?}");
         }
         assert_eq!(system.space.map(|s| s.total), data.space.map(|s| s.total));
+        // The Finder names both after the system (`Macintosh HD`).
+        assert!(system.label.is_some(), "{system:?}");
+        assert_eq!(system.label, data.label);
     }
 }

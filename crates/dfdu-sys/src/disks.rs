@@ -44,6 +44,9 @@ pub struct Disk {
     pub fstype: String,
     /// What is mounted (`/dev/sda1`, `server:/export`), when known.
     pub source: String,
+    /// The volume's name as the OS shows it (Finder, Explorer, udev's by-label), when it has
+    /// one.
+    pub label: Option<String>,
     pub class: FsClass,
     /// `None` when the filesystem did not answer in time (a hung network mount).
     pub space: Option<Space>,

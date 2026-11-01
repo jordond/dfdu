@@ -46,13 +46,16 @@ pub fn disks(timeout: Duration) -> io::Result<Vec<Disk>> {
 }
 
 /// A disk as `sysinfo` describes it: mounted at `mount_point` from `source`, of `total` bytes
-/// with `available` of them free, the rest counted as used.
+/// with `available` of them free, the rest counted as used. On Windows `sysinfo`'s source is
+/// the volume label, which is the disk's label too when there is one; elsewhere it is the
+/// device.
 fn disk(mount_point: PathBuf, fstype: String, source: String, total: u64, available: u64) -> Disk {
     Disk {
         mount_point,
         also_at: vec![],
         class: crate::classify_fs(&fstype),
         fstype,
+        label: label(&source, cfg!(windows)),
         source,
         space: Some(Space {
             total,
@@ -63,6 +66,12 @@ fn disk(mount_point: PathBuf, fstype: String, source: String, total: u64, availa
         role: None,
         shares_space_with: vec![],
     }
+}
+
+/// The label of a disk whose `sysinfo` source is `source`: the source itself on Windows
+/// (`windows`), where it is the volume label, unless the volume has none.
+fn label(source: &str, windows: bool) -> Option<String> {
+    (windows && !source.is_empty()).then(|| source.to_owned())
 }
 
 /// The listing that arrives on `rx` by `deadline`.
@@ -110,6 +119,14 @@ mod tests {
         // A filesystem reporting more free space than its size has none used.
         let odd = disk("D:\\".into(), "NTFS".into(), String::new(), 100, 200);
         assert_eq!(odd.space.map(|s| s.used), Some(0));
+    }
+
+    /// On Windows the source is the volume label; elsewhere it is a device, no label.
+    #[test]
+    fn only_windows_sources_are_labels() {
+        assert_eq!(label("Windows", true).as_deref(), Some("Windows"));
+        assert_eq!(label("", true), None);
+        assert_eq!(label("/dev/ada0p2", false), None);
     }
 
     /// Kernel filesystems and those without blocks are left out, the rest sorted by mount
