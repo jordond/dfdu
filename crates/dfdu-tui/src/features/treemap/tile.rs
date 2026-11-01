@@ -43,20 +43,6 @@ pub(super) fn base_style(
     (app.theme.style(token), slot)
 }
 
-/// The live size of a top-level tile's entry, or the size it was laid out with.
-fn live_size(app: &App, tile: &Tile) -> u64 {
-    match tile.entry {
-        Some((node, i)) => app
-            .session
-            .snap
-            .entries
-            .get(i)
-            .filter(|e| e.node == node)
-            .map_or(tile.size, |e| e.size),
-        None => tile.size,
-    }
-}
-
 /// What a tile's labels say: its name (with `✓ ` when marked and `/` for a directory), and
 /// its size with its share of the directory it is in.
 pub(super) fn texts(app: &App, tile: &Tile) -> (String, Sizes) {
@@ -73,14 +59,10 @@ pub(super) fn texts(app: &App, tile: &Tile) -> (String, Sizes) {
         tile.name,
         if tile.is_dir { "/" } else { "" }
     );
-    let size = live_size(app, tile);
+    let size = tile.live_size(&app.session);
     // Top-level tiles show live sizes, so their share is of the directory's live total.
-    let parent = match tile.level {
-        0 => app.session.size_mode.of(&app.session.snap.dir_total),
-        _ => tile.parent_size,
-    };
     let share = (size.saturating_mul(100))
-        .checked_div(parent)
+        .checked_div(tile.whole(&app.session))
         .map_or(String::new(), |p| format!("  {p}%"));
     let size = human(size);
     (

@@ -1,12 +1,13 @@
 //! The window driven headless through its accessibility tree (`egui_kittest`), on temporary
 //! directories: browsing (here), marking and deleting with undo (`flows`), the gates of a
-//! read-only browser and of an imported scan (`gates`), and the start screen and the history
-//! (`start`). Nothing is moved to the system's Trash: the delete flows stage instead, and the
+//! read-only browser and of an imported scan (`gates`), the start screen and the history
+//! (`start`), and the map (`views`). Nothing is moved to the system's Trash: the delete flows stage instead, and the
 //! Trash is tried only up to its dialog.
 
 mod flows;
 mod gates;
 mod start;
+mod views;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -58,6 +59,8 @@ fn harness(launch: Launch) -> Harness<'static, Window> {
     };
     Harness::builder()
         .with_size(egui::vec2(1000.0, 640.0))
+        // A frame's time as a window's, so two clicks in a row are a double click.
+        .with_step_dt(1.0 / 60.0)
         .build_ui_state(
             |ui, w: &mut Window| {
                 let gui = match &mut w.gui {

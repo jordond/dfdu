@@ -6,13 +6,20 @@
 //!
 //! The platform's own shortcuts are read too: `Delete` moves to the Trash as `d` does, the
 //! system's copy shortcut copies the selected path and Cmd-F (Ctrl-F) opens the filter.
+//!
+//! While the map is drawn the arrows and `hjkl` move between its tiles ([`toward`]), as in the
+//! terminal.
 
 use dfdu_session::actions::{ACTIONS, Action};
+use dfdu_session::treemap::Toward;
 use egui::{Event, Key, Modifiers};
 
+use crate::browser::Intent;
+
 /// The actions the window offers: moving, opening, sorting, what the list shows, rescans, the
-/// filters, marks, the details, the error list, the selected path, and deleting with its undo.
-/// The other views, the help and the command palette are left out of this version.
+/// filters, marks, the details, the error list, the selected path, deleting with its undo, and
+/// the Files and Map views with the map's depth and colours. The Cleanup, Duplicates and
+/// Largest views, the help and the command palette are left out of this version.
 pub const OFFERED: &[Action] = &[
     Action::Up,
     Action::Down,
@@ -50,6 +57,11 @@ pub const OFFERED: &[Action] = &[
     Action::Details,
     Action::Errors,
     Action::Close,
+    Action::ViewFiles,
+    Action::ViewMap,
+    Action::TreemapDeeper,
+    Action::TreemapShallower,
+    Action::TreemapColor,
 ];
 
 /// What one binding of the registry matches.
@@ -152,21 +164,49 @@ fn plain_or_ctrl(m: Modifiers) -> Option<bool> {
     (!m.alt && !m.mac_cmd && (!m.command || m.ctrl)).then_some(m.ctrl)
 }
 
+/// Where `event` moves the selection on the map: an arrow, or `h`, `j`, `k` or `l` typed.
+pub fn toward(event: &Event) -> Option<Toward> {
+    match event {
+        Event::Text(t) => match t.as_str() {
+            "h" => Some(Toward::Left),
+            "j" => Some(Toward::Down),
+            "k" => Some(Toward::Up),
+            "l" => Some(Toward::Right),
+            _ => None,
+        },
+        Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } if plain_or_ctrl(*modifiers) == Some(false) => match key {
+            Key::ArrowLeft => Some(Toward::Left),
+            Key::ArrowDown => Some(Toward::Down),
+            Key::ArrowUp => Some(Toward::Up),
+            Key::ArrowRight => Some(Toward::Right),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Takes the events of this frame that run an offered action out of `ctx`'s input, so no widget
-/// acts on them too, and returns their actions in order; in a `read_only` browser the keys that
-/// delete are left alone. Nothing is taken while a text field has the keyboard.
-pub fn take(ctx: &egui::Context, read_only: bool) -> Vec<Action> {
+/// acts on them too, and returns what they ask in order; in a `read_only` browser the keys that
+/// delete are left alone. While the `map` is drawn the arrows move between its tiles. Nothing is
+/// taken while a text field has the keyboard.
+pub fn take(ctx: &egui::Context, read_only: bool, map: bool) -> Vec<Intent> {
     if ctx.egui_wants_keyboard_input() {
         return Vec::new();
     }
     ctx.input_mut(|i| {
         let mut out = Vec::new();
-        i.events.retain(|ev| match action_for(ev, read_only) {
-            Some(a) => {
-                out.push(a);
-                false
-            }
-            None => true,
+        i.events.retain(|ev| {
+            let intent = match toward(ev).filter(|_| map) {
+                Some(t) => Some(Intent::Toward(t)),
+                None => action_for(ev, read_only).map(Intent::Act),
+            };
+            out.extend(intent.clone());
+            intent.is_none()
         });
         out
     })

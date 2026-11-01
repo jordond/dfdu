@@ -1,15 +1,16 @@
 //! The toolbar: what the list shows (disk usage or apparent size, hidden files, tree mode), the
-//! filter, and the scan's state with a spinner on the first line; the breadcrumbs from the scan
-//! root to the current directory on the second.
+//! filter, and the scan's state with a spinner on the first line; the tabs of the views and the
+//! breadcrumbs from the scan root to the current directory on the second.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::SizeMode;
 use dfdu_session::SessionState;
-use dfdu_session::actions::Action;
+use dfdu_session::actions::{Action, first_key};
 use dfdu_session::palette::Token;
 use dfdu_session::state::Cached;
+use dfdu_session::view::View;
 use dfdu_tree::HostPath;
 use egui::{Id, Key, Sense, Shape, Stroke, TextEdit, Ui, vec2};
 
@@ -20,6 +21,8 @@ use crate::theme::Colors;
 const SEPARATOR: &str = "›";
 /// The filter field's id, to tell whether it has the keyboard.
 const FILTER: &str = "dfdu-filter";
+/// The views the window shows, in the order of their tabs.
+pub const VIEWS: &[View] = &[View::Files, View::Map];
 
 pub fn show(
     ui: &mut Ui,
@@ -54,7 +57,25 @@ pub fn show(
             scan_state(ui, s, colors, now);
         });
     });
-    ui.horizontal_wrapped(|ui| breadcrumbs(ui, s, colors, out));
+    ui.horizontal_wrapped(|ui| {
+        tabs(ui, s, out);
+        ui.separator();
+        breadcrumbs(ui, s, colors, out);
+    });
+}
+
+/// The tabs of the views, each switching to its view as its key does.
+fn tabs(ui: &mut Ui, s: &SessionState, out: &mut Vec<Intent>) {
+    let current = s.current_view();
+    for &v in VIEWS {
+        let r = ui.selectable_label(current == v, v.name());
+        if r.on_hover_text(format!("key {}", first_key(v.action())))
+            .clicked()
+            && current != v
+        {
+            out.push(Intent::Act(v.action()));
+        }
+    }
 }
 
 /// Disk usage or apparent size, as `a` switches them.

@@ -34,16 +34,8 @@ pub fn show(
     view: &mut ViewState,
     out: &mut Vec<Intent>,
 ) -> usize {
-    let row_h = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
-    let room = ui.available_height() - row_h - ui.spacing().item_spacing.y;
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a count of rows on screen"
-    )]
-    let visible = (room / (row_h + ui.spacing().item_spacing.y))
-        .floor()
-        .max(0.0) as usize;
+    let row_h = row_height(ui);
+    let visible = visible_rows(ui);
     if s.list.rows.is_empty() && s.list.new_count == 0 {
         ui.label(colors.text(empty_note(s), Token::FgDim));
         return visible;
@@ -100,6 +92,26 @@ pub fn show(
                 r.context_menu(|ui| menu::row(ui, s, e, i, out));
             });
         });
+    visible
+}
+
+/// The height of a row of the list and of the other views' tables.
+pub fn row_height(ui: &Ui) -> f32 {
+    ui.text_style_height(&egui::TextStyle::Body) + 4.0
+}
+
+/// The rows a table under a header row has room for in `ui`: what a page moves by.
+pub fn visible_rows(ui: &Ui) -> usize {
+    let row_h = row_height(ui);
+    let room = ui.available_height() - row_h - ui.spacing().item_spacing.y;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of rows on screen"
+    )]
+    let visible = (room / (row_h + ui.spacing().item_spacing.y))
+        .floor()
+        .max(0.0) as usize;
     visible
 }
 

@@ -327,8 +327,13 @@ pub fn cycle_color(s: &mut SessionState) {
         ColorBy::Folder if s.snap.rules.is_some() => ColorBy::Category,
         ColorBy::Folder => ColorBy::Age,
     };
-    s.map.color = next;
-    s.status = Some(format!("map colour: {}", next.label()));
+    set_color(s, next);
+}
+
+/// Colours the tiles by `color`, and says so.
+pub fn set_color(s: &mut SessionState, color: ColorBy) {
+    s.map.color = color;
+    s.status = Some(format!("map colour: {}", color.label()));
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ mod place;
 pub use color::{AGES, age_band, age_token, base};
 pub use levels::{
     ColorBy, Info, Key, Kid, Kids, MAX_DEPTH, MAX_TILES, MIN_DEPTH, MapState, color_shown,
-    cycle_color, deeper, key_of, on, read, stale,
+    cycle_color, deeper, key_of, on, read, set_color, stale,
 };
 pub use place::{Grid, Inset, Room, Tile, TileTree, Toward, build, peek, select_top, step};
 

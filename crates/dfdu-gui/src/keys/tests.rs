@@ -120,8 +120,25 @@ fn a_read_only_browser_reads_no_key_that_deletes_or_puts_back() {
 }
 
 #[test]
-fn the_views_the_help_and_quitting_are_left_out() {
-    for left_out in ["q", "2", "3", "?", ":", "c", "N", "A"] {
+fn the_views_shown_and_the_map_keys_are_read() {
+    assert_eq!(action(&text("1")), Some(Action::ViewFiles));
+    assert_eq!(action(&text("2")), Some(Action::ViewMap));
+    assert_eq!(action(&text("+")), Some(Action::TreemapDeeper));
+    assert_eq!(action(&text("-")), Some(Action::TreemapShallower));
+    assert_eq!(action(&text("p")), Some(Action::TreemapColor));
+    // On the map the arrows and `hjkl` move between tiles; Backspace still goes up.
+    assert_eq!(toward(&text("h")), Some(Toward::Left));
+    assert_eq!(
+        toward(&key(Key::ArrowDown, Modifiers::NONE)),
+        Some(Toward::Down)
+    );
+    assert_eq!(toward(&key(Key::ArrowUp, Modifiers::ALT)), None);
+    assert_eq!(toward(&key(Key::Backspace, Modifiers::NONE)), None);
+}
+
+#[test]
+fn the_other_views_the_help_and_quitting_are_left_out() {
+    for left_out in ["q", "3", "4", "5", "[", "]", "?", ":", "c", "N", "A"] {
         assert_eq!(action(&text(left_out)), None, "{left_out:?}");
     }
     assert_eq!(action(&key(Key::C, Modifiers::CTRL)), None);
@@ -152,7 +169,7 @@ fn a_text_field_keeps_its_keys() {
             |ui| {
                 let mut s = String::new();
                 ui.text_edit_singleline(&mut s).request_focus();
-                taken = take(ui.ctx(), false);
+                taken = take(ui.ctx(), false, true);
             },
         );
         out.textures_delta.clear();

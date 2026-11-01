@@ -3,10 +3,10 @@
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
 //! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
-//! list, the delete dialog and the windows from its state, then carries out what was clicked or
-//! typed. It tells the session the rows the list had room for, and asks egui for the next frame
-//! when the session wants to be ticked again ([`Session::wake_at`]), so an idle window does not
-//! repaint.
+//! view shown (the list, or the map while it has room), the delete dialog and the windows from
+//! its state, then carries out what was clicked or typed. It tells the session the rows the
+//! view had room for and whether the map was drawn, and asks egui for the next frame when the
+//! session wants to be ticked again ([`Session::wake_at`]), so an idle window does not repaint.
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,7 @@ use dfdu_session::filter::{self, Edited};
 use dfdu_session::line::TextOp;
 use dfdu_session::palette::Token;
 use dfdu_session::startup::Started;
+use dfdu_session::treemap::{self, ColorBy, TileTree, Toward};
 use dfdu_session::type_filter::{self, Row};
 use dfdu_session::view::{Then, View};
 use dfdu_session::{FrontEnd, Session, SessionState, error_list, file_manager, selected_path};
@@ -26,7 +27,7 @@ use dfdu_tree::HostPath;
 
 use crate::bridge::Bridge;
 use crate::theme::Colors;
-use crate::{details, dialog, keys, list, status_bar, toolbar, windows};
+use crate::{details, dialog, keys, list, map, status_bar, toolbar, windows};
 
 /// How long quitting waits for the engine's threads to stop.
 const SHUTDOWN: Duration = Duration::from_millis(200);
@@ -77,6 +78,15 @@ pub enum Intent {
     Type(Row),
     /// A click on an entry of the error list: shows it in the list.
     ShowError(usize),
+    /// An arrow on the map: the selection moves to the nearest tile that way.
+    Toward(Toward),
+    /// A click on top-level tile `top` of the map: selects it, and a double click opens it.
+    Tile {
+        top: usize,
+        open: bool,
+    },
+    /// The map's colouring chosen.
+    MapColor(ColorBy),
 }
 
 /// What the window keeps beside the session's state.
@@ -100,6 +110,8 @@ pub struct ViewState {
     /// The undo offered, and when it was first seen: a staged delete is put back only for a
     /// while.
     pub undo_seen: Option<(u64, Instant)>,
+    /// The map's tiles as the last frame laid them out.
+    pub map: Option<TileTree>,
 }
 
 /// The session's state and the window's beside it.
@@ -208,6 +220,24 @@ impl<B: Backend> Browser<B> {
                     }
                 }
                 Intent::Type(row) => type_filter::toggle(s, row),
+                Intent::Toward(toward) => {
+                    let Front { state, view } = self.session.front_mut();
+                    match &view.map {
+                        Some(tree) => treemap::step(state, tree, toward),
+                        None => state.status = None,
+                    }
+                }
+                Intent::Tile { top, open } => {
+                    s.status = None;
+                    let Front { state, view } = self.session.front_mut();
+                    if let Some(tree) = &view.map {
+                        treemap::select_top(state, tree, top);
+                    }
+                    if open {
+                        self.act(Action::Enter, now, ctx);
+                    }
+                }
+                Intent::MapColor(color) => treemap::set_color(s, color),
                 Intent::ShowError(i) => {
                     let show = self
                         .view()
@@ -331,6 +361,25 @@ impl<B: Backend> Browser<B> {
     }
 }
 
+/// Draws the view shown in the central panel, and returns which it drew with the rows it had
+/// room for: the map while it has room, else the list.
+fn central(
+    ui: &mut egui::Ui,
+    s: &SessionState,
+    colors: &Colors,
+    view: &mut ViewState,
+    out: &mut Vec<Intent>,
+) -> (View, usize) {
+    match s.current_view() {
+        View::Map if map::fits(ui) => {
+            let rows = list::visible_rows(ui);
+            map::show(ui, s, colors, view, out);
+            (View::Map, rows)
+        }
+        _ => (View::Files, list::show(ui, s, colors, view, out)),
+    }
+}
+
 /// The intent that switches the dialog's method from `from` to `to`, if they differ.
 fn switch(from: Mode, to: Mode) -> Option<confirm::Intent> {
     if from == to {
@@ -357,9 +406,9 @@ impl<B: Backend> Browse for Browser<B> {
         }
         // The delete dialog takes the keys while it is open.
         if self.session.state().confirm.is_none() {
-            let read_only = self.session.state().read_only;
-            let pressed = keys::take(&ctx, read_only);
-            self.apply(pressed.into_iter().map(Intent::Act).collect(), now, &ctx);
+            let s = self.session.state();
+            let pressed = keys::take(&ctx, s.read_only, s.map_drawn());
+            self.apply(pressed, now, &ctx);
         }
         if let Err(e) = self.session.tick(now) {
             self.fatal = Some(e.to_string());
@@ -382,13 +431,15 @@ impl<B: Backend> Browse for Browser<B> {
                 .default_size(300.0)
                 .show(ui, |ui| details::show(ui, s, colors));
         }
-        let rows = egui::CentralPanel::default()
-            .show(ui, |ui| list::show(ui, s, colors, view, &mut intents))
+        let (shown, rows) = egui::CentralPanel::default()
+            .show(ui, |ui| central(ui, s, colors, view, &mut intents))
             .inner;
         windows::errors(&ctx, colors, view, &mut intents);
         windows::types(&ctx, s, colors, view, &mut intents);
         dialog::show(&ctx, s, colors, view, &mut intents);
-        self.session.state_mut().set_viewport(View::Files, rows);
+        let s = self.session.state_mut();
+        s.set_viewport(shown, rows);
+        s.set_map_drawn(shown == View::Map);
         if !intents.is_empty() {
             self.apply(intents, now, &ctx);
             ctx.request_repaint();

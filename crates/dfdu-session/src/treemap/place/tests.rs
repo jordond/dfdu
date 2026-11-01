@@ -220,3 +220,23 @@ fn arrows_move_to_the_nearest_tile_that_way() {
     assert_eq!(t.tiles[hit].name, "mid");
     assert_eq!(t.at(-1.0, 0.0), None);
 }
+
+#[test]
+fn labels_read_live_sizes_while_tiles_hold_still() {
+    let mut s = map();
+    let t = build(&s, area(0.0, 0.0, 80.0, 20.0), &CELLS);
+    let big = &t.tiles[t.tops[0]];
+    assert_eq!(big.live_size(&s), 6000);
+    s.snap.entries[0].size = 9000;
+    assert_eq!(
+        big.live_size(&s),
+        9000,
+        "the entry as the snapshot has it now"
+    );
+    assert!(
+        t.current(&s, t.area, &CELLS),
+        "no new layout for a size alone"
+    );
+    let kid = &peek(&s, &t, t.tops[0])[1];
+    assert_eq!((kid.live_size(&s), kid.whole(&s)), (4000, 6000));
+}

@@ -165,6 +165,28 @@ impl Tile {
     pub fn candidate(&self) -> bool {
         !self.nested && self.tag.is_some_and(Tag::candidate)
     }
+
+    /// Its size now: a top-level tile's entry as the last snapshot has it, else the size it was
+    /// laid out with. Labels show live sizes while tiles hold still.
+    #[must_use]
+    pub fn live_size(&self, s: &SessionState) -> u64 {
+        match self.entry {
+            Some((node, i)) => (s.snap.entries.get(i))
+                .filter(|e| e.node == node)
+                .map_or(self.size, |e| e.size),
+            None => self.size,
+        }
+    }
+
+    /// The size its share is of: the directory shown, live, for a top-level tile, else the
+    /// tile it is in.
+    #[must_use]
+    pub fn whole(&self, s: &SessionState) -> u64 {
+        match self.level {
+            0 => s.size_mode.of(&s.snap.dir_total),
+            _ => self.parent_size,
+        }
+    }
 }
 
 /// The tiles of the current directory, as [`build`] laid them out, and what for.
