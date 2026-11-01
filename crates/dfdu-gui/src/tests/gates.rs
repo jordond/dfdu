@@ -73,7 +73,7 @@ fn a_read_only_browser_shows_no_way_to_delete() {
 }
 
 /// An ncdu export of `/nowhere` with a directory `d` and a file `f` in it.
-const EXPORT: &[u8] = br#"[1,2,{},[{"name":"/nowhere"},[{"name":"d","dsize":4096},{"name":"f","asize":5,"dsize":4096}]]]"#;
+pub const EXPORT: &[u8] = br#"[1,2,{},[{"name":"/nowhere"},[{"name":"d","dsize":4096},{"name":"f","asize":5,"dsize":4096}]]]"#;
 
 #[test]
 fn an_imported_scan_refuses_the_commands_of_this_machine() {

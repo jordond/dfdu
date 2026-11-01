@@ -1,6 +1,8 @@
 //! The start screen, shown without a directory on the command line: the disks as `dfdu --disks`
 //! lists them (the data volume first on macOS, disks that do not answer disabled), the system's
-//! folder picker (`rfd`), a field to type a folder's path, and a folder dropped on the window.
+//! folder picker (`rfd`), a field to type a folder's path, a folder dropped on the window, and
+//! the system's file picker for a scan saved to a file (an export), which is browsed read-only
+//! as `--import` browses it.
 
 use std::io;
 use std::path::PathBuf;
@@ -12,6 +14,15 @@ use dfdu_sys::{Disk, FsClass, Role};
 use egui::{Button, ProgressBar, TextEdit, Ui};
 
 use crate::theme::Colors;
+
+/// What the start screen chose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// A folder to scan.
+    Folder(PathBuf),
+    /// A scan saved to a file, to browse read-only.
+    Export(PathBuf),
+}
 
 pub struct Start {
     listing: Receiver<io::Result<Vec<Disk>>>,
@@ -47,12 +58,13 @@ impl Start {
         }
     }
 
-    /// Draws the screen; the directory chosen, if one was.
-    pub fn show(&mut self, ui: &mut Ui, colors: &Colors) -> Option<PathBuf> {
+    /// Draws the screen; what was chosen, if anything was.
+    pub fn show(&mut self, ui: &mut Ui, colors: &Colors) -> Option<Chosen> {
         if self.disks.is_none() {
             self.disks = self.listing.try_recv().ok();
         }
         let mut chosen = None;
+        let mut export = None;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading(colors.text("Choose a disk to browse", Token::Title));
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
@@ -103,14 +115,30 @@ impl Start {
             if let Some(note) = &self.dropped {
                 ui.label(colors.text(note, Token::StatusWarn));
             }
+            ui.add_space(ui.spacing().item_spacing.y * 4.0);
+            ui.label(colors.text("Or a scan saved to a file:", Token::Header));
+            ui.horizontal(|ui| {
+                if ui.button("Open export…").clicked()
+                    && let Some(file) = rfd::FileDialog::new().pick_file()
+                {
+                    export = Some(file);
+                }
+                ui.label(colors.text(
+                    "A snapshot or an ncdu export, browsed read-only.",
+                    Token::FgDim,
+                ));
+            });
         });
+        if let Some(file) = export {
+            return Some(Chosen::Export(file));
+        }
         if let Some(dropped) = dropped(ui.ctx()) {
             match dropped {
                 Ok(dir) => chosen = Some(dir),
                 Err(note) => self.dropped = Some(note),
             }
         }
-        chosen
+        chosen.map(Chosen::Folder)
     }
 }
 

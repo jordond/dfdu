@@ -1,7 +1,7 @@
-//! The start screen takes a folder dropped on the window, and a scan of this machine is recorded
-//! in the scan history in dfdu's state directory, as `dfdu` records it. The history test runs
-//! this test binary again with `DFDU_STATE_DIR` set, because changing the environment of a
-//! running process needs `unsafe`.
+//! The start screen takes a folder dropped on the window and opens an export read-only, and a
+//! scan of this machine is recorded in the scan history in dfdu's state directory, as `dfdu`
+//! records it. The history test runs this test binary again with `DFDU_STATE_DIR` set, because
+//! changing the environment of a running process needs `unsafe`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +14,7 @@ use egui_kittest::kittest::Queryable;
 use super::{PATIENCE, close, files, harness, local, scan_done, shown, until};
 use crate::args::Args;
 use crate::launch::{self, Launch};
+use crate::start::Chosen;
 
 /// A path dropped on the window.
 #[derive(Debug)]
@@ -59,6 +60,53 @@ fn a_folder_dropped_on_the_start_screen_is_scanned() {
     h.input_mut().dropped_files.push(Arc::new(Dropped(dir)));
     until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
     close(h);
+}
+
+#[test]
+fn an_export_chosen_on_the_start_screen_is_browsed_read_only() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let file = tmp.path().join("scan.json");
+    std::fs::write(&file, super::gates::EXPORT).expect("write");
+    let start = Launch {
+        source: Source::Local {
+            path: None,
+            start: launch::local(None),
+        },
+        ..local(tmp.path(), false, None)
+    };
+    let mut h = harness(start);
+    until(&mut h, "the start screen", |h| shown(h, "Open export…"));
+
+    // What the system's file picker returns for the button: the browser of the export.
+    let ctx = h.ctx.clone();
+    let gui = h.state_mut().gui.as_mut().expect("the window");
+    gui.chosen(Chosen::Export(file), &ctx);
+    until(&mut h, "the imported scan", |h| shown(h, "d/"));
+    assert!(shown(&h, "read-only"), "an export is read-only");
+    assert!(super::state(&h).read_only);
+    close(h);
+}
+
+#[test]
+fn an_export_that_does_not_read_says_why() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let file = tmp.path().join("junk.json");
+    std::fs::write(&file, b"not a scan").expect("write");
+    let start = Launch {
+        source: Source::Local {
+            path: None,
+            start: launch::local(None),
+        },
+        ..local(tmp.path(), false, None)
+    };
+    let mut h = harness(start);
+    until(&mut h, "the start screen", |h| shown(h, "Open export…"));
+    let ctx = h.ctx.clone();
+    let gui = h.state_mut().gui.as_mut().expect("the window");
+    gui.chosen(Chosen::Export(file), &ctx);
+    until(&mut h, "the reason", |h| {
+        h.query_by_label_contains("Cannot open").is_some()
+    });
 }
 
 /// Set to the directory to scan when this binary runs the inner test.

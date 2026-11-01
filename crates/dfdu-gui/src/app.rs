@@ -1,5 +1,5 @@
-//! The window's contents: a menu bar, then the start screen until a directory is chosen, then
-//! the browser of its scan, or why it could not be opened. The browser is stopped when the
+//! The window's contents: a menu bar, then the start screen until a directory or an export is
+//! chosen, then the browser of its scan, or why it could not be opened. The browser is stopped when the
 //! window closes. The settings (`settings`) are applied when a browser opens and saved from it.
 //! The View menu chooses the theme: the system's dark or light one, either of them, or the
 //! theme file read at the start (`theme`).
@@ -10,7 +10,7 @@ use dfdu_session::startup::{Source, StartLocal};
 use crate::browser::Browse;
 use crate::launch::{self, Launch, Settings};
 use crate::settings::{Prefs, ThemeChoice};
-use crate::start::Start;
+use crate::start::{Chosen, Start};
 use crate::theme::{self, Colors};
 
 enum Screen {
@@ -67,13 +67,8 @@ impl Gui {
         let colors = Colors::new(ui.ctx().theme(), self.file_in_use());
         match &mut self.screen {
             Screen::Start { start, .. } => {
-                if let Some(path) = start.show(ui, &colors)
-                    && let Screen::Start { local, .. } =
-                        std::mem::replace(&mut self.screen, Screen::Closed)
-                {
-                    let source = launch::picked(path, local);
-                    self.screen = self.open(source, ui.ctx());
-                    ui.ctx().request_repaint();
+                if let Some(chosen) = start.show(ui, &colors) {
+                    self.chosen(chosen, ui.ctx());
                 }
             }
             Screen::Browse(b) => {
@@ -117,6 +112,23 @@ impl Gui {
                 }
             });
         });
+    }
+
+    /// Opens what was chosen on the start screen: a folder is scanned afresh, an export is
+    /// browsed read-only, as `--import` browses it.
+    pub fn chosen(&mut self, chosen: Chosen, ctx: &egui::Context) {
+        let Screen::Start { local, .. } = std::mem::replace(&mut self.screen, Screen::Closed)
+        else {
+            return;
+        };
+        self.screen = match chosen {
+            Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
+            Chosen::Export(file) => match launch::import(&file) {
+                Ok(tree) => self.open(Source::Imported(tree), ctx),
+                Err(e) => Screen::Failed(format!("Cannot open {}: {e}", file.display())),
+            },
+        };
+        ctx.request_repaint();
     }
 
     /// The themes the menu and the palette offer: the built-in ones, then the theme file read.

@@ -139,8 +139,12 @@ fn cache_slot(path: &Path) -> Option<dfdu_store::cache::Slot> {
     Some(cache.slot(key))
 }
 
-/// The tree of a scan saved in `file`.
-fn import(file: &Path) -> io::Result<dfdu_tree::Tree> {
+/// The tree of a scan saved in `file`: a snapshot, or an ncdu export.
+///
+/// # Errors
+///
+/// The file cannot be read or is not a scan.
+pub fn import(file: &Path) -> io::Result<dfdu_tree::Tree> {
     let f = std::fs::File::open(file)?;
     let opened = dfdu_store::open_file(f, &dfdu_store::Limits::default())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
