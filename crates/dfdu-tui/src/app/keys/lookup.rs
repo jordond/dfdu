@@ -2,6 +2,8 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+pub use dfdu_session::actions::cursor_after;
+
 use super::{ACTIONS, Action};
 
 /// One key of [`ActionInfo::keys`]: the key code and whether it needs Ctrl.
@@ -69,25 +71,6 @@ pub fn half_page(k: &KeyEvent, page: usize) -> Option<isize> {
         Action::HalfPageDown => Some(half),
         _ => None,
     }
-}
-
-/// Where `a` moves a cursor at `cursor` in a list of rows up to `last` that shows `page` rows,
-/// as the list moves its own; `None` for an action that does not move it. The views with a
-/// cursor of their own move theirs by it.
-#[must_use]
-pub fn cursor_after(a: Action, cursor: usize, last: usize, page: usize) -> Option<usize> {
-    let half = (page / 2).max(1);
-    Some(match a {
-        Action::Up => cursor.saturating_sub(1),
-        Action::Down => (cursor + 1).min(last),
-        Action::PageUp => cursor.saturating_sub(page),
-        Action::PageDown => (cursor + page).min(last),
-        Action::HalfPageUp => cursor.saturating_sub(half),
-        Action::HalfPageDown => (cursor + half).min(last),
-        Action::First => 0,
-        Action::Last => last,
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

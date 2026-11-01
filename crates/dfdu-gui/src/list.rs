@@ -22,7 +22,7 @@ use crate::menu;
 use crate::theme::Colors;
 
 /// Width of the size bar.
-const BAR_WIDTH: f32 = 80.0;
+pub const BAR_WIDTH: f32 = 80.0;
 /// Indent of each tree level, in units of the row height.
 const INDENT: f32 = 0.9;
 
@@ -207,6 +207,13 @@ fn mark(
     if s.read_only || e.pseudo || e.fold > 0 {
         return;
     }
+    if dot(ui, colors, marked).clicked() {
+        out.push(Intent::Mark(i));
+    }
+}
+
+/// A mark: a dot when `marked`, a ring under the pointer, named for what a click does.
+pub fn dot(ui: &mut Ui, colors: &Colors, marked: bool) -> egui::Response {
     let h = ui.text_style_height(&egui::TextStyle::Body);
     let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
     let (c, radius) = (rect.center(), h * 0.28);
@@ -219,13 +226,11 @@ fn mark(
     }
     let what = if marked { "Unmark" } else { "Mark" };
     r.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, marked, what));
-    if r.clicked() {
-        out.push(Intent::Mark(i));
-    }
+    r
 }
 
 /// The size bar: the part of the largest row's size `frac` is.
-fn bar(ui: &mut Ui, colors: &Colors, frac: f64) {
+pub fn bar(ui: &mut Ui, colors: &Colors, frac: f64) {
     let h = ui.text_style_height(&egui::TextStyle::Body) * 0.6;
     let (rect, _) = ui.allocate_exact_size(vec2(BAR_WIDTH - 8.0, h), Sense::hover());
     let p = ui.painter();

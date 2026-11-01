@@ -123,6 +123,7 @@ fn a_read_only_browser_reads_no_key_that_deletes_or_puts_back() {
 fn the_views_shown_and_the_map_keys_are_read() {
     assert_eq!(action(&text("1")), Some(Action::ViewFiles));
     assert_eq!(action(&text("2")), Some(Action::ViewMap));
+    assert_eq!(action(&text("5")), Some(Action::ViewLargest));
     assert_eq!(action(&text("+")), Some(Action::TreemapDeeper));
     assert_eq!(action(&text("-")), Some(Action::TreemapShallower));
     assert_eq!(action(&text("p")), Some(Action::TreemapColor));
@@ -138,7 +139,7 @@ fn the_views_shown_and_the_map_keys_are_read() {
 
 #[test]
 fn the_other_views_the_help_and_quitting_are_left_out() {
-    for left_out in ["q", "3", "4", "5", "[", "]", "?", ":", "c", "N", "A"] {
+    for left_out in ["q", "3", "4", "[", "]", "?", ":", "c", "N", "A"] {
         assert_eq!(action(&text(left_out)), None, "{left_out:?}");
     }
     assert_eq!(action(&key(Key::C, Modifiers::CTRL)), None);

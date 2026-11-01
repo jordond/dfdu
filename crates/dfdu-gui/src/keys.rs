@@ -18,8 +18,8 @@ use crate::browser::Intent;
 
 /// The actions the window offers: moving, opening, sorting, what the list shows, rescans, the
 /// filters, marks, the details, the error list, the selected path, deleting with its undo, and
-/// the Files and Map views with the map's depth and colours. The Cleanup, Duplicates and
-/// Largest views, the help and the command palette are left out of this version.
+/// the Files, Map and Largest views with the map's depth and colours. The Cleanup and
+/// Duplicates views, the help and the command palette are left out of this version.
 pub const OFFERED: &[Action] = &[
     Action::Up,
     Action::Down,
@@ -59,6 +59,7 @@ pub const OFFERED: &[Action] = &[
     Action::Close,
     Action::ViewFiles,
     Action::ViewMap,
+    Action::ViewLargest,
     Action::TreemapDeeper,
     Action::TreemapShallower,
     Action::TreemapColor,

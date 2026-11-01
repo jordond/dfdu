@@ -11,6 +11,7 @@ use dfdu_engine::{Model, SizeMode};
 use dfdu_tree::{HostPath, Ident, Kind, NodeRef, Target};
 
 use super::{File, walk};
+use crate::actions::{Action, cursor_after};
 use crate::marks;
 use crate::state::SessionState;
 use crate::view::{Then, View};
@@ -148,6 +149,22 @@ pub fn listed(s: &SessionState) -> HashSet<NodeRef> {
     s.largest.files.iter().map(|f| f.node).collect()
 }
 
+/// What action `a` asks of the view, as its key does: the moves move its cursor, `Enter` and
+/// `l` show the selected file in Files, `Space` ticks it. `None` leaves the action to the
+/// registry; the keys that delete act on what is ticked there.
+pub fn intent(s: &SessionState, a: Action) -> Option<Intent> {
+    let l = &s.largest;
+    let last = l.files.len().saturating_sub(1);
+    match cursor_after(a, l.cursor, last, s.page_rows()) {
+        Some(c) => Some(Intent::Select(c)),
+        None => match a {
+            Action::Open | Action::Enter => Some(Intent::Activate),
+            Action::ToggleMark => Some(Intent::Toggle),
+            _ => None,
+        },
+    }
+}
+
 /// Carries out `intent`.
 pub fn act(s: &mut SessionState, intent: Intent) -> Then {
     match intent {
@@ -243,6 +260,19 @@ mod tests {
             paths(&s),
             ["new.bin", "a/big.iso", "top.txt", "a/deep/x.bin"]
         );
+    }
+
+    /// The keys that move, open and tick act on the files; the rest go to the registry.
+    #[test]
+    fn keys_move_open_and_tick_the_files() {
+        let m = model();
+        let (mut s, _) = opened(&m, View::Largest);
+        assert_eq!(intent(&s, Action::Last), Some(Intent::Select(3)));
+        s.largest.cursor = 3;
+        assert_eq!(intent(&s, Action::Down), Some(Intent::Select(3)));
+        assert_eq!(intent(&s, Action::Enter), Some(Intent::Activate));
+        assert_eq!(intent(&s, Action::ToggleMark), Some(Intent::Toggle));
+        assert_eq!(intent(&s, Action::Trash), None);
     }
 
     /// Toggle ticks the selected file and moves down; Activate shows it in Files. A read-only

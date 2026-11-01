@@ -11,7 +11,7 @@ use dfdu_tree::{HostPath, Ix, Kind, NodeRef, Tree};
 mod view;
 
 pub use view::{
-    Info, Intent, Largest, MIN_INTERVAL, Walked, act, active, apply, listed, on_open, read,
+    Info, Intent, Largest, MIN_INTERVAL, Walked, act, active, apply, intent, listed, on_open, read,
     selected, stale,
 };
 

@@ -13,10 +13,10 @@
 use dfdu_session::largest as session;
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::keys::{self, Action};
+use crate::app::keys;
 use crate::app::views;
 use crate::app::{App, Effect};
-pub use session::{File, Intent};
+pub use session::File;
 
 mod draw;
 
@@ -37,17 +37,8 @@ fn active(app: &App) -> bool {
 /// Keys the view takes before the action registry; `None` passes the key on. The keys that
 /// delete act on what is marked, never on the list's selection hidden behind the view.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
-    let last = app.session.largest.files.len().saturating_sub(1);
-    let page = app.session.page_rows();
     let action = keys::action_for(k)?;
-    let intent = match keys::cursor_after(action, app.session.largest.cursor, last, page) {
-        Some(c) => Intent::Select(c),
-        None => match action {
-            Action::Open | Action::Enter => Intent::Activate,
-            Action::ToggleMark => Intent::Toggle,
-            _ => return None,
-        },
-    };
+    let intent = session::intent(&app.session, action)?;
     let then = session::act(&mut app.session, intent);
     Some(views::carry(app, then))
 }

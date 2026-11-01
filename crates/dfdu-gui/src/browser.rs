@@ -3,7 +3,7 @@
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
 //! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
-//! view shown (the list, or the map while it has room), the delete dialog and the windows from
+//! view shown (the list, the largest files, or the map while it has room), the delete dialog and the windows from
 //! its state, then carries out what was clicked or typed. It tells the session the rows the
 //! view had room for and whether the map was drawn, and asks egui for the next frame when the
 //! session wants to be ticked again ([`Session::wake_at`]), so an idle window does not repaint.
@@ -22,12 +22,16 @@ use dfdu_session::startup::Started;
 use dfdu_session::treemap::{self, ColorBy, TileTree, Toward};
 use dfdu_session::type_filter::{self, Row};
 use dfdu_session::view::{Then, View};
-use dfdu_session::{FrontEnd, Session, SessionState, error_list, file_manager, selected_path};
+use dfdu_session::{
+    FrontEnd, Session, SessionState, error_list, file_manager, largest, selected_path,
+};
 use dfdu_tree::HostPath;
 
 use crate::bridge::Bridge;
 use crate::theme::Colors;
-use crate::{details, dialog, keys, list, map, status_bar, toolbar, windows};
+use crate::{
+    details, dialog, keys, largest as largest_view, list, map, status_bar, toolbar, windows,
+};
 
 /// How long quitting waits for the engine's threads to stop.
 const SHUTDOWN: Duration = Duration::from_millis(200);
@@ -87,6 +91,8 @@ pub enum Intent {
     },
     /// The map's colouring chosen.
     MapColor(ColorBy),
+    /// A click in the Largest view.
+    Largest(largest::Intent),
 }
 
 /// What the window keeps beside the session's state.
@@ -238,6 +244,7 @@ impl<B: Backend> Browser<B> {
                     }
                 }
                 Intent::MapColor(color) => treemap::set_color(s, color),
+                Intent::Largest(i) => self.largest(i),
                 Intent::ShowError(i) => {
                     let show = self
                         .view()
@@ -267,14 +274,31 @@ impl<B: Backend> Browser<B> {
         );
     }
 
+    /// Carries out `intent` in the Largest view; showing a file in Files scrolls the list to it.
+    fn largest(&mut self, intent: largest::Intent) {
+        let s = self.session.state_mut();
+        s.status = None;
+        let then = largest::act(s, intent);
+        let acted = self.session.follow(then);
+        self.view().follow |= acted.went.is_some();
+    }
+
     /// Carries out action `a` as its key does in the terminal. `Esc` closes the window's own
-    /// windows first.
+    /// windows first; in the Largest view the keys that move, open and tick act on its files.
     fn act(&mut self, a: Action, now: Instant, ctx: &egui::Context) {
         if a == Action::Close {
             let view = self.view();
             if view.errors.take().is_some() || view.types.take().is_some() {
                 return;
             }
+        }
+        let s = self.session.state();
+        if largest::active(s)
+            && let Some(intent) = largest::intent(s, a)
+        {
+            self.largest(intent);
+            self.view().follow |= a.moves();
+            return;
         }
         let acted = self.session.act(a, now);
         if acted.front_end {
@@ -376,6 +400,7 @@ fn central(
             map::show(ui, s, colors, view, out);
             (View::Map, rows)
         }
+        View::Largest => (View::Largest, largest_view::show(ui, s, colors, view, out)),
         _ => (View::Files, list::show(ui, s, colors, view, out)),
     }
 }
