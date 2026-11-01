@@ -1,28 +1,32 @@
 //! The browser of a scan in the window: the session driver ([`Session`]) and what the window
-//! keeps beside it.
+//! keeps beside it ([`ViewState`]).
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
-//! (which reads the model when due), draws the toolbar, the list and the status bar from its
-//! state, then carries out what was clicked or typed. It tells the session the rows the list had
-//! room for, and asks egui for the next frame when the session wants to be ticked again
-//! ([`Session::wake_at`]), so an idle window does not repaint.
+//! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
+//! list, the delete dialog and the windows from its state, then carries out what was clicked or
+//! typed. It tells the session the rows the list had room for, and asks egui for the next frame
+//! when the session wants to be ticked again ([`Session::wake_at`]), so an idle window does not
+//! repaint.
 
 use std::time::{Duration, Instant};
 
+use dfdu_engine::{ErrorList, Mode, tilde};
 use dfdu_scan::Backend;
 use dfdu_session::actions::Action;
+use dfdu_session::confirm;
 use dfdu_session::effect::Output;
 use dfdu_session::filter::{self, Edited};
 use dfdu_session::line::TextOp;
 use dfdu_session::palette::Token;
 use dfdu_session::startup::Started;
-use dfdu_session::view::View;
-use dfdu_session::{FrontEnd, Session, SessionState};
+use dfdu_session::type_filter::{self, Row};
+use dfdu_session::view::{Then, View};
+use dfdu_session::{FrontEnd, Session, SessionState, error_list, file_manager, selected_path};
 use dfdu_tree::HostPath;
 
 use crate::bridge::Bridge;
 use crate::theme::Colors;
-use crate::{keys, list, status_bar, toolbar};
+use crate::{details, dialog, keys, list, status_bar, toolbar, windows};
 
 /// How long quitting waits for the engine's threads to stop.
 const SHUTDOWN: Duration = Duration::from_millis(200);
@@ -33,6 +37,8 @@ pub trait Browse {
     fn show(&mut self, ui: &mut egui::Ui, colors: &Colors);
 
     fn state(&self) -> &SessionState;
+
+    fn state_mut(&mut self) -> &mut SessionState;
 
     /// Stops the session and its engine ([`Session::shutdown`]).
     fn shutdown(self: Box<Self>);
@@ -48,6 +54,8 @@ pub enum Intent {
     Open(usize),
     /// A click on the disclosure triangle of a row in tree mode.
     ToggleRow(usize),
+    /// A click on the mark of a row: marks or unmarks it, the selection staying on it.
+    Mark(usize),
     /// A click on a breadcrumb: its directory opens with `child`, the one below it on the way
     /// to the current directory, selected.
     GoTo {
@@ -59,6 +67,16 @@ pub enum Intent {
     FilterSubmit,
     /// `Esc` in the filter.
     FilterCancel,
+    /// Input of the delete dialog.
+    Confirm(confirm::Intent),
+    /// The delete dialog's method chosen.
+    Method(Mode),
+    /// The word typed in the delete dialog changed.
+    Typed(String),
+    /// A row of the type picker chosen or unchosen.
+    Type(Row),
+    /// A click on an entry of the error list: shows it in the list.
+    ShowError(usize),
 }
 
 /// What the window keeps beside the session's state.
@@ -70,12 +88,44 @@ pub struct ViewState {
     pub focus_filter: bool,
     /// Scroll the list to the selected row in the next frame.
     pub follow: bool,
+    /// The word typed in the delete dialog, as its field shows it.
+    pub typed: String,
+    /// The estimate of the delete dialog drawn last: a dialog with another one is new, and its
+    /// Cancel button gets the keyboard.
+    pub dialog: Option<u64>,
+    /// The error list, while its window is open.
+    pub errors: Option<ErrorList>,
+    /// The type picker's search, while the picker is open.
+    pub types: Option<String>,
+    /// The undo offered, and when it was first seen: a staged delete is put back only for a
+    /// while.
+    pub undo_seen: Option<(u64, Instant)>,
+}
+
+/// The session's state and the window's beside it.
+pub struct Front {
+    pub state: SessionState,
+    pub view: ViewState,
+}
+
+impl FrontEnd for Front {
+    fn state(&self) -> &SessionState {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut SessionState {
+        &mut self.state
+    }
+
+    /// The type picker lists the directory's files by type.
+    fn breakdown(&self) -> bool {
+        self.view.types.is_some()
+    }
 }
 
 pub struct Browser<B: Backend> {
-    session: Session<'static, B>,
+    session: Session<'static, B, Front>,
     bridge: Bridge,
-    view: ViewState,
     /// The engine stopped with this error: its data is not shown as if it were live.
     fatal: Option<String>,
 }
@@ -88,24 +138,31 @@ impl<B: Backend> Browser<B> {
         state.home = setup.home;
         state.read_only = setup.read_only;
         state.outside.local = setup.local;
-        let session = Session::new(engine, state, setup.jobs);
+        let front = Front {
+            state,
+            view: ViewState::default(),
+        };
+        let session = Session::new(engine, front, setup.jobs);
         let bridge = Bridge::start(session.changes().clone(), ctx.clone());
         Browser {
             session,
             bridge,
-            view: ViewState::default(),
             fatal: None,
         }
+    }
+
+    fn view(&mut self) -> &mut ViewState {
+        &mut self.session.front_mut().view
     }
 
     /// Carries out `intents` at `now`.
     fn apply(&mut self, intents: Vec<Intent>, now: Instant, ctx: &egui::Context) {
         for intent in intents {
             let s = self.session.state_mut();
+            s.note_input(now);
             match intent {
                 Intent::Act(a) => self.act(a, now, ctx),
                 Intent::Select(row) => {
-                    s.note_input(now);
                     s.status = None;
                     s.move_to(row);
                 }
@@ -114,52 +171,132 @@ impl<B: Backend> Browser<B> {
                     self.act(Action::Enter, now, ctx);
                 }
                 Intent::ToggleRow(row) => {
-                    s.note_input(now);
                     s.status = None;
                     dfdu_session::tree::act::toggle_row(s, row);
                 }
+                Intent::Mark(row) => {
+                    s.status = None;
+                    s.move_to(row);
+                    dfdu_session::marks::toggle(s);
+                    s.move_to(row);
+                }
                 Intent::GoTo { child } => {
-                    s.note_input(now);
                     s.status = None;
                     let root = s.snap.root_path.clone();
-                    self.view.follow |= s.go_to(&child, &root).is_some();
+                    let went = s.go_to(&child, &root).is_some();
+                    self.view().follow |= went;
                 }
                 Intent::Filter(text) => self.set_filter(&text, now),
                 Intent::FilterSubmit => {
-                    s.note_input(now);
                     if filter::edit(s, TextOp::Submit) == Edited::Enter {
                         self.act(Action::Enter, now, ctx);
                     }
                 }
                 Intent::FilterCancel => {
-                    s.note_input(now);
                     let _ = filter::edit(s, TextOp::Cancel);
+                }
+                Intent::Confirm(i) => self.confirm(i),
+                Intent::Method(mode) => {
+                    if let Some(i) = s.confirm.as_ref().and_then(|c| switch(c.mode(), mode)) {
+                        self.confirm(i);
+                    }
+                }
+                Intent::Typed(text) => {
+                    self.confirm(confirm::Intent::Text(TextOp::Clear));
+                    for c in text.chars() {
+                        self.confirm(confirm::Intent::Text(TextOp::Insert(c)));
+                    }
+                }
+                Intent::Type(row) => type_filter::toggle(s, row),
+                Intent::ShowError(i) => {
+                    let show = self
+                        .view()
+                        .errors
+                        .as_ref()
+                        .and_then(|l| error_list::entry(l, i));
+                    if let Some(show) = show {
+                        self.view().errors = None;
+                        let acted = self.session.follow(Then {
+                            show: Some(show),
+                            ..Then::nothing()
+                        });
+                        self.view().follow |= acted.went.is_some();
+                    }
                 }
             }
         }
     }
 
-    /// Carries out action `a` as its key does in the terminal.
+    /// Carries out `intent` on the open delete dialog, and the delete it confirms.
+    fn confirm(&mut self, intent: confirm::Intent) {
+        let then = confirm::act(self.session.state_mut(), intent);
+        let acted = self.session.follow(then);
+        debug_assert!(
+            acted.outputs.is_empty(),
+            "a delete leaves the window nothing"
+        );
+    }
+
+    /// Carries out action `a` as its key does in the terminal. `Esc` closes the window's own
+    /// windows first.
     fn act(&mut self, a: Action, now: Instant, ctx: &egui::Context) {
+        if a == Action::Close {
+            let view = self.view();
+            if view.errors.take().is_some() || view.types.take().is_some() {
+                return;
+            }
+        }
         let acted = self.session.act(a, now);
+        if acted.front_end {
+            self.front_end(a, ctx);
+        }
         for out in acted.outputs {
             match out {
                 Output::Copy(text) => ctx.copy_text(text),
-                // Their actions are not offered in this version of the window.
-                Output::Open { .. } | Output::Errors(_) => {}
+                Output::Open { path, is_dir } => {
+                    if let Err(problem) = file_manager::spawn_open(&path, is_dir) {
+                        self.session.state_mut().status = Some(problem);
+                    }
+                }
+                Output::Errors(list) => self.view().errors = Some(list),
             }
         }
+        let view = self.view();
         if a == Action::Filter {
-            self.view.focus_filter = true;
+            view.focus_filter = true;
         }
-        self.view.follow |= a.moves() || acted.entered.is_some() || acted.went.is_some();
+        view.follow |= a.moves() || acted.entered.is_some() || acted.went.is_some();
+    }
+
+    /// The actions the session leaves to the window: copying the selected path and the type
+    /// picker. The others (help, palette, columns...) are not offered in this version.
+    fn front_end(&mut self, a: Action, ctx: &egui::Context) {
+        match a {
+            Action::CopyPath => {
+                let s = self.session.state_mut();
+                s.status = Some(match selected_path::selected(s) {
+                    Some((path, _)) => {
+                        ctx.copy_text(path.to_string());
+                        format!("copied {}", tilde(&path, s.home.as_deref()))
+                    }
+                    None => "nothing selected to copy".into(),
+                });
+            }
+            Action::Types => {
+                let view = self.view();
+                view.types = match view.types {
+                    Some(_) => None,
+                    None => Some(String::new()),
+                };
+            }
+            _ => {}
+        }
     }
 
     /// Sets the filter's query to `text`, opening the filter first, and brings the rows up to
     /// date with it at once.
     fn set_filter(&mut self, text: &str, now: Instant) {
         let s = self.session.state_mut();
-        s.note_input(now);
         if !filter::editing(s) {
             filter::open(s);
         }
@@ -173,6 +310,35 @@ impl<B: Backend> Browser<B> {
             FrontEnd::reorder(self.session.front_mut(), now);
             filter::refiltered(self.session.state_mut(), before);
         }
+    }
+
+    /// Notes when the undo offered now was first seen, and asks for a frame each second while
+    /// a staged delete counts down.
+    fn note_undo(&mut self, now: Instant, ctx: &egui::Context) {
+        let undo = self.session.state().snap.undo.clone();
+        let view = self.view();
+        match undo {
+            Some(u) => {
+                if view.undo_seen.is_none_or(|(plan, _)| plan != u.plan) {
+                    view.undo_seen = Some((u.plan, now));
+                }
+                if u.mode == Mode::Stage {
+                    ctx.request_repaint_after(Duration::from_secs(1));
+                }
+            }
+            None => view.undo_seen = None,
+        }
+    }
+}
+
+/// The intent that switches the dialog's method from `from` to `to`, if they differ.
+fn switch(from: Mode, to: Mode) -> Option<confirm::Intent> {
+    if from == to {
+        None
+    } else if to == Mode::Permanent || from == Mode::Permanent && to == Mode::Trash {
+        Some(confirm::Intent::SwitchPermanent)
+    } else {
+        Some(confirm::Intent::SwitchStage)
     }
 }
 
@@ -189,23 +355,39 @@ impl<B: Backend> Browse for Browser<B> {
         if self.bridge.take() {
             self.session.note_change();
         }
-        let pressed = keys::take(&ctx).into_iter().map(Intent::Act).collect();
-        self.apply(pressed, now, &ctx);
+        // The delete dialog takes the keys while it is open.
+        if self.session.state().confirm.is_none() {
+            let read_only = self.session.state().read_only;
+            let pressed = keys::take(&ctx, read_only);
+            self.apply(pressed.into_iter().map(Intent::Act).collect(), now, &ctx);
+        }
         if let Err(e) = self.session.tick(now) {
             self.fatal = Some(e.to_string());
             ctx.request_repaint();
             return;
         }
+        self.note_undo(now, &ctx);
         let mut intents = Vec::new();
-        let s = self.session.state();
-        let view = &mut self.view;
+        let Front { state: s, view } = self.session.front_mut();
+        let s = &*s;
         egui::Panel::top("toolbar").show(ui, |ui| {
             toolbar::show(ui, s, colors, view, now, &mut intents);
         });
-        egui::Panel::bottom("status").show(ui, |ui| status_bar::show(ui, s, colors));
+        egui::Panel::bottom("status").show(ui, |ui| {
+            status_bar::show(ui, s, colors, view, now, &mut intents);
+        });
+        if s.details.open {
+            egui::Panel::right("details")
+                .resizable(true)
+                .default_size(300.0)
+                .show(ui, |ui| details::show(ui, s, colors));
+        }
         let rows = egui::CentralPanel::default()
             .show(ui, |ui| list::show(ui, s, colors, view, &mut intents))
             .inner;
+        windows::errors(&ctx, colors, view, &mut intents);
+        windows::types(&ctx, s, colors, view, &mut intents);
+        dialog::show(&ctx, s, colors, view, &mut intents);
         self.session.state_mut().set_viewport(View::Files, rows);
         if !intents.is_empty() {
             self.apply(intents, now, &ctx);
@@ -221,7 +403,38 @@ impl<B: Backend> Browse for Browser<B> {
         self.session.state()
     }
 
+    fn state_mut(&mut self) -> &mut SessionState {
+        self.session.state_mut()
+    }
+
     fn shutdown(self: Box<Self>) {
         self.session.shutdown(SHUTDOWN);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_method_is_reached_from_each_other_in_one_switch() {
+        let all = [Mode::Trash, Mode::Stage, Mode::Permanent];
+        for from in all {
+            for to in all {
+                let mode = match switch(from, to) {
+                    None => from,
+                    Some(confirm::Intent::SwitchPermanent) => match from {
+                        Mode::Trash | Mode::Stage => Mode::Permanent,
+                        Mode::Permanent => Mode::Trash,
+                    },
+                    Some(confirm::Intent::SwitchStage) => match from {
+                        Mode::Stage => Mode::Trash,
+                        _ => Mode::Stage,
+                    },
+                    Some(other) => panic!("{other:?}"),
+                };
+                assert_eq!(mode, to, "{from:?} to {to:?}");
+            }
+        }
     }
 }

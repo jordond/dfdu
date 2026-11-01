@@ -1,6 +1,6 @@
 //! The start screen, shown without a directory on the command line: the disks as `dfdu --disks`
-//! lists them (the data volume first on macOS, disks that do not answer disabled), and a field
-//! to type a folder's path.
+//! lists them (the data volume first on macOS, disks that do not answer disabled), the system's
+//! folder picker (`rfd`), a field to type a folder's path, and a folder dropped on the window.
 
 use std::io;
 use std::path::PathBuf;
@@ -19,6 +19,8 @@ pub struct Start {
     disks: Option<io::Result<Vec<Disk>>>,
     /// The folder typed.
     folder: String,
+    /// Why what was dropped on the window last is not scanned.
+    dropped: Option<String>,
 }
 
 impl Start {
@@ -41,6 +43,7 @@ impl Start {
             listing,
             disks,
             folder: String::new(),
+            dropped: None,
         }
     }
 
@@ -83,6 +86,11 @@ impl Start {
             ui.add_space(ui.spacing().item_spacing.y * 4.0);
             ui.label(colors.text("Or a folder:", Token::Header));
             ui.horizontal(|ui| {
+                if ui.button("Open folder…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                {
+                    chosen = Some(dir);
+                }
                 let r =
                     ui.add(TextEdit::singleline(&mut self.folder).hint_text("Path of a folder"));
                 let typed = !self.folder.trim().is_empty();
@@ -91,9 +99,29 @@ impl Start {
                     chosen = Some(PathBuf::from(self.folder.trim()));
                 }
             });
+            ui.label(colors.text("Or drop a folder on the window.", Token::FgDim));
+            if let Some(note) = &self.dropped {
+                ui.label(colors.text(note, Token::StatusWarn));
+            }
         });
+        if let Some(dropped) = dropped(ui.ctx()) {
+            match dropped {
+                Ok(dir) => chosen = Some(dir),
+                Err(note) => self.dropped = Some(note),
+            }
+        }
         chosen
     }
+}
+
+/// The folder dropped on the window in this frame, or why what was dropped is not scanned.
+fn dropped(ctx: &egui::Context) -> Option<Result<PathBuf, String>> {
+    let path = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()))?;
+    Some(if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(format!("{} is not a folder.", path.display()))
+    })
 }
 
 /// One disk's row of the grid; its mount point when it was clicked.

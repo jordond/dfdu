@@ -1,9 +1,12 @@
 //! `dfdu-gui`: the dfdu browser in a window, on the same session driver as the terminal browser
 //! (`dfdu_session`). The command line (`args`) names what to open, built as `dfdu` builds it
 //! (`launch`); without a directory the start screen (`start`) lists the disks. The window
-//! (`app`) shows the browser (`browser`): the toolbar (`toolbar`), the list (`list`) and the
-//! status bar (`status_bar`), coloured by the theme's tokens (`theme`), with the terminal's keys
-//! (`keys`). A thread asks for a frame when the engine's model changes (`bridge`).
+//! (`app`) shows the browser (`browser`): the toolbar (`toolbar`), the list (`list`) with the
+//! menu of a row (`menu`), the details panel (`details`), the action and status bars
+//! (`status_bar`), the delete dialog (`dialog`) and the error list and type picker (`windows`),
+//! coloured by the theme's tokens (`theme`), with the terminal's keys (`keys`). A thread asks
+//! for a frame when the engine's model changes (`bridge`). The theme chosen and how the list
+//! was shown are kept between runs (`settings`).
 //!
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start.
 
@@ -11,14 +14,19 @@ mod app;
 mod args;
 mod bridge;
 mod browser;
+mod details;
+mod dialog;
 mod keys;
 mod launch;
 mod list;
+mod menu;
+mod settings;
 mod shot;
 mod start;
 mod status_bar;
 mod theme;
 mod toolbar;
+mod windows;
 
 #[cfg(test)]
 mod tests;
@@ -72,7 +80,9 @@ fn run(renderer: eframe::Renderer, pending: &Cell<Option<Launch>>) -> eframe::Re
             .with_title(NAME)
             .with_app_id(NAME)
             .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([480.0, 320.0]),
+            .with_min_inner_size([480.0, 320.0])
+            .with_drag_and_drop(true),
+        persistence_path: settings::path(),
         ..eframe::NativeOptions::default()
     };
     eframe::run_native(
@@ -80,11 +90,13 @@ fn run(renderer: eframe::Renderer, pending: &Cell<Option<Launch>>) -> eframe::Re
         opts,
         Box::new(|cc| {
             let launch = pending.take().ok_or("the window was opened twice")?;
-            let gui = Gui::new(launch, &cc.egui_ctx);
+            let prefs = settings::Prefs::load(cc.storage);
+            let gui = Gui::new(launch, prefs, &cc.egui_ctx);
             Ok(match std::env::var_os(shot::VAR) {
                 Some(path) => Box::new(shot::Shot {
                     gui,
                     path: Some(path.into()),
+                    keys: std::env::var(shot::KEYS).ok(),
                     opened: Instant::now(),
                     done: None,
                 }),

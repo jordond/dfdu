@@ -1,21 +1,24 @@
 //! The list of the current directory: a table that lays out only the rows on screen, with the
-//! size and its bar, the items, the day modified and the name, under headers that sort by their
-//! column. In tree mode the names are indented by depth, and a directory's triangle expands or
-//! collapses it. The rows that arrived since the last sort are one summary row at the end.
+//! mark, the size and its bar, the items, the day modified and the name, under headers that
+//! sort by their column. In tree mode the names are indented by depth, and a directory's
+//! triangle expands or collapses it. The rows that arrived since the last sort are one summary
+//! row at the end.
 //!
-//! A click selects a row and a double click opens it, as `Enter` does. Each scanned directory
-//! keeps its own scroll position.
+//! A click selects a row and a double click opens it, as `Enter` does; a click on the mark
+//! column marks it, and a right click opens its menu (`menu`). Each scanned directory keeps its
+//! own scroll position.
 
-use dfdu_session::SessionState;
 use dfdu_session::actions::{Action, first_key};
 use dfdu_session::format::{count, human, plural, ratio};
 use dfdu_session::order::SortKey;
 use dfdu_session::palette::Token;
 use dfdu_session::snapshot::{EntryData, Mark};
+use dfdu_session::{SessionState, marks};
 use egui::{Align, Layout, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use egui_extras::{Column, TableBuilder, TableRow};
 
 use crate::browser::{Intent, ViewState};
+use crate::menu;
 use crate::theme::Colors;
 
 /// Width of the size bar.
@@ -51,6 +54,7 @@ pub fn show(
         .striped(true)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
+        .column(Column::exact(row_h))
         .column(Column::auto().at_least(70.0))
         .column(Column::exact(BAR_WIDTH))
         .column(Column::auto().at_least(50.0))
@@ -67,6 +71,7 @@ pub fn show(
     table
         .header(row_h, |mut h| {
             for (key, label) in [
+                (None, ""),
                 (Some(SortKey::Size), "Size"),
                 (None, ""),
                 (Some(SortKey::Items), "Items"),
@@ -89,9 +94,10 @@ pub fn show(
                 let r = row.response();
                 if r.double_clicked() {
                     out.push(Intent::Open(i));
-                } else if r.clicked() {
+                } else if r.clicked() || r.secondary_clicked() {
                     out.push(Intent::Select(i));
                 }
+                r.context_menu(|ui| menu::row(ui, s, e, i, out));
             });
         });
     visible
@@ -151,9 +157,12 @@ fn entry(
         }
         _ => Token::Fg,
     };
+    let marked = marks::is_marked(s, e);
+    row.col(|ui| mark(ui, s, colors, e, marked, i, out));
     row.col(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(colors.text(human(e.size), size_token));
+            let token = if marked { Token::Mark } else { size_token };
+            ui.label(colors.text(human(e.size), token));
         });
     });
     row.col(|ui| bar(ui, colors, ratio(e.size, s.list.rows_largest.max(1))));
@@ -169,6 +178,38 @@ fn entry(
         }
     });
     row.col(|ui| name(ui, s, colors, e, i, out));
+}
+
+/// The mark of entry `e` on row `i`: a dot when it is marked, a ring under the pointer; a click
+/// marks or unmarks it. A read-only browser marks nothing and draws none; nor do rows that are
+/// not entries (the data shared between entries, fold rows).
+fn mark(
+    ui: &mut Ui,
+    s: &SessionState,
+    colors: &Colors,
+    e: &EntryData,
+    marked: bool,
+    i: usize,
+    out: &mut Vec<Intent>,
+) {
+    if s.read_only || e.pseudo || e.fold > 0 {
+        return;
+    }
+    let h = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
+    let (c, radius) = (rect.center(), h * 0.28);
+    if marked {
+        ui.painter()
+            .circle_filled(c, radius, colors.fg(Token::Mark));
+    } else if r.hovered() {
+        let stroke = Stroke::new(1.0, colors.fg(Token::FgDim));
+        ui.painter().circle_stroke(c, radius, stroke);
+    }
+    let what = if marked { "Unmark" } else { "Mark" };
+    r.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, marked, what));
+    if r.clicked() {
+        out.push(Intent::Mark(i));
+    }
 }
 
 /// The size bar: the part of the largest row's size `frac` is.
@@ -308,6 +349,7 @@ fn new_entries(
     out: &mut Vec<Intent>,
 ) {
     let n = s.list.new_count as u64;
+    row.col(|_| {});
     row.col(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(colors.text(human(s.list.new_largest), Token::FgDim));

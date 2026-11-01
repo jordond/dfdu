@@ -26,6 +26,7 @@ crossbeam-channel.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
+rfd.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit.workspace = true

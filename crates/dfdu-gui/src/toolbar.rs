@@ -40,8 +40,16 @@ pub fn show(
         if ui.checkbox(&mut tree, "Tree").changed() {
             out.push(Intent::Act(Action::ToggleTree));
         }
+        let mut details = s.details.open;
+        if ui.checkbox(&mut details, "Details").changed() {
+            out.push(Intent::Act(Action::Details));
+        }
         ui.separator();
         filter(ui, s, view, out);
+        types(ui, s, colors, view, out);
+        if ui.button("Rescan").clicked() {
+            out.push(Intent::Act(Action::Rescan));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             scan_state(ui, s, colors, now);
         });
@@ -90,6 +98,22 @@ fn filter(ui: &mut Ui, s: &SessionState, view: &mut ViewState, out: &mut Vec<Int
     if s.filter.active() {
         let (shown, all) = s.filter.shown(s.hide_hidden);
         ui.label(format!("{shown} of {all}"));
+    }
+}
+
+/// The type picker's button, which says which types are shown while the filter is on; and a
+/// button that turns the filter off.
+fn types(ui: &mut Ui, s: &SessionState, colors: &Colors, view: &ViewState, out: &mut Vec<Intent>) {
+    let label = if s.types_active() {
+        colors.text(format!("Only {}", s.types), Token::StatusWarn)
+    } else {
+        egui::RichText::new("File types…")
+    };
+    if ui.selectable_label(view.types.is_some(), label).clicked() {
+        out.push(Intent::Act(Action::Types));
+    }
+    if s.types_active() && ui.button("All files").clicked() {
+        out.push(Intent::Type(dfdu_session::type_filter::Row::All));
     }
 }
 

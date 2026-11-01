@@ -2,13 +2,17 @@
 //! in the window what it does in the terminal. A character (`j`, `G`, `/`) is matched against the
 //! text typed, so it follows the keyboard layout; a named key (`↑`, `PgUp`, `Enter`) and `Ctrl-`
 //! with a letter against the key pressed. Only the actions this version of the window offers
-//! ([`OFFERED`]) are read, and none of them deletes.
+//! ([`OFFERED`]) are read, and in a read-only browser none that deletes or puts back.
+//!
+//! The platform's own shortcuts are read too: `Delete` moves to the Trash as `d` does, the
+//! system's copy shortcut copies the selected path and Cmd-F (Ctrl-F) opens the filter.
 
 use dfdu_session::actions::{ACTIONS, Action};
 use egui::{Event, Key, Modifiers};
 
-/// The actions the window offers: moving, opening, sorting, what the list shows, rescans and the
-/// filter. Marks, the other views and every action that deletes are left out of this version.
+/// The actions the window offers: moving, opening, sorting, what the list shows, rescans, the
+/// filters, marks, the details, the error list, the selected path, and deleting with its undo.
+/// The other views, the help and the command palette are left out of this version.
 pub const OFFERED: &[Action] = &[
     Action::Up,
     Action::Down,
@@ -33,7 +37,18 @@ pub const OFFERED: &[Action] = &[
     Action::CycleFold,
     Action::Rescan,
     Action::SkipStalled,
+    Action::ToggleMark,
+    Action::ClearMarks,
+    Action::RangeMark,
+    Action::CopyPath,
+    Action::OpenPath,
+    Action::Trash,
+    Action::DeletePermanent,
+    Action::Undo,
     Action::Filter,
+    Action::Types,
+    Action::Details,
+    Action::Errors,
     Action::Close,
 ];
 
@@ -77,8 +92,32 @@ fn binding(name: &str) -> Option<Binding> {
     }
 }
 
-/// The action offered that `event` runs, if any.
-pub fn action_for(event: &Event) -> Option<Action> {
+/// The platform's shortcut `event` is, if any.
+fn shortcut(event: &Event) -> Option<Action> {
+    match event {
+        Event::Copy => Some(Action::CopyPath),
+        Event::Key {
+            key: Key::Delete,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.is_none() => Some(Action::Trash),
+        Event::Key {
+            key: Key::F,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command_only() => Some(Action::Filter),
+        _ => None,
+    }
+}
+
+/// The action offered that `event` runs, if any; in a `read_only` browser none that deletes.
+pub fn action_for(event: &Event, read_only: bool) -> Option<Action> {
+    let offered = |a: Action| !(read_only && a.deletes());
+    if let Some(a) = shortcut(event) {
+        return Some(a).filter(|&a| offered(a));
+    }
     let pressed = match event {
         Event::Text(t) => {
             let mut chars = t.chars();
@@ -98,7 +137,7 @@ pub fn action_for(event: &Event) -> Option<Action> {
         },
         _ => return None,
     };
-    OFFERED.iter().copied().find(|&a| {
+    OFFERED.iter().copied().filter(|&a| offered(a)).find(|&a| {
         ACTIONS
             .iter()
             .filter(|info| info.action == a)
@@ -114,15 +153,15 @@ fn plain_or_ctrl(m: Modifiers) -> Option<bool> {
 }
 
 /// Takes the events of this frame that run an offered action out of `ctx`'s input, so no widget
-/// acts on them too, and returns their actions in order. Nothing is taken while a text field has
-/// the keyboard.
-pub fn take(ctx: &egui::Context) -> Vec<Action> {
+/// acts on them too, and returns their actions in order; in a `read_only` browser the keys that
+/// delete are left alone. Nothing is taken while a text field has the keyboard.
+pub fn take(ctx: &egui::Context, read_only: bool) -> Vec<Action> {
     if ctx.egui_wants_keyboard_input() {
         return Vec::new();
     }
     ctx.input_mut(|i| {
         let mut out = Vec::new();
-        i.events.retain(|ev| match action_for(ev) {
+        i.events.retain(|ev| match action_for(ev, read_only) {
             Some(a) => {
                 out.push(a);
                 false
@@ -134,125 +173,4 @@ pub fn take(ctx: &egui::Context) -> Vec<Action> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn key(key: Key, modifiers: Modifiers) -> Event {
-        Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers,
-        }
-    }
-
-    fn text(t: &str) -> Event {
-        Event::Text(t.into())
-    }
-
-    #[test]
-    fn the_terminal_keys_move_open_and_sort() {
-        let none = Modifiers::NONE;
-        assert_eq!(action_for(&text("j")), Some(Action::Down));
-        assert_eq!(action_for(&key(Key::ArrowDown, none)), Some(Action::Down));
-        assert_eq!(action_for(&text("k")), Some(Action::Up));
-        assert_eq!(action_for(&key(Key::ArrowUp, none)), Some(Action::Up));
-        assert_eq!(action_for(&key(Key::Enter, none)), Some(Action::Enter));
-        assert_eq!(action_for(&text("l")), Some(Action::Open));
-        assert_eq!(action_for(&key(Key::ArrowRight, none)), Some(Action::Open));
-        assert_eq!(action_for(&key(Key::Backspace, none)), Some(Action::Parent));
-        assert_eq!(action_for(&text("h")), Some(Action::Parent));
-        assert_eq!(action_for(&text("<")), Some(Action::Parent));
-        assert_eq!(action_for(&text("G")), Some(Action::Last));
-        assert_eq!(action_for(&key(Key::Home, none)), Some(Action::First));
-        assert_eq!(
-            action_for(&key(Key::PageDown, none)),
-            Some(Action::PageDown)
-        );
-        assert_eq!(action_for(&text("s")), Some(Action::SortSize));
-        assert_eq!(action_for(&text("n")), Some(Action::SortName));
-        assert_eq!(action_for(&text("M")), Some(Action::SortMtime));
-        assert_eq!(action_for(&text("a")), Some(Action::ToggleApparent));
-        assert_eq!(action_for(&text("e")), Some(Action::ToggleHidden));
-        assert_eq!(action_for(&text("T")), Some(Action::ToggleTree));
-        assert_eq!(action_for(&text("/")), Some(Action::Filter));
-        assert_eq!(action_for(&key(Key::Escape, none)), Some(Action::Close));
-    }
-
-    #[test]
-    fn ctrl_letters_need_ctrl_and_the_platform_shortcuts_are_left_alone() {
-        assert_eq!(
-            action_for(&key(Key::U, Modifiers::CTRL)),
-            Some(Action::HalfPageUp)
-        );
-        assert_eq!(
-            action_for(&key(Key::D, Modifiers::CTRL)),
-            Some(Action::HalfPageDown)
-        );
-        assert_eq!(action_for(&key(Key::U, Modifiers::NONE)), None);
-        // Cmd-↓ on a Mac, Alt-← anywhere: not the plain key.
-        assert_eq!(action_for(&key(Key::ArrowDown, Modifiers::MAC_CMD)), None);
-        assert_eq!(action_for(&key(Key::ArrowLeft, Modifiers::ALT)), None);
-        // Shift with a named key is still the key.
-        assert_eq!(
-            action_for(&key(Key::ArrowDown, Modifiers::SHIFT)),
-            Some(Action::Down)
-        );
-        let released = Event::Key {
-            key: Key::Enter,
-            physical_key: None,
-            pressed: false,
-            repeat: false,
-            modifiers: Modifiers::NONE,
-        };
-        assert_eq!(action_for(&released), None);
-    }
-
-    #[test]
-    fn nothing_offered_deletes_marks_or_quits() {
-        assert!(OFFERED.iter().all(|a| !a.deletes()));
-        for left_out in ["d", "D", "U", " ", "v", "X", "q", "y", "2", "t", "i", "?"] {
-            assert_eq!(action_for(&text(left_out)), None, "{left_out:?}");
-        }
-        assert_eq!(action_for(&key(Key::Space, Modifiers::NONE)), None);
-        assert_eq!(action_for(&key(Key::C, Modifiers::CTRL)), None);
-    }
-
-    #[test]
-    fn every_offered_action_has_a_key_the_window_reads() {
-        for &a in OFFERED {
-            let info = ACTIONS.iter().find(|i| i.action == a).expect("in ACTIONS");
-            assert!(
-                info.keys.split_whitespace().any(|k| binding(k).is_some()),
-                "{a:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_text_field_keeps_its_keys() {
-        let ctx = egui::Context::default();
-        let mut events = vec![text("j"), key(Key::ArrowDown, Modifiers::NONE)];
-        let mut taken = Vec::new();
-        let mut frame = |events| {
-            let mut out = ctx.run_ui(
-                egui::RawInput {
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    let mut s = String::new();
-                    ui.text_edit_singleline(&mut s).request_focus();
-                    taken = take(ui.ctx());
-                },
-            );
-            out.textures_delta.clear();
-        };
-        // The first frame gives the field the focus; from the next it has the keys.
-        frame(events.clone());
-        events.reverse();
-        frame(events);
-        assert!(taken.is_empty(), "{taken:?}");
-    }
-}
+mod tests;
