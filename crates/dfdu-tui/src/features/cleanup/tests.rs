@@ -1,8 +1,11 @@
 use std::time::Instant;
 
+use dfdu_engine::{Command, Model};
+use dfdu_tree::{Class, HostPath, Kind, Safety, now_secs};
 use ratatui::crossterm::event::KeyCode;
 
 use super::*;
+use crate::state::marks;
 use crate::tests::{classified, classified_app, sync};
 use crate::tests::{press, render};
 use crate::theme::Theme;
@@ -30,7 +33,7 @@ fn groups_by_category_and_safety_and_marks_the_recommended() {
     );
     sync(&mut app, &fx.m, t0);
     assert!(active(&app));
-    let items = &app.extras.cleanup.items;
+    let items = &app.session.extras.cleanup.items;
     assert_eq!(items.len(), 2, "{items:?}");
     // Both are below their rules' minimum sizes: nothing is recommended.
     assert!(app.session.marks.is_empty());
@@ -124,7 +127,7 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     // On without the user opening the view: the read takes the matches in, and marks nothing.
     app.session.view = crate::app::views::View::Cleanup;
     sync(&mut app, &fx.m, t0);
-    assert_eq!(app.extras.cleanup.items.len(), 3);
+    assert_eq!(app.session.extras.cleanup.items.len(), 3);
     assert!(app.session.marks.is_empty());
     app.key(press(KeyCode::Char('1')), t0);
 
@@ -155,32 +158,6 @@ fn recommended_items_are_marked_only_when_the_view_opens() {
     assert!(app.session.marks.is_empty());
 }
 
-#[test]
-fn a_read_only_browser_never_marks() {
-    let fx = with_recommended();
-    let t0 = Instant::now();
-    let mut app = App::new(Theme::no_color(), t0);
-    app.session.read_only = true;
-    sync(&mut app, &fx.m, t0);
-    app.key(press(KeyCode::Char('3')), t0);
-    sync(&mut app, &fx.m, t0);
-    assert!(app.session.marks.is_empty());
-    // `A` and Space say why instead.
-    app.key(press(KeyCode::Char('A')), t0);
-    assert!(app.session.marks.is_empty());
-    assert_eq!(
-        app.session.status.as_deref(),
-        Some(crate::app::keys::READ_ONLY)
-    );
-    app.session.status = None;
-    app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.session.marks.is_empty());
-    assert_eq!(
-        app.session.status.as_deref(),
-        Some(crate::app::keys::READ_ONLY)
-    );
-}
-
 /// The group rows' columns are as wide as the categories shown, a category found at two safety
 /// levels shows each level, and a long path is shortened in the middle.
 #[test]
@@ -189,7 +166,7 @@ fn group_columns_fit_the_categories_shown() {
     let t0 = Instant::now();
     let mut app = opened(&fx.m, t0);
     let rules = app.session.snap.rules.clone().unwrap();
-    let base = app.extras.cleanup.items[0].clone();
+    let base = app.session.extras.cleanup.items[0].clone();
     // Three and a half days old, so the age shown stays the same during the test.
     let mtime = now_secs() - 3 * 86_400 - 43_200;
     let it = |id: &str, safety: Safety, path: &str| Item {
@@ -203,7 +180,7 @@ fn group_columns_fit_the_categories_shown() {
         ..base.clone()
     };
     let long = "/r/clients/northwind-traders/website-redesign-2026/frontend/node_modules";
-    app.extras.cleanup.items = vec![
+    app.session.extras.cleanup.items = vec![
         it(
             "node.node_modules",
             Safety::Regenerable,
@@ -214,7 +191,7 @@ fn group_columns_fit_the_categories_shown() {
     ];
     for row in rows(&app) {
         if let Row::Group { cat, safety } = row {
-            app.cleanup.open.insert((cat, safety));
+            app.session.cleanup.open.insert((cat, safety));
         }
     }
     let frame = render(&mut app, t0, 80, 20);
@@ -265,7 +242,7 @@ fn no_matches_have_an_empty_state() {
     fx.m.rules = Some(std::sync::Arc::new(dfdu_rules::builtin(&env).0));
     let t0 = Instant::now();
     let mut app = opened(&fx.m, t0);
-    assert!(active(&app) && app.extras.cleanup.items.is_empty());
+    assert!(active(&app) && app.session.extras.cleanup.items.is_empty());
     let frame = render(&mut app, t0, 100, 20);
     assert!(frame.contains("╭ Cleanup ─"), "{frame}");
     assert!(frame.contains("Esc  back to Files"), "{frame}");
@@ -285,65 +262,6 @@ fn a_short_terminal_still_shows_the_groups() {
     assert!(frame.contains("▸ [ ] OS and user caches"), "{frame}");
 }
 
-#[test]
-fn recommended_items() {
-    let fx = classified();
-    let t0 = Instant::now();
-    let app = opened(&fx.m, t0);
-    let rules = app.session.snap.rules.clone().unwrap();
-    let base = app.extras.cleanup.items[0].clone();
-    let rule = |id: &str| rules.index(id).unwrap();
-    let now = now_secs();
-    let day = 86_400;
-    let it = |id: &str, safety: Safety, size: u64, age_days: i64, flags: u8| Item {
-        class: Class {
-            rule: rule(id),
-            safety,
-            flags: dfdu_tree::ClassFlags::from_bits(flags),
-            ..base.class
-        },
-        size,
-        mtime: now - age_days * day,
-        ..base.clone()
-    };
-    let gib = 1 << 30;
-    let v = |it: Item| recommended(&app, &it, now).expect("rules");
-    // Safe above its minimum (50 MiB), quiet for a week.
-    assert_eq!(
-        v(it("generic.cachedir-tag", Safety::Safe, gib, 8, 0)),
-        Verdict::Safe
-    );
-    assert_eq!(
-        v(it("generic.cachedir-tag", Safety::Safe, 1 << 20, 8, 0)),
-        Verdict::Below(50 << 20)
-    );
-    assert_eq!(
-        v(it("generic.cachedir-tag", Safety::Safe, gib, 2, 0)),
-        Verdict::Newer(7)
-    );
-    // Regenerable only when stale (the Rust rule: 14 days).
-    assert_eq!(
-        v(it("rust.target", Safety::Regenerable, gib, 15, 0)),
-        Verdict::Stale(14)
-    );
-    assert_eq!(
-        v(it("rust.target", Safety::Regenerable, gib, 10, 0)),
-        Verdict::Newer(14)
-    );
-    // Never review, nothing in use or tracked by git.
-    assert_eq!(
-        v(it("rust.target", Safety::Review, gib, 99, 0)),
-        Verdict::Level(Safety::Review)
-    );
-    let in_use = dfdu_tree::ClassFlags::IN_USE.bits();
-    assert_eq!(
-        v(it("rust.target", Safety::Regenerable, gib, 99, in_use)),
-        Verdict::InUse
-    );
-    assert!(Verdict::Safe.recommended() && Verdict::Stale(14).recommended());
-    assert!(!Verdict::Newer(7).recommended());
-}
-
 /// Each item row says in a word why it is or is not suggested, and the detail pane explains the
 /// selected item's rule and the reason in full.
 #[test]
@@ -353,7 +271,7 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     let mut app = opened(&fx.m, t0);
     for row in rows(&app) {
         if let Row::Group { cat, safety } = row {
-            app.cleanup.open.insert((cat, safety));
+            app.session.cleanup.open.insert((cat, safety));
         }
     }
     let frame = render(&mut app, t0, 100, 24);
@@ -376,12 +294,12 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     insta::assert_snapshot!("cleanup_notes_100x24", frame);
 
     // On an item, its rule and the reason in full in the pane below the rows.
-    let items = app.extras.cleanup.items.clone();
+    let items = app.session.extras.cleanup.items.clone();
     let at = items
         .iter()
         .position(|it| it.path.to_local().ends_with("old-cache"))
         .unwrap();
-    app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
+    app.session.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
     let frame = render(&mut app, t0, 100, 24);
     let rules = app.session.snap.rules.clone().unwrap();
     let name = &rules.rule(items[at].class.rule).name;
@@ -402,60 +320,6 @@ fn rows_say_why_and_the_rule_is_explained_below() {
     assert!(line.contains(" │ "), "{wide}");
 }
 
-/// The user caches yield to the caches inside them: listed for the rest, and marking them
-/// marks that rest, not the folder whole.
-#[test]
-fn marking_a_container_marks_its_rest() {
-    let fx = dfdu_engine::test_support::caches();
-    let cache = fx.find("Caches");
-    let m = Model {
-        tree: fx.tree,
-        rules: Some(std::sync::Arc::new(fx.rules)),
-        ..Model::default()
-    };
-    let t0 = Instant::now();
-    let mut app = opened(&m, t0);
-    let items = app.extras.cleanup.items.clone();
-    let at = items
-        .iter()
-        .position(|it| it.path.to_local().ends_with("Caches"))
-        .expect("the user caches are listed");
-    let it = &items[at];
-    assert_eq!(it.size, m.tree.total(cache).alloc - 500);
-    let mut rest: Vec<&HostPath> = it.rest.iter().map(|r| &r.path).collect();
-    rest.sort();
-    assert_eq!(rest.len(), 2, "{rest:?}");
-    assert!(
-        items
-            .iter()
-            .any(|i| i.path.to_local().ends_with("Caches/pip"))
-    );
-    let cat = app
-        .session
-        .snap
-        .rules
-        .as_ref()
-        .unwrap()
-        .rule(it.class.rule)
-        .category;
-    app.cleanup.open.insert((cat, it.class.safety));
-    app.cleanup.cursor = rows(&app).iter().position(|r| *r == Row::Item(at)).unwrap();
-    app.key(press(KeyCode::Char(' ')), t0);
-    let mut marked: Vec<&HostPath> = app
-        .session
-        .marks
-        .items()
-        .iter()
-        .map(|i| &i.target.path)
-        .collect();
-    marked.sort();
-    assert_eq!(marked, rest);
-    assert!(is_marked(&app, it));
-    app.cleanup.cursor -= 1;
-    app.key(press(KeyCode::Char(' ')), t0);
-    assert!(app.session.marks.is_empty());
-}
-
 #[test]
 fn half_pages_move_the_cursor() {
     let fx = classified();
@@ -469,7 +333,7 @@ fn half_pages_move_the_cursor() {
     };
     let last = rows(&app).len() - 1;
     app.key(ctrl('d'), t0);
-    assert_eq!(app.cleanup.cursor, last.min(5));
+    assert_eq!(app.session.cleanup.cursor, last.min(5));
     app.key(ctrl('u'), t0);
-    assert_eq!(app.cleanup.cursor, 0);
+    assert_eq!(app.session.cleanup.cursor, 0);
 }

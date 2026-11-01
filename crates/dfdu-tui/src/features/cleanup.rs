@@ -12,464 +12,126 @@
 //! run first, then `y` runs it; `v` picks a further-reaching form, which `y` must confirm
 //! twice. `A` marks the recommended items again and `f` shows only the safer levels; like `N`,
 //! they are registry actions (`app::keys`) that act only while the view is shown.
+//!
+//! The rows, the ticks and what they mark are the session's (`dfdu_session::cleanup`): the keys
+//! turn into its intents ([`Intent`]). The native pane and the scroll stay here.
 
 use std::collections::HashSet;
 
-use dfdu_engine::{Command, Model, Verdict, verdict};
+use dfdu_engine::Verdict;
 use dfdu_rules::CategoryIx;
-use dfdu_tree::{
-    Class, DirState, HostPath, Ident, Ix, Kind, NodeRef, Safety, Target, Totals, now_secs,
-};
+use dfdu_session::cleanup as session;
+use dfdu_tree::{NodeRef, Safety};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
-use crate::app::views::{self, View};
+use crate::app::views;
 use crate::app::{App, Effect};
-use crate::format::{human, plural};
-use crate::state::marks;
+pub use session::{Intent, Item, Row, markable};
 
 mod draw;
 mod pane;
-mod rows;
-
-pub use rows::enter_does;
-pub(crate) use rows::selected;
-use rows::{Row, group_items, is_open, rows, section_items, set_open};
 
 pub use draw::draw;
 pub use pane::command;
 
-/// Output lines the native pane keeps.
-const PANE_LINES: usize = 200;
+/// The rows the page keys move the view's cursor by.
+const PAGE: usize = 10;
 
-/// What the view keeps between frames.
+/// What only the terminal keeps of the view between frames: the scroll and the native pane.
 #[derive(Clone, Debug, Default)]
 pub struct Cleanup {
-    cursor: usize,
     scroll: usize,
-    /// Categories shown with their items, by (category, safety); closed by default.
-    open: HashSet<(CategoryIx, Safety)>,
-    /// Safety sections closed by the user; open by default.
-    closed: HashSet<Safety>,
-    /// Only items this safe or safer; `None` shows all.
-    filter: Option<Safety>,
-    /// The recommended items were marked (once, when the view was first opened with items).
-    preselected: bool,
-    /// The view was just opened: the next read marks the recommended items if it finds any
-    /// matches, and they were never marked before.
-    premark: bool,
     pane: Option<pane::Pane>,
     commands: u64,
-    /// The extras were read since the view was switched on.
-    fresh: bool,
-    /// What the last read found to reclaim, for the view's tab; `None` before the first.
-    reclaimable: Option<u64>,
-    /// The tree's version and number of matches the last total was counted at.
-    counted_at: Option<(u64, usize)>,
-}
-
-/// One match, as the last read found it.
-#[derive(Clone, Debug)]
-pub struct Item {
-    pub node: NodeRef,
-    pub path: HostPath,
-    pub dev_ino: (u64, u64),
-    pub kind: Kind,
-    pub class: Class,
-    pub size: u64,
-    pub items: u64,
-    pub shared_out: u64,
-    pub mtime: i64,
-    pub scanning: bool,
-    /// With matches inside it listed on their own, the entries that marking it marks
-    /// ([`dfdu_engine::Listed::rest`]); empty when it is marked whole.
-    pub rest: Vec<Item>,
-}
-
-/// The native command output the view shows.
-#[derive(Clone, Debug, Default)]
-pub struct NativeView {
-    pub id: u64,
-    pub lines: Vec<String>,
-    pub done: Option<Result<(), String>>,
-}
-
-/// What [`read`] takes from the model.
-#[derive(Clone, Debug, Default)]
-pub struct Info {
-    pub items: Vec<Item>,
-    pub native: Option<NativeView>,
-    /// What native size commands reported, by rule name.
-    pub native_sizes: Vec<(String, Result<u64, String>)>,
-    /// What the matches that can be ticked add up to, for the tab and the summary bar alike.
-    pub total: Option<Reclaim>,
-}
-
-/// What the matches that can be ticked add up to.
-#[derive(Clone, Copy, Debug)]
-pub struct Reclaim {
-    /// The tree's version and number of matches it was counted at ([`count_key`]).
-    pub at: (u64, usize),
-    pub size: u64,
 }
 
 /// True when the view is shown, and so takes the keys it knows.
 pub fn active(app: &App) -> bool {
-    views::current(app) == View::Cleanup
+    session::active(&app.session)
 }
 
-/// The view was opened ([`views::switch`]), or opened `again` while shown: it reads its matches
-/// again, and until it once did, marks the recommended items ([`apply`]). Opened from another
-/// view, it also asks the rules' native size commands for their numbers.
-pub fn on_open(app: &mut App, again: bool) -> Vec<Effect> {
-    app.cleanup.fresh = false;
-    app.cleanup.premark = !app.cleanup.preselected && !app.session.read_only;
-    if again {
-        return Vec::new();
-    }
-    vec![Effect::Send(Command::NativeSizes)]
-}
-
-/// What the matches that can be ticked add up to: the summary bar's total, kept current while
-/// the view is closed too (counted again when the tree changes, once the scan is done);
-/// `None` before the first count.
+/// What the matches that can be ticked add up to ([`session::reclaimable`]).
 pub fn reclaimable(app: &App) -> Option<u64> {
-    app.cleanup.reclaimable
+    session::reclaimable(&app.session)
 }
 
-/// The tree's version and its number of matches: the total is counted again when either
-/// changes.
-fn count_key(m: &Model) -> (u64, usize) {
-    (m.tree.version(), m.tree.classes().count())
+pub(crate) fn rows(app: &App) -> Vec<Row> {
+    session::rows(&app.session)
 }
 
-/// The view needs a read: it was just switched on.
-pub fn stale(app: &App) -> bool {
-    active(app) && !app.cleanup.fresh
+pub(crate) fn selected(app: &App) -> Option<&Item> {
+    session::selected(&app.session)
 }
 
-/// The listed matches ([`dfdu_engine::listed`]), under the read lock. Matches are few: one per
-/// matched directory, and below it only those a rule that does not stop the descent lets in.
-pub fn read(m: &Model, app: &App) -> Info {
-    // Without the rules there is nothing to list or count, and the view is not shown
-    // ([`views::current`]).
-    let Some(rules) = &m.rules else {
-        return Info::default();
-    };
-    if !active(app) {
-        // Closed, only the total for the tab, when the tree changed since it was counted.
-        let at = count_key(m);
-        if app.session.snap.busy || app.cleanup.counted_at == Some(at) {
-            return Info::default();
-        }
-        let total = (dfdu_engine::listed(&m.tree, rules).iter())
-            .filter(|l| l.class.safety < Safety::Protected)
-            .map(|l| l.total.alloc)
-            .sum();
-        return Info {
-            total: Some(Reclaim { at, size: total }),
-            ..Info::default()
-        };
-    }
-    let t = &m.tree;
-    let item = |ix: Ix, path: HostPath, class: Class, tot: Totals, scanning: bool| Item {
-        node: t.node_ref(ix),
-        path,
-        dev_ino: t.dev_ino(ix),
-        kind: t.kind(ix),
-        class,
-        size: tot.alloc,
-        items: tot.items,
-        shared_out: tot.shared_out,
-        mtime: t.mtime(ix),
-        scanning,
-        rest: Vec::new(),
-    };
-    let items: Vec<Item> = dfdu_engine::listed(t, rules)
-        .into_iter()
-        .map(|l| {
-            let rest = (l.rest.iter())
-                .map(|&r| {
-                    let scanning = t.dir(r).is_some_and(|d| d.state == DirState::Pending);
-                    item(r, t.host_path(r), l.class, t.total(r), scanning)
-                })
-                .collect();
-            Item {
-                rest,
-                ..item(l.ix, l.path, l.class, l.total, l.scanning)
-            }
-        })
-        .collect();
-    let native = m.status.native.as_ref().map(|n| NativeView {
-        id: n.id,
-        lines: n
-            .lines
-            .iter()
-            .skip(n.lines.len().saturating_sub(PANE_LINES))
-            .cloned()
-            .collect(),
-        done: n.done.clone(),
-    });
-    let mut native_sizes: Vec<(String, Result<u64, String>)> = (m.native_sizes.iter())
-        .map(|(&r, v)| (rules.rule(r).name.clone(), v.clone()))
-        .collect();
-    native_sizes.sort_by(|a, b| a.0.cmp(&b.0));
-    let total = items
-        .iter()
-        .filter(|it| markable(it))
-        .map(|it| it.size)
-        .sum();
-    Info {
-        items,
-        native,
-        native_sizes,
-        total: Some(Reclaim {
-            at: count_key(m),
-            size: total,
-        }),
-    }
+/// What `Enter` does on the selected row, for the footer.
+pub fn enter_does(app: &App) -> &'static str {
+    session::enter_does(&app.session)
 }
 
-/// Takes in a read. The first read after the user opened the view ([`on_open`]) marks the
-/// recommended items, unless it found no matches yet: then the next opening tries again.
-pub fn apply(app: &mut App) {
-    app.cleanup.fresh = true;
-    if let Some(Reclaim { at, size }) = app.extras.cleanup.total {
-        app.cleanup.reclaimable = Some(size);
-        app.cleanup.counted_at = Some(at);
-    }
-    let premark = std::mem::take(&mut app.cleanup.premark);
-    if !active(app) || !premark || app.extras.cleanup.items.is_empty() {
-        return;
-    }
-    app.cleanup.preselected = true;
-    let (n, size) = mark_recommended(app);
-    if n > 0 {
-        app.session.status = Some(marked_status(n, size));
-    }
+fn is_open(app: &App, row: Row) -> bool {
+    session::is_open(&app.session, row)
 }
 
-/// The status line after `n` suggested items of `size` in all were ticked.
-fn marked_status(n: usize, size: u64) -> String {
-    format!(
-        "Ticked {n} suggested item{} ({}) · {} untick all",
-        plural(n as u64),
-        human(size),
-        crate::app::keys::first_key(crate::app::keys::Action::ClearMarks)
-    )
-}
-
-/// Whether `it` is marked by default, and why; `None` without rules.
-fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
-    let rules = app.session.snap.rules.as_ref()?;
-    Some(verdict(
-        rules.rule(it.class.rule),
-        it.class,
-        it.size,
-        now.saturating_sub(it.mtime),
-        it.scanning,
-    ))
-}
-
-/// Marks every recommended item; returns how many were newly marked, and their size.
-fn mark_recommended(app: &mut App) -> (usize, u64) {
-    let now = now_secs();
-    let picks: Vec<Item> = app
-        .extras
-        .cleanup
-        .items
-        .iter()
-        .filter(|it| recommended(app, it, now).is_some_and(Verdict::recommended))
-        .filter(|it| !is_marked(app, it))
-        .cloned()
-        .collect();
-    for it in &picks {
-        set_marked(app, it, true);
-    }
-    let size = picks.iter().map(marked_size).sum();
-    (picks.len(), size)
-}
-
-/// What marking `it` marks: itself, or its rest.
-fn marked_size(it: &Item) -> u64 {
-    if it.rest.is_empty() {
-        it.size
-    } else {
-        it.rest.iter().map(|r| r.size).sum()
-    }
-}
-
-/// Whether `it` is marked: itself, or all of its rest.
 fn is_marked(app: &App, it: &Item) -> bool {
-    if it.rest.is_empty() {
-        app.session.marks.contains(it.node)
-    } else {
-        it.rest.iter().all(|r| app.session.marks.contains(r.node))
-    }
+    session::is_marked(&app.session, it)
 }
 
-/// Marks or unmarks `it`, or each entry of its rest.
-fn set_marked(app: &mut App, it: &Item, on: bool) {
-    if it.rest.is_empty() {
-        marks::set(app, mark_of(it), on);
-    }
-    for r in &it.rest {
-        marks::set(app, mark_of(r), on);
-    }
+fn recommended(app: &App, it: &Item, now: i64) -> Option<Verdict> {
+    session::recommended(&app.session, it, now)
 }
 
-fn mark_of(it: &Item) -> marks::Item {
-    marks::Item {
-        target: Target {
-            node: Some(it.node),
-            path: it.path.clone(),
-            ident: Some(Ident {
-                dev_ino: it.dev_ino,
-                kind: it.kind,
-            }),
-        },
-        is_dir: it.kind == Kind::Dir,
-        size: it.size,
-        items: it.items,
-        shared_out: it.shared_out,
-        scanning: it.scanning,
-        inside: false,
-    }
+fn group_items(app: &App, cat: CategoryIx, safety: Safety) -> Vec<usize> {
+    session::group_items(&app.session, cat, safety)
 }
 
-/// Protected matches (git-tracked ones) are listed but cannot be marked.
-fn markable(it: &Item) -> bool {
-    it.class.safety < Safety::Protected
+fn section_items(app: &App, safety: Safety) -> Vec<usize> {
+    session::section_items(&app.session, safety)
 }
 
-/// The rows the page keys move the view's cursor by.
-const PAGE: usize = 10;
+/// The nodes of the matches the view lists and of what ticking them ticks
+/// ([`session::listed`]).
+pub fn listed(app: &App) -> HashSet<NodeRef> {
+    session::listed(&app.session)
+}
 
-/// Keys the view takes before the action registry; `None` passes the key on.
+/// Keys the view takes before the action registry; `None` passes the key on. The native pane
+/// takes every key while it is open; otherwise the registry's moves, `Enter`/`→`, `←` and
+/// `Space` become the session's intents.
 pub fn key(app: &mut App, k: &KeyEvent) -> Option<Vec<Effect>> {
     if app.cleanup.pane.is_some() {
         return Some(pane::key(app, k));
     }
     // What the first opening ticked is said until the next key.
     app.session.status = None;
-    let rows = rows(app);
-    let last = rows.len().saturating_sub(1);
+    let last = rows(app).len().saturating_sub(1);
     let action = keys::action_for(k)?;
-    if let Some(c) = keys::cursor_after(action, app.cleanup.cursor, last, PAGE) {
-        app.cleanup.cursor = c;
-        return Some(Vec::new());
-    }
-    let c = &mut app.cleanup;
-    match action {
-        Action::Open | Action::Enter => match rows.get(c.cursor) {
-            Some(&Row::Item(i)) => show_in_files(app, i),
-            Some(&row) => {
-                let open = is_open(app, row);
-                set_open(app, row, !open);
-            }
-            None => {}
+    let intent = match keys::cursor_after(action, app.session.cleanup.cursor, last, PAGE) {
+        Some(c) => Intent::Select(c),
+        None => match action {
+            Action::Open | Action::Enter => Intent::Activate,
+            Action::Parent => Intent::CloseUp,
+            Action::ToggleMark => Intent::Toggle,
+            _ => return None,
         },
-        Action::Parent => {
-            // The nearest open section or category at or above the cursor; none without rows.
-            let at = (0..=c.cursor.min(last)).rev().find_map(|i| {
-                let row = *rows.get(i)?;
-                (!matches!(row, Row::Item(_)) && is_open(app, row)).then_some((i, row))
-            });
-            if let Some((i, row)) = at {
-                set_open(app, row, false);
-                app.cleanup.cursor = i;
-            }
-        }
-        Action::ToggleMark => toggle(app, rows.get(app.cleanup.cursor).copied()),
-        _ => return None,
-    }
-    Some(Vec::new())
-}
-
-/// The nodes of the matches the view lists and of what ticking them ticks (a container's
-/// rest), for `d` to act on its ticks only.
-pub fn listed(app: &App) -> HashSet<NodeRef> {
-    (app.extras.cleanup.items.iter())
-        .flat_map(|it| std::iter::once(it.node).chain(it.rest.iter().map(|r| r.node)))
-        .collect()
-}
-
-/// Shows item `i` in Files: closes the view, opens the item's directory and selects it there.
-fn show_in_files(app: &mut App, i: usize) {
-    let Some(path) = app.extras.cleanup.items.get(i).map(|it| it.path.clone()) else {
-        return;
     };
-    let root = app.session.snap.root_path.clone();
-    views::switch(app, View::Files);
-    app.go_to(&path, &root);
+    Some(act(app, intent))
 }
 
-/// `f` ([`Action::CleanupFilter`](crate::app::keys::Action)): shows only the safer levels,
-/// one level fewer each time, then everything again.
-pub fn cycle_filter(app: &mut App) {
-    let c = &mut app.cleanup;
-    c.filter = match c.filter {
-        None => Some(Safety::Safe),
-        Some(Safety::Safe) => Some(Safety::Regenerable),
-        Some(Safety::Regenerable) => Some(Safety::Review),
-        Some(_) => None,
-    };
-    c.cursor = 0;
-    let label = c.filter.map_or("everything", |f| match f {
-        Safety::Safe => "safe only",
-        Safety::Regenerable => "safe and regenerable",
-        _ => "up to review",
-    });
-    app.session.status = Some(format!("cleanup: showing {label}"));
-}
-
-/// `A` ([`Action::TickSuggested`](crate::app::keys::Action)): marks every recommended item.
-pub fn tick_suggested(app: &mut App) {
-    if app.session.read_only {
-        app.session.status = Some(crate::app::keys::READ_ONLY.into());
-        return;
-    }
-    let (n, size) = mark_recommended(app);
-    app.session.status = Some(if n == 0 {
-        "every suggested item is ticked already".into()
-    } else {
-        marked_status(n, size)
-    });
-}
-
-fn toggle(app: &mut App, row: Option<Row>) {
-    let picks: Vec<usize> = match row {
-        Some(Row::Item(i)) => vec![i],
-        Some(Row::Group { cat, safety }) => group_items(app, cat, safety),
-        Some(Row::Section(safety)) => section_items(app, safety),
-        None => return,
-    };
-    let items: Vec<Item> = picks
-        .iter()
-        .filter_map(|&i| app.extras.cleanup.items.get(i).cloned())
-        .filter(markable)
-        .collect();
-    if items.is_empty() {
-        app.session.status = Some("protected: cannot be marked".into());
-        return;
-    }
-    let on = !items.iter().all(|it| is_marked(app, it));
-    for it in &items {
-        set_marked(app, it, on);
-    }
-    if matches!(row, Some(Row::Item(_))) {
-        app.cleanup.cursor += 1;
-    }
+/// Carries out `intent` ([`session::act`]) and what it leaves to the TUI.
+pub fn act(app: &mut App, intent: Intent) -> Vec<Effect> {
+    let then = session::act(&mut app.session, intent);
+    views::carry(app, then)
 }
 
 impl Cleanup {
-    /// Keeps the cursor on one of `rows` rows and inside the `list_h` rows shown.
-    fn clamp_scroll(&mut self, rows: usize, list_h: usize) {
-        self.cursor = self.cursor.min(rows.saturating_sub(1));
-        if self.cursor < self.scroll {
-            self.scroll = self.cursor;
-        } else if list_h > 0 && self.cursor >= self.scroll + list_h {
-            self.scroll = self.cursor + 1 - list_h;
+    /// Keeps `cursor` on one of `rows` rows and inside the `list_h` rows shown.
+    fn clamp_scroll(&mut self, cursor: &mut usize, rows: usize, list_h: usize) {
+        *cursor = (*cursor).min(rows.saturating_sub(1));
+        if *cursor < self.scroll {
+            self.scroll = *cursor;
+        } else if list_h > 0 && *cursor >= self.scroll + list_h {
+            self.scroll = *cursor + 1 - list_h;
         }
     }
 }

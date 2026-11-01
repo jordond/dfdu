@@ -12,6 +12,7 @@ use crate::format::human;
 use crate::state::tree;
 
 pub use dfdu_session::view::View;
+use dfdu_session::view::{Show, Then};
 
 /// The view shown ([`SessionState::current_view`](dfdu_session::SessionState::current_view)).
 pub fn current(app: &App) -> View {
@@ -49,12 +50,22 @@ pub fn switch(app: &mut App, view: View) -> Vec<Effect> {
             treemap::on_open(app);
             Vec::new()
         }
-        View::Cleanup => cleanup::on_open(app, again),
+        View::Cleanup => dfdu_session::cleanup::on_open(&mut app.session, again),
         View::Largest => {
             largest::on_open(app);
             Vec::new()
         }
     }
+}
+
+/// Carries out what an intent of a view left to the TUI: shows a path in Files, which moves
+/// the list's scroll too, and returns the effects for the run loop.
+pub fn carry(app: &mut App, then: Then) -> Vec<Effect> {
+    if let Some(Show { path, root }) = then.show {
+        switch(app, View::Files);
+        app.go_to(&path, &root);
+    }
+    then.effects
 }
 
 /// `[` and `]`: the view `by` places before or after the current one, round the end. Cleanup

@@ -1,6 +1,6 @@
 //! What the features read from the engine model besides the directory snapshot: the session's
-//! (`dfdu_session::extras`: the marks, the treemap's lower levels), the details of the selected
-//! entry, the debug counters, the cleanup matches, the nodes of the duplicate files and the
+//! (`dfdu_session::extras`: the marks, the treemap's lower levels, the cleanup matches), the
+//! details of the selected entry, the debug counters, the nodes of the duplicate files and the
 //! largest files below. Read with every snapshot, and on its own (without copying the directory
 //! again) when a feature needs it sooner.
 
@@ -8,13 +8,12 @@ use dfdu_engine::Model;
 use dfdu_scan::Budget;
 
 use crate::app::App;
-use crate::features::{cleanup, debug, details, largest};
+use crate::features::{debug, details, largest};
 
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
     pub details: details::Info,
     pub debug: debug::Info,
-    pub cleanup: cleanup::Info,
     /// The node of each file of the duplicates found, by path; `None` once a file is gone.
     pub dupes: std::collections::HashMap<std::path::PathBuf, Option<dfdu_tree::NodeRef>>,
     /// A new walk for the largest files below, when one was due.
@@ -32,7 +31,6 @@ pub fn read(m: &Model, app: &App, budget: &Budget, counters: debug::Counters) ->
     let extras = Extras {
         details: details::read(m, app),
         debug: debug::read(m, budget, counters),
-        cleanup: cleanup::read(m, app),
         dupes: crate::features::dupes::read(m, app),
         largest: largest::read(m, app),
         dupe_candidates: crate::features::dupes::count(m, app),
@@ -52,7 +50,6 @@ pub fn apply(app: &mut App, Found { session, extras }: Found) {
     dfdu_session::extras::apply(&mut app.session, session);
     app.extras = extras;
     details::apply(app);
-    cleanup::apply(app);
     largest::apply(app);
     crate::features::dupes::apply(app);
 }

@@ -78,10 +78,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let (list, pane_area) = review::split(body, 5);
     let list_h = usize::from(list.height).saturating_sub(1);
-    app.cleanup.clamp_scroll(rows.len(), list_h);
+    let at = &mut app.session.cleanup.cursor;
+    app.cleanup.clamp_scroll(at, rows.len(), list_h);
     let app: &App = app;
     let t = &app.theme;
-    let (cursor_at, scroll) = (app.cleanup.cursor, app.cleanup.scroll);
+    let (cursor_at, scroll) = (app.session.cleanup.cursor, app.cleanup.scroll);
     f.render_widget(Paragraph::new(head), area);
     let headings = format!(
         "{:indent$}{:>SIZE$}  {:>ITEMS$}  {:>AGE$}  path",
@@ -98,7 +99,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         (rows.iter())
             .filter_map(|r| match r {
                 Row::Item(i) => Some(tilde(
-                    &app.extras.cleanup.items[*i].path,
+                    &app.session.extras.cleanup.items[*i].path,
                     app.session.home.as_deref(),
                 )),
                 _ => None,
@@ -111,7 +112,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         let line = match *row {
             Row::Section(safety) => section_line(app, safety, width),
             Row::Group { cat, safety } => group_line(app, cat, safety, width),
-            Row::Item(i) => item_line(app, &app.extras.cleanup.items[i], now, shared, width),
+            Row::Item(i) => item_line(
+                app,
+                &app.session.extras.cleanup.items[i],
+                now,
+                shared,
+                width,
+            ),
         };
         lines.push(if i == cursor_at {
             cursor(t, line, list.width)
@@ -131,7 +138,14 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 /// (`super::reclaimable`).
 fn tally(app: &App) -> Tally {
     let mut sum = Tally::default();
-    for it in app.extras.cleanup.items.iter().filter(|it| markable(it)) {
+    for it in app
+        .session
+        .extras
+        .cleanup
+        .items
+        .iter()
+        .filter(|it| markable(it))
+    {
         sum.add(it.size, is_marked(app, it));
     }
     sum
@@ -142,7 +156,7 @@ fn tally(app: &App) -> Tally {
 fn notes(app: &App) -> Vec<Line<'static>> {
     let t = &app.theme;
     let mut lines = Vec::new();
-    let native = &app.extras.cleanup.native_sizes;
+    let native = &app.session.extras.cleanup.native_sizes;
     if !native.is_empty() {
         let parts: Vec<String> = native
             .iter()
@@ -161,7 +175,7 @@ fn notes(app: &App) -> Vec<Line<'static>> {
 
 /// The tick of the items `ix`: on when every one that can be ticked is.
 fn tick_of_items(app: &App, ix: &[usize]) -> Tick {
-    let items = &app.extras.cleanup.items;
+    let items = &app.session.extras.cleanup.items;
     let can: Vec<&Item> = ix
         .iter()
         .map(|&i| &items[i])
@@ -181,7 +195,10 @@ fn with_total(
     ix: &[usize],
     width: usize,
 ) -> Line<'static> {
-    let size: u64 = ix.iter().map(|&i| app.extras.cleanup.items[i].size).sum();
+    let size: u64 = ix
+        .iter()
+        .map(|&i| app.session.extras.cleanup.items[i].size)
+        .sum();
     let right = format!("{:>SIZE$}  {:>4} ", human(size), ix.len());
     let used: usize = left.iter().map(Span::width).sum();
     let room = width.saturating_sub(right.chars().count());
@@ -331,7 +348,7 @@ fn detail_lines<'a>(app: &'a App, row: Option<&Row>, now: i64) -> Vec<Line<'a>> 
     let (Some(i), Some(rules)) = (i, &app.session.snap.rules) else {
         return Vec::new();
     };
-    let it = &app.extras.cleanup.items[i];
+    let it = &app.session.extras.cleanup.items[i];
     let r = rules.rule(it.class.rule);
     let mut d = vec![
         Line::from(vec![

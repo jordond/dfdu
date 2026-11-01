@@ -1,6 +1,14 @@
-//! Text for numbers: sizes ([`human`]), compact counts, fractions and percentages.
+//! Text for numbers: sizes ([`human`]), compact counts, fractions and percentages, and the
+//! ending of a noun counted ([`plural`]).
 
 pub use dfdu_engine::human;
+
+/// The ending of a noun counted `n`: `s`, or nothing for one. Irregular plurals (`entries`,
+/// `matches`, `them`) are written where they are used.
+#[must_use]
+pub fn plural(n: u64) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
 
 /// `part` as a fraction of `whole`, for bars and percentages.
 #[must_use]

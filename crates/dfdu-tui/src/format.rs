@@ -1,16 +1,9 @@
 //! Text for numbers and names: sizes ([`human`]), compact counts, fractions and percentages
-//! (`dfdu_session::format`), bars, the spinner, names shortened to fit.
+//! and plurals (`dfdu_session::format`), bars, the spinner, names shortened to fit.
 
 use unicode_width::UnicodeWidthChar;
 
-pub use dfdu_session::format::{count, human, percent, ratio};
-
-/// The ending of a noun counted `n`: `s`, or nothing for one. Irregular plurals (`entries`,
-/// `matches`, `them`) are written where they are used.
-#[must_use]
-pub fn plural(n: u64) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
+pub use dfdu_session::format::{count, human, percent, plural, ratio};
 
 /// How bars are drawn: `--bars` and the theme key `bars`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

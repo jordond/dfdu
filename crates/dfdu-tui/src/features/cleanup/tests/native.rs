@@ -3,6 +3,8 @@
 
 use std::time::Instant;
 
+use dfdu_engine::Command;
+use dfdu_session::cleanup::NativeView;
 use ratatui::crossterm::event::KeyCode;
 
 use super::super::*;
@@ -30,7 +32,7 @@ fn native_commands_start_with_their_dry_run() {
             )
         })
         .unwrap();
-    app.cleanup.cursor = at;
+    app.session.cleanup.cursor = at;
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
     let out = app.key(press(KeyCode::Char('N')), t0);
@@ -48,7 +50,7 @@ fn native_commands_start_with_their_dry_run() {
     // While it runs, `y` does nothing.
     assert!(app.key(press(KeyCode::Char('y')), t0).is_empty());
     let id = app.cleanup.pane.as_ref().unwrap().id;
-    app.extras.cleanup.native = Some(NativeView {
+    app.session.extras.cleanup.native = Some(NativeView {
         id,
         lines: vec!["Summary 3 files".into()],
         done: Some(Ok(())),
@@ -87,7 +89,7 @@ fn read_only_runs_only_the_dry_run() {
             )
         })
         .unwrap();
-    app.cleanup.cursor = at;
+    app.session.cleanup.cursor = at;
     app.key(press(KeyCode::Enter), t0);
     app.key(press(KeyCode::Down), t0);
     let out = app.key(press(KeyCode::Char('N')), t0);
@@ -99,7 +101,7 @@ fn read_only_runs_only_the_dry_run() {
         "{out:?}"
     );
     let id = app.cleanup.pane.as_ref().unwrap().id;
-    app.extras.cleanup.native = Some(NativeView {
+    app.session.extras.cleanup.native = Some(NativeView {
         id,
         lines: vec!["Summary 3 files".into()],
         done: Some(Ok(())),

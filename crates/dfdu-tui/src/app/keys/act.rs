@@ -127,12 +127,14 @@ pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
         Action::NextView => fx.extend(views::step(app, 1)),
         Action::DupesKeep => crate::features::dupes::cycle_keep(app),
         Action::TickSuggested => match views::current(app) {
-            View::Cleanup => cleanup::tick_suggested(app),
+            View::Cleanup => fx.extend(cleanup::act(app, cleanup::Intent::TickSuggested)),
             View::Duplicates => dupes::tick_suggested(app),
             _ => only_in(app, a, &[View::Cleanup, View::Duplicates]),
         },
         Action::CompareAgain if dupes::active(app) => fx.extend(dupes::compare_again(app)),
-        Action::CleanupFilter if cleanup::active(app) => cleanup::cycle_filter(app),
+        Action::CleanupFilter if cleanup::active(app) => {
+            fx.extend(cleanup::act(app, cleanup::Intent::CycleFilter));
+        }
         Action::CleanupCommand if cleanup::active(app) => fx.extend(cleanup::command(app)),
         Action::CompareAgain => only_in(app, a, &[View::Duplicates]),
         Action::CleanupFilter | Action::CleanupCommand => only_in(app, a, &[View::Cleanup]),

@@ -16,6 +16,7 @@ use dfdu_engine::SizeMode;
 use dfdu_tree::Target;
 use dfdu_tree::filetype::TypeFilter;
 
+use crate::cleanup::Cleanup;
 use crate::extras::Extras;
 use crate::filter::Filter;
 use crate::marks::Marks;
@@ -83,6 +84,8 @@ pub struct SessionState {
     pub sort_schedule: SortSchedule,
     /// The Map view's depth and colouring.
     pub map: MapState,
+    /// The cleanup view's cursor, open rows, filter and what it marked.
+    pub cleanup: Cleanup,
     /// What the features read from the engine model with the last read.
     pub extras: Extras,
 }
@@ -120,6 +123,7 @@ impl SessionState {
             read_only: false,
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
+            cleanup: Cleanup::default(),
             extras: Extras::default(),
         }
     }

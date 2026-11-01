@@ -90,6 +90,7 @@ pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
     };
     // Until its result has arrived, the shown command counts as running.
     let done = app
+        .session
         .extras
         .cleanup
         .native
@@ -104,6 +105,7 @@ pub(super) fn key(app: &mut App, k: &KeyEvent) -> Vec<Effect> {
         return Vec::new();
     }
     let it = app
+        .session
         .extras
         .cleanup
         .items
@@ -174,7 +176,13 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect, t: &crate::theme::Theme
         height.min(area.height),
     );
     f.render_widget(Clear, rect);
-    let shown = app.extras.cleanup.native.as_ref().filter(|n| n.id == p.id);
+    let shown = app
+        .session
+        .extras
+        .cleanup
+        .native
+        .as_ref()
+        .filter(|n| n.id == p.id);
     let what = match p.variant {
         None => "its cleanup command".to_string(),
         Some(v) => def

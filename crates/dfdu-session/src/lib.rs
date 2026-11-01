@@ -12,6 +12,7 @@
 //! (`palette`), and the single-line text input (`line`).
 
 pub mod actions;
+pub mod cleanup;
 pub mod details;
 pub mod dupes;
 pub mod effect;
