@@ -1,13 +1,17 @@
 //! What a front end opens (`Source`) and the parts of starting it that need no terminal or
-//! window: resuming a scan read from a file (`resume`) and the link to the scan history its
-//! scan is recorded in (`history`).
+//! window: the engine for it with what its session needs (`open`), resuming a scan read from a
+//! file (`resume`) and the link to the scan history its scan is recorded in (`history`). A
+//! front end that offers a choice of disks asks for one before.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
-use dfdu_engine::{Engine, EngineOptions, JournalPosition};
-use dfdu_scan::JobOptions;
+use dfdu_engine::{Command, Engine, EngineOptions, JournalPosition};
+use dfdu_scan::{Backend, JobOptions, NativeBackend, PortableBackend};
 
+use crate::cache_link::CacheLink;
 use crate::history_link::HistoryLink;
+use crate::session::SessionOptions;
 
 /// Starts an engine scanning a directory on this host with the options given, and returns it
 /// with the options of the scan (which mounts it descends into, the rules it classifies with).
@@ -68,6 +72,128 @@ pub fn resume(
     Some((engine, path, job))
 }
 
+/// An engine started for a [`Source`], with what the session around it needs.
+pub struct Started<B: Backend> {
+    pub engine: Engine<B>,
+    pub setup: Setup,
+}
+
+/// What the session around an engine started for a [`Source`] needs.
+#[derive(Clone, Debug)]
+pub struct Setup {
+    /// The history and cache jobs of its session.
+    pub jobs: SessionOptions,
+    /// The scan is of this machine: mounts it did not enter and links out of it are looked up
+    /// here, and a comparison of duplicates reads its files.
+    pub local: bool,
+    /// Nothing is deleted: the scan was read from a file, or the engine is read-only.
+    pub read_only: bool,
+    /// The user's home directory, shown as `~`: `None` for another machine's scan.
+    pub home: Option<PathBuf>,
+}
+
+/// The engine of a source: the scans of this machine and of others run on the native backend,
+/// and a tree read from a file is browsed on the portable one.
+pub enum Opened {
+    Native(Started<NativeBackend>),
+    Imported(Started<PortableBackend>),
+}
+
+/// Starts the engine of `source` with `opts` and sends it its first command: the scan of a
+/// directory, the resume of a scan read from a file. A cached directory's session sends its
+/// own ([`crate::cache_link`]). With `record`, a scan of this machine is recorded in the
+/// history. A [`Source::Local`] needs its path: a front end asks for one first.
+///
+/// # Errors
+///
+/// When a [`Source::Local`] has no path, or a resumed scan has no root.
+pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Opened> {
+    let home = dfdu_engine::home_dir;
+    let read_only = opts.read_only;
+    let link = |root: &Path, job: &JobOptions| history(record, root, job, opts);
+    let local = |engine, history, cache| {
+        Opened::Native(Started {
+            engine,
+            setup: Setup {
+                jobs: SessionOptions { history, cache },
+                local: true,
+                read_only,
+                home: home(),
+            },
+        })
+    };
+    Ok(match source {
+        Source::Imported(tree) => Opened::Imported(Started {
+            engine: Engine::start_imported(tree, opts.clone()),
+            setup: Setup {
+                jobs: SessionOptions::default(),
+                local: false,
+                read_only: true,
+                // Most files are of this machine's scans; another system's paths are left
+                // alone by their host.
+                home: home(),
+            },
+        }),
+        Source::Remote { engine, path, job } => {
+            engine.send(Command::Scan { path, opts: job });
+            Opened::Native(Started {
+                engine,
+                setup: Setup {
+                    jobs: SessionOptions::default(),
+                    local: false,
+                    read_only,
+                    // Another host's paths are not below this one's home directory.
+                    home: None,
+                },
+            })
+        }
+        Source::Resumed {
+            tree,
+            journal,
+            start,
+        } => {
+            let Some((engine, path, job)) = resume(tree, journal, start, opts) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the scan read from the file has no root",
+                ));
+            };
+            local(engine, link(&path, &job), None)
+        }
+        Source::Cached { path, slot, start } => {
+            let root = slot.key.root().to_path_buf();
+            let (engine, job) = start(&path, opts.clone());
+            let history = link(&root, &job);
+            let cache = CacheLink {
+                slot,
+                path,
+                job,
+                save: !read_only,
+            };
+            local(engine, history, Some(cache))
+        }
+        Source::Local { path: None, .. } => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no directory to scan was chosen",
+            ));
+        }
+        Source::Local {
+            path: Some(path),
+            start,
+        } => {
+            let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let (engine, job) = start(&path, opts.clone());
+            let history = link(&root, &job);
+            engine.send(Command::Scan {
+                path: path.into(),
+                opts: job,
+            });
+            local(engine, history, None)
+        }
+    })
+}
+
 /// The link to the scan history a scan of `root` with `job`, by an engine with `engine`, is
 /// recorded in, its last scan's sizes loading; `None` unless `record` and the history has a
 /// place on this machine. Only scans that count the same data are compared.
@@ -81,4 +207,28 @@ pub fn history(
     let db = dfdu_sys::dirs::history_path().filter(|_| record)?;
     let key = dfdu_store::history::options_key(job, engine.measure_workers > 0);
     Some(HistoryLink::start(db, root.to_path_buf(), key))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn an_imported_tree_is_browsed_read_only_and_a_local_scan_needs_its_path() {
+        let opts = EngineOptions::default();
+        let Ok(Opened::Imported(s)) =
+            open(Source::Imported(dfdu_tree::Tree::default()), &opts, true)
+        else {
+            panic!("an imported tree");
+        };
+        assert!(s.setup.read_only && !s.setup.local);
+        assert!(s.setup.jobs.history.is_none() && s.setup.jobs.cache.is_none());
+        s.engine.shutdown(Duration::from_millis(200));
+        let start: StartLocal = Box::new(|_, _| panic!("no engine is started without a path"));
+        let local = Source::Local { path: None, start };
+        let e = open(local, &opts, false).err().expect("no path");
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+    }
 }

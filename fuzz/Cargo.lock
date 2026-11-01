@@ -501,6 +501,7 @@ dependencies = [
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
+ "dunce",
  "nucleo-matcher",
  "toml",
 ]

@@ -33,14 +33,13 @@ mod theme;
 mod view;
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
-use dfdu_engine::{Command, Engine, EngineOptions};
-use dfdu_scan::JobOptions;
-use dfdu_session::startup::resume;
+use dfdu_engine::{Engine, EngineOptions};
+use dfdu_session::startup::{self, Opened, Setup};
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
@@ -153,97 +152,34 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
     }
-    let read_only = opts.engine.read_only;
-    let ui_opts = |theme: Theme, history: Option<HistoryLink>, local: bool| UiOptions {
+    let source = match opts.source {
+        Source::Local { path: None, start } => match features::picker::pick(&mut terminal, &theme)?
+        {
+            Picked::Scan(p) => Source::Local {
+                path: Some(p),
+                start,
+            },
+            Picked::Quit => return Ok(()),
+        },
+        source => source,
+    };
+    let ui_opts = |setup: Setup| UiOptions {
         theme,
         color_level: colors.level,
         background: colors.background,
         mouse,
         debug: ui.debug_stats,
-        // Another host's paths are not below this one's home directory.
-        home: dfdu_engine::home_dir().filter(|_| local),
-        history,
-        cache: None,
+        home: setup.home,
+        history: setup.jobs.history,
+        cache: setup.jobs.cache,
         types: ui.types.clone(),
-        local,
-        read_only,
+        local: setup.local,
+        read_only: setup.read_only,
     };
-    let link = |root: &Path, job: &JobOptions, engine: &EngineOptions| {
-        dfdu_session::startup::history(opts.history, root, job, engine)
-    };
-    let (path, start) = match opts.source {
-        Source::Imported(tree) => {
-            let engine = Engine::start_imported(tree, opts.engine);
-            // Most files are of this machine's scans; another system's paths are left alone
-            // by their host.
-            let ui = UiOptions {
-                read_only: true,
-                home: dfdu_engine::home_dir(),
-                ..ui_opts(theme, None, false)
-            };
-            return browse(&mut terminal, restore, engine, ui);
-        }
-        Source::Remote { engine, path, job } => {
-            engine.send(Command::Scan { path, opts: job });
-            return browse(&mut terminal, restore, engine, ui_opts(theme, None, false));
-        }
-        Source::Resumed {
-            tree,
-            journal,
-            start,
-        } => {
-            let Some((engine, path, job)) = resume(tree, journal, start, &opts.engine) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "the scan read from the file has no root",
-                ));
-            };
-            let history = link(&path, &job, &opts.engine);
-            return browse(
-                &mut terminal,
-                restore,
-                engine,
-                ui_opts(theme, history, true),
-            );
-        }
-        Source::Cached { path, slot, start } => {
-            let root = slot.key.root().to_path_buf();
-            let (engine, job) = start(&path, opts.engine.clone());
-            let history = link(&root, &job, &opts.engine);
-            let cache = CacheLink {
-                slot,
-                path,
-                job,
-                save: !read_only,
-            };
-            let ui = UiOptions {
-                cache: Some(cache),
-                ..ui_opts(theme, history, true)
-            };
-            return browse(&mut terminal, restore, engine, ui);
-        }
-        Source::Local { path, start } => (path, start),
-    };
-    let path = match path {
-        Some(p) => p,
-        None => match features::picker::pick(&mut terminal, &theme)? {
-            Picked::Scan(p) => p,
-            Picked::Quit => return Ok(()),
-        },
-    };
-    let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
-    let (engine, job) = start(&path, opts.engine.clone());
-    let history = link(&root, &job, &opts.engine);
-    engine.send(Command::Scan {
-        path: path.into(),
-        opts: job,
-    });
-    browse(
-        &mut terminal,
-        restore,
-        engine,
-        ui_opts(theme, history, true),
-    )
+    match startup::open(source, &opts.engine, opts.history)? {
+        Opened::Native(s) => browse(&mut terminal, restore, s.engine, ui_opts(s.setup)),
+        Opened::Imported(s) => browse(&mut terminal, restore, s.engine, ui_opts(s.setup)),
+    }
 }
 
 /// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
