@@ -18,15 +18,72 @@ use egui::{Align, Layout, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use egui_extras::{Column, TableBuilder, TableRow};
 
 use crate::browser::{Intent, ViewState};
-use crate::menu;
-use crate::theme::Colors;
+use crate::theme::{Colors, style};
+use crate::{kit, menu};
 
-/// The names of the list's columns, as the accessibility tree has them.
-const COLUMNS: [&str; 6] = ["Marked", "Size", "Size bar", "Items", "Modified", "Name"];
-/// Width of the size bar.
-pub const BAR_WIDTH: f32 = 80.0;
-/// Indent of each tree level, in units of the row height.
-const INDENT: f32 = 0.9;
+/// Which of the columns that drop at narrow widths are shown, and the share column's width.
+#[derive(Clone, Copy)]
+struct Shown {
+    items: bool,
+    modified: bool,
+    category: bool,
+    share: f32,
+}
+
+impl Shown {
+    /// The columns `width` has room for beside a name of at least 160: the category first
+    /// (only when a row has one), then the date, then the items go; the bar shrinks before.
+    fn for_width(width: f32, any_category: bool) -> Shown {
+        let fixed = 22.0 + 160.0 + 96.0 + 8.0 * 7.0;
+        let mut room = width - fixed;
+        let mut take = |w: f32| {
+            let fits = room >= w;
+            if fits {
+                room -= w;
+            }
+            fits
+        };
+        let share_min = take(120.0);
+        let items = take(64.0);
+        let modified = take(104.0);
+        let category = any_category && take(150.0);
+        let share = if share_min {
+            (120.0 + room).min(220.0)
+        } else {
+            0.0
+        };
+        Shown {
+            items,
+            modified,
+            category,
+            share,
+        }
+    }
+
+    /// The names of the columns shown, as the accessibility tree has them.
+    fn names(self) -> Vec<&'static str> {
+        let mut n = vec!["Marked", "Name", "Size"];
+        if self.share > 0.0 {
+            n.push("Share");
+        }
+        if self.items {
+            n.push("Items");
+        }
+        if self.modified {
+            n.push("Modified");
+        }
+        if self.category {
+            n.push("Category");
+        }
+        n
+    }
+}
+/// Width of the share column: the bar and the percentage.
+pub const BAR_WIDTH: f32 = 200.0;
+/// Indent of each tree level.
+const INDENT: f32 = 16.0;
+/// The largest sizes of a listing stand out: the first this many rows sorted by size.
+const BIG: usize = 3;
 
 /// Draws the list and returns how many rows it had room for.
 pub fn show(
@@ -39,24 +96,37 @@ pub fn show(
     let row_h = row_height(ui);
     let visible = visible_rows(ui);
     if s.list.rows.is_empty() && s.list.new_count == 0 {
-        ui.label(colors.text(empty_note(s), Token::FgDim));
+        empty(ui, colors, &empty_note(s));
         return visible;
     }
     let selected = s.selected_index();
+    let any_category =
+        s.snap.rules.is_some() && s.list.rows.iter().any(|&r| s.snap.entries[r].tag.is_some());
+    let shown = Shown::for_width(ui.available_width(), any_category);
+    let names = shown.names();
     whole_rows(ui);
+    header_rule(ui, colors, row_h);
     let mut table = TableBuilder::new(ui)
         .id_salt(("list", &s.snap.dir_path))
-        .striped(true)
+        .striped(false)
         .sense(Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(row_h))
-        .column(Column::auto().at_least(70.0))
-        .column(Column::exact(BAR_WIDTH))
-        .column(Column::auto().at_least(50.0))
-        .column(Column::auto().at_least(80.0))
-        .column(Column::remainder())
-        .min_scrolled_height(0.0)
-        .auto_shrink(false);
+        .column(Column::exact(22.0))
+        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::exact(96.0));
+    if shown.share > 0.0 {
+        table = table.column(Column::exact(shown.share));
+    }
+    if shown.items {
+        table = table.column(Column::exact(64.0));
+    }
+    if shown.modified {
+        table = table.column(Column::exact(104.0));
+    }
+    if shown.category {
+        table = table.column(Column::exact(150.0).clip(true));
+    }
+    let mut table = table.min_scrolled_height(0.0).auto_shrink(false);
     if std::mem::take(&mut view.follow)
         && let Some(i) = selected
     {
@@ -65,17 +135,24 @@ pub fn show(
     let new_row = usize::from(s.list.new_count > 0);
     table
         .header(row_h, |mut h| {
-            for (key, label, name) in [
-                (None, "", "Marked"),
-                (Some(SortKey::Size), "Size", "Size"),
-                (None, "", "Size bar"),
-                (Some(SortKey::Items), "Items", "Items"),
-                (Some(SortKey::Mtime), "Modified", "Modified"),
-                (Some(SortKey::Name), "Name", "Name"),
+            for (key, label, name, right) in [
+                (None, "", "Marked", false),
+                (Some(SortKey::Name), "Name", "Name", false),
+                (Some(SortKey::Size), "Size", "Size", true),
+                (None, "", "Share", false),
+                (Some(SortKey::Items), "Items", "Items", true),
+                (Some(SortKey::Mtime), "Modified", "Modified", false),
+                (None, "Category", "Category", false),
             ] {
+                if !names.contains(&name) {
+                    continue;
+                }
                 h.col(|ui| {
                     name_column(ui, name);
-                    header(ui, s, colors, key, label, out);
+                    if name == "Modified" {
+                        ui.add_space(12.0);
+                    }
+                    header(ui, s, colors, key, label, right, out);
                 });
             }
         })
@@ -83,12 +160,21 @@ pub fn show(
             body.rows(row_h, s.list.rows.len() + new_row, |mut row| {
                 let i = row.index();
                 if i == s.list.rows.len() {
-                    new_entries(&mut row, s, colors, out);
+                    new_entries(&mut row, names.len(), s, colors, out);
                     return;
                 }
                 row.set_selected(selected == Some(i));
                 let e = &s.snap.entries[s.list.rows[i]];
-                entry(&mut row, s, colors, e, i, out);
+                entry(
+                    &mut row,
+                    s,
+                    colors,
+                    (shown, &names),
+                    e,
+                    i,
+                    selected == Some(i),
+                    out,
+                );
                 let r = row.response();
                 let slash = if e.is_dir && !e.pseudo { "/" } else { "" };
                 let name = String::from_utf8_lossy(&e.name);
@@ -106,6 +192,24 @@ pub fn show(
             });
         });
     visible
+}
+
+/// The rule in `border` under a table's header row of height `row_h`, across the sheet.
+pub fn header_rule(ui: &Ui, colors: &Colors, row_h: f32) {
+    let top = ui.cursor().top();
+    let x = ui.max_rect().x_range();
+    ui.painter().hline(
+        x,
+        top + row_h + ui.spacing().item_spacing.y / 2.0,
+        Stroke::new(1.0, colors.fg(Token::Border)),
+    );
+}
+
+/// What an empty view says, centred in it.
+pub fn empty(ui: &mut Ui, colors: &Colors, note: &str) {
+    ui.centered_and_justified(|ui| {
+        ui.label(kit::sans(note, 13.0).color(colors.fg(Token::FgDim)));
+    });
 }
 
 /// Makes the labels added to `ui` from now on take no clicks, so that a click or a right click
@@ -139,8 +243,8 @@ pub fn name_row(r: &egui::Response, selected: bool, label: String) {
 }
 
 /// The height of a row of the list and of the other views' tables.
-pub fn row_height(ui: &Ui) -> f32 {
-    ui.text_style_height(&egui::TextStyle::Body) + 4.0
+pub fn row_height(_ui: &Ui) -> f32 {
+    style::ROW
 }
 
 /// The rows a table under a header row has room for in `ui`: what a page moves by.
@@ -169,8 +273,27 @@ fn empty_note(s: &SessionState) -> String {
     }
 }
 
-/// A column's header: a click sorts by it, again reverses.
+/// A column's header, in the label style: a click sorts by it, again reverses; the sorted
+/// one in `header` with its arrow.
 fn header(
+    ui: &mut Ui,
+    s: &SessionState,
+    colors: &Colors,
+    key: Option<SortKey>,
+    label: &str,
+    right: bool,
+    out: &mut Vec<Intent>,
+) {
+    if right {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            header_text(ui, s, colors, key, label, out);
+        });
+    } else {
+        header_text(ui, s, colors, key, label, out);
+    }
+}
+
+fn header_text(
     ui: &mut Ui,
     s: &SessionState,
     colors: &Colors,
@@ -178,14 +301,25 @@ fn header(
     label: &str,
     out: &mut Vec<Intent>,
 ) {
-    let Some(key) = key else { return };
-    let r = ui.add(egui::Button::new(colors.text(label, Token::Header)).frame(false));
-    if s.sort.key == key {
-        let h = ui.text_style_height(&egui::TextStyle::Body);
-        let (rect, _) = ui.allocate_exact_size(vec2(h, h), Sense::hover());
-        let point = if s.sort.desc { Point::Down } else { Point::Up };
-        triangle(ui, colors.fg(Token::Header), rect, point);
-    }
+    let dim = colors.fg(Token::FgDim);
+    let Some(key) = key else {
+        if !label.is_empty() {
+            ui.label(kit::label(label, 12.0).color(dim));
+        }
+        return;
+    };
+    let sorted = s.sort.key == key;
+    let text = if sorted {
+        let arrow = if s.sort.desc { "↓" } else { "↑" };
+        kit::title(format!("{label} {arrow}"), 12.0).color(colors.fg(Token::Header))
+    } else {
+        kit::label(label, 12.0).color(dim)
+    };
+    let r = ui.add(
+        egui::Button::new(text)
+            .frame(false)
+            .min_size(vec2(0.0, 0.0)),
+    );
     if r.clicked() {
         out.push(Intent::Act(match key {
             SortKey::Size => Action::SortSize,
@@ -196,50 +330,137 @@ fn header(
     }
 }
 
+/// The colours of a row's text: every text in the selected row is `cursor`.
+pub struct Ink {
+    pub on: bool,
+    cursor: egui::Color32,
+}
+
+impl Ink {
+    pub fn new(colors: &Colors, on: bool) -> Self {
+        Ink {
+            on,
+            cursor: colors.fg(Token::Cursor),
+        }
+    }
+
+    /// `color`, or `cursor` on the selected row.
+    pub fn of(&self, color: egui::Color32) -> egui::Color32 {
+        if self.on { self.cursor } else { color }
+    }
+}
+
 /// The cells of entry `e` on row `i`.
+#[expect(clippy::too_many_arguments, reason = "a row's state")]
 fn entry(
     row: &mut TableRow<'_, '_>,
     s: &SessionState,
     colors: &Colors,
+    (shown, names): (Shown, &[&str]),
     e: &EntryData,
     i: usize,
+    on: bool,
     out: &mut Vec<Intent>,
 ) {
-    let dim = |text: String| colors.text(text, Token::FgDim);
-    let size_token = match e.mark {
-        Mark::Scanning | Mark::Rescanning | Mark::Stalled | Mark::Incomplete | Mark::Error => {
-            Token::FgDim
-        }
-        _ => Token::Fg,
-    };
+    let ink = Ink::new(colors, on);
+    let dim = ink.of(colors.fg(Token::FgDim));
+    let pending = matches!(
+        e.mark,
+        Mark::Scanning | Mark::Rescanning | Mark::Stalled | Mark::Incomplete | Mark::Error
+    );
     let marked = marks::is_marked(s, e);
-    cell(row, &COLUMNS, |ui| mark(ui, s, colors, e, marked, i, out));
-    cell(row, &COLUMNS, |ui| {
+    cell(row, names, |ui| mark(ui, s, colors, e, marked, i, out));
+    cell(row, names, |ui| {
+        name(ui, s, colors, &ink, e, marked, i, out)
+    });
+    cell(row, names, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let token = if marked { Token::Mark } else { size_token };
-            ui.label(colors.text(human(e.size), token));
+            let big = s.sort.key == SortKey::Size && s.sort.desc && i < BIG && !e.pseudo;
+            let text = human(e.size);
+            let t = if marked {
+                kit::mono_bold(text, 13.0).color(ink.of(colors.fg(Token::Mark)))
+            } else if pending {
+                kit::mono(text, 13.0).color(dim)
+            } else if big || on {
+                kit::mono_bold(text, 13.0).color(ink.of(colors.fg(Token::SizeBig)))
+            } else {
+                kit::mono(text, 13.0).color(colors.fg(Token::Fg))
+            };
+            ui.label(t);
         });
     });
-    cell(row, &COLUMNS, |ui| {
-        bar(ui, colors, ratio(e.size, s.list.rows_largest.max(1)))
-    });
-    cell(row, &COLUMNS, |ui| {
-        // The data shared between entries has no items of its own.
-        if !(e.pseudo && e.fold == 0) {
-            ui.label(dim(count(e.items)));
+    if shown.share > 0.0 {
+        cell(row, names, |ui| {
+            let total = s.size_mode.of(&s.snap.dir_total).max(1);
+            share(
+                ui,
+                colors,
+                &ink,
+                ratio(e.size, s.list.rows_largest.max(1)),
+                ratio(e.size, total),
+            );
+        });
+    }
+    if shown.items {
+        cell(row, names, |ui| {
+            // The data shared between entries has no items of its own.
+            if !(e.pseudo && e.fold == 0) {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(kit::mono(count(e.items), 13.0).color(dim));
+                });
+            }
+        });
+    }
+    if shown.modified {
+        cell(row, names, |ui| {
+            if e.mtime > 0 && !e.pseudo {
+                ui.add_space(12.0);
+                ui.label(kit::mono(dfdu_tree::day(e.mtime), 12.0).color(dim));
+            }
+        });
+    }
+    if !shown.category {
+        return;
+    }
+    cell(row, names, |ui| {
+        let rules = s.snap.rules.as_deref();
+        if let Some((tag, rules)) = e.tag.zip(rules) {
+            let (_, slot) = tag.category(rules);
+            let name = rules.rule(tag.class.rule).category().name;
+            // Inside a match, rows show its category dim: the match is the directory above.
+            let color = if tag.inherited {
+                dim
+            } else {
+                ink.of(colors.fg(category(slot)))
+            };
+            kit::chip(ui, name, color);
         }
     });
-    cell(row, &COLUMNS, |ui| {
-        if e.mtime > 0 && !e.pseudo {
-            ui.label(dim(dfdu_tree::day(e.mtime)));
-        }
-    });
-    cell(row, &COLUMNS, |ui| name(ui, s, colors, e, i, out));
 }
 
-/// The mark of entry `e` on row `i`: a dot when it is marked, a ring under the pointer; a click
-/// marks or unmarks it. A read-only browser marks nothing and draws none; nor do rows that are
-/// not entries (the data shared between entries, fold rows).
+/// The colour of category slot `slot`.
+pub fn category(slot: usize) -> Token {
+    dfdu_session::palette::Category::ALL
+        .get(slot)
+        .map_or(Token::CatOther, |c| c.token())
+}
+
+/// The share cell: a bar of `frac` of the largest row, then the share of the directory.
+fn share(ui: &mut Ui, colors: &Colors, ink: &Ink, frac: f64, of_dir: f64) {
+    let pct_w = 48.0;
+    let w = (ui.available_width() - pct_w - 8.0).max(8.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(w, style::ROW), Sense::hover());
+    let bar = Rect::from_center_size(rect.center(), vec2(w, 8.0));
+    kit::paint_bar(ui, colors, bar, frac);
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let pct = format!("{:.1}%", of_dir * 100.0);
+        ui.label(kit::mono(pct, 11.0).color(ink.of(colors.fg(Token::FgDim))));
+    });
+}
+
+/// The mark of entry `e` on row `i`: a check box in `mark`; a click marks or unmarks it. A
+/// read-only browser marks nothing and draws none; nor do rows that are not entries (the data
+/// shared between entries, fold rows).
 fn mark(
     ui: &mut Ui,
     s: &SessionState,
@@ -257,17 +478,29 @@ fn mark(
     }
 }
 
-/// A mark: a dot when `marked`, a ring under the pointer, named for what a click does.
+/// A mark's check box: filled in `mark` with a tick when `marked`, outlined otherwise, named for
+/// what a click does.
 pub fn dot(ui: &mut Ui, colors: &Colors, marked: bool) -> egui::Response {
-    let h = ui.text_style_height(&egui::TextStyle::Body);
-    let (rect, r) = ui.allocate_exact_size(vec2(h, h), Sense::click());
-    let (c, radius) = (rect.center(), h * 0.28);
+    let (rect, r) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
+    let b = Rect::from_center_size(rect.center(), vec2(14.0, 14.0));
+    let radius = egui::CornerRadius::same(style::RADIUS_SM);
+    let p = ui.painter();
     if marked {
-        ui.painter()
-            .circle_filled(c, radius, colors.fg(Token::Mark));
-    } else if r.hovered() {
-        let stroke = Stroke::new(1.0, colors.fg(Token::FgDim));
-        ui.painter().circle_stroke(c, radius, stroke);
+        p.rect_filled(b, radius, colors.fg(Token::Mark));
+        let c = b.center();
+        let tick = vec![
+            pos2(c.x - 3.5, c.y),
+            pos2(c.x - 1.0, c.y + 2.6),
+            pos2(c.x + 3.6, c.y - 2.8),
+        ];
+        p.add(Shape::line(tick, Stroke::new(1.8, colors.chrome.surface)));
+    } else {
+        let edge = if r.hovered() {
+            colors.fg(Token::BorderFocus)
+        } else {
+            colors.fg(Token::Border)
+        };
+        p.rect_stroke(b, radius, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
     }
     let what = if marked { "Unmark" } else { "Mark" };
     r.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, marked, what));
@@ -276,29 +509,26 @@ pub fn dot(ui: &mut Ui, colors: &Colors, marked: bool) -> egui::Response {
 
 /// The size bar: the part of the largest row's size `frac` is.
 pub fn bar(ui: &mut Ui, colors: &Colors, frac: f64) {
-    let h = ui.text_style_height(&egui::TextStyle::Body) * 0.6;
-    let (rect, _) = ui.allocate_exact_size(vec2(BAR_WIDTH - 8.0, h), Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(rect, 2.0, colors.fg(Token::BarEmpty));
-    #[expect(clippy::cast_possible_truncation, reason = "a width on screen")]
-    let w = rect.width() * frac.clamp(0.0, 1.0) as f32;
-    let filled = Rect::from_min_size(rect.min, vec2(w, rect.height()));
-    p.rect_filled(filled, 2.0, colors.fg(Token::BarFill));
+    kit::size_bar(ui, colors, 72.0, 8.0, frac);
 }
 
-/// The name cell: in tree mode indented by depth, with a directory's triangle; a note after the
-/// name for a mark.
+/// The name cell in mono: in tree mode indented by depth, with a directory's triangle;
+/// directories in `dir` with a slash, marked entries in `mark`; a note after the name for a
+/// mark.
+#[expect(clippy::too_many_arguments, reason = "a row's state")]
 fn name(
     ui: &mut Ui,
     s: &SessionState,
     colors: &Colors,
+    ink: &Ink,
     e: &EntryData,
+    marked: bool,
     i: usize,
     out: &mut Vec<Intent>,
 ) {
-    let h = ui.text_style_height(&egui::TextStyle::Body);
+    let h = 16.0;
     if let Some(tree) = &s.tree {
-        ui.add_space(f32::from(e.depth) * h * INDENT);
+        ui.add_space(f32::from(e.depth) * INDENT);
         // Only a directory's triangle takes clicks; a file has room for one, and nothing in it.
         let opens = e.is_dir && !e.pseudo;
         let sense = if opens {
@@ -311,7 +541,7 @@ fn name(
             let open = tree.is_expanded(e.node);
             let token = if r.hovered() { Token::Fg } else { Token::FgDim };
             let point = if open { Point::Down } else { Point::Right };
-            triangle(ui, colors.fg(token), rect, point);
+            triangle(ui, ink.of(colors.fg(token)), rect, point);
             let what = if open { "Collapse" } else { "Expand" };
             r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, what));
             if r.clicked() {
@@ -320,14 +550,17 @@ fn name(
         }
     }
     let text = String::from_utf8_lossy(&e.name);
+    let dim = ink.of(colors.fg(Token::FgDim));
     let label = if e.fold > 0 {
-        colors.text(text, Token::FgDim).italics()
+        kit::mono(text, 13.0).color(dim)
     } else if e.pseudo {
-        colors.text(text, Token::FgDim)
+        kit::mono(text, 13.0).color(dim).italics()
     } else if e.is_dir {
-        colors.text(format!("{text}/"), Token::Dir)
+        let c = if marked { Token::Mark } else { Token::Dir };
+        kit::mono_bold(format!("{text}/"), 13.0).color(ink.of(colors.fg(c)))
     } else {
-        colors.text(text, Token::Fg)
+        let c = if marked { Token::Mark } else { Token::Fg };
+        kit::mono(text, 13.0).color(ink.of(colors.fg(c)))
     };
     let label = if e.ghost {
         label.strikethrough()
@@ -339,14 +572,13 @@ fn name(
     if e.fold == 0
         && let Some((note, token)) = mark_note(e)
     {
-        ui.label(colors.text(note, token));
+        ui.label(kit::sans(note, 11.0).color(ink.of(colors.fg(token))));
     }
 }
 
 /// Where a triangle points.
 #[derive(Copy, Clone)]
 pub enum Point {
-    Up,
     Down,
     Right,
 }
@@ -358,11 +590,6 @@ pub fn triangle(ui: &Ui, color: egui::Color32, rect: Rect, point: Point) {
     let c = rect.center();
     let (r, n) = (rect.height() * 0.25, rect.height() * 0.15);
     let points = match point {
-        Point::Up => vec![
-            pos2(c.x - r, c.y + n),
-            pos2(c.x + r, c.y + n),
-            pos2(c.x, c.y - r),
-        ],
         Point::Down => vec![
             pos2(c.x - r, c.y - n),
             pos2(c.x + r, c.y - n),
@@ -414,29 +641,35 @@ fn mark_note(e: &EntryData) -> Option<(String, Token)> {
 /// The summary row of the entries new since the last sort; a click sorts them in.
 fn new_entries(
     row: &mut TableRow<'_, '_>,
+    columns: usize,
     s: &SessionState,
     colors: &Colors,
     out: &mut Vec<Intent>,
 ) {
     let n = s.list.new_count as u64;
-    cell(row, &COLUMNS, |_| {});
-    cell(row, &COLUMNS, |ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(colors.text(human(s.list.new_largest), Token::FgDim));
-        });
-    });
-    cell(row, &COLUMNS, |_| {});
-    cell(row, &COLUMNS, |_| {});
-    cell(row, &COLUMNS, |_| {});
-    cell(row, &COLUMNS, |ui| {
+    let dim = colors.fg(Token::FgDim);
+    let names = ["Marked", "Name", "Size"];
+    cell(row, &names, |_| {});
+    cell(row, &names, |ui| {
         let text = format!(
             "{} new entr{} since the last sort ({} sorts them in)",
             count(n),
             if n == 1 { "y" } else { "ies" },
             first_key(Action::Resort)
         );
-        ui.label(colors.text(text, Token::FgDim).italics());
+        ui.label(kit::sans(text, 12.0).color(dim).italics());
     });
+    cell(row, &names, |ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(kit::mono(human(s.list.new_largest), 13.0).color(dim));
+        });
+    });
+    while row.col_index() < columns {
+        row.col(|ui| {
+            let r = ui.response();
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Cell, true, "Empty"));
+        });
+    }
     let r = row.response();
     name_row(&r, false, format!("{} new since the last sort", count(n)));
     if r.clicked() {

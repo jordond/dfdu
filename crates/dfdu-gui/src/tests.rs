@@ -250,15 +250,15 @@ fn the_details_panel_shows_the_selected_entry() {
     until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
     h.event(egui::Event::Text("i".into()));
     until(&mut h, "the details", |h| {
-        shown(h, "big.bin") && shown_part(h, "on disk") && shown_part(h, "apparent")
+        shown(h, "big.bin") && shown(h, "Apparent") && shown(h, "Like du")
     });
     // On a directory: its largest children.
     h.event(egui::Event::Text("j".into()));
     until(&mut h, "the directory's details", |h| {
-        shown(h, "sub/") && shown_part(h, "Largest by")
+        shown(h, "sub/") && shown(h, "Largest inside")
     });
-    // The toolbar's box closes it again.
+    // The tab bar's box closes it again.
     h.get_by_label("Details").click();
-    until(&mut h, "no details", |h| !shown_part(h, "Largest by"));
+    until(&mut h, "no details", |h| !shown(h, "Largest inside"));
     close(h);
 }

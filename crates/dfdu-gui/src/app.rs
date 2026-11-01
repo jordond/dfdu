@@ -57,6 +57,7 @@ impl Gui {
         };
         let Launch { source, settings } = launch;
         let theme_files = theme::listed(theme_dir.as_deref());
+        theme::install(ctx);
         let mut gui = Gui {
             screen: Screen::Closed,
             settings,
@@ -79,8 +80,12 @@ impl Gui {
     /// Draws a frame of the screen shown in `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         window_keys(ui.ctx());
-        egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
+        // The browser's toolbar has its own View menu.
+        if !self.browsing() {
+            egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
+        }
         let colors = Colors::new(ui.ctx().theme(), self.file_in_use());
+        let current = self.themes().iter().position(|t| *t == self.prefs.theme);
         match &mut self.screen {
             Screen::Start { start, .. } => {
                 if let Some(chosen) = start.show(ui, &colors) {
@@ -88,6 +93,7 @@ impl Gui {
                 }
             }
             Screen::Browse(b) => {
+                b.view_mut().theme_current = current;
                 b.show(ui, &colors);
                 let pick = b.view_mut().theme_pick.take();
                 if let Some(choice) = pick.and_then(|i| self.themes().get(i).cloned()) {

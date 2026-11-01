@@ -82,7 +82,7 @@ fn an_export_chosen_on_the_start_screen_is_browsed_read_only() {
     let gui = h.state_mut().gui.as_mut().expect("the window");
     gui.chosen(Chosen::Export(file), &ctx);
     until(&mut h, "the imported scan", |h| shown(h, "d/"));
-    assert!(shown(&h, "read-only"), "an export is read-only");
+    assert!(shown(&h, "Read-only"), "an export is read-only");
     assert!(super::state(&h).read_only);
     close(h);
 }

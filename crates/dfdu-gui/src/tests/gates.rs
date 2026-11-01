@@ -57,7 +57,7 @@ fn a_read_only_browser_shows_no_way_to_delete() {
     let tmp = files();
     let mut h = window(tmp.path());
     until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
-    assert!(shown(&h, "read-only"));
+    assert!(shown(&h, "Read-only"));
     no_way_to_delete(&h);
     keys_do_nothing(&mut h);
     assert_eq!(
@@ -91,7 +91,7 @@ fn an_imported_scan_refuses_the_commands_of_this_machine() {
     assert!(!launched.settings.record, "an import is recorded nowhere");
     let mut h = harness(launched);
     until(&mut h, "the imported scan", |h| shown(h, "d/"));
-    assert!(shown(&h, "read-only"), "an import is read-only");
+    assert!(shown(&h, "Read-only"), "an import is read-only");
     no_way_to_delete(&h);
     keys_do_nothing(&mut h);
 

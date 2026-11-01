@@ -33,8 +33,9 @@ use dfdu_session::{
 use crate::access;
 use crate::bridge::Bridge;
 use crate::help::Help;
+use crate::kit;
 use crate::palette::Palette;
-use crate::theme::Colors;
+use crate::theme::{Colors, style};
 use crate::{
     cleanup as cleanup_view, details, dialog, dupes as dupes_view, help, keys,
     largest as largest_view, list, map, palette, review, status_bar, toolbar, windows,
@@ -461,25 +462,81 @@ impl<B: Backend> Browse for Browser<B> {
         let mut intents = Vec::new();
         let Front { state: s, view } = self.session.front_mut();
         let s = &*s;
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            toolbar::show(ui, s, colors, view, now, &mut intents);
-        });
-        if let Some(folders) = &view.no_access {
-            egui::Panel::top("access").show(ui, |ui| {
-                access::banner(ui, colors, folders, &mut intents);
+        let bar = |left: i8, right: i8| {
+            egui::Frame::new()
+                .fill(colors.chrome.bg)
+                .inner_margin(egui::Margin {
+                    left,
+                    right,
+                    top: 0,
+                    bottom: 0,
+                })
+        };
+        egui::Panel::top("toolbar")
+            .frame(bar(16, 16))
+            .exact_size(style::TOOLBAR)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                toolbar::show(ui, s, colors, view, now, &mut intents);
             });
+        egui::Panel::top("tabs")
+            .frame(bar(12, 16))
+            .exact_size(style::TAB_BAR)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                toolbar::tab_bar(ui, s, colors, view, &mut intents);
+            });
+        if let Some(folders) = &view.no_access {
+            egui::Panel::top("access")
+                .frame(bar(16, 16).inner_margin(egui::Margin::symmetric(16, 8)))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    access::banner(ui, colors, folders, &mut intents);
+                });
         }
-        egui::Panel::bottom("status").show(ui, |ui| {
-            status_bar::show(ui, s, colors, view, now, &mut intents);
-        });
+        egui::Panel::bottom("status")
+            .frame(bar(16, 16))
+            .exact_size(style::STATUS_BAR)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                status_bar::show(ui, s, colors, view, now, &mut intents);
+            });
         if s.details.open {
             egui::Panel::right("details")
+                .frame(
+                    egui::Frame::new()
+                        .fill(colors.chrome.bg)
+                        .inner_margin(egui::Margin {
+                            left: 0,
+                            right: 12,
+                            top: 12,
+                            bottom: 12,
+                        }),
+                )
+                .show_separator_line(false)
                 .resizable(true)
-                .default_size(300.0)
-                .show(ui, |ui| details::show(ui, s, colors));
+                .default_size(320.0)
+                .size_range(260.0..=480.0)
+                .show(ui, |ui| {
+                    kit::raised_sheet(colors).show(ui, |ui| {
+                        ui.set_min_size(ui.available_size());
+                        details::show(ui, s, colors, &mut intents);
+                    });
+                });
         }
+        let workspace = egui::Frame::new()
+            .fill(colors.chrome.bg)
+            .inner_margin(egui::Margin::same(12));
         let (shown, rows) = egui::CentralPanel::default()
-            .show(ui, |ui| central(ui, s, colors, view, &mut intents))
+            .frame(workspace)
+            .show(ui, |ui| {
+                kit::sheet(colors)
+                    .show(ui, |ui| {
+                        ui.set_min_size(ui.available_size());
+                        central(ui, s, colors, view, &mut intents)
+                    })
+                    .inner
+            })
             .inner;
         windows::errors(&ctx, colors, view, &mut intents);
         windows::types(&ctx, s, colors, view, &mut intents);

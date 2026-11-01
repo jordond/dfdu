@@ -8,8 +8,10 @@ use dfdu_session::palette::{BuiltinTheme, Modifiers, Palette, Rgb, ThemeFile, To
 use egui::{Color32, RichText, Visuals};
 
 mod file;
+pub mod style;
 
 pub use file::{listed, named, preference, saved, title_bar};
+pub use style::Chrome;
 
 /// The palette of one of egui's themes, resolved to colours.
 #[derive(Clone, Debug)]
@@ -17,6 +19,8 @@ pub struct Colors {
     palette: Palette,
     /// egui's text colour, for tokens without a foreground.
     text: Color32,
+    /// The window's layers, which the palette has no tokens for.
+    pub chrome: Chrome,
 }
 
 fn color((r, g, b): Rgb) -> Color32 {
@@ -50,6 +54,7 @@ impl Colors {
         Colors {
             palette,
             text: base.text_color(),
+            chrome: Chrome::of(theme),
         }
     }
 
@@ -86,18 +91,37 @@ impl Colors {
         r
     }
 
-    /// egui's `base` visuals with the palette's text, selection and accent colours.
-    pub fn visuals(&self, mut base: Visuals) -> Visuals {
-        base.override_text_color = Some(self.fg(Token::Fg));
-        if let Some(bg) = self.bg(Token::Cursor) {
-            base.selection.bg_fill = bg;
-        }
-        base.selection.stroke.color = self.fg(Token::Cursor);
-        base.hyperlink_color = self.fg(Token::Key);
-        base.warn_fg_color = self.fg(Token::StatusWarn);
-        base.error_fg_color = self.fg(Token::StatusError);
-        base
+    /// The accent: the main action's fill and the selected segment (the palette's `key`).
+    pub fn accent(&self) -> Color32 {
+        self.fg(Token::Key)
     }
+
+    /// egui's `base` visuals in the palette's and the chrome's colours.
+    pub fn visuals(&self, base: Visuals) -> Visuals {
+        let cursor_bg = self.bg(Token::Cursor).unwrap_or(self.chrome.hover);
+        let mut v = style::visuals(
+            base,
+            &self.chrome,
+            self.fg(Token::Fg),
+            self.fg(Token::Border),
+            self.fg(Token::BorderFocus),
+            self.accent(),
+            (self.fg(Token::Cursor), cursor_bg),
+            self.fg(Token::Key),
+        );
+        v.warn_fg_color = self.fg(Token::StatusWarn);
+        v.error_fg_color = self.fg(Token::StatusError);
+        v
+    }
+}
+
+/// Bundles the fonts and sets the text styles and spacing, once, for both of egui's themes.
+pub fn install(ctx: &egui::Context) {
+    style::fonts(ctx);
+    ctx.all_styles_mut(|s| {
+        style::text_styles(s);
+        style::spacing(s);
+    });
 }
 
 /// Gives both of egui's themes the palette's colours, with those of `file`; egui shows the one
@@ -131,6 +155,7 @@ mod tests {
         let v = dark.visuals(Visuals::dark());
         assert_eq!(v.override_text_color, Some(dark.fg(Token::Fg)));
         assert_eq!(v.selection.bg_fill, Color32::from_rgb(0x4c, 0x56, 0x6a));
+        assert_eq!(v.panel_fill, Chrome::DARK.bg);
     }
 
     #[test]

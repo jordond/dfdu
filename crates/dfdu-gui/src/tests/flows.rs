@@ -27,7 +27,7 @@ fn scan_browse_mark_stage_and_undo() {
 
     // Space marks the selected entry and moves down; the bar below sums up the marks.
     h.key_press(Key::Space);
-    until(&mut h, "the mark", |h| shown(h, "1 marked (64.0 KiB)"));
+    until(&mut h, "the mark", |h| shown(h, "1 marked · 64.0 KiB"));
     assert_eq!(selected(&h).as_deref(), Some(&b"sub"[..]));
     assert!(shown(&h, "Unmark"), "the row's mark");
 

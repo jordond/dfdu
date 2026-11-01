@@ -1,22 +1,23 @@
-//! The bars below the list. The action bar, left out of a read-only browser: what is marked and
-//! its total, what the last delete to the Trash or staging can put back (a staged delete with
-//! the time left to do it), and the buttons that delete. The status bar: the status line of the
-//! last action, what the engine is deleting or noticed, or what is selected in the view shown
-//! ([`selection`]), on the left; the
-//! scan's totals and what makes them partial on the right, its errors a link to their list.
+//! The status bar below the views, 40 high under a rule in `border`. On its left what is
+//! marked and its total (in `mark`), what the last delete to the Trash or staging can put back
+//! (a staged delete with the time left to do it), and the status line: the last action's
+//! message, what the engine is deleting or noticed, or what is selected in the view shown
+//! ([`selection`]). On its right the buttons that delete, left out of a read-only browser.
+//! The scan's totals are the toolbar's.
 
 use std::time::Instant;
 
 use dfdu_engine::{Mode, STAGE_UNDO_WINDOW, tilde};
-use dfdu_session::actions::Action;
+use dfdu_session::actions::{Action, first_key};
 use dfdu_session::format::{count, human, plural};
 use dfdu_session::palette::Token;
 use dfdu_session::view::View;
 use dfdu_session::{SessionState, cleanup, dupes, largest};
 use dfdu_tree::Kind;
-use egui::{Align, Button, Layout, Ui};
+use egui::{Align, Layout, Stroke, Ui};
 
 use crate::browser::{Intent, ViewState};
+use crate::kit::{self, Kind as ButtonKind};
 use crate::theme::Colors;
 use crate::{cleanup as cleanup_view, dupes as dupes_view};
 
@@ -28,61 +29,84 @@ pub fn show(
     now: Instant,
     out: &mut Vec<Intent>,
 ) {
-    if !s.read_only {
-        ui.horizontal(|ui| actions(ui, s, colors, view, now, out));
-        ui.separator();
-    }
-    ui.horizontal(|ui| {
-        status(ui, s, colors);
+    let full = ui.max_rect();
+    ui.painter().hline(
+        full.x_range(),
+        full.top() + 0.5,
+        Stroke::new(1.0, colors.fg(Token::Border)),
+    );
+    ui.horizontal_centered(|ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
+        if !s.read_only {
+            match marked(s) {
+                Some(text) => {
+                    ui.label(kit::title(text, 12.0).color(colors.fg(Token::Mark)));
+                }
+                None => {
+                    ui.label(kit::sans("Nothing marked", 12.0).color(colors.fg(Token::FgDim)));
+                }
+            }
+            if let Some(text) = undo_note(s, view, now) {
+                ui.label(kit::sans(text, 12.0).color(colors.fg(Token::StatusWarn)));
+                let enabled = !s.snap.undoing;
+                if kit::button(
+                    ui,
+                    colors,
+                    ButtonKind::Secondary,
+                    "Undo",
+                    Some(first_key(Action::Undo)),
+                    enabled,
+                )
+                .clicked()
+                {
+                    out.push(Intent::Act(Action::Undo));
+                }
+            }
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            totals(ui, s, colors, out);
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if !s.read_only {
+                actions(ui, s, colors, out);
+            }
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                status(ui, s, colors);
+            });
         });
     });
 }
 
-/// The marks, the undo and the buttons that delete.
-fn actions(
-    ui: &mut Ui,
-    s: &SessionState,
-    colors: &Colors,
-    view: &ViewState,
-    now: Instant,
-    out: &mut Vec<Intent>,
-) {
-    match marked(s) {
-        Some(text) => {
-            ui.label(colors.text(text, Token::Mark));
-            if ui.button("Clear marks").clicked() {
-                out.push(Intent::Act(Action::ClearMarks));
-            }
-        }
-        None => {
-            ui.label(colors.text("Nothing marked", Token::FgDim));
-        }
+/// The buttons, right to left: delete permanently, move to the Trash (the danger fill), and
+/// clear the marks when there are some.
+fn actions(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
+    let target = !s.marks.is_empty() || s.selected_entry().is_some_and(|e| !e.pseudo);
+    let permanent = kit::button(
+        ui,
+        colors,
+        ButtonKind::Secondary,
+        "Delete permanently…",
+        Some(first_key(Action::DeletePermanent)),
+        target,
+    );
+    if permanent.clicked() {
+        out.push(Intent::Act(Action::DeletePermanent));
     }
-    if let Some(text) = undo_note(s, view, now) {
-        ui.separator();
-        ui.label(colors.text(text, Token::StatusWarn));
-        let button = ui.add_enabled(!s.snap.undoing, Button::new("Undo"));
-        if button.clicked() {
-            out.push(Intent::Act(Action::Undo));
-        }
+    let trash = kit::button(
+        ui,
+        colors,
+        ButtonKind::Danger,
+        "Move to Trash…",
+        Some(first_key(Action::Trash)),
+        target,
+    );
+    if trash.clicked() {
+        out.push(Intent::Act(Action::Trash));
     }
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let target = !s.marks.is_empty() || s.selected_entry().is_some_and(|e| !e.pseudo);
-        if ui
-            .add_enabled(target, Button::new("Delete permanently…"))
-            .clicked()
-        {
-            out.push(Intent::Act(Action::DeletePermanent));
-        }
-        if ui
-            .add_enabled(target, Button::new("Move to Trash…"))
-            .clicked()
-        {
-            out.push(Intent::Act(Action::Trash));
-        }
-    });
+    if !s.marks.is_empty()
+        && kit::button(ui, colors, ButtonKind::Secondary, "Clear marks", None, true).clicked()
+    {
+        out.push(Intent::Act(Action::ClearMarks));
+    }
 }
 
 /// How many entries are marked and their total; `None` when nothing is.
@@ -94,7 +118,7 @@ pub fn marked(s: &SessionState) -> Option<String> {
     let (total, scanning) = marks.total();
     let at_least = if scanning { "at least " } else { "" };
     Some(format!(
-        "{} marked ({at_least}{})",
+        "{} marked · {at_least}{}",
         marks.items().len(),
         human(total)
     ))
@@ -133,16 +157,20 @@ fn status(ui: &mut Ui, s: &SessionState, colors: &Colors) {
         None => s.status.clone().or_else(|| s.snap.notice.clone()),
     };
     if let Some(msg) = msg {
-        ui.label(colors.text(msg, Token::StatusWarn));
+        ui.label(kit::sans(msg, 12.0).color(colors.fg(Token::StatusWarn)));
         return;
     }
     if let Some(sel) = selection(s) {
-        ui.label(colors.text(sel.name, Token::Fg));
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(kit::sans("Selected", 12.0).color(colors.fg(Token::FgDim)));
+        ui.add(
+            egui::Label::new(kit::mono_bold(sel.name, 12.0).color(colors.fg(Token::Fg))).truncate(),
+        );
         if let Some(size) = sel.size {
-            ui.label(colors.text(human(size), Token::SizeBig));
+            ui.label(kit::mono(human(size), 12.0).color(colors.fg(Token::Fg)));
         }
         if let Some(note) = sel.note {
-            ui.label(colors.text(note, Token::FgDim));
+            ui.label(kit::sans(note, 12.0).color(colors.fg(Token::FgDim)));
         }
     }
 }
@@ -256,36 +284,5 @@ fn dupes_selection(s: &SessionState) -> Option<Selection> {
                 }),
             })
         }
-    }
-}
-
-/// The scan's totals, right to left: its size and items, then errors (a click lists them), the
-/// filter of file types and an incomplete scan.
-fn totals(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
-    let snap = &s.snap;
-    let root = snap.root_total;
-    ui.label(colors.text(human(s.size_mode.of(&root)), Token::Header));
-    ui.label(colors.text(
-        format!("{} item{}", count(root.items), plural(root.items)),
-        Token::FgDim,
-    ));
-    if root.errors > 0 {
-        let text = format!("{} error{}", count(root.errors), plural(root.errors));
-        if ui.link(colors.text(text, Token::StatusError)).clicked() {
-            out.push(Intent::Act(Action::Errors));
-        }
-    }
-    if snap.incomplete {
-        ui.label(colors.text("incomplete", Token::StatusWarn));
-    }
-    if snap.stalled > 0 {
-        ui.label(colors.text(
-            format!(
-                "{} director{} not responding",
-                snap.stalled,
-                if snap.stalled == 1 { "y" } else { "ies" }
-            ),
-            Token::StatusWarn,
-        ));
     }
 }

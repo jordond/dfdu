@@ -26,6 +26,7 @@ mod dialog;
 mod dupes;
 mod help;
 mod keys;
+mod kit;
 mod largest;
 mod launch;
 mod list;

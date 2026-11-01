@@ -104,6 +104,8 @@ pub struct ViewState {
     pub themes: Vec<String>,
     /// The theme chosen in the palette, by its index in `themes`, for the window to apply.
     pub theme_pick: Option<usize>,
+    /// The theme drawn with, by its index in `themes`, as the View menu ticks it.
+    pub theme_current: Option<usize>,
     /// The folders macOS keeps from the window that the scan could not read, as the banner
     /// on Full Disk Access names them, until it is dismissed (`access`).
     pub no_access: Option<Vec<String>>,
