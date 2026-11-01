@@ -9,8 +9,7 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 
 ## Features
 
-- **Browse while it scans.** The list fills in and re-sorts as the scan runs. Nothing to wait for.
-- **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](https://dfdu.app/docs/benchmarks/).
+- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes. As fast as or faster than gdu and dua in [our benchmarks](https://dfdu.app/docs/benchmarks/).
 - **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](https://dfdu.app/docs/rules/) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.

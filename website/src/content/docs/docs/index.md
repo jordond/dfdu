@@ -1,16 +1,15 @@
 ---
 title: Overview
-description: dfdu is a disk usage browser for the terminal. Browse, sort and delete while the scan runs, and see what is safe to remove.
+description: dfdu is a disk usage browser for the terminal. Browse, sort and delete, and see what is safe to remove.
 ---
 
-dfdu is a disk usage browser for the terminal. Browse, sort and delete while the scan is still running, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove. It is written in Rust and runs on macOS, Linux and Windows.
+dfdu is a disk usage browser for the terminal. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove. It is written in Rust and runs on macOS, Linux and Windows.
 
 ![Browsing a home directory, the treemap and the cleanup view](/demos/browse.gif)
 
 ## Features
 
-- **Browse while it scans.** The list fills in and re-sorts as the scan runs. Nothing to wait for.
-- **Fast.** Parallel scanning tuned to the storage device. As fast as or faster than gdu and dua in [our benchmarks](/docs/benchmarks/).
+- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes. As fast as or faster than gdu and dua in [our benchmarks](/docs/benchmarks/).
 - **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](/docs/rules/) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.

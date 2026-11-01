@@ -7,4 +7,4 @@ export const isPreview = () => process.env.DFDU_SITE_ENV === 'preview'
 
 export const DEFAULT_TITLE = 'dfdu: a disk usage browser for the terminal'
 export const DEFAULT_DESCRIPTION =
-  'dfdu is a fast disk usage browser for the terminal. Browse, sort and delete while the scan runs, see what your space is made of, and get a list of what is safe to remove. macOS, Linux and Windows.'
+  'dfdu is a fast disk usage browser for the terminal. Browse, sort and delete, see what your space is made of, and get a list of what is safe to remove. macOS, Linux and Windows.'

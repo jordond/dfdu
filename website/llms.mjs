@@ -7,7 +7,7 @@ const repo = 'https://github.com/jordond/dfdu'
 export const llms = {
   projectName: 'dfdu',
   description:
-    'dfdu is a disk usage browser for the terminal, written in Rust, for macOS, Linux and Windows. It scans a directory in parallel, lets you browse, sort and delete while the scan runs, shows a treemap, duplicates and the largest files, and recognises caches, build output and other files that are safe to remove. It also has non-interactive commands with JSON output for scripts and CI.',
+    'dfdu is a disk usage browser for the terminal, written in Rust, for macOS, Linux and Windows. It scans a directory in parallel, lets you browse, sort and delete before the scan finishes, shows a treemap, duplicates and the largest files, and recognises caches, build output and other files that are safe to remove. It also has non-interactive commands with JSON output for scripts and CI.',
   details: `Install (any one; all put a \`dfdu\` binary on PATH):
 
 \`\`\`sh

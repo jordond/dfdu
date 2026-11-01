@@ -96,9 +96,8 @@ const S = (section: string, note: string): Spec => ({ section, note })
 const TOOLS = ['dfdu', 'ncdu', 'gdu', 'dua', 'Dust']
 
 const ABOUT: Spec[] = [
-  S('Browse', 'no waiting for the scan'),
-  { label: 'Browse while it scans', tone: 'build', cols: ['dfdu ~'], sub: 'list · live', lines: [L('The list fills in and re-sorts as the scan runs. Nothing to wait for.')], cmd: 'dfdu ~', gif: gif('browse') },
-  { label: 'Fast', tone: 'tool', cols: ['parallel'], sub: 'scanner', lines: [L('Parallel scanning tuned to the storage device.'), L('As fast as or faster than gdu and dua in our benchmarks.', 'dim')], gif: gif('scan-cli') },
+  S('Browse', 'fast, and faster the second time'),
+  { label: 'Fast', tone: 'tool', cols: ['dfdu ~'], sub: 'parallel scanner', lines: [L('Parallel scanning tuned to the storage device, and you can start browsing before it finishes.'), L('As fast as or faster than gdu and dua in our benchmarks.', 'dim')], cmd: 'dfdu ~', gif: gif('browse') },
   { label: "Opens last time's scan at once", tone: 'media', cols: ['dfdu PATH'], sub: 'cache', lines: [L('Scans that took 3 s or more are cached, so the next dfdu PATH opens at once and refreshes in the background.'), L('On macOS, Windows and btrfs only the changed directories are read again.', 'dim'), L('cached 3 h ago, refreshing', 'warn')], cmd: 'dfdu ~' },
   S('Understand', 'what your space is made of'),
   { label: 'Cleanup view', tone: 'cache', cols: ['3'], sub: 'view 3 · rules', lines: [L('Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. Rules are extendable.'), L('✓ Safe to delete', 'safe', true), L('↻ Regenerable', 'safe', true), L('? Review first', 'review', true), L('⚒ Manual', 'keep', true), L('⊘ Protected', 'keep', true)], cmd: 'dfdu report ~/dev', gif: gif('cleanup') },
@@ -200,7 +199,7 @@ function build(t: TabSpec): Tab {
 
 const SPECS: TabSpec[] = [
   {
-    id: 'about', name: 'About', band: 'Features · what dfdu does', bandRight: '9 entries', count: '9',
+    id: 'about', name: 'About', band: 'Features · what dfdu does', bandRight: '8 entries', count: '8',
     grid: 'minmax(0,1fr) 22ch', head: [{ t: '  feature', align: 'left' }, { t: 'try', align: 'right' }],
     sumTitle: 'dfdu', sumNote: 'disk usage browser',
     sum: 'dfdu scans a directory once and shows it as a list, a treemap, a cleanup view, duplicates or the largest files. It is written in Rust and runs on macOS, Linux and Windows.',
