@@ -7,8 +7,8 @@
 //! the treemap's layout (`treemap`). The actions with their keys and labels (`actions`), the
 //! duplicates comparison and its keep rules (`dupes`), the largest files below a directory
 //! (`largest`), the details of an entry (`details`), mark by pattern (`mark_pattern`), the
-//! text for numbers (`format`), and the theme's tokens, built-in themes and theme files
-//! (`palette`).
+//! text for numbers (`format`), the theme's tokens, built-in themes and theme files
+//! (`palette`), and the single-line text input (`line`).
 
 pub mod actions;
 pub mod details;
@@ -19,6 +19,7 @@ pub mod fuzzy;
 pub mod growth;
 pub mod history_link;
 pub mod largest;
+pub mod line;
 pub mod mark_pattern;
 pub mod order;
 pub mod outside;

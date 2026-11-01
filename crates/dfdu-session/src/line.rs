@@ -1,5 +1,5 @@
 //! A single-line text input, for the filter, the palette and typed confirmations. It is edited
-//! by [`TextOp`]s; the terminal's keys map to them in `line_keys`, and the view draws it.
+//! by [`TextOp`]s, which a front end maps its keys or text events to, and the front end draws it.
 
 /// One editing operation on a [`LineInput`]: what a key or a text field event asks for.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -52,7 +52,6 @@ impl LineInput {
     }
 
     /// The cursor, in characters from the start.
-    #[cfg(test)]
     pub fn cursor(&self) -> usize {
         self.cursor
     }
