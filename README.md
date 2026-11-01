@@ -9,7 +9,7 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 
 ## Features
 
-- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes. As fast as or faster than gdu and dua in [our benchmarks](https://dfdu.app/docs/benchmarks/).
+- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes.
 - **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](https://dfdu.app/docs/rules/) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
@@ -17,20 +17,6 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 - **Remote.** Browse and delete on another machine over ssh.
 - **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
 - **Safe by default.** Deletes go to the Trash; permanent deletes ask you to type `delete`. `--read-only` removes the delete keys.
-
-## Compared to other tools
-
-|                              | dfdu | [ncdu](https://dev.yorhel.nl/ncdu) | [gdu](https://github.com/dundee/gdu) | [dua](https://github.com/Byron/dua-cli) | [Dust](https://github.com/bootandy/dust) |
-| ---------------------------- | :--: | :--: | :--: | :--: | :--: |
-| Interactive browser          | ✓    | ✓    | ✓    | ✓    |      |
-| Parallel scan                | ✓    | ✓    | ✓    | ✓    | ✓    |
-| Treemap                      | ✓    |      |      |      |      |
-| Cleanup recommendations      | ✓    |      |      |      |      |
-| Duplicate files              | ✓    |      |      |      |      |
-| Scan history and diffs       | ✓    |      |      |      |      |
-| Reads ncdu exports           | ✓    | ✓    | ✓    |      |      |
-
-Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](https://dfdu.app/docs/benchmarks/) have the full numbers.
 
 ## Install
 
@@ -103,6 +89,16 @@ dfdu -f home.snap                           # browse a saved scan or an ncdu exp
 - [Themes](https://dfdu.app/docs/themes/): five built-in themes and custom TOML themes
 - [Benchmarks](https://dfdu.app/docs/benchmarks/): scan time and memory against other tools
 - [Contributing](CONTRIBUTING.md): building, testing and releasing
+
+## Similar tools
+
+Other disk usage tools worth a look:
+
+- [ncdu](https://dev.yorhel.nl/ncdu): the classic ncurses disk usage browser, whose keys dfdu follows
+- [gdu](https://github.com/dundee/gdu): a fast disk usage analyzer with a console interface, written in Go
+- [dua](https://github.com/Byron/dua-cli): disk usage analyzer with an interactive mode, written in Rust
+- [Dust](https://github.com/bootandy/dust): a more intuitive version of `du`, written in Rust
+- [pdu](https://github.com/KSXGitHub/parallel-disk-usage): parallel disk usage, written in Rust
 
 ## License
 

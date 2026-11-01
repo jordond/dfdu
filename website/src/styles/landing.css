@@ -296,7 +296,7 @@ a:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
   .pitch h1 { font-size: 19px; line-height: 24px; }
   .grid { --grid: var(--narrow-grid) !important; column-gap: 8px; }
   .row { min-height: 32px; }
-  .pane:not([data-tab='compare']) .grid > .extra { display: none; }
+  .grid > .extra { display: none; }
   .section .note { display: none; }
   .summary { display: none; }
 }

@@ -19,7 +19,7 @@ const logoH = Math.round((logoW * vh) / vw)
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <rect width="${W}" height="${H}" fill="#1f232b"/>
   <rect x="0" y="0" width="${W}" height="44" fill="#4c566a"/>
-  <text x="40" y="29" font-family="Menlo, 'DejaVu Sans Mono', monospace" font-size="22" font-weight="700" fill="#eceff4">dfdu │ 1 About │ 2 Install │ 3 CLI │ 4 Compare</text>
+  <text x="40" y="29" font-family="Menlo, 'DejaVu Sans Mono', monospace" font-size="22" font-weight="700" fill="#eceff4">dfdu │ 1 About │ 2 Install │ 3 CLI</text>
   <svg x="${(W - logoW) / 2}" y="140" width="${logoW}" height="${logoH}" viewBox="${viewBox}">${inner}</svg>
   <text x="${W / 2}" y="${160 + logoH + 60}" text-anchor="middle" font-family="Menlo, 'DejaVu Sans Mono', monospace" font-size="38" font-weight="700" fill="#eceff4">a disk usage browser for the terminal</text>
   <text x="${W / 2}" y="${160 + logoH + 112}" text-anchor="middle" font-family="Menlo, 'DejaVu Sans Mono', monospace" font-size="24" fill="#959eb1">macOS · Linux · Windows · dfdu.app</text>

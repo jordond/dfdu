@@ -40,7 +40,7 @@ export type Row =
   | { kind: 'item'; label: string; tone: Tone; tree: string; cells: Cell[]; detail: Detail }
 
 export interface Tab {
-  id: 'about' | 'install' | 'cli' | 'compare'
+  id: 'about' | 'install' | 'cli'
   name: string
   band: string
   bandRight: string
@@ -82,7 +82,7 @@ const L = (t: string, tone: Tone = 'fg', bold = false): Line => ({ t, tone, bold
 interface ItemSpec {
   label: string
   tone: Tone
-  cols: (string | boolean)[]
+  cols: string[]
   sub?: string
   lines?: Line[]
   cmd?: string
@@ -93,11 +93,9 @@ type Spec = { section: string; note: string } | ItemSpec
 
 const S = (section: string, note: string): Spec => ({ section, note })
 
-const TOOLS = ['dfdu', 'ncdu', 'gdu', 'dua', 'Dust']
-
 const ABOUT: Spec[] = [
   S('Browse', 'fast, and faster the second time'),
-  { label: 'Fast', tone: 'tool', cols: ['dfdu ~'], sub: 'parallel scanner', lines: [L('Parallel scanning tuned to the storage device, and you can start browsing before it finishes.'), L('As fast as or faster than gdu and dua in our benchmarks.', 'dim')], cmd: 'dfdu ~', gif: gif('browse') },
+  { label: 'Fast', tone: 'tool', cols: ['dfdu ~'], sub: 'parallel scanner', lines: [L('Parallel scanning tuned to the storage device, and you can start browsing before it finishes.')], cmd: 'dfdu ~', gif: gif('browse') },
   { label: "Opens last time's scan at once", tone: 'media', cols: ['dfdu PATH'], sub: 'cache', lines: [L('Scans that took 3 s or more are cached, so the next dfdu PATH opens at once and refreshes in the background.'), L('On macOS, Windows and btrfs only the changed directories are read again.', 'dim'), L('cached 3 h ago, refreshing', 'warn')], cmd: 'dfdu ~' },
   S('Understand', 'what your space is made of'),
   { label: 'Cleanup view', tone: 'cache', cols: ['3'], sub: 'view 3 · rules', lines: [L('Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. Rules are extendable.'), L('✓ Safe to delete', 'safe', true), L('↻ Regenerable', 'safe', true), L('? Review first', 'review', true), L('⚒ Manual', 'keep', true), L('⊘ Protected', 'keep', true)], cmd: 'dfdu report ~/dev', gif: gif('cleanup') },
@@ -142,34 +140,12 @@ const CLI: Spec[] = [
   cli('dfdu -f home.snap', 'tool', 'browse a saved scan or an ncdu export', 'snapshot'),
 ]
 
-const compare = (label: string, ...has: boolean[]): ItemSpec => ({ label, tone: 'fg', cols: has })
-
-const COMPARE: Spec[] = [
-  compare('Interactive browser', true, true, true, true, false),
-  compare('Parallel scan', true, true, true, true, true),
-  compare('Treemap', true, false, false, false, false),
-  compare('Cleanup recommendations', true, false, false, false, false),
-  compare('Duplicate files', true, false, false, false, false),
-  compare('Scan history and diffs', true, false, false, false, false),
-  compare('Reads ncdu exports', true, true, true, false, false),
-]
-
 interface TabSpec extends Omit<Tab, 'rows' | 'narrowGrid'> {
   narrowGrid?: string
   specs: Spec[]
 }
 
 function detailFor(tab: TabSpec['id'], s: ItemSpec): Detail {
-  if (tab === 'compare') {
-    const has = TOOLS.filter((_, i) => s.cols[i])
-    const not = TOOLS.filter((_, i) => !s.cols[i])
-    return {
-      title: s.label,
-      sub: 'compared',
-      lines: [L(`Has it: ${has.join(', ')}`), L(not.length ? `Doesn't: ${not.join(', ')}` : 'Every tool here has it.', 'dim')],
-      videos: [],
-    }
-  }
   if (tab === 'cli') {
     return { title: String(s.cols[0]), sub: s.label.split(' ').slice(0, 2).join(' '), lines: [], cmd: s.cmd, gif: s.gif, gifAlt: `Recording of ${s.label}`, still: stillFor(s.gif), videos: videosFor(s.gif) }
   }
@@ -187,11 +163,12 @@ function build(t: TabSpec): Tab {
     }
     const next = specs[i + 1]
     const last = !next || 'section' in next
-    const cells: Cell[] = s.cols.map((v, ci) => {
-      const align = tab.head[ci + 1]?.align ?? 'left'
-      if (typeof v === 'boolean') return { t: v ? '✓' : '·', tone: v ? (ci === 0 ? 'key' : 'fg') : 'dim', bold: v && ci === 0, align }
-      return { t: v, tone: tab.id === 'cli' ? 'fg' : 'dim', bold: false, align }
-    })
+    const cells: Cell[] = s.cols.map((v, ci) => ({
+      t: v,
+      tone: tab.id === 'cli' ? 'fg' : 'dim',
+      bold: false,
+      align: tab.head[ci + 1]?.align ?? 'left',
+    }))
     return { kind: 'item', label: s.label, tone: s.tone, tree: sectioned ? (last ? '  └─ ' : '  ├─ ') : '  ', cells, detail: detailFor(tab.id, s) }
   })
   return { ...tab, narrowGrid: t.narrowGrid ?? 'minmax(0,1fr)', rows }
@@ -218,14 +195,6 @@ const SPECS: TabSpec[] = [
     sumTitle: 'clean', sumNote: 'dry run first',
     sum: 'clean changes nothing without --yes. JSON output is versioned; the schemas are in schema/. dfdu --help lists every option and exit code.',
     specs: CLI,
-  },
-  {
-    id: 'compare', name: 'Compare', band: 'dfdu against ncdu, gdu, dua and Dust', bandRight: '7 features', count: '7',
-    grid: 'minmax(0,1fr) repeat(5, 6ch)', narrowGrid: 'minmax(0,1fr) repeat(5, 4ch)',
-    head: [{ t: '  feature', align: 'left' }, ...TOOLS.map((t) => ({ t, align: 'center' as const }))],
-    sumTitle: 'Memory', sumNote: 'about 85 bytes per entry',
-    sum: 'Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, dua aggregate or du -s use a few megabytes.',
-    specs: COMPARE,
   },
 ]
 

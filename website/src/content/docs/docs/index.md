@@ -9,7 +9,7 @@ dfdu is a disk usage browser for the terminal. Browse, sort and delete, see what
 
 ## Features
 
-- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes. As fast as or faster than gdu and dua in [our benchmarks](/docs/benchmarks/).
+- **Fast.** Parallel scanning tuned to the storage device, and you can start browsing before it finishes.
 - **Cleanup view.** Recognises caches, build folders, SDKs and old installers, says how safe each is to delete and how much it frees. [Rules](/docs/rules/) are extendable.
 - **Treemap, tree mode, duplicates and largest files**, one key away from the list.
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
@@ -18,16 +18,12 @@ dfdu is a disk usage browser for the terminal. Browse, sort and delete, see what
 - **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
 - **Safe by default.** Deletes go to the Trash; permanent deletes ask you to type `delete`. `--read-only` removes the delete keys.
 
-## Compared to other tools
+## Similar tools
 
-|                         | dfdu | [ncdu](https://dev.yorhel.nl/ncdu) | [gdu](https://github.com/dundee/gdu) | [dua](https://github.com/Byron/dua-cli) | [Dust](https://github.com/bootandy/dust) |
-| ----------------------- | :--: | :--: | :--: | :--: | :--: |
-| Interactive browser     | ✓    | ✓    | ✓    | ✓    |      |
-| Parallel scan           | ✓    | ✓    | ✓    | ✓    | ✓    |
-| Treemap                 | ✓    |      |      |      |      |
-| Cleanup recommendations | ✓    |      |      |      |      |
-| Duplicate files         | ✓    |      |      |      |      |
-| Scan history and diffs  | ✓    |      |      |      |      |
-| Reads ncdu exports      | ✓    | ✓    | ✓    |      |      |
+Other disk usage tools worth a look:
 
-Keeping the whole tree in memory costs dfdu about 85 bytes per entry (850 MiB for 10 million files). If you only want a total, `dua aggregate` or `du -s` use a few megabytes. The [benchmarks](/docs/benchmarks/) have the full numbers.
+- [ncdu](https://dev.yorhel.nl/ncdu): the classic ncurses disk usage browser, whose keys dfdu follows
+- [gdu](https://github.com/dundee/gdu): a fast disk usage analyzer with a console interface, written in Go
+- [dua](https://github.com/Byron/dua-cli): disk usage analyzer with an interactive mode, written in Rust
+- [Dust](https://github.com/bootandy/dust): a more intuitive version of `du`, written in Rust
+- [pdu](https://github.com/KSXGitHub/parallel-disk-usage): parallel disk usage, written in Rust
