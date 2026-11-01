@@ -13,7 +13,8 @@ use egui::{Label, RichText, Ui};
 
 use crate::browser::Intent;
 use crate::kit::{self, Kind};
-use crate::theme::Colors;
+use crate::review;
+use crate::theme::{Colors, style};
 
 use super::section_name;
 
@@ -53,7 +54,7 @@ pub fn show(
             let (glyph, token) = crate::details::safety(safety);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(kit::title(glyph, 14.0).color(colors.fg(token)));
+                review::glyph(ui, glyph, 14.0, colors.fg(token));
                 ui.label(kit::title(name, 14.0).color(colors.fg(token)));
             });
             let line = format!("{meaning}; {n} match{}", if n == 1 { "" } else { "es" });
@@ -71,8 +72,12 @@ pub fn show(
     ui.horizontal(|ui| {
         ui.label(kit::title(&r.name, 14.0).color(colors.fg(Token::Title)));
         let (glyph, token) = crate::details::safety(it.class.safety);
-        let level = format!("{glyph} {}", it.class.safety.as_str());
+        ui.add_space(style::SPACE_1);
+        ui.spacing_mut().item_spacing.x = style::SPACE_1;
+        review::glyph(ui, glyph, 12.0, colors.fg(token));
+        let level = it.class.safety.as_str();
         ui.label(kit::label(level, 12.0).color(colors.fg(token)));
+        ui.spacing_mut().item_spacing.x = style::SPACE_2;
         if native && matches!(row, Some(Row::Item(_))) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let key = first_key(Action::CleanupCommand);

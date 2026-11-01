@@ -348,7 +348,7 @@ fn section(
     list::cell(row, &COLUMNS, |ui| {
         let (name, meaning) = section_name(safety);
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(kit::title(glyph, 14.0).color(color));
+        review::glyph(ui, glyph, 14.0, color);
         ui.label(kit::title(name, 14.0).color(color));
         ui.add_space(style::SPACE_1);
         ui.add(

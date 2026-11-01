@@ -205,6 +205,18 @@ pub fn rule_under(ui: &Ui, color: egui::Color32) {
     ui.painter().hline(x, y, Stroke::new(1.0, color));
 }
 
+/// A safety level's `glyph` of `size` in `color`, in the first of the title's and the data's
+/// fonts that has it; none when neither has (its name says the level).
+pub fn glyph(ui: &mut Ui, glyph: &str, size: f32, color: egui::Color32) {
+    for family in [style::SANS_SEMIBOLD_FAMILY, style::MONO_SEMIBOLD_FAMILY] {
+        let font = egui::FontId::new(size, egui::FontFamily::Name(family.into()));
+        if ui.ctx().fonts_mut(|f| f.has_glyphs(&font, glyph)) {
+            ui.label(RichText::new(glyph).font(font).color(color));
+            return;
+        }
+    }
+}
+
 /// `text` aligned to the right of its cell.
 pub fn right(ui: &mut Ui, text: RichText) {
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
