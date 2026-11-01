@@ -490,6 +490,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfdu-session"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "dfdu-engine",
+ "dfdu-rules",
+ "dfdu-scan",
+ "dfdu-store",
+ "dfdu-sys",
+ "dfdu-tree",
+ "nucleo-matcher",
+]
+
+[[package]]
 name = "dfdu-store"
 version = "0.1.0"
 dependencies = [
@@ -532,11 +546,11 @@ dependencies = [
  "dfdu-engine",
  "dfdu-rules",
  "dfdu-scan",
+ "dfdu-session",
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
  "dunce",
- "nucleo-matcher",
  "ratatui",
  "tachyonfx",
  "terminal-colorsaurus",
