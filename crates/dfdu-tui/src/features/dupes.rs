@@ -9,15 +9,17 @@
 //! ticks a copy, or on a group every copy but the one kept, `A` does that for every group, and
 //! `d` and `D` delete what is ticked through the usual dialog, which checks each file against
 //! the scan. The copy kept is the oldest, and `K` cycles the rule ([`Keep`]); `R` compares
-//! again. Groups of APFS clones, which free nothing, are listed but `A` leaves them alone.
+//! again. Groups of APFS clones, which free nothing, are listed but `A` leaves them alone. The
+//! comparison's thread and the keep rules are in `dfdu_session::dupes`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::Ordering;
 
-use dfdu_dupes::{Candidate, Found, Group, Options, Progress};
+use dfdu_dupes::{Candidate, Found, Group, Options};
 use dfdu_engine::Model;
+pub use dfdu_session::dupes::Keep;
+use dfdu_session::dupes::Run;
 use dfdu_tree::{HostPath, NodeRef};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -54,44 +56,6 @@ pub struct Dupes {
     /// The groups with two files left, counted when the files' nodes were last read; `None`
     /// while the view is closed.
     live_groups: Option<usize>,
-}
-
-/// Which copy of a group marking leaves unmarked. Ties go to the first in path order.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum Keep {
-    #[default]
-    Oldest,
-    Newest,
-    ShortestPath,
-    FirstPath,
-}
-
-impl Keep {
-    /// Every rule, in the order `K` steps through them.
-    pub const ALL: [Keep; 4] = [
-        Keep::Oldest,
-        Keep::Newest,
-        Keep::ShortestPath,
-        Keep::FirstPath,
-    ];
-
-    fn next(self) -> Keep {
-        match self {
-            Keep::Oldest => Keep::Newest,
-            Keep::Newest => Keep::ShortestPath,
-            Keep::ShortestPath => Keep::FirstPath,
-            Keep::FirstPath => Keep::Oldest,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Keep::Oldest => "oldest",
-            Keep::Newest => "newest",
-            Keep::ShortestPath => "shortest path",
-            Keep::FirstPath => "first in path order",
-        }
-    }
 }
 
 /// The next keep rule, with the status line saying so. A copy the new rule keeps is unticked:
@@ -144,15 +108,6 @@ pub fn whole_group_ticked(app: &App) -> Option<String> {
         })
         .flatten()
     })
-}
-
-/// A comparison, running or done.
-#[derive(Clone, Debug)]
-struct Run {
-    root: PathBuf,
-    progress: Arc<Progress>,
-    cancel: Arc<AtomicBool>,
-    result: Arc<OnceLock<Found>>,
 }
 
 /// True when the view is shown, and so takes the keys it knows. Nothing is compared until the
@@ -273,24 +228,10 @@ fn start(app: &mut App) -> Vec<Effect> {
 }
 
 /// Starts comparing `cands` (read under the lock by the run loop) in a thread, with as many
-/// threads reading as the storage under `root` serves well.
+/// threads reading as the storage under `root` serves well ([`Run::start`]).
 pub fn begin(app: &mut App, root: PathBuf, cands: Vec<Candidate>) {
-    let run = Run {
-        root,
-        progress: Arc::default(),
-        cancel: Arc::default(),
-        result: Arc::default(),
-    };
-    let (progress, cancel, result) = (run.progress.clone(), run.cancel.clone(), run.result.clone());
-    let root_path = run.root.clone();
-    let spawned = std::thread::Builder::new()
-        .name("dfdu-dupes".into())
-        .spawn(move || {
-            let opts = Options::for_storage(dfdu_sys::storage(&root_path));
-            let _ = result.set(dfdu_dupes::find(&cands, &opts, &progress, &cancel));
-        });
-    match spawned {
-        Ok(_) => app.dupes.run = Some(run),
+    match Run::start(root, cands) {
+        Ok(run) => app.dupes.run = Some(run),
         Err(e) => app.status = Some(format!("duplicates: cannot start a thread: {e}")),
     }
 }

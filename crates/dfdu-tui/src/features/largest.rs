@@ -2,19 +2,20 @@
 //! current directory in one flat list, with their paths relative to it.
 //!
 //! Only while the view is open, the extras read walks the directory's subtree under the read
-//! lock and keeps the largest [`TOP`] files in a bounded heap. It walks again when the view
-//! opens, for another directory or size mode, and when the scan data changed: at once when no
-//! scan is running (a delete), and during a scan at most every [`MIN_INTERVAL`] and at most a
-//! tenth of the time, as the run loop paces the snapshot. It is one of the review views
-//! (`features::review`): `Space` ticks a file (marks it, as in the list), `Enter` shows it in
-//! Files, in its directory, and `d` deletes what is ticked.
+//! lock and keeps the largest [`TOP`](dfdu_session::largest::TOP) files in a bounded heap. It
+//! walks again when the view opens, for another directory or size mode, and when the scan data
+//! changed: at once when no scan is running (a delete), and during a scan at most every
+//! [`MIN_INTERVAL`] and at most a tenth of the time, as the run loop paces the snapshot. It is
+//! one of the review views (`features::review`): `Space` ticks a file (marks it, as in the
+//! list), `Enter` shows it in Files, in its directory, and `d` deletes what is ticked.
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Model, SizeMode};
-use dfdu_tree::{HostPath, Ident, Ix, Kind, NodeRef, Target, Tree};
+pub use dfdu_session::largest::File;
+use dfdu_session::largest::walk;
+use dfdu_tree::{HostPath, Ident, Kind, NodeRef, Target};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::keys::{self, Action};
@@ -26,8 +27,6 @@ mod draw;
 
 pub use draw::draw;
 
-/// The most files the view lists.
-pub const TOP: usize = 1000;
 /// During a scan, the walk runs at most this often.
 const MIN_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -55,17 +54,6 @@ pub struct Walked {
     cost: Duration,
     /// The model's fingerprint then.
     fingerprint: u64,
-}
-
-/// One of the largest files.
-#[derive(Clone, Debug)]
-pub struct File {
-    pub node: NodeRef,
-    /// Relative to the directory walked.
-    pub path: HostPath,
-    pub size: u64,
-    pub dev_ino: (u64, u64),
-    pub shared_out: u64,
 }
 
 /// What [`read`] found.
@@ -98,8 +86,8 @@ pub fn stale(app: &App) -> bool {
         })
 }
 
-/// Under the read lock, while the view is open and a walk is due: the largest [`TOP`] files
-/// below the current directory. `None` keeps what the last walk found.
+/// Under the read lock, while the view is open and a walk is due: the largest files below the
+/// current directory ([`walk`]). `None` keeps what the last walk found.
 pub fn read(m: &Model, app: &App) -> Option<Info> {
     if !active(app) {
         return None;
@@ -130,66 +118,6 @@ pub fn read(m: &Model, app: &App) -> Option<Info> {
             fingerprint,
         },
     })
-}
-
-/// The largest [`TOP`] files below `dir` in size mode `mode`, largest first and by path among
-/// equals, and how many files there are below it. A walk of the subtree with a heap of at most
-/// [`TOP`] files: the cost is one look at each node, and the paths are built only for those
-/// kept. `hide_hidden` leaves out hidden files and everything in hidden directories.
-fn walk(t: &Tree, dir: Ix, mode: SizeMode, hide_hidden: bool) -> (Vec<File>, u64) {
-    let mut heap: BinaryHeap<Reverse<(u64, Ix)>> = BinaryHeap::with_capacity(TOP + 1);
-    let mut count = 0;
-    let mut stack = vec![dir];
-    while let Some(d) = stack.pop() {
-        for c in t.children(d) {
-            if hide_hidden && t.name(c).first() == Some(&b'.') {
-                continue;
-            }
-            if t.dir(c).is_some() {
-                stack.push(c);
-                continue;
-            }
-            if t.kind(c) != Kind::File {
-                continue;
-            }
-            count += 1;
-            let size = mode.of(&t.total(c));
-            if heap.len() < TOP {
-                heap.push(Reverse((size, c)));
-            } else if heap.peek().is_some_and(|Reverse((least, _))| size > *least) {
-                heap.pop();
-                heap.push(Reverse((size, c)));
-            }
-        }
-    }
-    let mut files: Vec<File> = (heap.into_iter())
-        .map(|Reverse((size, ix))| File {
-            node: t.node_ref(ix),
-            path: below(t, dir, ix),
-            size,
-            dev_ino: t.dev_ino(ix),
-            shared_out: t.total(ix).shared_out,
-        })
-        .collect();
-    files.sort_by(|a, b| {
-        (b.size.cmp(&a.size)).then_with(|| a.path.components().cmp(b.path.components()))
-    });
-    (files, count)
-}
-
-/// The path of `ix` relative to its ancestor `dir`.
-fn below(t: &Tree, dir: Ix, ix: Ix) -> HostPath {
-    let mut names = Vec::new();
-    let mut at = Some(ix);
-    while let Some(i) = at.filter(|&i| i != dir) {
-        names.push(t.name(i));
-        at = t.parent(i);
-    }
-    let mut out = HostPath::empty(t.host());
-    for n in names.iter().rev() {
-        out.push(n);
-    }
-    out
 }
 
 /// Takes in a walk, keeping the cursor on the file it was on when that file is still listed,

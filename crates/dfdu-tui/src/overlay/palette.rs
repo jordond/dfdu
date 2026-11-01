@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::keys::{self, Action, Group};
 use crate::app::{App, Effect, Overlay};
-use crate::input::fuzzy::{Fuzzy, char_pos};
+use crate::input::fuzzy::char_pos;
 use crate::input::line::{Edit, LineInput};
 use crate::theme::Theme;
 
@@ -74,18 +74,11 @@ impl Palette {
         p
     }
 
-    /// Matches the entries against the input: by score, ties in registry order.
+    /// Matches the entries against the input: by score, ties in registry order
+    /// ([`dfdu_session::fuzzy::rank`]).
     fn rank(&mut self) {
-        let mut fuzzy = Fuzzy::new(self.input.text());
-        let mut ranked: Vec<(u32, usize, Vec<u32>)> = Vec::new();
-        for (i, e) in self.entries.iter().enumerate() {
-            let mut indices = Vec::new();
-            if let Some(score) = fuzzy.indices(&e.label, &mut indices) {
-                ranked.push((score, i, indices));
-            }
-        }
-        ranked.sort_by_key(|&(score, i, _)| (std::cmp::Reverse(score), i));
-        self.shown = ranked.into_iter().map(|(_, i, ix)| (i, ix)).collect();
+        let labels = self.entries.iter().map(|e| e.label.as_str());
+        self.shown = dfdu_session::fuzzy::rank(self.input.text(), labels);
         self.cursor = 0;
         self.scroll.set(0);
     }

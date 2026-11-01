@@ -494,6 +494,7 @@ name = "dfdu-session"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "dfdu-dupes",
  "dfdu-engine",
  "dfdu-rules",
  "dfdu-scan",

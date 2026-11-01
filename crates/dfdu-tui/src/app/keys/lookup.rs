@@ -2,7 +2,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{ACTIONS, Action, ActionInfo};
+use super::{ACTIONS, Action};
 
 /// One key of [`ActionInfo::keys`]: the key code and whether it needs Ctrl.
 pub(crate) fn parse(key: &str) -> Option<(KeyCode, bool)> {
@@ -38,14 +38,6 @@ pub(crate) fn parse(key: &str) -> Option<(KeyCode, bool)> {
         }
     };
     Some((code, false))
-}
-
-/// The actions of [`ACTIONS`] the browser offers: all of them, less those that delete when it is
-/// `read_only`.
-pub fn offered(read_only: bool) -> impl Iterator<Item = &'static ActionInfo> {
-    ACTIONS
-        .iter()
-        .filter(move |info| !(read_only && info.action.deletes()))
 }
 
 /// The first key of `a` in [`ACTIONS`]; empty for an action without a key.
@@ -125,16 +117,6 @@ mod tests {
         for bad in ["", "Ctrl-", "Ctrl-PP", "Fx", "Shift-a"] {
             assert_eq!(parse(bad), None, "{bad:?}");
         }
-    }
-
-    #[test]
-    fn a_read_only_browser_offers_no_action_that_deletes() {
-        let all: Vec<Action> = offered(false).map(|info| info.action).collect();
-        let read_only: Vec<Action> = offered(true).map(|info| info.action).collect();
-        assert_eq!(all.len(), ACTIONS.len());
-        assert_eq!(read_only.len(), all.len() - 3);
-        assert!(read_only.iter().all(|a| !a.deletes()));
-        assert!(all.contains(&Action::Undo) && !read_only.contains(&Action::Undo));
     }
 
     #[test]

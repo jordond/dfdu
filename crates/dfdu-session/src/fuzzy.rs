@@ -109,6 +109,21 @@ impl Fuzzy {
     }
 }
 
+/// The `labels` that `query` matches, as the palette ranks them: by score, ties in the order
+/// given. Each is its index in `labels` with the indices of its matched characters.
+pub fn rank<'a>(query: &str, labels: impl IntoIterator<Item = &'a str>) -> Vec<(usize, Vec<u32>)> {
+    let mut fuzzy = Fuzzy::new(query);
+    let mut ranked: Vec<(u32, usize, Vec<u32>)> = Vec::new();
+    for (i, label) in labels.into_iter().enumerate() {
+        let mut indices = Vec::new();
+        if let Some(score) = fuzzy.indices(label, &mut indices) {
+            ranked.push((score, i, indices));
+        }
+    }
+    ranked.sort_by_key(|&(score, i, _)| (std::cmp::Reverse(score), i));
+    ranked.into_iter().map(|(_, i, ix)| (i, ix)).collect()
+}
+
 /// `text` as nucleo reads it: its bytes when it is ASCII, otherwise one `char` per character
 /// (so match indices are `char` indices).
 fn utf32<'a>(text: &'a str, buf: &'a mut Vec<char>) -> Utf32Str<'a> {
@@ -227,5 +242,20 @@ mod tests {
             assert_eq!(out, [] as [u32; 0]);
         }
         assert!(!Fuzzy::new("a").is_empty());
+    }
+
+    #[test]
+    fn rank_puts_the_best_first_and_keeps_the_order_of_ties() {
+        let labels = ["sort by name", "size", "sort by size", "quit"];
+        let ranked = rank("size", labels);
+        let order: Vec<usize> = ranked.iter().map(|&(i, _)| i).collect();
+        assert_eq!(order, [1, 2]);
+        assert_eq!(ranked[0].1, [0, 1, 2, 3]);
+        let all: Vec<usize> = rank("", labels).into_iter().map(|(i, _)| i).collect();
+        assert_eq!(
+            all,
+            [0, 1, 2, 3],
+            "an empty query keeps every label, in order"
+        );
     }
 }

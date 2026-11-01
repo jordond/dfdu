@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use dfdu_engine::{Command as EngineCommand, Engine, EngineOptions};

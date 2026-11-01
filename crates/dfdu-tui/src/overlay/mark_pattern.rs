@@ -1,9 +1,11 @@
 //! Mark by pattern (in the command palette): a glob over the names the list shows in the current
 //! directory, such as `*.log` or `IMG_????.jpg`; `Enter` marks every entry it matches. Globs are
 //! those of the rules ([`dfdu_rules::Glob`]): `*` and `?`, no `[...]`, and case ignored on macOS
-//! and Windows, where file names usually ignore it.
+//! and Windows, where file names usually ignore it. The glob and what it matches are in
+//! `dfdu_session::mark_pattern`.
 
-use dfdu_rules::{Glob, GlobError, Platform};
+use dfdu_rules::{Glob, GlobError};
+use dfdu_session::mark_pattern::glob;
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -25,23 +27,12 @@ pub struct Prompt {
     matches: Option<Result<usize, GlobError>>,
 }
 
-/// The glob of `pattern`, compared as file names are on this platform.
-fn glob(pattern: &str) -> Result<Glob, GlobError> {
-    let fold = matches!(Platform::current(), Platform::MacOs | Platform::Windows);
-    Glob::new(pattern.trim(), fold)
-}
-
-/// The entries the list shows that `g` matches, by index into the snapshot's entries. The
-/// "shared between entries" row is not an entry, and directories are left out while a type
-/// filter shows only some of their files.
+/// The entries the list shows that `g` matches, by index into the snapshot's entries
+/// ([`dfdu_session::mark_pattern::matched`]). Directories are left out while a type filter
+/// shows only some of their files.
 fn matched(app: &App, g: &Glob) -> Vec<usize> {
     let folders = !crate::overlay::type_filter::active(app);
-    (app.list.rows.iter().copied())
-        .filter(|&i| {
-            let e = &app.snap.entries[i];
-            !e.pseudo && (folders || !e.is_dir) && g.matches(&e.name)
-        })
-        .collect()
+    dfdu_session::mark_pattern::matched(&app.snap.entries, &app.list.rows, folders, g)
 }
 
 /// Opens the prompt, empty. A read-only browser marks nothing, so it says so instead.

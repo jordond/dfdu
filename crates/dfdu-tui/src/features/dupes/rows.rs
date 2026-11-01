@@ -4,7 +4,7 @@
 use dfdu_dupes::{Candidate, Group};
 use dfdu_tree::{HostPath, Ident, Kind, NodeRef, Target};
 
-use super::{Keep, found};
+use super::found;
 use crate::app::App;
 use crate::state::marks;
 
@@ -17,7 +17,7 @@ pub(super) enum Row {
 
 /// A file still in the tree.
 pub(super) fn live(app: &App, c: &Candidate) -> Option<NodeRef> {
-    app.extras.dupes.get(&c.path).copied().flatten()
+    dfdu_session::dupes::live(&app.extras.dupes, c)
 }
 
 /// Whether group `g` shows its files: by default unless it is clones, which free nothing.
@@ -68,42 +68,28 @@ pub(super) fn mark_of(c: &Candidate, node: NodeRef) -> marks::Item {
     }
 }
 
-/// The index in `group` of the file still in the tree that the keep rule keeps.
+/// The index in `group` of the file still in the tree that the keep rule keeps
+/// ([`dfdu_session::dupes::kept`]).
 pub(super) fn kept(app: &App, group: &Group) -> Option<usize> {
-    let left = (group.files.iter().enumerate()).filter(|(_, c)| live(app, c).is_some());
-    // Compared by reference: this runs for every group on every frame.
-    let order = |a: &Candidate, b: &Candidate| match app.dupes.keep {
-        Keep::Oldest => a.mtime.cmp(&b.mtime),
-        Keep::Newest => b.mtime.cmp(&a.mtime),
-        Keep::ShortestPath => (a.path.as_os_str().len()).cmp(&b.path.as_os_str().len()),
-        Keep::FirstPath => std::cmp::Ordering::Equal,
-    };
-    left.min_by(|(_, a), (_, b)| order(a, b).then_with(|| a.path.cmp(&b.path)))
-        .map(|(i, _)| i)
+    dfdu_session::dupes::kept(group, app.dupes.keep, &app.extras.dupes)
 }
 
 /// The files of `group` still in the tree, but the one [`kept`].
 pub(super) fn copies(app: &App, group: &Group) -> Vec<(Candidate, NodeRef)> {
-    let keep = kept(app, group);
-    (group.files.iter().enumerate())
-        .filter(|&(i, _)| Some(i) != keep)
-        .filter_map(|(_, c)| Some((c.clone(), live(app, c)?)))
-        .collect()
+    dfdu_session::dupes::copies(group, app.dupes.keep, &app.extras.dupes)
 }
 
-/// Marks every copy but the one kept in each group that frees something; returns how many were
-/// newly marked.
+/// Marks every copy but the one kept in each group that frees something
+/// ([`dfdu_session::dupes::suggested`]); returns how many were newly marked.
 pub(super) fn mark_all(app: &mut App) -> usize {
     let Some(f) = found(app) else {
         return 0;
     };
-    let picks: Vec<(Candidate, NodeRef)> = f
-        .groups
-        .iter()
-        .filter(|g| !g.all_clones())
-        .flat_map(|g| copies(app, g))
-        .filter(|(_, n)| !app.marks.contains(*n))
-        .collect();
+    let picks: Vec<(Candidate, NodeRef)> =
+        dfdu_session::dupes::suggested(f, app.dupes.keep, &app.extras.dupes)
+            .into_iter()
+            .filter(|(_, n)| !app.marks.contains(*n))
+            .collect();
     for (c, n) in &picks {
         marks::set(app, mark_of(c, *n), true);
     }
@@ -148,13 +134,6 @@ mod tests {
         }));
     }
 
-    fn paths(files: &[(Candidate, NodeRef)]) -> Vec<String> {
-        files
-            .iter()
-            .map(|(c, _)| c.path.display().to_string())
-            .collect()
-    }
-
     #[test]
     fn open_groups_list_their_files_and_clones_come_last_closed() {
         let mut app = app();
@@ -185,27 +164,6 @@ mod tests {
         // A group with one file left is no group.
         app.extras.dupes.insert("/r/x".into(), None);
         assert!(!rows(&app).contains(&Row::Group(1)));
-    }
-
-    #[test]
-    fn the_keep_rule_picks_the_copy_kept() {
-        let mut app = app();
-        let group = found(&app).expect("a result").groups[0].clone();
-        let kept_path = |app: &App| kept(app, &group).map(|i| group.files[i].path.clone());
-        for (keep, path) in [
-            (Keep::Oldest, "/r/a"),
-            (Keep::Newest, "/r/c"),
-            (Keep::ShortestPath, "/r/a"),
-            (Keep::FirstPath, "/r/a"),
-        ] {
-            app.dupes.keep = keep;
-            assert_eq!(kept_path(&app), Some(path.into()), "{keep:?}");
-        }
-        // The copy kept is one still in the tree.
-        app.dupes.keep = Keep::Oldest;
-        app.extras.dupes.insert("/r/a".into(), None);
-        assert_eq!(kept_path(&app), Some("/r/bb/b".into()));
-        assert_eq!(paths(&copies(&app, &group)), ["/r/c"]);
     }
 
     #[test]

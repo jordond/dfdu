@@ -117,21 +117,6 @@ fn enter_goes_to_the_file_in_its_directory() {
     assert_eq!(&app.selected_entry().expect("selected").name[..], b"x.bin");
 }
 
-#[test]
-fn the_heap_keeps_only_the_largest() {
-    let (mut m, root) = root_model();
-    let n = TOP as u64 + 5;
-    for i in 1..=n {
-        add_file(&mut m.tree, root, &format!("f{i}"), i, 10 + i);
-    }
-    let (files, count) = walk(&m.tree, root, SizeMode::Disk, false);
-    assert_eq!(count, n);
-    assert_eq!(files.len(), TOP);
-    assert_eq!(files[0].size, n);
-    assert_eq!(files[TOP - 1].size, 6);
-    assert!(files.windows(2).all(|w| w[0].size >= w[1].size));
-}
-
 /// The walk runs only while the view is open, and again only when the data changed.
 #[test]
 fn walks_only_while_open_and_when_something_changed() {

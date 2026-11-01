@@ -1,6 +1,6 @@
 [package]
 name = "dfdu-session"
-description = "What a front end of dfdu shows besides drawing and input: the directory snapshot, tree mode, row order, fuzzy matching, the scan history, the mounts left out, startup and the treemap layout"
+description = "What a front end of dfdu shows besides drawing and input: the directory snapshot, tree mode, row order, fuzzy matching, the scan history, the mounts left out, startup, the treemap layout, the actions, duplicates, the largest files and an entry's details"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,7 @@ dfdu-rules.workspace = true
 dfdu-engine.workspace = true
 dfdu-sys.workspace = true
 dfdu-store.workspace = true
+dfdu-dupes.workspace = true
 crossbeam-channel.workspace = true
 nucleo-matcher.workspace = true
 
