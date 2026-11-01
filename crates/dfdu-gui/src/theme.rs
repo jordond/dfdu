@@ -36,6 +36,10 @@ impl Colors {
             egui::Theme::Light => (BuiltinTheme::Light, Visuals::light()),
         };
         let mut palette = builtin.palette();
+        if builtin == BuiltinTheme::Light {
+            // The terminal's warm track reads as beige beside the window's cool greys.
+            palette[Token::BarEmpty].fg.rgb = Some((0xe3, 0xe7, 0xee));
+        }
         if let Some(file) = file {
             let theirs = file.palette();
             for t in Token::ALL {
