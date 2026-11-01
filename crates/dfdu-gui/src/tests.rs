@@ -114,6 +114,15 @@ fn the_window_scans_a_directory_and_opens_one_with_the_keys() {
     until(&mut h, "the parent", |h| shown(h, "big.bin"));
     assert_eq!(selected(&h).as_deref(), Some(&b"sub"[..]));
 
+    // Tree mode: `T`, then the triangle of the directory expands it in place.
+    h.event(egui::Event::Text("T".into()));
+    until(&mut h, "tree mode", |h| shown(h, "Expand"));
+    assert!(!shown(&h, "inner.txt"));
+    h.get_by_label("Expand").click();
+    until(&mut h, "the expanded directory", |h| {
+        shown(h, "inner.txt") && shown(h, "Collapse")
+    });
+
     let mut gui = h.into_state().gui.expect("the window");
     gui.close();
 }

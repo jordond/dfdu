@@ -53,15 +53,18 @@ impl Shot {
                 close.send_viewport_cmd(egui::ViewportCommand::Close);
             }),
         ));
-        ctx.request_repaint();
     }
 }
 
 impl eframe::App for Shot {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.gui.show(ui);
+        let ctx = ui.ctx().clone();
         if self.path.is_some() {
-            self.take(&ui.ctx().clone());
+            self.take(&ctx);
+        } else {
+            // The picture is read back from the GPU while frames are painted.
+            ctx.request_repaint_after(Duration::from_millis(50));
         }
     }
 

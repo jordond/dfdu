@@ -7,7 +7,7 @@
 //! keeps its own scroll position.
 
 use dfdu_session::SessionState;
-use dfdu_session::actions::Action;
+use dfdu_session::actions::{Action, first_key};
 use dfdu_session::format::{count, human, plural, ratio};
 use dfdu_session::order::SortKey;
 use dfdu_session::palette::Token;
@@ -98,13 +98,13 @@ pub fn show(
 }
 
 /// What an empty list says.
-fn empty_note(s: &SessionState) -> &'static str {
+fn empty_note(s: &SessionState) -> String {
     match s.snap.dir_mark {
-        Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "Scanning…",
-        Some(Mark::Error) => "This directory could not be read.",
-        Some(Mark::Incomplete) => "Incomplete: rescan with r.",
-        _ if s.filter.active() => "Nothing matches the filter.",
-        _ => "Empty.",
+        Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "Scanning…".into(),
+        Some(Mark::Error) => "This directory could not be read.".into(),
+        Some(Mark::Incomplete) => format!("Incomplete: rescan with {}.", first_key(Action::Rescan)),
+        _ if s.filter.active() => "Nothing matches the filter.".into(),
+        _ => "Empty.".into(),
     }
 }
 
@@ -293,7 +293,10 @@ fn mark_note(e: &EntryData) -> Option<(String, Token)> {
             Token::StatusError,
         )),
         Mark::Deleting => Some(("deleting".into(), Token::StatusWarn)),
-        Mark::Incomplete => Some(("incomplete: rescan with r".into(), Token::StatusWarn)),
+        Mark::Incomplete => Some((
+            format!("incomplete: rescan with {}", first_key(Action::Rescan)),
+            Token::StatusWarn,
+        )),
     }
 }
 
@@ -315,9 +318,10 @@ fn new_entries(
     row.col(|_| {});
     row.col(|ui| {
         let text = format!(
-            "{} new entr{} since the last sort (S sorts them in)",
+            "{} new entr{} since the last sort ({} sorts them in)",
             count(n),
-            if n == 1 { "y" } else { "ies" }
+            if n == 1 { "y" } else { "ies" },
+            first_key(Action::Resort)
         );
         ui.label(colors.text(text, Token::FgDim).italics());
     });
