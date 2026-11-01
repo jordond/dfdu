@@ -70,6 +70,8 @@ fn shortcuts(read_only: bool) -> Vec<(String, &'static str)> {
     if !read_only {
         out.push(("Delete".into(), "move to Trash"));
     }
+    out.push((format!("{cmd}-W"), "close the window"));
+    out.push((format!("{cmd}-Q"), "quit"));
     out
 }
 

@@ -1,7 +1,7 @@
 //! The window's contents: a menu bar, then the start screen until a directory or an export is
 //! chosen, then the browser of its scan, or why it could not be opened. The browser is stopped when the
 //! window closes. The settings (`settings`) are applied when a browser opens and saved from it.
-//! The View menu chooses the theme: the system's dark or light one, either of them, or a theme
+//! Cmd-Q and Cmd-W (Ctrl-Q, Ctrl-W) close the window. The View menu chooses the theme: the system's dark or light one, either of them, or a theme
 //! file of dfdu's theme directory (`theme`), read when it is chosen.
 
 use std::path::PathBuf;
@@ -78,6 +78,7 @@ impl Gui {
 
     /// Draws a frame of the screen shown in `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        window_keys(ui.ctx());
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
         let colors = Colors::new(ui.ctx().theme(), self.file_in_use());
         match &mut self.screen {
@@ -260,6 +261,19 @@ impl Gui {
             }
             Err(e) => Screen::Failed(format!("Cannot open it: {e}")),
         }
+    }
+}
+
+/// The window's own shortcuts, taken before anything else sees them: Cmd-Q (Ctrl-Q) quits and
+/// Cmd-W (Ctrl-W) closes the window, which for the one window is the same. Quitting stops the
+/// browser ([`Gui::close`]) as closing the window does.
+fn window_keys(ctx: &egui::Context) {
+    let close = ctx.input_mut(|i| {
+        let quit = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Q);
+        quit | i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
+    });
+    if close {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 

@@ -7,12 +7,14 @@
 //! keys and ticks of the review views (`review`), the details panel (`details`), the action and
 //! status bars (`status_bar`), the delete dialog (`dialog`), the error list and type picker
 //! (`windows`), the help (`help`) and the command palette (`palette`), coloured by the theme's
-//! tokens (`theme`), with the terminal's keys (`keys`). A thread asks for a frame when the
+//! tokens (`theme`), with the terminal's keys (`keys`). On macOS a banner says when the window
+//! lacks Full Disk Access (`access`). A thread asks for a frame when the
 //! engine's model changes (`bridge`). The theme chosen and how the list was shown are kept
 //! between runs (`settings`).
 //!
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start.
 
+mod access;
 mod app;
 mod args;
 mod bridge;

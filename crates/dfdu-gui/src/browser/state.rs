@@ -67,6 +67,10 @@ pub enum Intent {
     DupesCancel,
     /// Theme `i` of [`ViewState::themes`] chosen in the palette.
     Theme(usize),
+    /// The banner's button that opens the Full Disk Access settings (`access`).
+    OpenAccessSettings,
+    /// The banner on Full Disk Access dismissed.
+    DismissAccess,
 }
 
 /// What the window keeps beside the session's state.
@@ -100,4 +104,9 @@ pub struct ViewState {
     pub themes: Vec<String>,
     /// The theme chosen in the palette, by its index in `themes`, for the window to apply.
     pub theme_pick: Option<usize>,
+    /// The folders macOS keeps from the window that the scan could not read, as the banner
+    /// on Full Disk Access names them, until it is dismissed (`access`).
+    pub no_access: Option<Vec<String>>,
+    /// The finished scan was checked for those folders.
+    pub access_checked: bool,
 }

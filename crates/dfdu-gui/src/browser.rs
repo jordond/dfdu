@@ -2,7 +2,8 @@
 //! keeps beside it ([`ViewState`]).
 //!
 //! Each frame takes in a change the bridge thread saw, runs the keys pressed, ticks the session
-//! (which reads the model when due), draws the toolbar, the status bar, the details panel, the
+//! (which reads the model when due), draws the toolbar, the banner on Full Disk Access once a
+//! scan on macOS finds folders it keeps (`access`), the status bar, the details panel, the
 //! view shown (the list, the map while it has room, Cleanup, Duplicates or the largest files),
 //! the delete
 //! dialog, the native command pane and the windows from its state, then carries out what was
@@ -29,6 +30,7 @@ use dfdu_session::{
     selected_path,
 };
 
+use crate::access;
 use crate::bridge::Bridge;
 use crate::help::Help;
 use crate::palette::Palette;
@@ -203,6 +205,13 @@ impl<B: Backend> Browser<B> {
                     self.view().follow |= acted.went.is_some();
                 }
                 Intent::Theme(i) => self.view().theme_pick = Some(i),
+                Intent::OpenAccessSettings => {
+                    let settings = std::path::Path::new(access::SETTINGS);
+                    if let Err(problem) = file_manager::spawn_open(settings, true) {
+                        self.session.state_mut().status = Some(problem);
+                    }
+                }
+                Intent::DismissAccess => self.view().no_access = None,
                 Intent::DupesCancel => {
                     if dupes::cancel(s) {
                         s.status = Some("duplicates: the comparison was stopped".into());
@@ -352,6 +361,32 @@ impl<B: Backend> Browser<B> {
         }
     }
 
+    /// On macOS, once the scan of this machine is done, looks for the folders macOS keeps from
+    /// an app without Full Disk Access among those it could not read, for the banner.
+    fn check_access(&mut self) {
+        let s = self.session.state();
+        let done = s.done_at.is_some() && !s.snap.busy;
+        if !cfg!(target_os = "macos") || self.view().access_checked || !done {
+            return;
+        }
+        let s = self.session.state();
+        let (local, errors, home) = (s.outside.local, s.snap.root_total.errors, s.home.clone());
+        let found = if local && errors > 0 {
+            let home = home.as_deref();
+            self.session
+                .engine()
+                .read(|m| access::denied(&m.tree, home))
+        } else {
+            Vec::new()
+        };
+        let named: Vec<String> = (found.iter())
+            .map(|p| tilde(&dfdu_tree::HostPath::local(p), home.as_deref()))
+            .collect();
+        let view = self.view();
+        view.access_checked = true;
+        view.no_access = (!named.is_empty()).then_some(named);
+    }
+
     /// Notes when the undo offered now was first seen, and asks for a frame each second while
     /// a staged delete counts down.
     fn note_undo(&mut self, now: Instant, ctx: &egui::Context) {
@@ -422,12 +457,18 @@ impl<B: Backend> Browse for Browser<B> {
             return;
         }
         self.note_undo(now, &ctx);
+        self.check_access();
         let mut intents = Vec::new();
         let Front { state: s, view } = self.session.front_mut();
         let s = &*s;
         egui::Panel::top("toolbar").show(ui, |ui| {
             toolbar::show(ui, s, colors, view, now, &mut intents);
         });
+        if let Some(folders) = &view.no_access {
+            egui::Panel::top("access").show(ui, |ui| {
+                access::banner(ui, colors, folders, &mut intents);
+            });
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             status_bar::show(ui, s, colors, view, now, &mut intents);
         });

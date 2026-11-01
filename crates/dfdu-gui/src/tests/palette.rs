@@ -1,6 +1,7 @@
 //! The command palette runs an action or chooses a theme by name; the help lists the keys by
 //! group and searches them; neither offers a way to delete in a read-only browser. The
-//! platform's shortcuts open the palette and the filter and copy the selected path.
+//! platform's shortcuts open the palette and the filter, copy the selected path and close the
+//! window.
 
 use dfdu_session::filter;
 use egui::{Event, Key, Modifiers};
@@ -101,5 +102,37 @@ fn the_platform_shortcuts_open_the_filter_and_copy_the_path() {
     until(&mut h, "the filtered list", |h| {
         shown(h, "sub/") && !h.query_all_by_label("big.bin").any(|_| true)
     });
+    close(h);
+}
+
+#[test]
+fn cmd_q_and_cmd_w_close_the_window() {
+    let tmp = files();
+    let mut h = window(tmp.path());
+    until(&mut h, "the scan", |h| scan_done(h) && shown(h, "big.bin"));
+    let closes = |h: &egui_kittest::Harness<super::Window>| {
+        (h.output().viewport_output.get(&egui::ViewportId::ROOT))
+            .is_some_and(|v| v.commands.contains(&egui::ViewportCommand::Close))
+    };
+    h.step();
+    assert!(!closes(&h));
+    // One event a step: the output read is the step's that took the key.
+    let press = |key, modifiers| Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    for key in [Key::Q, Key::W] {
+        h.event(press(key, Modifiers::COMMAND));
+        h.step();
+        assert!(closes(&h), "{key:?}");
+        h.step();
+    }
+    // Without the Command key they are nothing of the window's.
+    h.event(press(Key::Q, Modifiers::NONE));
+    h.step();
+    assert!(!closes(&h));
     close(h);
 }
