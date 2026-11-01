@@ -1,5 +1,6 @@
-//! The window's contents: a menu bar, then the start screen until a directory or an export is
-//! chosen, then the browser of its scan, or why it could not be opened. The browser is stopped when the
+//! The window's contents: the start screen until a directory or an export is chosen, with a
+//! View menu in its top right corner, then the browser of its scan, or why it could not be
+//! opened. The browser is stopped when the
 //! window closes. The settings (`settings`) are applied when a browser opens and saved from it.
 //! Cmd-Q and Cmd-W (Ctrl-Q, Ctrl-W) close the window. The View menu chooses the theme: the system's dark or light one, either of them, or a theme
 //! file of dfdu's theme directory (`theme`), read when it is chosen.
@@ -10,9 +11,10 @@ use dfdu_session::palette::{ThemeFile, Token};
 use dfdu_session::startup::{Source, StartLocal};
 
 use crate::browser::Browse;
+use crate::kit;
 use crate::launch::{self, Launch, Settings};
 use crate::settings::{Prefs, ThemeChoice};
-use crate::start::{Chosen, Start};
+use crate::start::{self, Chosen, Start};
 use crate::theme::{self, Colors};
 
 enum Screen {
@@ -80,10 +82,6 @@ impl Gui {
     /// Draws a frame of the screen shown in `ui`.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         window_keys(ui.ctx());
-        // The browser's toolbar has its own View menu.
-        if !self.browsing() {
-            egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
-        }
         let colors = Colors::new(ui.ctx().theme(), self.file_in_use());
         let current = self.themes().iter().position(|t| *t == self.prefs.theme);
         match &mut self.screen {
@@ -101,39 +99,46 @@ impl Gui {
                 }
             }
             Screen::Failed(e) => {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    ui.label(colors.text(e.as_str(), Token::StatusError));
-                });
+                egui::CentralPanel::default()
+                    .frame(start::frame(&colors))
+                    .show(ui, |ui| {
+                        start::backdrop(ui, &colors);
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(ui.available_height() * 0.35);
+                            let error = colors.fg(Token::StatusError);
+                            ui.add(
+                                egui::Label::new(kit::sans(e.as_str(), 13.0).color(error)).wrap(),
+                            );
+                        });
+                    });
             }
             Screen::Closed => {}
         }
+        // The browser's toolbar has its own View menu.
+        if !self.browsing() {
+            self.menu(ui.ctx());
+        }
     }
 
-    /// The menu bar: the theme, and the help and the command palette of a browser.
-    fn menu(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            if let Screen::Browse(b) = &mut self.screen {
-                ui.menu_button("Go", |ui| {
-                    if ui.button("Command palette…").clicked() {
-                        b.view_mut().palette = Some(crate::palette::Palette::new());
-                    }
-                    if ui.button("Keys").clicked() {
-                        b.view_mut().help = Some(crate::help::Help::new());
+    /// The View menu of the screens without a browser, quiet in the window's top right corner:
+    /// the theme.
+    fn menu(&mut self, ctx: &egui::Context) {
+        egui::Area::new(egui::Id::unique("dfdu-view-menu"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 12.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.menu_button(kit::label("View", 12.0), |ui| {
+                    ui.label(kit::label("Theme", 11.0).weak());
+                    for choice in self.themes() {
+                        if ui
+                            .radio(self.prefs.theme == choice, choice.label())
+                            .clicked()
+                        {
+                            self.choose(choice, ui.ctx());
+                        }
                     }
                 });
-            }
-            ui.menu_button("View", |ui| {
-                ui.label("Theme");
-                for choice in self.themes() {
-                    if ui
-                        .radio(self.prefs.theme == choice, choice.label())
-                        .clicked()
-                    {
-                        self.choose(choice, ui.ctx());
-                    }
-                }
             });
-        });
     }
 
     /// Opens what was chosen on the start screen: a folder is scanned afresh, an export is

@@ -1,15 +1,17 @@
 //! The help (`?`, F1): the keys of the actions the window offers, from the action registry
 //! grouped as the terminal's help groups them (`dfdu_session::actions::search`), with a search
 //! that matches their keys and labels; then the platform's own shortcuts. In a read-only
-//! browser the actions that delete are left out. `Esc` closes it.
+//! browser the actions that delete are left out. `Esc` closes it. Each key is in a cap
+//! ([`caps`]), each group under a dim heading.
 
 use dfdu_session::actions::{Group, search};
 use dfdu_session::palette::Token;
-use egui::{Id, Label, ScrollArea, TextEdit, Window};
+use egui::{Id, Label, ScrollArea, Ui, WidgetInfo, Window};
 
 use crate::browser::ViewState;
-use crate::keys;
 use crate::theme::Colors;
+use crate::theme::style::{ROW, SPACE_1, SPACE_2, SPACE_3};
+use crate::{keys, kit, windows};
 
 /// The groups, in the order the help lists them, with their headings.
 const GROUPS: [(Group, &str); 6] = [
@@ -80,18 +82,16 @@ pub fn show(ctx: &egui::Context, read_only: bool, colors: &Colors, view: &mut Vi
     let Some(help) = &mut view.help else { return };
     let mut open = true;
     let mut close = false;
-    Window::new("Keys")
+    Window::new(kit::title("Keys", 15.0))
         .id(Id::unique("dfdu-help"))
+        .frame(windows::frame(ctx))
         .open(&mut open)
         .default_size([460.0, 520.0])
         .collapsible(false)
         .show(ctx, |ui| {
-            let r = ui.add(
-                TextEdit::singleline(&mut help.query)
-                    .id(Id::unique("dfdu-help-search"))
-                    .hint_text("Search the keys")
-                    .desired_width(f32::INFINITY),
-            );
+            let width = ui.available_width();
+            let id = Id::unique("dfdu-help-search");
+            let r = windows::field(ui, colors, &mut help.query, id, "Search the keys", width);
             if std::mem::take(&mut help.focus) {
                 r.request_focus();
             }
@@ -101,36 +101,58 @@ pub fn show(ctx: &egui::Context, read_only: bool, colors: &Colors, view: &mut Vi
             let rows = rows(&help.query, read_only);
             ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 if rows.is_empty() {
-                    ui.label(colors.text("Nothing matches.", Token::FgDim));
+                    ui.add_space(SPACE_2);
+                    ui.label(kit::sans("Nothing matches.", 12.0).color(colors.fg(Token::FgDim)));
                 }
                 for (heading, found) in &rows {
-                    ui.add_space(ui.spacing().item_spacing.y);
-                    ui.label(colors.text(*heading, Token::Title).strong());
-                    grid(ui, colors, heading, found);
+                    group(ui, colors, heading, found);
                 }
                 if help.query.is_empty() {
-                    ui.add_space(ui.spacing().item_spacing.y);
-                    ui.label(colors.text("Shortcuts", Token::Title).strong());
-                    let found: Vec<(String, &str)> = shortcuts(read_only);
-                    grid(ui, colors, "shortcuts", &found);
+                    group(ui, colors, "Shortcuts", &shortcuts(read_only));
                 }
             });
         });
-    crate::windows::name_title_bar(ctx, "dfdu-help", "Keys");
+    windows::name_title_bar(ctx, "dfdu-help", "Keys");
     if !open || close {
         view.help = None;
     }
 }
 
-/// The keys and labels of a group.
-fn grid(ui: &mut egui::Ui, colors: &Colors, id: &str, rows: &[(String, &str)]) {
-    egui::Grid::new(("dfdu-help", id)).show(ui, |ui| {
-        for (keys, label) in rows {
-            ui.label(colors.text(keys, Token::Key));
-            ui.add(Label::new(*label).wrap());
-            ui.end_row();
-        }
-    });
+/// A group: its heading, dim, then each action's keys in caps and its label.
+fn group(ui: &mut Ui, colors: &Colors, heading: &str, rows: &[(String, &str)]) {
+    ui.add_space(SPACE_3);
+    ui.label(kit::label(heading, 11.0).color(colors.fg(Token::FgDim)));
+    ui.add_space(SPACE_1);
+    egui::Grid::new(("dfdu-help", heading))
+        .min_row_height(ROW)
+        .min_col_width(120.0)
+        .spacing(egui::vec2(SPACE_3, 2.0))
+        .show(ui, |ui| {
+            for (keys, label) in rows {
+                caps(ui, colors, keys);
+                ui.add(Label::new(kit::sans(*label, 13.0)).wrap());
+                ui.end_row();
+            }
+        });
+}
+
+/// The keys `keys` (as [`keys::shown`] names them, apart by spaces) each in a cap, named
+/// together as they are written.
+pub fn caps(ui: &mut Ui, colors: &Colors, keys: &str) {
+    if keys.is_empty() {
+        return;
+    }
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_1;
+            for key in keys.split_whitespace() {
+                kit::key_cap(ui, colors, key);
+            }
+        })
+        .response;
+    let id = r.id.with("dfdu-keys");
+    ui.interact(r.rect, id, egui::Sense::hover())
+        .widget_info(|| WidgetInfo::labeled(egui::Role::Label, true, keys));
 }
 
 #[cfg(test)]

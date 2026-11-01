@@ -22,7 +22,7 @@ fn the_banner_on_full_disk_access_names_the_folders_and_is_dismissed() {
         &h,
         "macOS keeps ~/Library/Mail, ~/Library/Safari, ~/Library/Messages and 1 more from dfdu"
     ));
-    assert!(shown(&h, "Open Full Disk Access settings"));
+    assert!(shown(&h, "Open System Settings"));
     h.get_by_label("Dismiss").click();
     until(&mut h, "no banner", |h| !shown(h, "No Full Disk Access."));
     close(h);

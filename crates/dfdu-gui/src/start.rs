@@ -3,6 +3,10 @@
 //! folder picker (`rfd`), a field to type a folder's path, a folder dropped on the window, and
 //! the system's file picker for a scan saved to a file (an export), which is browsed read-only
 //! as `--import` browses it.
+//!
+//! It is drawn on the window's background with a faint grid ([`backdrop`]), 32 in from its
+//! edges: the heading, a card per disk (its name, mount point, a bar of its use, used of total
+//! and free), then the ways to choose a folder or an export.
 
 use std::io;
 use std::path::PathBuf;
@@ -11,9 +15,22 @@ use crossbeam_channel::Receiver;
 use dfdu_session::format::{human, ratio};
 use dfdu_session::palette::Token;
 use dfdu_sys::{Disk, FsClass, Role};
-use egui::{Button, Label, ProgressBar, TextEdit, Ui};
+use egui::text::{LayoutJob, TextWrapping};
+use egui::{
+    Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, Sense,
+    Stroke, StrokeKind, TextFormat, Ui, WidgetInfo, pos2, vec2,
+};
 
+use crate::kit::{self, Kind};
 use crate::theme::Colors;
+use crate::theme::style::{
+    MONO_SEMIBOLD_FAMILY, RADIUS_MD, SPACE_2, SPACE_3, SPACE_4, SPACE_6, SPACE_8,
+};
+
+/// A disk's card.
+const CARD: egui::Vec2 = vec2(260.0, 118.0);
+/// Between the lines of the background grid.
+const GRID: f32 = 24.0;
 
 /// What the start screen chose.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +49,30 @@ pub struct Start {
     folder: String,
     /// Why what was dropped on the window last is not scanned.
     dropped: Option<String>,
+}
+
+/// The frame of a screen without a browser: the window's background, 32 in from its edges.
+pub fn frame(colors: &Colors) -> Frame {
+    Frame::new()
+        .fill(colors.chrome.bg)
+        .inner_margin(Margin::same(32))
+}
+
+/// Paints the faint grid of the screens without a browser over the whole window.
+pub fn backdrop(ui: &Ui, colors: &Colors) {
+    let rect = ui.ctx().content_rect();
+    let p = ui.ctx().layer_painter(ui.layer_id());
+    let stroke = Stroke::new(1.0, colors.chrome.grid);
+    let mut x = rect.left() + GRID;
+    while x < rect.right() {
+        p.vline(x.round() + 0.5, rect.y_range(), stroke);
+        x += GRID;
+    }
+    let mut y = rect.top() + GRID;
+    while y < rect.bottom() {
+        p.hline(rect.x_range(), y.round() + 0.5, stroke);
+        y += GRID;
+    }
 }
 
 impl Start {
@@ -65,70 +106,81 @@ impl Start {
         }
         let mut chosen = None;
         let mut export = None;
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading(colors.text("Choose a disk to browse", Token::Title));
-            ui.add_space(ui.spacing().item_spacing.y * 2.0);
-            match &self.disks {
-                None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(colors.text("Listing the disks…", Token::FgDim));
-                    });
-                }
-                Some(Err(e)) => {
-                    ui.label(colors.text(
-                        format!("The disks cannot be listed: {e}"),
-                        Token::StatusError,
-                    ));
-                }
-                Some(Ok(disks)) if disks.is_empty() => {
-                    ui.label(colors.text("No disks found.", Token::FgDim));
-                }
-                Some(Ok(disks)) => {
-                    egui::Grid::new("disks").striped(true).show(ui, |ui| {
-                        for d in disks {
-                            if let Some(p) = disk(ui, d, colors) {
-                                chosen = Some(p);
+        let dim = colors.fg(Token::FgDim);
+        egui::CentralPanel::default()
+            .frame(frame(colors))
+            .show(ui, |ui| {
+                backdrop(ui, colors);
+                ui.label(kit::mono_bold("Choose a disk", 22.0).color(colors.fg(Token::Header)));
+                ui.add_space(SPACE_4);
+                match &self.disks {
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(kit::sans("Listing the disks…", 13.0).color(dim));
+                        });
+                    }
+                    Some(Err(e)) => {
+                        let text = format!("The disks cannot be listed: {e}");
+                        ui.label(kit::sans(text, 13.0).color(colors.fg(Token::StatusError)));
+                    }
+                    Some(Ok(disks)) if disks.is_empty() => {
+                        ui.label(kit::sans("No disks found.", 13.0).color(dim));
+                    }
+                    Some(Ok(disks)) => {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(SPACE_3, SPACE_3);
+                            for d in disks {
+                                if let Some(p) = card(ui, d, colors) {
+                                    chosen = Some(p);
+                                }
                             }
-                            ui.end_row();
-                        }
-                    });
+                        });
+                    }
                 }
-            }
-            ui.add_space(ui.spacing().item_spacing.y * 4.0);
-            ui.label(colors.text("Or a folder:", Token::Header));
-            ui.horizontal(|ui| {
-                if ui.button("Open folder…").clicked()
-                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
-                {
-                    chosen = Some(dir);
+                ui.add_space(SPACE_8);
+                ui.label(kit::label("Or a folder", 11.0).color(dim));
+                ui.add_space(SPACE_2);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_2;
+                    let open = kit::button(ui, colors, Kind::Primary, "Open folder…", None, true);
+                    if open.clicked()
+                        && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                    {
+                        chosen = Some(dir);
+                    }
+                    ui.add_space(SPACE_2);
+                    let id = egui::Id::unique("dfdu-start-folder");
+                    let hint = "Path of a folder";
+                    let r = crate::windows::field(ui, colors, &mut self.folder, id, hint, 280.0);
+                    let typed = !self.folder.trim().is_empty();
+                    let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let scan = kit::button(ui, colors, Kind::Secondary, "Scan", None, typed);
+                    if (scan.clicked() || entered) && typed {
+                        chosen = Some(PathBuf::from(self.folder.trim()));
+                    }
+                });
+                ui.add_space(SPACE_2);
+                let drop = "or drop a folder anywhere on the window";
+                ui.label(kit::sans(drop, 12.0).color(dim));
+                if let Some(note) = &self.dropped {
+                    ui.label(kit::sans(note, 12.0).color(colors.fg(Token::StatusWarn)));
                 }
-                let r =
-                    ui.add(TextEdit::singleline(&mut self.folder).hint_text("Path of a folder"));
-                let typed = !self.folder.trim().is_empty();
-                let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (ui.add_enabled(typed, Button::new("Scan")).clicked() || entered) && typed {
-                    chosen = Some(PathBuf::from(self.folder.trim()));
-                }
+                ui.add_space(SPACE_6);
+                ui.label(kit::label("Or a scan saved to a file", 11.0).color(dim));
+                ui.add_space(SPACE_2);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_3;
+                    let open = kit::button(ui, colors, Kind::Secondary, "Open export…", None, true);
+                    if open.clicked()
+                        && let Some(file) = rfd::FileDialog::new().pick_file()
+                    {
+                        export = Some(file);
+                    }
+                    let what = "A snapshot or an ncdu export, browsed read-only.";
+                    ui.label(kit::sans(what, 12.0).color(dim));
+                });
             });
-            ui.label(colors.text("Or drop a folder on the window.", Token::FgDim));
-            if let Some(note) = &self.dropped {
-                ui.label(colors.text(note, Token::StatusWarn));
-            }
-            ui.add_space(ui.spacing().item_spacing.y * 4.0);
-            ui.label(colors.text("Or a scan saved to a file:", Token::Header));
-            ui.horizontal(|ui| {
-                if ui.button("Open export…").clicked()
-                    && let Some(file) = rfd::FileDialog::new().pick_file()
-                {
-                    export = Some(file);
-                }
-                ui.label(colors.text(
-                    "A snapshot or an ncdu export, browsed read-only.",
-                    Token::FgDim,
-                ));
-            });
-        });
         if let Some(file) = export {
             return Some(Chosen::Export(file));
         }
@@ -152,48 +204,142 @@ fn dropped(ctx: &egui::Context) -> Option<Result<PathBuf, String>> {
     })
 }
 
-/// One disk's row of the grid; its mount point when it was clicked.
-fn disk(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
-    let at = d.mount_point.display().to_string();
-    let clicked = ui
-        .add_enabled(d.space.is_some(), Button::new(colors.text(at, Token::Dir)))
-        .clicked();
-    cell(ui, colors, &d.fstype);
-    match d.space {
-        Some(s) => {
-            let frac = ratio(s.used, s.total.max(1));
-            #[expect(clippy::cast_possible_truncation, reason = "a fraction drawn as a bar")]
-            let bar = ProgressBar::new(frac as f32)
-                .desired_width(160.0)
-                .fill(colors.fg(Token::BarFill))
-                .text(format!("{:.0}%", frac * 100.0));
-            ui.add(bar);
-            ui.label(format!("{} of {}", human(s.used), human(s.total)));
-            ui.label(colors.text(format!("{} free", human(s.available)), Token::FgDim));
-        }
-        None => {
-            ui.label(colors.text("not responding", Token::StatusWarn));
-            cell(ui, colors, "");
-            cell(ui, colors, "");
-        }
-    }
-    let mut notes = Vec::new();
+/// What a disk is called on its card: the last name of its mount point, or the mount point.
+fn name(d: &Disk) -> String {
+    d.mount_point.file_name().map_or_else(
+        || d.mount_point.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
+/// What a disk's card notes of it: its filesystem, a network one, its role.
+fn notes(d: &Disk) -> String {
+    let mut notes = vec![d.fstype.as_str()];
     if d.class == FsClass::Network {
         notes.push("network");
     }
     if let Some(role) = d.role {
         notes.push(role.label());
     }
-    cell(ui, colors, &notes.join(" · "));
-    clicked.then(|| d.mount_point.clone())
+    notes.retain(|n| !n.is_empty());
+    notes.join(" · ")
 }
 
-/// A dim cell of the grid. An empty one is not selectable: egui's labels are, and a screen
-/// reader would then meet a control with no name.
-fn cell(ui: &mut Ui, colors: &Colors, text: &str) {
-    if text.is_empty() {
-        ui.add(Label::new("").selectable(false));
+/// `text` in `font` and `color`, on one line, cut with `…` at `width`.
+fn line(
+    ui: &Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = LayoutJob::single_section(text.to_owned(), TextFormat::simple(font, color));
+    job.wrap = TextWrapping::truncate_at_width(width);
+    ui.painter().layout_job(job)
+}
+
+/// A disk's card, the whole of it a button; its mount point when it was clicked. A disk that
+/// does not answer is dimmed and says so.
+fn card(ui: &mut Ui, d: &Disk, colors: &Colors) -> Option<PathBuf> {
+    let enabled = d.space.is_some();
+    let sense = if enabled {
+        Sense::click()
     } else {
-        ui.label(colors.text(text, Token::FgDim));
+        Sense::hover()
+    };
+    let (rect, r) = ui.allocate_exact_size(CARD, sense);
+    let at = d.mount_point.display().to_string();
+    let spoken = match d.space {
+        Some(s) => format!(
+            "{at}, {} of {} used, {} free",
+            human(s.used),
+            human(s.total),
+            human(s.available)
+        ),
+        None => format!("{at}, not responding"),
+    };
+    r.widget_info(|| WidgetInfo::labeled(egui::Role::Button, enabled, &spoken));
+    let r = if enabled {
+        r.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        r
+    };
+    let c = &colors.chrome;
+    let mut p = ui.painter().clone();
+    if !enabled {
+        p.multiply_opacity(0.45);
     }
+    let radius = CornerRadius::same(RADIUS_MD);
+    let fill = if r.hovered() && enabled {
+        c.hover
+    } else {
+        c.raised
+    };
+    p.rect_filled(rect, radius, fill);
+    let (width, edge) = if r.has_focus() {
+        (2.0, colors.fg(Token::BorderFocus))
+    } else if r.hovered() && enabled {
+        (1.0, colors.fg(Token::BorderFocus))
+    } else {
+        (1.0, c.divider)
+    };
+    p.rect_stroke(rect, radius, Stroke::new(width, edge), StrokeKind::Inside);
+
+    let inner = rect.shrink(SPACE_4);
+    let w = inner.width();
+    let dim = colors.fg(Token::FgDim);
+    let bold = FontId::new(15.0, FontFamily::Name(MONO_SEMIBOLD_FAMILY.into()));
+    let mono = |size| FontId::new(size, FontFamily::Monospace);
+    let mut y = inner.top();
+    let g = line(ui, &name(d), bold, colors.fg(Token::Header), w);
+    p.galley(pos2(inner.left(), y), g, Color32::PLACEHOLDER);
+    y += 22.0;
+    let g = line(ui, &at, mono(11.0), dim, w);
+    p.galley(pos2(inner.left(), y), g, Color32::PLACEHOLDER);
+    y += 22.0;
+    match d.space {
+        Some(s) => {
+            let bar = Rect::from_min_size(pos2(inner.left(), y), vec2(w, 8.0));
+            kit::paint_bar(ui, colors, bar, ratio(s.used, s.total.max(1)));
+            y += 16.0;
+            let used = format!("{} of {}", human(s.used), human(s.total));
+            p.text(
+                pos2(inner.left(), y),
+                Align2::LEFT_TOP,
+                used,
+                mono(12.0),
+                colors.fg(Token::Fg),
+            );
+            let free = format!("{} free", human(s.available));
+            p.text(
+                pos2(inner.right(), y),
+                Align2::RIGHT_TOP,
+                free,
+                mono(12.0),
+                dim,
+            );
+        }
+        None => {
+            let warn = colors.fg(Token::StatusWarn);
+            let font = FontId::new(12.0, FontFamily::Proportional);
+            p.text(
+                pos2(inner.left(), y),
+                Align2::LEFT_TOP,
+                "Not responding",
+                font,
+                warn,
+            );
+        }
+    }
+    let notes = notes(d);
+    if !notes.is_empty() {
+        let font = FontId::new(11.0, FontFamily::Proportional);
+        let g = line(ui, &notes, font, dim, w);
+        p.galley(
+            pos2(inner.left(), inner.bottom() - g.size().y),
+            g,
+            Color32::PLACEHOLDER,
+        );
+    }
+    r.clicked().then(|| d.mount_point.clone())
 }

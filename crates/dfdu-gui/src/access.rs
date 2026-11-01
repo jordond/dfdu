@@ -12,10 +12,12 @@ use std::path::{Component, Path, PathBuf};
 
 use dfdu_session::palette::Token;
 use dfdu_tree::{ErrKind, Tree};
-use egui::Ui;
+use egui::{Align, Button, CornerRadius, Frame, Layout, Margin, Stroke, Ui, vec2};
 
 use crate::browser::Intent;
+use crate::kit::{self, Kind};
 use crate::theme::Colors;
+use crate::theme::style::{CONTROL, RADIUS_MD, SPACE_2};
 
 /// The Full Disk Access pane of System Settings, opened with `open`.
 pub const SETTINGS: &str =
@@ -100,8 +102,8 @@ pub fn denied(tree: &Tree, home: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
-/// The banner: which folders could not be read and why, a button that opens the privacy
-/// settings and one that dismisses it.
+/// The banner, a strip on `raised` outlined in `status.warn`: which folders could not be read
+/// and why, a button that opens the privacy settings and a quiet one that dismisses it.
 pub fn banner(ui: &mut Ui, colors: &Colors, folders: &[String], out: &mut Vec<Intent>) {
     let mut named = folders
         .iter()
@@ -112,19 +114,50 @@ pub fn banner(ui: &mut Ui, colors: &Colors, folders: &[String], out: &mut Vec<In
     if folders.len() > NAMED {
         named.push_str(&format!(" and {} more", folders.len() - NAMED));
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(colors.text("No Full Disk Access.", Token::StatusWarn));
-        ui.label(format!(
-            "macOS keeps {named} from dfdu, so their sizes are missing. Allow dfdu in \
-             Privacy & Security › Full Disk Access, then reopen it and rescan."
-        ));
-        if ui.button("Open Full Disk Access settings").clicked() {
-            out.push(Intent::OpenAccessSettings);
-        }
-        if ui.button("Dismiss").clicked() {
-            out.push(Intent::DismissAccess);
-        }
-    });
+    let warn = colors.fg(Token::StatusWarn);
+    Frame::new()
+        .fill(colors.chrome.raised)
+        .stroke(Stroke::new(1.0, warn))
+        .corner_radius(CornerRadius::same(RADIUS_MD))
+        .inner_margin(Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                let dismiss =
+                    Button::new(kit::label("Dismiss", 12.0).color(colors.fg(Token::FgDim)))
+                        .frame(false)
+                        .min_size(vec2(0.0, CONTROL));
+                if ui.add(dismiss).clicked() {
+                    out.push(Intent::DismissAccess);
+                }
+                let open = kit::button(
+                    ui,
+                    colors,
+                    Kind::Secondary,
+                    "Open System Settings",
+                    None,
+                    true,
+                );
+                if open.clicked() {
+                    out.push(Intent::OpenAccessSettings);
+                }
+                ui.add_space(SPACE_2);
+                let rest = Layout::left_to_right(Align::Center).with_main_wrap(true);
+                ui.with_layout(rest, |ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_2;
+                    ui.label(kit::label("No Full Disk Access.", 12.0).color(warn));
+                    ui.label(kit::sans(
+                        format!(
+                            "macOS keeps {named} from dfdu, so their sizes are missing. Allow \
+                             dfdu in Privacy & Security › Full Disk Access, then reopen it and \
+                             rescan."
+                        ),
+                        12.0,
+                    ));
+                });
+            });
+        });
 }
 
 #[cfg(test)]

@@ -4,28 +4,34 @@
 //! deletes, and a scan that is not of this machine (read from a file, or remote) has no file
 //! manager here to show its paths in. The rows of Cleanup and Duplicates have the same menu
 //! where its items apply ([`review`]): they tick rather than mark, the delete items act on what
-//! is ticked in the view, and nothing there is rescanned.
+//! is ticked in the view, and nothing there is rescanned. The items that delete are in
+//! `status.error`.
 
 use dfdu_session::SessionState;
 use dfdu_session::actions::Action;
 use dfdu_session::marks;
 use dfdu_session::snapshot::EntryData;
-use egui::Ui;
+use egui::{Color32, RichText, Ui, WidgetText};
 
 use crate::browser::Intent;
 use crate::review::Tick;
 
 /// The items of row `i`, entry `e`.
 pub fn row(ui: &mut Ui, s: &SessionState, e: &EntryData, i: usize, out: &mut Vec<Intent>) {
-    let mut item = |ui: &mut Ui, label: &str, intent: Intent| {
+    let error = ui.visuals().error_fg_color;
+    let mut item = |ui: &mut Ui, label: WidgetText, intent: Intent| {
         if ui.button(label).clicked() {
             out.push(intent);
         }
     };
     if s.outside.local {
-        item(ui, "Show in file manager", Intent::Act(Action::OpenPath));
+        item(
+            ui,
+            "Show in file manager".into(),
+            Intent::Act(Action::OpenPath),
+        );
     }
-    item(ui, "Copy path", Intent::Act(Action::CopyPath));
+    item(ui, "Copy path".into(), Intent::Act(Action::CopyPath));
     let entry = !e.pseudo && e.fold == 0;
     if !s.read_only && entry {
         let label = if marks::is_marked(s, e) {
@@ -33,15 +39,19 @@ pub fn row(ui: &mut Ui, s: &SessionState, e: &EntryData, i: usize, out: &mut Vec
         } else {
             "Mark"
         };
-        item(ui, label, Intent::Mark(i));
+        item(ui, label.into(), Intent::Mark(i));
     }
-    item(ui, "Rescan", Intent::Act(Action::Rescan));
+    item(ui, "Rescan".into(), Intent::Act(Action::Rescan));
     if !s.read_only && entry {
         ui.separator();
-        item(ui, "Move to Trash…", Intent::Act(Action::Trash));
         item(
             ui,
-            "Delete permanently…",
+            danger(error, "Move to Trash…"),
+            Intent::Act(Action::Trash),
+        );
+        item(
+            ui,
+            danger(error, "Delete permanently…"),
             Intent::Act(Action::DeletePermanent),
         );
     }
@@ -57,30 +67,44 @@ pub fn review(
     (tick, toggle): (Tick, &[Intent]),
     out: &mut Vec<Intent>,
 ) {
-    let mut item = |ui: &mut Ui, label: &str, intents: &[Intent]| {
+    let error = ui.visuals().error_fg_color;
+    let mut item = |ui: &mut Ui, label: WidgetText, intents: &[Intent]| {
         if ui.button(label).clicked() {
             out.extend_from_slice(intents);
         }
     };
     if path && s.outside.local {
-        item(ui, "Show in file manager", &[Intent::Act(Action::OpenPath)]);
+        item(
+            ui,
+            "Show in file manager".into(),
+            &[Intent::Act(Action::OpenPath)],
+        );
     }
     if path {
-        item(ui, "Copy path", &[Intent::Act(Action::CopyPath)]);
+        item(ui, "Copy path".into(), &[Intent::Act(Action::CopyPath)]);
     }
     if s.read_only {
         return;
     }
     match tick {
-        Tick::On => item(ui, "Untick", toggle),
-        Tick::Off | Tick::Partial => item(ui, "Tick", toggle),
+        Tick::On => item(ui, "Untick".into(), toggle),
+        Tick::Off | Tick::Partial => item(ui, "Tick".into(), toggle),
         Tick::Locked => {}
     }
     ui.separator();
-    item(ui, "Move to Trash…", &[Intent::Act(Action::Trash)]);
     item(
         ui,
-        "Delete permanently…",
+        danger(error, "Move to Trash…"),
+        &[Intent::Act(Action::Trash)],
+    );
+    item(
+        ui,
+        danger(error, "Delete permanently…"),
         &[Intent::Act(Action::DeletePermanent)],
     );
+}
+
+/// The text of an item that deletes, in `status.error`.
+fn danger(error: Color32, label: &str) -> WidgetText {
+    RichText::new(label).color(error).into()
 }
