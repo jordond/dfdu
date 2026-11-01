@@ -19,8 +19,8 @@ mod view;
 
 pub use rows::{Row, mark_all, mark_of, open, rows};
 pub use view::{
-    Dupes, Groups, Intent, act, active, apply, begin, compared, count, found, groups, listed,
-    min_size, read, running, selected, stale, whole_group_ticked,
+    Dupes, Groups, Intent, act, active, apply, begin, cancel, compared, count, found, groups,
+    listed, min_size, read, running, selected, stale, whole_group_ticked,
 };
 
 /// The node of every file of the result looked up so far, `None` for one gone from the tree.

@@ -168,3 +168,23 @@ fn a_scan_is_read_until_it_settles() {
     session.shutdown(Duration::ZERO);
     engine.shutdown(Duration::from_millis(200));
 }
+
+#[test]
+fn shutting_down_stops_the_comparison_of_duplicates() {
+    let engine = Engine::portable(1);
+    let mut s = SessionState::new(Instant::now());
+    s.view = crate::view::View::Duplicates;
+    let run = crate::dupes::Run {
+        root: "/r".into(),
+        progress: std::sync::Arc::default(),
+        cancel: std::sync::Arc::default(),
+        result: std::sync::Arc::default(),
+    };
+    let cancel = run.cancel.clone();
+    s.dupes.run = Some(run);
+    let session = Session::over(&engine, s, SessionOptions::default());
+    assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+    session.shutdown(Duration::ZERO);
+    assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
+    engine.shutdown(Duration::from_millis(200));
+}

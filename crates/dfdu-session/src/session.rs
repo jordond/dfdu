@@ -238,17 +238,18 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         effect::carry_out(self.front.state_mut(), self.engine.get(), fx)
     }
 
-    /// Stops what runs beside the engine: cancels a save to the cache, waits a bounded time
-    /// for a record in the history, and shuts the engine down when the session owns it,
-    /// waiting at most `wait` ([`Engine::shutdown`]).
+    /// Stops what runs beside the engine: stops a comparison of duplicates, cancels a save to the
+    /// cache, waits a bounded time for a record in the history, and shuts the engine down when
+    /// the session owns it, waiting at most `wait` ([`Engine::shutdown`]).
     pub fn shutdown(self, wait: Duration) {
         let Session {
             engine,
-            front,
+            mut front,
             pacing: _,
             cacher,
             recorder,
         } = self;
+        let _ = crate::dupes::cancel(front.state_mut());
         drop(cacher);
         drop(recorder);
         drop(front);

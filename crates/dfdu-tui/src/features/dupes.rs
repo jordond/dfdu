@@ -9,9 +9,10 @@
 //! ticks a copy, or on a group every copy but the one kept, `A` does that for every group, and
 //! `d` and `D` delete what is ticked through the usual dialog, which checks each file against
 //! the scan. The copy kept is the oldest, and `K` cycles the rule ([`Keep`]); `R` compares
-//! again. Groups of APFS clones, which free nothing, are listed but `A` leaves them alone. The
-//! comparison's thread, the keep rules, the rows and what the keys ask ([`Intent`]) are in
-//! `dfdu_session::dupes`; the scroll stays here.
+//! again, and leaving the view (or quitting) stops a comparison that runs. Groups of APFS
+//! clones, which free nothing, are listed but `A` leaves them alone. The comparison's thread,
+//! the keep rules, the rows and what the keys ask ([`Intent`]) are in `dfdu_session::dupes`;
+//! the scroll stays here.
 
 use std::collections::HashSet;
 use std::path::PathBuf;

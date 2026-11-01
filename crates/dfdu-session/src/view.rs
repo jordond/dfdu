@@ -86,8 +86,9 @@ impl SessionState {
 
 /// Switches to `view`, and opens it: Largest walks again, Cleanup reads its matches again (and,
 /// switched to from another view, asks for the native sizes), and the map switched to from the
-/// tree opens on the directory the selected row is in. Cleanup without rules says so and
-/// changes nothing else.
+/// tree opens on the directory the selected row is in. Leaving Duplicates stops a comparison
+/// that runs ([`crate::dupes::cancel`]). Cleanup without rules says so and changes nothing
+/// else.
 pub fn switch(s: &mut SessionState, view: View) -> Then {
     if view == View::Cleanup && s.snap.rules.is_none() {
         s.status = Some("no rules: the cleanup view needs classification".into());
@@ -100,6 +101,9 @@ pub fn switch(s: &mut SessionState, view: View) -> Then {
         None
     };
     let again = s.view == view;
+    if s.view == View::Duplicates && !again && crate::dupes::cancel(s) {
+        s.status = Some("duplicates: comparison stopped".into());
+    }
     s.view = view;
     let effects = match view {
         View::Files | View::Map | View::Duplicates => Vec::new(),

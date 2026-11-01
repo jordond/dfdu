@@ -1,8 +1,9 @@
 //! The Duplicates view: switching it on compares nothing. It says how many files a comparison
 //! would read ([`count`]), and asking ([`Intent::Compare`]) starts one in a thread of its own
-//! from the candidates read under the read lock ([`Effect::FindDupes`], then [`begin`]). Ticks
-//! are the marks: a tick on a group ticks every copy but the one kept, and
-//! [`Intent::TickSuggested`] does that for every group that frees something.
+//! from the candidates read under the read lock ([`Effect::FindDupes`], then [`begin`]); closing
+//! the view or shutting the session down stops it ([`cancel`]). Ticks are the marks: a tick on
+//! a group ticks every copy but the one kept, and [`Intent::TickSuggested`] does that for every
+//! group that frees something.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -375,6 +376,19 @@ fn compare_again(s: &mut SessionState) -> Vec<Effect> {
         r.cancel.store(true, Ordering::Relaxed);
     }
     start(s)
+}
+
+/// Stops the comparison that runs, if one does, and forgets it: the view waits to be asked
+/// again. A comparison that ended stays. True when one was stopped. Called when the view
+/// closes and when the session shuts down: nothing else reads what a comparison finds.
+pub fn cancel(s: &mut SessionState) -> bool {
+    let Some(r) = s.dupes.run.take_if(|r| r.result.get().is_none()) else {
+        return false;
+    };
+    r.cancel.store(true, Ordering::Relaxed);
+    s.dupes.cursor = 0;
+    s.dupes.toggled.clear();
+    true
 }
 
 /// Marks every copy but the one kept in each group that frees something.

@@ -242,3 +242,40 @@ fn the_files_to_compare_are_counted_once() {
     let then = act(&mut s, Intent::Compare);
     assert!(matches!(then.effects[..], [Effect::FindDupes]));
 }
+
+/// A browser of the Duplicates view comparing, with its comparison's cancel flag.
+fn comparing() -> (SessionState, Arc<std::sync::atomic::AtomicBool>) {
+    let mut s = SessionState::new(Instant::now());
+    s.view = View::Duplicates;
+    let run = Run {
+        root: "/r".into(),
+        progress: Arc::default(),
+        cancel: Arc::default(),
+        result: Arc::default(),
+    };
+    let cancel = run.cancel.clone();
+    s.dupes.run = Some(run);
+    (s, cancel)
+}
+
+#[test]
+fn closing_the_view_stops_the_comparison_that_runs() {
+    let (mut s, cancel) = comparing();
+    s.dupes.cursor = 3;
+    // Switching to the view shown again keeps it.
+    let _ = crate::view::switch(&mut s, View::Duplicates);
+    assert!(running(&s) && !cancel.load(Ordering::Relaxed));
+    let _ = crate::view::switch(&mut s, View::Files);
+    assert!(cancel.load(Ordering::Relaxed), "the thread is told to stop");
+    assert!(s.dupes.run.is_none(), "the view waits to be asked again");
+    assert_eq!(s.dupes.cursor, 0);
+    assert_eq!(s.status.as_deref(), Some("duplicates: comparison stopped"));
+    // One that ended stays, to come back to.
+    let mut s = two_groups();
+    let cancel = (s.dupes.run.as_ref()).map(|r| r.cancel.clone());
+    let _ = crate::view::step(&mut s, 1);
+    assert_eq!(s.view, View::Largest);
+    assert!(found(&s).is_some());
+    assert!(!cancel.is_some_and(|c| c.load(Ordering::Relaxed)));
+    assert_eq!(s.status, None);
+}
