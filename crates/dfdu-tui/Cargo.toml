@@ -18,16 +18,17 @@ dfdu-engine.workspace = true
 dfdu-sys.workspace = true
 dfdu-store.workspace = true
 dfdu-dupes.workspace = true
+dfdu-session.workspace = true
 crossbeam-channel.workspace = true
 ratatui.workspace = true
 unicode-width.workspace = true
 tachyonfx.workspace = true
-nucleo-matcher.workspace = true
 terminal-colorsaurus.workspace = true
 toml.workspace = true
 dunce.workspace = true
 
 [dev-dependencies]
+dfdu-session = { workspace = true, features = ["test-support"] }
 dfdu-engine = { workspace = true, features = ["test-support"] }
 insta.workspace = true
 proptest.workspace = true

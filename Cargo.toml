@@ -9,6 +9,7 @@ default-members = [
     "crates/dfdu-hangfs",
     "crates/dfdu-rules",
     "crates/dfdu-scan",
+    "crates/dfdu-session",
     "crates/dfdu-sim",
     "crates/dfdu-store",
     "crates/dfdu-sys",
@@ -32,6 +33,7 @@ dfdu-engine = { path = "crates/dfdu-engine" }
 dfdu-clean = { path = "crates/dfdu-clean" }
 dfdu-rules = { path = "crates/dfdu-rules" }
 dfdu-tui = { path = "crates/dfdu-tui" }
+dfdu-session = { path = "crates/dfdu-session" }
 dfdu-sys = { path = "crates/dfdu-sys" }
 dfdu-store = { path = "crates/dfdu-store" }
 dfdu-bench = { path = "crates/dfdu-bench" }

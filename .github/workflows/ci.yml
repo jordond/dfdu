@@ -79,6 +79,13 @@ jobs:
       - name: Check the workspace builds on the MSRV
         if: ${{ !cancelled() }}
         run: cargo xtask msrv
+      # dfdu-session is shared by the front ends, so it must not pull in a terminal crate.
+      - name: Check dfdu-session has no terminal dependencies
+        if: ${{ !cancelled() }}
+        run: |
+          deps=$(cargo tree -p dfdu-session -e normal --prefix none --locked)
+          found=$(grep -E '^(ratatui|crossterm|tachyonfx|terminal-colorsaurus) ' <<< "$deps" | sort -u) || true
+          test -z "$found" || { echo "::error::dfdu-session depends on ${found//$'\n'/, }"; exit 1; }
       # The fuzz crate is not a workspace member, and only the nightly fuzz run builds it.
       - name: Check the fuzz targets build
         if: ${{ !cancelled() }}

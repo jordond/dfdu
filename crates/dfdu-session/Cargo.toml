@@ -1,0 +1,26 @@
+[package]
+name = "dfdu-session"
+description = "What a front end of dfdu shows besides drawing and input: the directory snapshot, tree mode, row order and fuzzy matching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dfdu-tree.workspace = true
+dfdu-rules.workspace = true
+dfdu-engine.workspace = true
+dfdu-sys.workspace = true
+nucleo-matcher.workspace = true
+
+[features]
+# Helpers for the tests of the crates above (`snapshot::build`, `snapshot::test_entry`,
+# `test_support`).
+test-support = ["dfdu-engine/test-support"]
+
+[dev-dependencies]
+dfdu-engine = { workspace = true, features = ["test-support"] }

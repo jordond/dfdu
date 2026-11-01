@@ -6,7 +6,7 @@
 //! directory just expanded) gets an exact sort. Fold rows come last among their siblings.
 
 use super::{SortSpec, ranked};
-use crate::model::snapshot::EntryData;
+use crate::snapshot::EntryData;
 
 /// How each group of siblings is ordered.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -21,10 +21,6 @@ pub enum Siblings {
 
 /// The rows of a tree snapshot sorted by `spec`: every entry, siblings sorted exactly, in
 /// preorder.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "for the tree mode keys and drawing")
-)]
 pub fn tree_order(entries: &[EntryData], spec: SortSpec) -> Vec<usize> {
     tree_rows(entries, |_, _| true, spec, &[], Siblings::Exact)
 }
@@ -125,7 +121,7 @@ fn siblings(
 mod tests {
     use super::super::SortKey;
     use super::*;
-    use crate::state::tree::tests::sample;
+    use crate::test_support::sample;
 
     /// The names of `rows` of `es`.
     fn names(es: &[EntryData], rows: &[usize]) -> Vec<String> {

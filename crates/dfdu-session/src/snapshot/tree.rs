@@ -10,7 +10,7 @@ use dfdu_tree::filetype::{self, TypeFilter};
 use dfdu_tree::{Ix, Kind, NodeRef, Totals};
 
 use super::{EntryData, Mark, Snapshot, Tag, Target, class_below, entry_of, mark_of};
-use crate::state::tree::{Found, MAX_CHAIN, MAX_TREE_ROWS, TreeState};
+use crate::tree::{Found, MAX_CHAIN, MAX_TREE_ROWS, TreeState};
 
 /// A directory whose children get rows: its row, node and class in effect.
 struct Open {
@@ -282,8 +282,8 @@ mod tests {
     use dfdu_tree::DirState;
 
     use super::*;
-    use crate::model::snapshot::build_view;
-    use crate::tests::root_model;
+    use crate::snapshot::build_view;
+    use crate::test_support::root_model;
 
     /// `/r` with `a/` (`big` 600, `mid` 300, `t1` 5 and `t2` 4 bytes) and `b/` (`x` 50 bytes),
     /// and `a`.

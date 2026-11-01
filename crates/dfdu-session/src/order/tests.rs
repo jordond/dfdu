@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::snapshot::test_entry;
+use crate::snapshot::test_entry;
 
 fn names(o: &Order, entries: &[EntryData]) -> Vec<String> {
     o.rows()

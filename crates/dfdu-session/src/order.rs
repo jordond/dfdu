@@ -16,13 +16,9 @@ mod tree;
 use std::cmp::Ordering;
 
 pub use tree::Siblings;
-#[cfg_attr(
-    not(test),
-    expect(unused_imports, reason = "for the tree mode keys and drawing")
-)]
 pub use tree::{tree_order, tree_rows};
 
-use crate::model::snapshot::EntryData;
+use crate::snapshot::EntryData;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SortKey {

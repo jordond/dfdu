@@ -782,6 +782,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfdu-session"
+version = "0.1.0"
+dependencies = [
+ "dfdu-engine",
+ "dfdu-rules",
+ "dfdu-sys",
+ "dfdu-tree",
+ "nucleo-matcher",
+]
+
+[[package]]
 name = "dfdu-sim"
 version = "0.1.0"
 dependencies = [
@@ -842,12 +853,12 @@ dependencies = [
  "dfdu-engine",
  "dfdu-rules",
  "dfdu-scan",
+ "dfdu-session",
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
  "dunce",
  "insta",
- "nucleo-matcher",
  "proptest",
  "ratatui",
  "tachyonfx",

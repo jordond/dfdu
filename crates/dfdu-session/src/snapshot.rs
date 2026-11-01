@@ -238,7 +238,7 @@ pub struct Snapshot {
     pub breakdown: Option<std::sync::Arc<Breakdown>>,
     /// Tree mode: what the read found of the expanded directories (`state::tree`). `None`
     /// when tree mode is off.
-    pub tree: Option<crate::state::tree::Found>,
+    pub tree: Option<crate::tree::Found>,
 }
 
 fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
@@ -280,7 +280,7 @@ fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
 
 /// Builds the snapshot for the directory `target` points at, updating `target` if the node had
 /// to be found again (rescan swap) or no longer exists (falls back to the nearest ancestor).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn build(m: &Model, target: &mut Target, mode: SizeMode) -> Snapshot {
     build_view(m, target, mode, &TypeFilter::default(), false, None)
 }
@@ -295,12 +295,12 @@ pub fn build_view(
     mode: SizeMode,
     types: &TypeFilter,
     breakdown: bool,
-    tree_state: Option<&crate::state::tree::TreeState>,
+    tree_state: Option<&crate::tree::TreeState>,
 ) -> Snapshot {
     let tree = &m.tree;
     let mut snap = status_of(m, types);
     // Read for this tree state even when there is nothing to show yet, so it is not stale.
-    snap.tree = tree_state.map(|t| crate::state::tree::Found {
+    snap.tree = tree_state.map(|t| crate::tree::Found {
         generation: t.generation,
         ..Default::default()
     });
@@ -492,11 +492,12 @@ fn only_types(tree: &Tree, dir: Ix, types: &TypeFilter, mode: SizeMode, snap: &m
 }
 
 /// An entry with a unique node reference, for tests that do not need a real tree.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn test_entry(i: u32, name: &str, size: u64) -> EntryData {
+    use dfdu_engine::test_support::meta;
     let mut t = Tree::new();
-    let root = t.new_root(b"/", &crate::tests::meta(Kind::Dir, 0, 1), true);
-    let file = crate::tests::meta(Kind::File, 0, 1);
+    let root = t.new_root(b"/", &meta(Kind::Dir, 0, 1), true);
+    let file = meta(Kind::File, 0, 1);
     let mut last = root;
     for _ in 0..=i {
         last = t.add_file(root, b"x", &file, false, None);
