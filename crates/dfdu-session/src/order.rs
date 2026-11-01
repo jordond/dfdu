@@ -7,7 +7,7 @@
 //! first screen of rows is kept sorted with each snapshot ([`Order::sort_top`]).
 //!
 //! In tree mode the rows are a preorder of the expanded tree, and the same rules apply within
-//! each group of siblings ([`tree`], [`Order::sort_tree`]). Entries that appear between sorts
+//! each group of siblings (`tree`, [`Order::sort_tree`]). Entries that appear between sorts
 //! then go after their known siblings instead of to the new list, and the first screen is not
 //! sorted with each snapshot: a row moving there would carry its expanded children along.
 
