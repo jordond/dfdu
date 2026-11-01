@@ -190,7 +190,12 @@ impl Gui {
         self.prefs.theme = choice;
         let file = self.file_in_use();
         theme::apply(ctx, file);
-        ctx.set_theme(theme::preference(&self.prefs.theme, file));
+        let preference = theme::preference(&self.prefs.theme, file);
+        ctx.set_theme(preference);
+        // The title bar too (Windows, macOS, Wayland): dark with a dark theme.
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(theme::title_bar(
+            preference,
+        )));
     }
 
     /// The settings to keep: the theme, and how the browser shows its list.

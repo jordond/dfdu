@@ -116,6 +116,16 @@ pub fn preference(choice: &ThemeChoice, file: Option<&ThemeFile>) -> egui::Theme
     }
 }
 
+/// The theme of the window's title bar for egui's preference `p`: the system's, unless a
+/// dark or a light theme is chosen.
+pub fn title_bar(p: egui::ThemePreference) -> egui::SystemTheme {
+    match p {
+        egui::ThemePreference::System => egui::SystemTheme::SystemDefault,
+        egui::ThemePreference::Dark => egui::SystemTheme::Dark,
+        egui::ThemePreference::Light => egui::SystemTheme::Light,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -147,6 +157,12 @@ mod tests {
             preference(&choice, Some(&file)),
             egui::ThemePreference::Light
         );
+        assert_eq!(
+            title_bar(preference(&choice, Some(&file))),
+            egui::SystemTheme::Light
+        );
+        let system = preference(&ThemeChoice::System, None);
+        assert_eq!(title_bar(system), egui::SystemTheme::SystemDefault);
 
         let err = |name: &str| named(name, Some(themes)).expect_err(name);
         assert!(err("missing").contains("missing.toml"));

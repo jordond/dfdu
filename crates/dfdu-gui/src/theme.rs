@@ -1,6 +1,7 @@
 //! The theme's tokens as egui colours and text styles. The built-in dark and light palettes of
 //! `dfdu_session::palette` follow the system's setting, or the one chosen; a theme file
-//! (`file`) sets the tokens it gives an RGB value over them. A token without an RGB value (the
+//! (`file`) sets the tokens it gives an RGB value over them. The window's title bar follows the
+//! theme chosen, or the system's setting ([`title_bar`]). A token without an RGB value (the
 //! terminal's own colours) takes egui's colour for text or for the background.
 
 use dfdu_session::palette::{BuiltinTheme, Modifiers, Palette, Rgb, ThemeFile, Token};
@@ -8,7 +9,7 @@ use egui::{Color32, RichText, Visuals};
 
 mod file;
 
-pub use file::{listed, named, preference, saved};
+pub use file::{listed, named, preference, saved, title_bar};
 
 /// The palette of one of egui's themes, resolved to colours.
 #[derive(Clone, Debug)]
