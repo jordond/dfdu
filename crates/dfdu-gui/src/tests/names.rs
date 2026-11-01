@@ -204,6 +204,6 @@ fn the_start_screen_names_its_controls() {
         ..super::local(tmp.path(), true, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open folder…"));
+    until(&mut h, "the start screen", |h| shown(h, "Browse…"));
     all_named(&mut h, "the start screen");
 }

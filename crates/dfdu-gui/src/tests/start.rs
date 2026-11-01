@@ -41,7 +41,7 @@ fn a_folder_dropped_on_the_start_screen_is_scanned() {
         ..local(tmp.path(), true, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open folder…"));
+    until(&mut h, "the start screen", |h| shown(h, "Browse…"));
 
     // A file is not a folder: the screen says so.
     let file = tmp.path().join("big.bin");
@@ -75,7 +75,7 @@ fn an_export_chosen_on_the_start_screen_is_browsed_read_only() {
         ..local(tmp.path(), false, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open export…"));
+    until(&mut h, "the start screen", |h| shown(h, "Open file…"));
 
     // What the system's file picker returns for the button: the browser of the export.
     let ctx = h.ctx.clone();
@@ -100,7 +100,7 @@ fn an_export_that_does_not_read_says_why() {
         ..local(tmp.path(), false, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open export…"));
+    until(&mut h, "the start screen", |h| shown(h, "Open file…"));
     let ctx = h.ctx.clone();
     let gui = h.state_mut().gui.as_mut().expect("the window");
     gui.chosen(Chosen::Export(file), &ctx);
