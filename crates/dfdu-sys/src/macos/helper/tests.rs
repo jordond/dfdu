@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
@@ -8,34 +8,41 @@ use super::service::{Failure, Status, registered};
 use super::xpc::Anonymous;
 
 const WAIT: Duration = Duration::from_secs(10);
+const OTHER: &str = r#"identifier "app.dfdu" and anchor apple generic"#;
 
-/// A requirement this test binary meets: its code signing identifier (the linker signs it
-/// ad hoc).
-fn this_binary() -> String {
-    let exe = std::env::current_exe().unwrap();
+/// A requirement this test binary meets: its code signing identifier (the linker signs it ad
+/// hoc on Apple silicon). `None`, after saying so, when it is not signed.
+fn this_binary() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
     let out = std::process::Command::new("codesign")
         .args(["-d", "--verbose=2"])
         .arg(&exe)
         .output()
-        .unwrap();
+        .ok()?;
     let text = String::from_utf8_lossy(&out.stderr);
-    let id = text
-        .lines()
-        .find_map(|l| l.strip_prefix("Identifier="))
-        .unwrap_or_else(|| panic!("no identifier for {}: {text}", exe.display()));
-    format!("identifier \"{id}\"")
+    let id = text.lines().find_map(|l| l.strip_prefix("Identifier="));
+    if id.is_none() {
+        eprintln!("skipped: {} has no code signature: {text}", exe.display());
+    }
+    Some(format!("identifier \"{}\"", id?))
 }
 
 #[test]
 fn the_link_reaches_the_helper() {
-    let me = this_binary();
+    let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(&me, move |p| tx.send(p).unwrap()).unwrap();
+    let server = Anonymous::listen(&me, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
     let (mut mine, theirs) = UnixStream::pair().unwrap();
     server.connect(&me, theirs.as_fd(), WAIT).unwrap();
     drop(theirs);
     let peer = rx.recv_timeout(WAIT).unwrap();
     assert_eq!(peer.euid, rustix::process::geteuid().as_raw());
+    let flags = rustix::io::fcntl_getfd(&peer.link).unwrap();
+    assert!(flags.contains(rustix::io::FdFlags::CLOEXEC));
     UnixStream::from(peer.link).write_all(b"hello").unwrap();
     let mut got = [0; 5];
     mine.read_exact(&mut got).unwrap();
@@ -43,43 +50,98 @@ fn the_link_reaches_the_helper() {
 }
 
 #[test]
-fn a_client_with_another_signature_is_refused() {
-    let me = this_binary();
+fn a_failed_start_reaches_the_client() {
+    let Some(me) = this_binary() else { return };
+    let server = Anonymous::listen(&me, |_| Err("no agent today".to_owned())).unwrap();
+    let (_mine, theirs) = UnixStream::pair().unwrap();
+    let err = server.connect(&me, theirs.as_fd(), WAIT).unwrap_err();
+    assert!(err.to_string().contains("no agent today"), "{err}");
+}
+
+#[test]
+fn a_panic_in_the_start_answers_an_error() {
+    let Some(me) = this_binary() else { return };
+    let server = Anonymous::listen(&me, |_| panic!("on purpose")).unwrap();
+    let (_mine, theirs) = UnixStream::pair().unwrap();
+    let err = server.connect(&me, theirs.as_fd(), WAIT).unwrap_err();
+    assert!(err.to_string().contains("failed starting"), "{err}");
+    // The helper goes on serving.
+    let (_mine, theirs) = UnixStream::pair().unwrap();
+    assert!(server.connect(&me, theirs.as_fd(), WAIT).is_err());
+}
+
+#[test]
+fn a_link_that_is_not_a_socket_is_refused() {
+    let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(
-        r#"identifier "app.dfdu" and anchor apple generic"#,
-        move |p| tx.send(p).unwrap(),
-    )
+    let server = Anonymous::listen(&me, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let (read, _write) = std::io::pipe().unwrap();
+    let err = server.connect(&me, read.as_fd(), WAIT).unwrap_err();
+    assert!(err.to_string().contains("not a socket"), "{err}");
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn a_client_with_another_signature_is_refused() {
+    let Some(me) = this_binary() else { return };
+    let (tx, rx) = mpsc::channel();
+    let server = Anonymous::listen(OTHER, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
     .unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
     let err = server
         .connect(&me, theirs.as_fd(), Duration::from_secs(2))
         .unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted, "{err}");
+    assert_eq!(err.kind(), ErrorKind::ConnectionAborted, "{err}");
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+}
+
+/// The boundary itself: a link sent straight away, by a client of its own making that does not
+/// meet the requirement, never reaches `on_peer`.
+#[test]
+fn a_link_alone_from_another_signature_never_arrives() {
+    if this_binary().is_none() {
+        return;
+    }
+    let (tx, rx) = mpsc::channel();
+    let server = Anonymous::listen(OTHER, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let (_mine, theirs) = UnixStream::pair().unwrap();
+    let err = server
+        .send_link(theirs.as_fd(), Duration::from_secs(2))
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ConnectionAborted, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]
 fn a_helper_with_another_signature_is_not_trusted() {
-    let me = this_binary();
+    let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(&me, move |p| tx.send(p).unwrap()).unwrap();
+    let server = Anonymous::listen(&me, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
-    let err = server
-        .connect(
-            r#"identifier "app.dfdu" and anchor apple generic"#,
-            theirs.as_fd(),
-            WAIT,
-        )
-        .unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+    let err = server.connect(OTHER, theirs.as_fd(), WAIT).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::PermissionDenied, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]
 fn an_invalid_requirement_is_an_error() {
-    let err = Anonymous::listen("identifier (", |_| {}).err().unwrap();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
+    let err = Anonymous::listen("identifier (", |_| Ok(())).err().unwrap();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput, "{err}");
 }
 
 #[test]
@@ -92,7 +154,7 @@ fn no_helper_is_not_found() {
         WAIT,
     )
     .unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
+    assert_eq!(err.kind(), ErrorKind::NotFound, "{err}");
 }
 
 #[test]
@@ -102,16 +164,16 @@ fn serving_a_service_launchd_did_not_give_is_an_error() {
         let _ = tx.send(super::serve(
             "app.dfdu.helper.missing",
             "anchor apple generic",
-            |_| {},
+            |_| Ok(()),
         ));
     });
     let err = rx.recv_timeout(WAIT).expect("serve returns");
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
+    assert_eq!(err.kind(), ErrorKind::NotFound, "{err}");
 }
 
-fn failure(code: isize) -> Failure {
+fn failure(domain: &str, code: isize) -> Failure {
     Failure {
-        domain: "SMAppServiceErrorDomain".into(),
+        domain: domain.into(),
         code,
         message: "Operation not permitted".into(),
     }
@@ -119,8 +181,9 @@ fn failure(code: isize) -> Failure {
 
 #[test]
 fn registering_maps_waiting_for_approval_to_a_status() {
+    let sm = "SMAppServiceErrorDomain";
     assert_eq!(
-        registered(Err(failure(1)), Status::RequiresApproval).unwrap(),
+        registered(Err(failure(sm, 1)), Status::RequiresApproval).unwrap(),
         Status::RequiresApproval
     );
     assert_eq!(
@@ -128,13 +191,22 @@ fn registering_maps_waiting_for_approval_to_a_status() {
         Status::Enabled
     );
     assert_eq!(
-        registered(Err(failure(12)), Status::Enabled).unwrap(),
+        registered(Err(failure(sm, 12)), Status::Enabled).unwrap(),
         Status::Enabled
     );
-    let err = registered(Err(failure(3)), Status::NotRegistered).unwrap_err();
+    // Other errors stay errors, whatever the status after.
+    let err = registered(Err(failure(sm, 3)), Status::RequiresApproval).unwrap_err();
     assert!(
         err.to_string().contains("SMAppServiceErrorDomain 3"),
         "{err}"
     );
-    assert!(registered(Err(failure(1)), Status::Enabled).is_err());
+    assert!(
+        registered(
+            Err(failure("NSPOSIXErrorDomain", 1)),
+            Status::RequiresApproval
+        )
+        .is_err()
+    );
+    assert!(registered(Err(failure(sm, 1)), Status::Enabled).is_err());
+    assert!(registered(Err(failure(sm, 1)), Status::NotRegistered).is_err());
 }

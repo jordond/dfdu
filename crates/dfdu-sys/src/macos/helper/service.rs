@@ -146,17 +146,30 @@ impl std::fmt::Display for Failure {
 
 impl std::error::Error for Failure {}
 
+/// The value of `SMAppServiceErrorDomain`, the domain of `SMAppService`'s own errors.
+const DOMAIN: &str = "SMAppServiceErrorDomain";
+
+/// The code of the error the first registration of a daemon fails with ("Operation not
+/// permitted"), leaving it waiting for approval.
+const NEEDS_APPROVAL: isize = 1;
+
 /// `kSMErrorAlreadyRegistered`.
 const ALREADY_REGISTERED: isize = 12;
 
 /// What [`register`] returns, from what `registerAndReturnError:` said and the status after.
-/// A failure that leaves the daemon waiting for approval is that status, not an error (the
-/// first registration of a daemon fails with code 1 and leaves it so), and so is registering
-/// again a daemon that is enabled.
+/// The error of a first registration, when it leaves the daemon waiting for approval, is that
+/// status, and registering again a daemon that is enabled is that status too. Every other
+/// error is one, whatever the status after.
 pub(super) fn registered(result: Result<(), Failure>, after: Status) -> io::Result<Status> {
     match result {
         Ok(()) => Ok(after),
-        Err(_) if after == Status::RequiresApproval => Ok(after),
+        Err(f)
+            if after == Status::RequiresApproval
+                && f.domain == DOMAIN
+                && f.code == NEEDS_APPROVAL =>
+        {
+            Ok(after)
+        }
         Err(f) if after == Status::Enabled && f.code == ALREADY_REGISTERED => Ok(after),
         Err(f) => Err(io::Error::other(f)),
     }
