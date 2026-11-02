@@ -16,6 +16,7 @@
 //! its icon.
 
 mod access;
+mod admin;
 mod app;
 mod args;
 mod bridge;
@@ -25,6 +26,8 @@ mod details;
 mod dialog;
 mod dupes;
 mod help;
+#[cfg(target_os = "macos")]
+mod helper;
 mod keys;
 mod kit;
 mod largest;
@@ -66,6 +69,10 @@ fn main() -> ExitCode {
     let args = args::Args::parse();
     if args.agent {
         return launch::agent();
+    }
+    #[cfg(target_os = "macos")]
+    if args.helper {
+        return helper::serve();
     }
     let launch = match launch::prepare(&args) {
         Ok(launch) => launch,

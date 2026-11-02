@@ -49,8 +49,11 @@ impl User {
 static CURRENT: OnceLock<User> = OnceLock::new();
 
 /// The uid of the user an agent acts for, set by the macOS helper daemon (root) when it starts
-/// the agent for a GUI: the euid of that GUI's process, as XPC reports it. Checked before
-/// `PKEXEC_UID` and `SUDO_UID`, which a root daemon's environment does not have.
+/// the agent for a GUI: the euid of that GUI's process, as XPC reports it. Read only on macOS
+/// and only when neither `PKEXEC_UID` nor `SUDO_UID` is set: those two are set by sudo and
+/// pkexec themselves, while this one would pass through from the invoking user's environment
+/// under `sudo -E` (or an `env_keep` rule) and must not let them choose whom root acts for. The
+/// daemon's environment has neither.
 pub const ACTING_UID_VAR: &str = "DFDU_ACTING_UID";
 
 /// The user this process acts for, once [`adopt`] found one.
@@ -82,12 +85,35 @@ pub fn detect() -> Option<User> {
     unix::lookup(uid)
 }
 
-/// The first of [`ACTING_UID_VAR`], `PKEXEC_UID` and `SUDO_UID` that `var` has a uid in.
+/// The user with `uid`, from the password and group databases.
+#[cfg(unix)]
+#[must_use]
+pub fn user(uid: u32) -> Option<User> {
+    unix::lookup(uid)
+}
+
+/// This process's real uid.
+#[cfg(unix)]
+#[must_use]
+pub fn this_uid() -> u32 {
+    rustix::process::getuid().as_raw()
+}
+
+/// The group of macOS administrators (`admin`), whose members may use the helper.
+#[cfg(target_os = "macos")]
+pub const ADMIN_GID: u32 = 80;
+
+/// The uid in `PKEXEC_UID`, else `SUDO_UID`, else (macOS, the helper's agents)
+/// [`ACTING_UID_VAR`], as `var` has them. A variable that is set decides, valid or not.
 #[cfg(unix)]
 fn acting_uid(var: impl Fn(&str) -> Option<String>) -> Option<u32> {
-    [ACTING_UID_VAR, "PKEXEC_UID", "SUDO_UID"]
-        .iter()
-        .find_map(|v| var(v)?.trim().parse::<u32>().ok())
+    let names: &[&str] = if cfg!(target_os = "macos") {
+        &["PKEXEC_UID", "SUDO_UID", ACTING_UID_VAR]
+    } else {
+        &["PKEXEC_UID", "SUDO_UID"]
+    };
+    let value = names.iter().find_map(|v| var(v))?;
+    value.trim().parse::<u32>().ok()
 }
 
 #[cfg(not(unix))]
@@ -387,6 +413,20 @@ mod unix {
             cmd.pre_exec(set);
         }
         cmd.envs(u.env());
+        // The user's own tools too (Homebrew's, which a root process must not look in: those
+        // directories are the user's to write). Run as them, the command can do no more than
+        // they can.
+        let mut path: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            if !path.iter().any(|p| p.as_os_str() == extra) {
+                path.push(extra.into());
+            }
+        }
+        if let Ok(joined) = std::env::join_paths(path) {
+            cmd.env("PATH", joined);
+        }
     }
 }
 
@@ -406,25 +446,27 @@ mod tests {
     }
 
     #[test]
-    fn the_helper_s_uid_comes_first() {
+    fn sudo_and_pkexec_decide_before_the_helpers_variable() {
         let env = |vars: &'static [(&'static str, &'static str)]| {
             move |k: &str| vars.iter().find(|v| v.0 == k).map(|v| v.1.to_owned())
         };
+        // Passed through by `sudo -E`: ignored while sudo's own variable is there.
         assert_eq!(
-            acting_uid(env(&[
-                ("SUDO_UID", "502"),
-                ("PKEXEC_UID", "503"),
-                (ACTING_UID_VAR, "501")
-            ])),
-            Some(501)
+            acting_uid(env(&[("SUDO_UID", "502"), (ACTING_UID_VAR, "501")])),
+            Some(502)
         );
         assert_eq!(
             acting_uid(env(&[("SUDO_UID", "502"), ("PKEXEC_UID", "503")])),
             Some(503)
         );
+        // A set variable that is not a uid acts for no one rather than falling through.
         assert_eq!(
-            acting_uid(env(&[(ACTING_UID_VAR, "x"), ("SUDO_UID", "502")])),
-            Some(502)
+            acting_uid(env(&[("SUDO_UID", "x"), (ACTING_UID_VAR, "501")])),
+            None
+        );
+        assert_eq!(
+            acting_uid(env(&[(ACTING_UID_VAR, "501")])),
+            cfg!(target_os = "macos").then_some(501)
         );
         assert_eq!(acting_uid(env(&[])), None);
     }

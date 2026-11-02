@@ -88,6 +88,7 @@ fn an_imported_scan_refuses_the_commands_of_this_machine() {
         theme: None,
         admin: false,
         agent: false,
+        helper: false,
     };
     let launched = launch::prepare(&args).expect("the export reads");
     assert!(!launched.settings.record, "an import is recorded nowhere");

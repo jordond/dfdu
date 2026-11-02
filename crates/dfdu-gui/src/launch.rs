@@ -76,6 +76,7 @@ pub fn prepare(args: &Args) -> Result<Launch, String> {
 
 /// The agent of an administrator's scan: this program with `--agent`, or inside an AppImage
 /// the AppImage file itself, since its mount is not readable by root.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn agent_command() -> io::Result<Vec<OsString>> {
     let appimage = std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
@@ -106,6 +107,10 @@ pub fn elevate(
     let opts = settings.engine.clone();
     let ctx = ctx.clone();
     let connect = move || {
+        // macOS: the helper in the app bundle; elsewhere through pkexec.
+        #[cfg(target_os = "macos")]
+        let io = crate::helper::connect();
+        #[cfg(not(target_os = "macos"))]
         let io = agent_command().and_then(|agent| dfdu_session::elevate::spawn(&agent));
         let opened = io
             .and_then(|io| {

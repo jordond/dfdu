@@ -34,6 +34,10 @@ pub struct Args {
     /// input and output (started through pkexec by `--admin`).
     #[arg(long, hide = true, exclusive = true)]
     pub agent: bool,
+    /// Run as the helper that starts those agents as root (macOS, started by launchd from the
+    /// app's launch daemon).
+    #[arg(long, hide = true, exclusive = true)]
+    pub helper: bool,
 }
 
 #[cfg(test)]
@@ -57,6 +61,7 @@ mod tests {
                 theme: None,
                 admin: false,
                 agent: false,
+                helper: false,
             }
         );
     }
