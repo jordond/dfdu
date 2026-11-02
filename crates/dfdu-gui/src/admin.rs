@@ -3,8 +3,9 @@
 //! badge, and when a scan with Full disk access on is asked for before it is ready; checked
 //! again every second while open, so a step taken in System Settings shows at once.
 //!
-//! - Linux: a scan as an administrator asks for the password each time through pkexec;
-//!   nothing is installed. The window says whether pkexec is there.
+//! - Linux: a scan as an administrator asks for the password each time through pkexec (with
+//!   dfdu's own polkit action when installed from the .deb); nothing is set up from here. The
+//!   window says whether pkexec is there.
 //! - macOS: a helper inside the app scans as root (a launch daemon registered with
 //!   SMAppService). It is installed from here, approved once in Login Items, and reads the
 //!   folders macOS protects only once dfdu has Full Disk Access (the helper shares the app's

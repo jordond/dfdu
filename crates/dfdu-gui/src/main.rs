@@ -120,7 +120,8 @@ fn run(
 ) -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(NAME)
-        .with_app_id(NAME)
+        // Wayland's app_id and X11's WM_CLASS: desktops match it to app.dfdu.desktop.
+        .with_app_id("app.dfdu")
         .with_inner_size([1100.0, 720.0])
         .with_min_inner_size([480.0, 320.0])
         .with_drag_and_drop(true);
