@@ -7,7 +7,7 @@
 //! It is drawn on the window's background with a faint grid ([`backdrop`]), in a column at most
 //! [`COLUMN`] wide: the heading, the disks as rows of one sheet (a key, the name, mount point
 //! and notes, a bar of the use, the free space), then a sheet for a folder and one for an
-//! export, then the keys and the button that scans the chosen disk. On macOS the sealed system
+//! export, then the keys, the Full disk access switch and the button that scans the chosen disk. On macOS the sealed system
 //! volume is folded into the data volume of its container: both show the container's space,
 //! and the data volume is the one with anything to clean.
 //!
@@ -31,7 +31,8 @@ use egui::{
 use crate::kit::{self, Kind};
 use crate::theme::Colors;
 use crate::theme::style::{
-    MONO_SEMIBOLD_FAMILY, RADIUS_MD, RADIUS_SM, SPACE_1, SPACE_2, SPACE_3, SPACE_4, SPACE_6,
+    MONO_SEMIBOLD_FAMILY, RADIUS_MD, RADIUS_SM, SANS_MEDIUM_FAMILY, SPACE_1, SPACE_2, SPACE_3,
+    SPACE_4, SPACE_6,
 };
 
 /// The widest the screen's column grows.
@@ -99,7 +100,7 @@ pub struct Start {
     pub admin: bool,
     /// Where that stands, checked at most every second ([`crate::admin`]).
     admin_step: (crate::admin::Step, std::time::Instant),
-    /// The Administrator access window was asked for, for the window to open.
+    /// The Full disk access window was asked for, for the window to open.
     pub setup: bool,
 }
 
@@ -428,30 +429,89 @@ impl Start {
             let (admin, setup) = (&mut self.admin, &mut self.setup);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some((disk, mount)) = row {
-                    let text = format!("Scan {disk}");
+                    let text = if *admin && !step.usable() {
+                        "Set up, then scan…".to_owned()
+                    } else {
+                        format!("Scan {disk}")
+                    };
                     if kit::button(ui, colors, Kind::Primary, &text, None, true).clicked() {
                         chosen = Some(mount);
                     }
-                    ui.add_space(SPACE_3);
+                    ui.add_space(SPACE_4);
                 }
                 if !matches!(step, crate::admin::Step::Unavailable(_)) {
-                    if *admin && !step.usable() {
-                        if ui.link(kit::sans("Set up…", 12.0)).clicked() {
-                            *setup = true;
-                        }
-                    } else if *admin {
-                        ui.label(kit::sans(step.summary(), 11.0).color(dim));
-                    }
-                    ui.checkbox(admin, kit::sans("As administrator", 12.0))
-                        .on_hover_text(
-                            "Scan as root: folders you cannot read are counted too. \
-                             Asks for an administrator's password.",
-                        );
+                    full_disk_access(ui, colors, admin, setup, step.usable());
                 }
             });
         });
         chosen
     }
+}
+
+/// The Full disk access switch, laid out right to left in the footer: a scan as an administrator
+/// ([`crate::admin`]). Until that is set up, a Set up badge beside its name opens the window that
+/// sets it up.
+fn full_disk_access(ui: &mut Ui, colors: &Colors, on: &mut bool, setup: &mut bool, ready: bool) {
+    const NAME: &str = "Full disk access";
+    const CAPTION: &str = "Asks for an administrator's password";
+    const BADGE: &str = "Set up";
+    let name_font = FontId::new(13.0, FontFamily::Name(SANS_MEDIUM_FAMILY.into()));
+    let badge_font = FontId::new(11.0, FontFamily::Name(SANS_MEDIUM_FAMILY.into()));
+    let caption_font = FontId::new(11.0, FontFamily::Proportional);
+    let width = |text: &str, font: &FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    let gap = SPACE_2 + 2.0;
+    let badge = if ready {
+        0.0
+    } else {
+        6.0 + width(BADGE, &badge_font) + 2.0 * ui.spacing().button_padding.x + 2.0
+    };
+    let text = (width(NAME, &name_font) + badge).max(width(CAPTION, &caption_font));
+    let size = vec2(40.0 + gap + text.ceil() + 1.0, 36.0);
+    // Sized up front, so that the group sits by the button in the footer's right-to-left row
+    // while its own parts read left to right.
+    ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        kit::switch(ui, colors, on, NAME).on_hover_text(
+            "Counts the folders your account can't open too. \
+             Asks for an administrator's password before each scan.",
+        );
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let name = egui::RichText::new(NAME)
+                    .font(name_font)
+                    .color(colors.fg(Token::Title));
+                if ui
+                    .add(egui::Label::new(name).sense(Sense::click()))
+                    .clicked()
+                {
+                    *on = !*on;
+                }
+                if !ready {
+                    let warn = colors.fg(Token::StatusWarn);
+                    let b = egui::Button::new(kit::label(BADGE, 11.0).color(warn))
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0, warn))
+                        .corner_radius(CornerRadius::same(RADIUS_SM))
+                        .min_size(vec2(0.0, 18.0));
+                    if ui.add(b).on_hover_text("Set up full disk access").clicked() {
+                        *setup = true;
+                    }
+                }
+            });
+            ui.label(
+                egui::RichText::new(CAPTION)
+                    .font(caption_font)
+                    .color(colors.fg(Token::FgDim)),
+            );
+        });
+    });
 }
 
 /// The rows of `disks`: each disk, but a macOS system volume that shares its space with a data

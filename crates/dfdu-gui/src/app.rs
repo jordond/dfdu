@@ -48,7 +48,7 @@ pub struct Gui {
     theme_dir: Option<PathBuf>,
     /// The names of the theme files in it, as they were when the window opened.
     theme_files: Vec<String>,
-    /// The Administrator access window, while open ([`crate::admin`]).
+    /// The Full disk access window, while open ([`crate::admin`]).
     admin: Option<crate::admin::Panel>,
 }
 
@@ -174,7 +174,7 @@ impl Gui {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::containers::menu::MenuButton::from_button(quiet).ui(ui, |ui| {
-                    if ui.button("Administrator access…").clicked() {
+                    if ui.button("Full disk access…").clicked() {
                         self.admin = Some(crate::admin::Panel::new());
                         ui.close();
                     }

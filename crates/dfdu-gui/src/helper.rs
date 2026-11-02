@@ -1,7 +1,7 @@
 //! macOS: the helper that runs scans as an administrator. It is this program, started by
 //! launchd as root with `--helper` from the launch daemon in the app bundle
 //! (`Contents/Library/LaunchDaemons/app.dfdu.helper.plist`, registered with SMAppService from
-//! the Administrator access window, `crate::admin`).
+//! the Full disk access window, `crate::admin`).
 //!
 //! For each scan the window makes a socket pair and sends one end to the helper over XPC
 //! ([`connect`]) with an administrator's authorization for [`RIGHT`] (the system's sheet, which

@@ -200,6 +200,46 @@ pub fn key_cap(ui: &mut Ui, colors: &Colors, key: &str) -> Response {
     r
 }
 
+/// An on/off switch 40 by 24, named `name` for assistive technology: the accent track with a
+/// white knob on the right when on, an outlined track with a `border` knob on the left when off.
+/// Flips `on` when clicked.
+pub fn switch(ui: &mut Ui, colors: &Colors, on: &mut bool, name: &str) -> Response {
+    let (rect, mut r) = ui.allocate_exact_size(vec2(40.0, 24.0), Sense::click());
+    if r.clicked() {
+        *on = !*on;
+        r.mark_changed();
+    }
+    let enabled = ui.is_enabled();
+    let now = *on;
+    r.widget_info(|| WidgetInfo::selected(egui::Role::Switch, enabled, now, name));
+    let border = colors.fg(Token::Border);
+    let (fill, stroke, knob) = if now {
+        (colors.accent(), colors.accent(), colors.chrome.on_accent)
+    } else {
+        (colors.chrome.raised, border, border)
+    };
+    let p = ui.painter();
+    let radius = CornerRadius::same(12);
+    p.rect_filled(rect, radius, fill);
+    p.rect_stroke(rect, radius, Stroke::new(1.5, stroke), StrokeKind::Inside);
+    let x = if now {
+        rect.right() - 12.0
+    } else {
+        rect.left() + 12.0
+    };
+    p.circle_filled(pos2(x, rect.center().y), 7.5, knob);
+    if r.has_focus() {
+        let ring = rect.expand(3.0);
+        p.rect_stroke(
+            ring,
+            CornerRadius::same(15),
+            Stroke::new(2.0, colors.fg(Token::BorderFocus)),
+            StrokeKind::Outside,
+        );
+    }
+    r
+}
+
 /// A category: an 8px square in its colour, then its name in it.
 pub fn chip(ui: &mut Ui, name: &str, color: Color32) -> Response {
     ui.horizontal(|ui| {

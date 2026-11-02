@@ -106,7 +106,7 @@ pub struct ViewState {
     pub theme_pick: Option<usize>,
     /// The theme drawn with, by its index in `themes`, as the View menu ticks it.
     pub theme_current: Option<usize>,
-    /// The Administrator access window was asked for, for the window to open.
+    /// The Full disk access window was asked for, for the window to open.
     pub admin_open: bool,
     /// The folders macOS keeps from the window that the scan could not read, as the banner
     /// on Full Disk Access names them, until it is dismissed (`access`).
