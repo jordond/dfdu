@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-clean"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-dupes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-sys",
  "dfdu-tree",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-rules"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-tree",
  "serde",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-scan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-deque",
  "dfdu-rules",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32c",
  "dfdu-scan",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dfdu-tree",
  "etcetera",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tree"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fixedbitset",
  "os_str_bytes",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -1337,9 +1337,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "loom"
