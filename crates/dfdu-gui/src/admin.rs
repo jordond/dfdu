@@ -22,8 +22,9 @@ use crate::theme::style::{SPACE_2, SPACE_3};
 /// How often the window checks again while open.
 const RECHECK: Duration = Duration::from_secs(1);
 
-/// Where scanning as an administrator stands.
+/// Where scanning as an administrator stands. Linux has only `Unavailable` and `Ready`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum Step {
     /// This system offers no way, for the reason given.
     Unavailable(String),
