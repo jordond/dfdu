@@ -15,6 +15,17 @@ on:
       - crates/dfdu-gui/macos/**
   workflow_dispatch:
   workflow_call:
+    secrets:
+      MACOS_CERT_P12:
+        required: true
+      MACOS_CERT_PASSWORD:
+        required: true
+      APPLE_API_KEY_P8:
+        required: true
+      APPLE_API_KEY_ID:
+        required: true
+      APPLE_API_ISSUER_ID:
+        required: true
 
 permissions:
   contents: read

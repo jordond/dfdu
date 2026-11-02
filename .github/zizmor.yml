@@ -19,6 +19,8 @@ rules:
   secrets-inherit:
     ignore:
       - release.yml
+  # gui-release.yml calls the three GUI workflows by `./` path, as dist's release.yml does.
   self-repository:
     ignore:
       - release.yml
+      - gui-release.yml

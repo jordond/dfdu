@@ -13,11 +13,22 @@ on:
 jobs:
   macos:
     uses: ./.github/workflows/gui-macos.yml
-    secrets: inherit
+    permissions:
+      contents: read
+    secrets:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
   linux:
     uses: ./.github/workflows/gui-linux.yml
+    permissions:
+      contents: read
   windows:
     uses: ./.github/workflows/gui-windows.yml
+    permissions:
+      contents: read
 
   upload:
     name: Upload the GUI to the release
