@@ -328,7 +328,9 @@ jobs:
           cargo test --profile ci --locked -p dfdu-sys --test acting
           cargo test --profile ci --locked -p dfdu --test sudo
         env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_BTRFS_DIR,HOME
+          # Empty: the elevated agent's test runs the agent directly, already as root.
+          DFDU_ELEVATE_COMMAND: ""
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_BTRFS_DIR,DFDU_ELEVATE_COMMAND,HOME
 
   binaries:
     name: Binary (${{ matrix.os }})

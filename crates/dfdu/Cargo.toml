@@ -44,6 +44,7 @@ agent-download = ["dep:ureq", "dep:lzma-rust2", "dep:tar"]
 
 [dev-dependencies]
 tempfile.workspace = true
+dfdu-session.workspace = true
 boon.workspace = true
 crossbeam-channel.workspace = true
 lzma-rust2 = { workspace = true, features = ["encoder"] }

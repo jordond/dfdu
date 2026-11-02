@@ -1256,6 +1256,7 @@ dependencies = [
  "dfdu-hangfs",
  "dfdu-rules",
  "dfdu-scan",
+ "dfdu-session",
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
