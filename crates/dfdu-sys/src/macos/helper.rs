@@ -11,7 +11,7 @@
 pub mod service;
 mod xpc;
 
-pub use xpc::{Peer, connect, serve};
+pub use xpc::{Peer, Started, connect, serve};
 
 #[cfg(test)]
 mod tests;
