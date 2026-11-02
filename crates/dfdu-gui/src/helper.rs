@@ -76,13 +76,11 @@ pub fn serve() -> ExitCode {
             }
         });
     }
-    let on_peer = move |peer: dfdu_sys::helper::Peer| {
+    let on_peer = move |peer: dfdu_sys::helper::Peer| -> dfdu_sys::helper::Started {
         // Only an administrator may scan and delete as root, as with sudo: the app can be run
-        // by every user of the Mac once an administrator approved the helper. Closing the link
-        // tells the window it was refused.
+        // by every user of the Mac once an administrator approved the helper.
         if !may_use(peer.euid) {
-            eprintln!("dfdu helper: uid {} is not an administrator", peer.euid);
-            return;
+            return Err("only an administrator of this Mac can scan as root".into());
         }
         let started = (|| {
             let output = peer.link.try_clone()?;
@@ -109,8 +107,9 @@ pub fn serve() -> ExitCode {
                     }
                     running.fetch_sub(1, Ordering::SeqCst);
                 });
+                Ok(())
             }
-            Err(e) => eprintln!("dfdu helper: cannot start the agent: {e}"),
+            Err(e) => Err(format!("the helper cannot start the agent: {e}")),
         }
     };
     let e = dfdu_sys::helper::serve(SERVICE, REQUIREMENT, on_peer);
