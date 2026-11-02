@@ -112,6 +112,32 @@ pub fn history_path() -> Option<PathBuf> {
     Some(state_dir()?.join("history.sqlite3"))
 }
 
+/// Gives dfdu's own directories back to the user a root dfdu acts for
+/// ([`crate::acting`]): the configuration, state and cache directories with everything in
+/// them, and on Linux the home trash's directories (not what was trashed, which keeps its
+/// owner). Run when starting and before exiting, so files a root run created (history, journals,
+/// staging, cached scans) stay usable without root. Does nothing when acting for no one.
+pub fn give_back() {
+    if crate::acting::current().is_none() {
+        return;
+    }
+    let cache = etcetera::base_strategy::choose_native_strategy()
+        .ok()
+        .map(|d| d.cache_dir().join("dfdu"));
+    for d in [config_dir(), state_dir(), cache_dir(), cache]
+        .into_iter()
+        .flatten()
+    {
+        crate::acting::give_back(&d, true);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(trash) = xdg_data_dir().map(|d| d.join("Trash")) {
+        for d in ["files", "info", "expunged"] {
+            crate::acting::give_back(&trash.join(d), false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

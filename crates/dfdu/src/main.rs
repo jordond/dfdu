@@ -368,8 +368,16 @@ fn install_crash_hook() {
 }
 
 fn main() -> ExitCode {
+    // First: may execute dfdu again with the invoking user's HOME (see `dfdu_sys::acting`).
+    if let Err(e) = dfdu_sys::acting::adopt() {
+        eprintln!("dfdu: cannot act for the user who ran sudo: {e}");
+        return ExitCode::from(1);
+    }
+    dfdu_sys::dirs::give_back();
     install_crash_hook();
-    run(Cli::parse()).unwrap_or_else(|code| code)
+    let code = run(Cli::parse()).unwrap_or_else(|code| code);
+    dfdu_sys::dirs::give_back();
+    code
 }
 
 /// Runs the subcommand. Those that can stop early return the exit code they stop with as

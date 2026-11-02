@@ -11,6 +11,7 @@
 //! [`dirs`] owns where dfdu keeps its files: the config, state, cache, crash and rule
 //! directories every other crate asks for.
 
+pub mod acting;
 pub mod dirs;
 mod disks;
 mod mounted;
