@@ -1,8 +1,8 @@
 [package]
 name = "dfdu-gui"
 description = "Desktop browser for dfdu, in a window"
-# Its own version: the GUI is released on its own tags (`gui-v*`), apart from the CLI.
-version = "0.1.0"
+# The CLI's version: the GUI is released with it, on the same tag.
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
