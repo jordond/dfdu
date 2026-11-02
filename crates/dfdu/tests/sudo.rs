@@ -55,9 +55,16 @@ fn an_elevated_agent_scans_as_sudo_dfdu_does() {
     use dfdu_session::elevate;
     use std::time::Duration;
 
-    if dfdu_sys::acting::detect().is_none()
-        || std::env::var_os(elevate::ELEVATE_VAR).is_none_or(|v| !v.is_empty())
-    {
+    if dfdu_sys::acting::detect().is_none() {
+        return;
+    }
+    if std::env::var_os(elevate::ELEVATE_VAR).is_none_or(|v| !v.is_empty()) {
+        // CI's root step sets it; without it the check would pass there unseen.
+        assert!(
+            std::env::var_os("DFDU_BTRFS_DIR").is_none(),
+            "{} must be set and empty in the root btrfs step",
+            elevate::ELEVATE_VAR
+        );
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
