@@ -1,8 +1,10 @@
 //! macOS calls without a safe binding: `getattrlistbulk(2)`, and `fgetattrlist(2)` for APFS
-//! clone information. The `FSEvents` history is in [`fsevents`], and what the Finder shows of a
-//! volume (its name, its free space with purgeable data included) in `volume`.
+//! clone information. The `FSEvents` history is in [`fsevents`], what the Finder shows of a
+//! volume (its name, its free space with purgeable data included) in `volume`, and the
+//! privileged helper's `SMAppService` and XPC calls in [`helper`].
 
 pub mod fsevents;
+pub mod helper;
 mod volume;
 
 pub(crate) use volume::{important_available, volume_name};
