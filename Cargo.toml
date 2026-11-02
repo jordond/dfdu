@@ -93,6 +93,12 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Ioctl",
 ] }
 fuser = { version = "0.18.0", default-features = false }
+# The macOS privileged helper (crates/dfdu-sys/src/macos/helper): `SMAppService` to register the
+# launchd daemon, and blocks for the XPC handlers. The versions eframe and rfd already bring in.
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 dfdu-hangfs = { path = "crates/dfdu-hangfs" }
 # The GUI's, used by crates/dfdu-gui only. egui changes its API with every minor version, so the
 # family is pinned exactly and upgraded on purpose. Renderers: wgpu, and glow (OpenGL) when wgpu

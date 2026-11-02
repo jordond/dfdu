@@ -29,6 +29,12 @@ rustix = { workspace = true }
 [target.'cfg(not(any(target_os = "linux", target_os = "macos")))'.dependencies]
 sysinfo = { workspace = true }
 
+# The privileged helper: `SMAppService` and the XPC handshake with the GUI.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { workspace = true }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-service-management = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 dfdu-tree = { workspace = true }

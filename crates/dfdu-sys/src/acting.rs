@@ -1,4 +1,5 @@
-//! Acting for the user who started dfdu as root through `sudo` or `pkexec`.
+//! Acting for the user who started dfdu as root through `sudo` or `pkexec`, or for whom the
+//! macOS helper daemon started it.
 //!
 //! A root dfdu scans as root, but everything that belongs to a person stays that person's:
 //! configuration, rules, themes, the state directory (deletion journals, staging, history),
@@ -6,14 +7,15 @@
 //! root; `npm` or `cargo` run as root would leave root-owned files in their home).
 //!
 //! [`adopt`] is called first thing in `main`. When the process runs as root for another user
-//! ([`detect`]: `PKEXEC_UID`, else `SUDO_UID`), it makes `HOME`, `USER` and `LOGNAME` theirs by
-//! executing itself again with them set when they differ (Linux sudo resets `HOME` to root's;
-//! macOS keeps it), so every lookup of the user's directories, here and in the `trash` crate,
-//! finds theirs without the process changing its own environment. Files dfdu creates as root
-//! in those directories are given to the user by [`give_back`]; [`run_as`] makes a command run
-//! as them.
+//! ([`detect`]: [`ACTING_UID_VAR`], else `PKEXEC_UID`, else `SUDO_UID`), it makes `HOME`,
+//! `USER` and `LOGNAME` theirs by executing itself again with them set when they differ (Linux
+//! sudo resets `HOME` to root's; macOS keeps it, and the helper daemon has root's), so every
+//! lookup of the user's directories, here and in the `trash` crate, finds theirs without the
+//! process changing its own environment. Files dfdu creates as root in those directories are
+//! given to the user by [`give_back`]; [`run_as`] makes a command run as them.
 //!
-//! A root process with neither variable (a root login, `sudo -i` from root) acts for no one.
+//! A root process with none of these variables (a root login, `sudo -i` from root) acts for
+//! no one.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -46,6 +48,11 @@ impl User {
 
 static CURRENT: OnceLock<User> = OnceLock::new();
 
+/// The uid of the user an agent acts for, set by the macOS helper daemon (root) when it starts
+/// the agent for a GUI: the euid of that GUI's process, as XPC reports it. Checked before
+/// `PKEXEC_UID` and `SUDO_UID`, which a root daemon's environment does not have.
+pub const ACTING_UID_VAR: &str = "DFDU_ACTING_UID";
+
 /// The user this process acts for, once [`adopt`] found one.
 #[must_use]
 pub fn current() -> Option<&'static User> {
@@ -60,15 +67,15 @@ pub fn owner_uid() -> u32 {
     current().map_or_else(|| rustix::process::getuid().as_raw(), |u| u.uid)
 }
 
-/// The user a root process runs for: the uid in `PKEXEC_UID`, else `SUDO_UID`, when it is not
-/// root's and the password database knows it. `None` when not root.
+/// The user a root process runs for: the uid in [`ACTING_UID_VAR`], else `PKEXEC_UID`, else
+/// `SUDO_UID`, when it is not root's and the password database knows it. `None` when not root.
 #[cfg(unix)]
 #[must_use]
 pub fn detect() -> Option<User> {
     if !rustix::process::geteuid().is_root() {
         return None;
     }
-    let uid = ["PKEXEC_UID", "SUDO_UID"]
+    let uid = [ACTING_UID_VAR, "PKEXEC_UID", "SUDO_UID"]
         .iter()
         .find_map(|v| std::env::var(v).ok()?.trim().parse::<u32>().ok())?;
     if uid == 0 {
