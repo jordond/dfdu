@@ -106,6 +106,9 @@ Enter).
 
 ## Releasing
 
-The GUI has its own version in `Cargo.toml` and is left out of the CLI's `dist` release
-(`dist = false`). It will ship on `gui-v*` tags with its own installers (dmg, NSIS, AppImage,
-deb) and a Homebrew cask; that workflow is not written yet (Phase 7 in `GUI-PLAN.md`).
+The GUI has the workspace's version and ships on the CLI's tag, though `dist` leaves it out
+(`dist = false`). After dist announces a release, `.github/workflows/gui-release.yml` (a
+post-announce job) runs `gui-macos`, `gui-linux` and `gui-windows`, uploads their files with a
+`.sha256` each and `gui-sha256.sum` to the same release, and pushes the `dfdu-gui` cask to
+`jordond/homebrew-tap` (not for prereleases). `cargo xtask release manifests VERSION` fills
+the GUI's Scoop and winget manifests too when the release has `gui-sha256.sum`.

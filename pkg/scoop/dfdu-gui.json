@@ -1,0 +1,22 @@
+{
+    "version": "@VERSION@",
+    "description": "Disk usage browser, in a window",
+    "homepage": "https://dfdu.app/",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/jordond/dfdu/releases/download/v@VERSION@/dfdu-gui-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA256_GUI_x86_64-pc-windows-msvc.zip@"
+        }
+    },
+    "bin": "dfdu-gui.exe",
+    "shortcuts": [["dfdu-gui.exe", "dfdu"]],
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/jordond/dfdu/releases/download/v$version/dfdu-gui-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}

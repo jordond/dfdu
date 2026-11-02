@@ -1,0 +1,109 @@
+name: gui-release
+
+# The GUI's part of a release (publish-jobs in dist-workspace.toml): builds the installers on
+# the three systems (gui-macos, gui-linux, gui-windows), uploads them with a .sha256 each and
+# gui-sha256.sum to the release dist created, and pushes the Homebrew cask to the tap.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  macos:
+    uses: ./.github/workflows/gui-macos.yml
+    secrets: inherit
+  linux:
+    uses: ./.github/workflows/gui-linux.yml
+  windows:
+    uses: ./.github/workflows/gui-windows.yml
+
+  upload:
+    name: Upload the GUI to the release
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      PLAN: ${{ inputs.plan }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the GUI builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gui-*
+          path: gui
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          # The icon for install.sh --gui's desktop entry on Linux.
+          cp assets/logo/dfdu-mark-512.png gui/dfdu-gui-icon-512.png
+          cd gui
+          rm -f ./*.sha256 gui-sha256.sum
+          for f in dfdu-gui-*; do
+            sha256sum "$f" >"$f.sha256"
+            cat "$f.sha256" >>gui-sha256.sum
+          done
+          cat gui-sha256.sum
+          # Every asset install.sh, the cask and the manifests name.
+          for f in dfdu-gui-aarch64-apple-darwin.dmg dfdu-gui-x86_64-apple-darwin.dmg \
+            dfdu-gui-aarch64-apple-darwin.app.tar.gz dfdu-gui-x86_64-apple-darwin.app.tar.gz \
+            dfdu-gui-x86_64-unknown-linux-gnu.AppImage dfdu-gui-x86_64-unknown-linux-gnu.deb \
+            dfdu-gui-x86_64-pc-windows-msvc-setup.exe dfdu-gui-x86_64-pc-windows-msvc.zip \
+            dfdu-gui-icon-512.png; do
+            test -f "$f" || { echo "::error::no $f among the GUI builds"; exit 1; }
+          done
+      - name: Upload to the release
+        run: |
+          tag=$(jq -r .announcement_tag <<<"$PLAN")
+          gh release upload "$tag" gui/* --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Keep the checksums for the cask
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gui-sha256
+          path: gui/gui-sha256.sum
+
+  cask:
+    name: Publish the Homebrew cask
+    needs: [upload]
+    runs-on: ubuntu-26.04
+    if: ${{ !fromJson(inputs.plan).announcement_is_prerelease || fromJson(inputs.plan).publish_prereleases }}
+    timeout-minutes: 15
+    env:
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: src
+      - name: Check out the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          repository: "jordond/homebrew-tap"
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Fetch the checksums
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gui-sha256
+          path: sums
+      - name: Commit the cask
+        run: |
+          version=$(jq -r .announcement_tag <<<"$PLAN")
+          version=${version#v}
+          mkdir -p tap/Casks
+          src/.github/scripts/brew-cask.sh "$version" sums/gui-sha256.sum tap/Casks/dfdu-gui.rb
+          cd tap
+          git config user.name "axo bot"
+          git config user.email "admin+bot@axo.dev"
+          git add Casks/dfdu-gui.rb
+          git commit -m "dfdu-gui $version"
+          git push
