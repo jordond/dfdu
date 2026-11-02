@@ -1,0 +1,4 @@
+#!/bin/sh
+# The agent of dfdu-gui's administrator's scan, run by pkexec under the polkit action
+# app.dfdu.agent, which names this path. Installed by the .deb at /usr/libexec/dfdu/dfdu-agent.
+exec /usr/bin/dfdu-gui --agent "$@"

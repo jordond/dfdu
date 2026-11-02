@@ -1,0 +1,87 @@
+name: gui-linux
+
+# Builds the GUI's Linux release files with scripts/linux-package.sh: a .deb (with the agent
+# script and its polkit action) and an AppImage, for x86_64 glibc. Checks what the .deb holds,
+# installs it and runs it, and runs the program in the AppImage. Built on Ubuntu 24.04, not the
+# newest runner, so the glibc it needs is older. Runs when the packaging changes on main,
+# by hand, and from the release workflow (Phase 9, GUI-PLAN.md), which uploads the files to the
+# release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gui-linux.yml
+      - scripts/linux-package.sh
+      - crates/dfdu-gui/linux/**
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  packages:
+    name: .deb and AppImage (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the build libraries and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev desktop-file-utils libxml2-utils
+      - name: Build the packages
+        run: scripts/linux-package.sh dist
+      - name: Check the .deb
+        run: |
+          deb=dist/dfdu-gui-x86_64-unknown-linux-gnu.deb
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | tee "$RUNNER_TEMP/contents"
+          for path in ./usr/bin/dfdu-gui ./usr/libexec/dfdu/dfdu-agent \
+            ./usr/share/polkit-1/actions/app.dfdu.agent.policy \
+            ./usr/share/applications/app.dfdu.desktop \
+            ./usr/share/icons/hicolor/512x512/apps/app.dfdu.png; do
+            grep -q " $path\$" "$RUNNER_TEMP/contents" || { echo "::error::$path is not in the .deb"; exit 1; }
+          done
+          grep -E '^-rwxr-xr-x root/root .* \./usr/libexec/dfdu/dfdu-agent$' "$RUNNER_TEMP/contents"
+          dpkg-deb --field "$deb" Depends Recommends
+          # The action pkexec looks up for the agent script, and the script it runs.
+          dpkg-deb --fsys-tarfile "$deb" | tar -xO ./usr/share/polkit-1/actions/app.dfdu.agent.policy >"$RUNNER_TEMP/policy"
+          xmllint --noout "$RUNNER_TEMP/policy"
+          grep -q '<action id="app.dfdu.agent">' "$RUNNER_TEMP/policy"
+          grep -q 'org.freedesktop.policykit.exec.path">/usr/libexec/dfdu/dfdu-agent<' "$RUNNER_TEMP/policy"
+      - name: Install the .deb and run it
+        run: |
+          # dpkg stops at a dependency the runner lacks; apt then installs it and finishes.
+          sudo dpkg -i dist/dfdu-gui-x86_64-unknown-linux-gnu.deb || sudo apt-get install -y -f --no-install-recommends
+          test "$(dpkg-query -W -f '${Status}' dfdu-gui)" = "install ok installed"
+          test "$(command -v dfdu-gui)" = /usr/bin/dfdu-gui
+          dfdu-gui --help
+          /usr/libexec/dfdu/dfdu-agent --help
+          desktop-file-validate /usr/share/applications/app.dfdu.desktop
+      - name: Run the program in the AppImage
+        working-directory: ${{ runner.temp }}
+        env:
+          APPIMAGE_FILE: ${{ github.workspace }}/dist/dfdu-gui-x86_64-unknown-linux-gnu.AppImage
+        run: |
+          test -x "$APPIMAGE_FILE"
+          "$APPIMAGE_FILE" --appimage-extract >/dev/null
+          squashfs-root/usr/bin/dfdu-gui --help
+          squashfs-root/AppRun --help
+          test -f squashfs-root/app.dfdu.desktop
+          test -f squashfs-root/usr/share/icons/hicolor/512x512/apps/app.dfdu.png
+      - name: Upload the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gui-linux-x86_64-unknown-linux-gnu
+          path: dist/
+          if-no-files-found: error

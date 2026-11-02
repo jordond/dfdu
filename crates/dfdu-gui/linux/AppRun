@@ -1,0 +1,5 @@
+#!/bin/sh
+# The AppImage's entry: runs dfdu-gui from the mounted (or extracted) AppDir. The runtime sets
+# APPDIR; started from an extracted squashfs-root, the AppDir is where this file is.
+here=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+exec "$here/usr/bin/dfdu-gui" "$@"

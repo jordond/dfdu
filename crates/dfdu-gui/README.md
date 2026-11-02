@@ -75,6 +75,26 @@ notarised and stapled. `NOTARY_PROFILE` names credentials saved once with
 `xcrun notarytool store-credentials dfdu --key KEY.p8 --key-id ID --issuer ISSUER`;
 `DFDU_NO_NOTARIZE=1` skips notarisation. `DFDU_TARGET` builds another architecture.
 
+## Linux packages
+
+```sh
+scripts/linux-package.sh out    # out/dfdu-gui-x86_64-unknown-linux-gnu.{deb,AppImage}
+```
+
+It needs `dpkg-deb`, `objdump`, `curl`, `sha256sum` and `desktop-file-validate`
+(`desktop-file-utils`) beside the libraries above, and downloads appimagetool and the AppImage
+runtime, pinned by checksum. Both packages carry the desktop file `app.dfdu.desktop` and the
+icon; the sources are in `linux/`.
+
+- **.deb:** installs `/usr/bin/dfdu-gui` and the agent script `/usr/libexec/dfdu/dfdu-agent`
+  with its polkit action `app.dfdu.agent`, so the password dialog of an administrator's scan
+  names dfdu. polkit is recommended, not required: without pkexec the rest works.
+- **AppImage:** one file, run in place. Its agent is the AppImage itself, through pkexec's
+  generic prompt.
+
+The `gui-linux` workflow builds both on Ubuntu 24.04, installs the .deb and runs the program
+from each.
+
 ## Tests and lints
 
 ```sh

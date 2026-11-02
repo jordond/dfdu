@@ -83,18 +83,40 @@ fn cancelled(e: &io::Error) -> bool {
     return e.kind() == io::ErrorKind::PermissionDenied;
 }
 
-/// The agent of an administrator's scan: this program with `--agent`, or inside an AppImage
-/// the AppImage file itself, since its mount is not readable by root.
+/// Where the .deb installs the program.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+const DEB_EXE: &str = "/usr/bin/dfdu-gui";
+
+/// The agent the .deb installs beside it: a script running `dfdu-gui --agent`, named by the
+/// polkit action `app.dfdu.agent`, so pkexec asks for the password in dfdu's name.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+const DEB_AGENT: &str = "/usr/libexec/dfdu/dfdu-agent";
+
+/// The agent of an administrator's scan: this program with `--agent`; inside an AppImage the
+/// AppImage file itself, since its mount is not readable by root; installed from the .deb, its
+/// agent script.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn agent_command() -> io::Result<Vec<OsString>> {
-    let appimage = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute());
-    let exe = match appimage {
-        Some(p) => p,
-        None => std::env::current_exe()?,
-    };
-    Ok(vec![exe.into_os_string(), "--agent".into()])
+    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    Ok(agent_argv(
+        appimage,
+        std::env::current_exe()?,
+        Path::new(DEB_AGENT).is_file(),
+    ))
+}
+
+/// The agent's command, from `$APPIMAGE` (`appimage`), the running program (`exe`) and whether
+/// the .deb's agent script is installed (`deb_agent`): the script only for the program the .deb
+/// installed, since it runs that one, not some other build started beside it.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn agent_argv(appimage: Option<PathBuf>, exe: PathBuf, deb_agent: bool) -> Vec<OsString> {
+    if let Some(appimage) = appimage.filter(|p| p.is_absolute()) {
+        return vec![appimage.into_os_string(), "--agent".into()];
+    }
+    if deb_agent && exe == Path::new(DEB_EXE) {
+        return vec![DEB_AGENT.into()];
+    }
+    vec![exe.into_os_string(), "--agent".into()]
 }
 
 /// What an administrator's scan opened, or why not: `Err(None)` when the password dialog was
@@ -270,4 +292,52 @@ pub fn import(file: &Path) -> io::Result<dfdu_tree::Tree> {
     let opened = dfdu_store::open_file(f, &dfdu_store::Limits::default())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     Ok(opened.tree)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(appimage: Option<&str>, exe: &str, deb_agent: bool) -> Vec<OsString> {
+        agent_argv(appimage.map(PathBuf::from), PathBuf::from(exe), deb_agent)
+    }
+
+    #[test]
+    fn agent_is_this_program_by_default() {
+        assert_eq!(
+            argv(None, "/home/u/dfdu-gui", false),
+            ["/home/u/dfdu-gui", "--agent"]
+        );
+    }
+
+    #[test]
+    fn agent_is_the_appimage_inside_one() {
+        let want = ["/home/u/dfdu.AppImage", "--agent"];
+        let mounted = "/tmp/.mount_dfdu/usr/bin/dfdu-gui";
+        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), mounted, false), want);
+        // The .deb installed as well changes nothing: its script runs its own program.
+        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), mounted, true), want);
+    }
+
+    #[test]
+    fn relative_appimage_is_ignored() {
+        assert_eq!(
+            argv(Some("dfdu.AppImage"), "/home/u/dfdu-gui", false),
+            ["/home/u/dfdu-gui", "--agent"]
+        );
+    }
+
+    #[test]
+    fn agent_is_the_deb_script_when_installed_from_the_deb() {
+        assert_eq!(argv(None, DEB_EXE, true), [DEB_AGENT]);
+    }
+
+    #[test]
+    fn deb_script_is_only_for_the_deb_program() {
+        assert_eq!(argv(None, DEB_EXE, false), [DEB_EXE, "--agent"]);
+        assert_eq!(
+            argv(None, "/home/u/target/release/dfdu-gui", true),
+            ["/home/u/target/release/dfdu-gui", "--agent"]
+        );
+    }
 }

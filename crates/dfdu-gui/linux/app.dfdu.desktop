@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=dfdu
+GenericName=Disk Usage Analyzer
+Comment=See what takes up disk space and clean it up
+Exec=dfdu-gui %f
+Icon=app.dfdu
+Terminal=false
+Categories=System;FileTools;
+Keywords=disk;usage;space;storage;cleanup;duplicates;
+StartupWMClass=dfdu
