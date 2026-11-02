@@ -94,6 +94,9 @@ pub struct Start {
     folder: String,
     /// Why what was dropped on the window last is not scanned.
     dropped: Option<String>,
+    /// Scan what is chosen as an administrator ([`dfdu_session::elevate`]), where the system
+    /// offers it.
+    pub admin: bool,
 }
 
 /// The frame of a screen without a browser: the window's background, 32 in from its edges.
@@ -141,6 +144,7 @@ impl Start {
             selected: 0,
             folder: String::new(),
             dropped: None,
+            admin: false,
         }
     }
 
@@ -381,7 +385,7 @@ impl Start {
     }
 
     /// The keys, and the button that scans the chosen disk.
-    fn footer(&self, ui: &mut Ui, colors: &Colors) -> Option<PathBuf> {
+    fn footer(&mut self, ui: &mut Ui, colors: &Colors) -> Option<PathBuf> {
         let dim = colors.fg(Token::FgDim);
         let open = if cfg!(target_os = "macos") {
             "⌘O"
@@ -403,14 +407,26 @@ impl Start {
                 kit::key_cap(ui, colors, key);
                 ui.label(kit::sans(*what, 11.0).color(dim));
             }
-            if let Some(r) = self.chosen_row() {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let text = format!("Scan {}", name(&r.disk));
+            let row = self
+                .chosen_row()
+                .map(|r| (name(&r.disk), r.disk.mount_point.clone()));
+            let admin = &mut self.admin;
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if let Some((disk, mount)) = row {
+                    let text = format!("Scan {disk}");
                     if kit::button(ui, colors, Kind::Primary, &text, None, true).clicked() {
-                        chosen = Some(r.disk.mount_point.clone());
+                        chosen = Some(mount);
                     }
-                });
-            }
+                    ui.add_space(SPACE_3);
+                }
+                if dfdu_session::elevate::elevator().is_some() {
+                    ui.checkbox(admin, kit::sans("As administrator", 12.0))
+                        .on_hover_text(
+                            "Scan as root: folders you cannot read are counted too. \
+                             Asks for an administrator's password.",
+                        );
+                }
+            });
         });
         chosen
     }

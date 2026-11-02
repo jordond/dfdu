@@ -28,6 +28,7 @@ pub mod debug;
 pub mod details;
 pub mod dupes;
 pub mod effect;
+pub mod elevate;
 pub mod error_list;
 pub mod extras;
 pub mod file_manager;

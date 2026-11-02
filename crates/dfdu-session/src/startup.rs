@@ -45,13 +45,16 @@ pub enum Source {
     },
     /// A scan read from a file, browsed read-only.
     Imported(dfdu_tree::Tree),
-    /// An engine scanning `path` on another host with `job`: the root the agent resolved
+    /// An engine scanning `path` through an agent with `job`: the root the agent resolved
     /// ([`dfdu_engine::Connected::root`]). It deletes there too (unless
-    /// [`EngineOptions::read_only`]); nothing is recorded in the history.
+    /// [`EngineOptions::read_only`]); nothing is recorded in the history. The agent is on
+    /// another host, or with `local` on this one, run as root ([`crate::elevate`]), so the
+    /// tree is this machine's.
     Remote {
         engine: Engine<dfdu_scan::NativeBackend>,
         path: dfdu_tree::HostPath,
         job: JobOptions,
+        local: bool,
     },
 }
 
@@ -134,16 +137,21 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
                 home: home(),
             },
         }),
-        Source::Remote { engine, path, job } => {
+        Source::Remote {
+            engine,
+            path,
+            job,
+            local,
+        } => {
             engine.send(Command::Scan { path, opts: job });
             Opened::Native(Started {
                 engine,
                 setup: Setup {
                     jobs: SessionOptions::default(),
-                    local: false,
+                    local,
                     read_only,
                     // Another host's paths are not below this one's home directory.
-                    home: None,
+                    home: if local { home() } else { None },
                 },
             })
         }

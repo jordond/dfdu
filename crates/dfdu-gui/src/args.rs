@@ -26,6 +26,14 @@ pub struct Args {
     /// high-contrast follow the system, as auto does. Without it, the theme chosen last.
     #[arg(long, value_name = "NAME")]
     pub theme: Option<String>,
+    /// Scan PATH as an administrator: asks for the password, then scans as root while the
+    /// window runs as you (Linux).
+    #[arg(long, conflicts_with = "import")]
+    pub admin: bool,
+    /// Run as the agent of an administrator's scan, speaking dfdu's wire protocol on standard
+    /// input and output (started through pkexec by `--admin`).
+    #[arg(long, hide = true, exclusive = true)]
+    pub agent: bool,
 }
 
 #[cfg(test)]
@@ -47,6 +55,8 @@ mod tests {
                 import: None,
                 no_rules: false,
                 theme: None,
+                admin: false,
+                agent: false,
             }
         );
     }
@@ -60,6 +70,22 @@ mod tests {
         assert_eq!(a.theme.as_deref(), Some("nord"));
         let a = parse(&["--import", "scan.json"]).expect("parses");
         assert_eq!(a.import.as_deref(), Some(std::path::Path::new("scan.json")));
+    }
+
+    #[test]
+    fn an_administrators_scan_and_its_agent() {
+        let a = parse(&["/srv", "--admin"]).expect("parses");
+        assert!(a.admin && !a.agent);
+        assert!(
+            parse(&["--admin"]).expect("parses").admin,
+            "the start screen, ticked"
+        );
+        assert!(parse(&["--import", "scan.json", "--admin"]).is_err());
+        assert!(parse(&["--agent"]).expect("parses").agent);
+        assert!(
+            parse(&["--agent", "/srv"]).is_err(),
+            "the agent takes nothing else"
+        );
     }
 
     #[test]

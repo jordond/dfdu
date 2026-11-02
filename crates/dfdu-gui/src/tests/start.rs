@@ -155,6 +155,8 @@ fn inner_record() {
         import: None,
         no_rules: true,
         theme: None,
+        admin: false,
+        agent: false,
     };
     let launched = launch::prepare(&args).expect("prepares");
     assert!(
