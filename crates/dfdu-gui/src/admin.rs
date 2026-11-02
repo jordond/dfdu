@@ -242,6 +242,9 @@ mod platform {
             );
         }
         match service::status(crate::helper::PLIST) {
+            // SMAppService reports a daemon never registered as not found, so the plist in the
+            // bundle tells that from an app that is not dfdu.app.
+            Status::NotFound if bundled() => Step::Install,
             Status::NotFound => Step::Unavailable(
                 "The helper is part of dfdu.app: open dfdu from its app in Applications to \
                  scan as an administrator."
@@ -274,6 +277,16 @@ mod platform {
 
     pub fn removable(step: &Step) -> bool {
         matches!(step, Step::Approve | Step::FullDiskAccess | Step::Ready)
+    }
+
+    /// Whether this program runs from an app bundle holding the helper's launch daemon.
+    fn bundled() -> bool {
+        app_path().is_some_and(|app| {
+            std::path::Path::new(&app)
+                .join("Contents/Library/LaunchDaemons")
+                .join(crate::helper::PLIST)
+                .is_file()
+        })
     }
 
     /// The app bundle holding this program, to drag into Full Disk Access.
