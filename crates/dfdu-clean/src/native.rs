@@ -151,6 +151,8 @@ pub fn run_command<T: Send + 'static>(
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
+    // A root dfdu started by sudo or pkexec runs tools as the user it acts for.
+    dfdu_sys::acting::run_as(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("{prog}: {e}"))?;
     let pipes = [
         child

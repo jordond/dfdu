@@ -216,7 +216,7 @@ mod imp {
         if let Some(root) = volume_root(path, id.dev) {
             dirs.push(
                 root.join(".Trashes")
-                    .join(rustix::process::getuid().as_raw().to_string()),
+                    .join(dfdu_sys::acting::owner_uid().to_string()),
             );
         }
         let mut denied = false;

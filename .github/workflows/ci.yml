@@ -310,7 +310,9 @@ jobs:
       - name: Install btrfs tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends btrfs-progs btrfs-compsize
       - name: Build tests
-        run: cargo test --profile ci --locked --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui -p dfdu-store
+        run: |
+          cargo test --profile ci --locked --no-run -p dfdu-sys -p dfdu-clean -p dfdu-engine -p dfdu-tui -p dfdu-store
+          cargo test --profile ci --locked --no-run -p dfdu --test sudo
       - name: Create the btrfs fixture
         run: sudo scripts/btrfs-fixture.sh "$RUNNER_TEMP/btrfs.img" "$DFDU_BTRFS_DIR" "$(id -un)"
       - name: Run btrfs tests unprivileged
@@ -323,6 +325,8 @@ jobs:
           cargo test --profile ci --locked -p dfdu-tui --lib tests::btrfs::
           cargo test --profile ci --locked -p dfdu-store --test resume btrfs
           cargo test --profile ci --locked -p dfdu-clean --lib
+          cargo test --profile ci --locked -p dfdu-sys --test acting
+          cargo test --profile ci --locked -p dfdu --test sudo
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sudo --preserve-env=DFDU_BTRFS_DIR,HOME
 
