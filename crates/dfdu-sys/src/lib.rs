@@ -40,8 +40,8 @@ pub use bulk::{BulkEntry, SF_FIRMLINK, VDIR, VLNK, VREG, parse_bulk_record};
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
-    CloneAt, CloneInfo, clone_info, clone_info_at, fsevents, helper, performance_cores,
-    read_bulk, shares_extents,
+    CloneAt, CloneInfo, clone_info, clone_info_at, fsevents, helper, performance_cores, read_bulk,
+    shares_extents,
 };
 
 #[cfg(windows)]
