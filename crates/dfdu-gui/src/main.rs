@@ -64,6 +64,9 @@ const ICON: &[u8] = include_bytes!("../../../assets/logo/dfdu-mark-512.png");
 
 fn main() -> ExitCode {
     let args = args::Args::parse();
+    if args.agent {
+        return launch::agent();
+    }
     let launch = match launch::prepare(&args) {
         Ok(launch) => launch,
         Err(e) => {

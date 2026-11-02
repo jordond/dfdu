@@ -59,7 +59,9 @@ fn local(dir: &Path, read_only: bool, journal: Option<PathBuf>) -> Launch {
                 ..EngineOptions::default()
             },
             record: false,
+            rules: false,
         },
+        admin: false,
     }
 }
 

@@ -39,6 +39,7 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             engine,
             path: root,
             job,
+            local: false,
         }
     } else {
         let resumed = (cli.resume_from.as_deref().map(read_export))

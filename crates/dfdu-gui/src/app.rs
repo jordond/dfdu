@@ -24,6 +24,12 @@ enum Screen {
         local: StartLocal,
     },
     Browse(Box<dyn Browse>),
+    /// An administrator's scan of `path`, waiting for the system's password dialog and the
+    /// agent ([`launch::elevate`]).
+    Elevating {
+        path: PathBuf,
+        opened: crossbeam_channel::Receiver<Result<dfdu_session::elevate::Elevated, String>>,
+    },
     /// What was chosen could not be opened.
     Failed(String),
     /// Between two screens, and after the browser stopped.
@@ -57,7 +63,11 @@ impl Gui {
             (ThemeChoice::File(name), Some(file)) => Some((name.clone(), file)),
             _ => None,
         };
-        let Launch { source, settings } = launch;
+        let Launch {
+            source,
+            settings,
+            admin,
+        } = launch;
         let theme_files = theme::listed(theme_dir.as_deref());
         theme::install(ctx);
         let mut gui = Gui {
@@ -70,10 +80,17 @@ impl Gui {
         };
         gui.choose(gui.prefs.theme.clone(), ctx);
         gui.screen = match source {
-            Source::Local { path: None, start } => Screen::Start {
-                start: Start::new(ctx),
-                local: start,
-            },
+            Source::Local { path: None, start } => {
+                let mut s = Start::new(ctx);
+                s.admin = admin;
+                Screen::Start {
+                    start: s,
+                    local: start,
+                }
+            }
+            Source::Local {
+                path: Some(path), ..
+            } if admin => gui.elevate(path, ctx),
             source => gui.open(source, ctx),
         };
         gui
@@ -98,20 +115,18 @@ impl Gui {
                     self.choose(choice, ui.ctx());
                 }
             }
-            Screen::Failed(e) => {
-                egui::CentralPanel::default()
-                    .frame(start::frame(&colors))
-                    .show(ui, |ui| {
-                        start::backdrop(ui, &colors);
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(ui.available_height() * 0.35);
-                            let error = colors.fg(Token::StatusError);
-                            ui.add(
-                                egui::Label::new(kit::sans(e.as_str(), 13.0).color(error)).wrap(),
-                            );
-                        });
-                    });
-            }
+            Screen::Elevating { path, opened } => match opened.try_recv() {
+                Ok(Ok(elevated)) => self.screen = self.open(elevated.source(), ui.ctx()),
+                Ok(Err(e)) => self.screen = Screen::Failed(e),
+                Err(_) => {
+                    let text = format!(
+                        "Waiting for an administrator's password to scan {}…",
+                        path.display()
+                    );
+                    message(ui, &colors, &text, colors.fg(Token::FgDim));
+                }
+            },
+            Screen::Failed(e) => message(ui, &colors, e, colors.fg(Token::StatusError)),
             Screen::Closed => {}
         }
         // The browser's toolbar has its own View menu.
@@ -146,11 +161,12 @@ impl Gui {
     /// Opens what was chosen on the start screen: a folder is scanned afresh, an export is
     /// browsed read-only, as `--import` browses it.
     pub fn chosen(&mut self, chosen: Chosen, ctx: &egui::Context) {
-        let Screen::Start { local, .. } = std::mem::replace(&mut self.screen, Screen::Closed)
+        let Screen::Start { local, start } = std::mem::replace(&mut self.screen, Screen::Closed)
         else {
             return;
         };
         self.screen = match chosen {
+            Chosen::Folder(path) if start.admin => self.elevate(path, ctx),
             Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
             Chosen::Export(file) => match launch::import(&file) {
                 Ok(tree) => self.open(Source::Imported(tree), ctx),
@@ -261,6 +277,12 @@ impl Gui {
         }
     }
 
+    /// The screen waiting for an administrator's scan of `path` to start.
+    fn elevate(&self, path: PathBuf, ctx: &egui::Context) -> Screen {
+        let opened = launch::elevate(path.clone(), &self.settings, ctx);
+        Screen::Elevating { path, opened }
+    }
+
     /// The browser of `source`, showing its list as the settings say, or why it could not be
     /// opened.
     fn open(&self, source: Source, ctx: &egui::Context) -> Screen {
@@ -280,6 +302,19 @@ impl Gui {
             Err(e) => Screen::Failed(format!("Cannot open it: {e}")),
         }
     }
+}
+
+/// A message alone in the middle of a screen without a browser, in `color`.
+fn message(ui: &mut egui::Ui, colors: &Colors, text: &str, color: egui::Color32) {
+    egui::CentralPanel::default()
+        .frame(start::frame(colors))
+        .show(ui, |ui| {
+            start::backdrop(ui, colors);
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.35);
+                ui.add(egui::Label::new(kit::sans(text, 13.0).color(color)).wrap());
+            });
+        });
 }
 
 /// The window's own shortcuts, taken before anything else sees them: Cmd-Q (Ctrl-Q) quits and
