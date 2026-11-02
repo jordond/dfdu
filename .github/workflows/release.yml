@@ -112,6 +112,9 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      CODESIGN_CERTIFICATE: ${{ secrets.CODESIGN_CERTIFICATE }}
+      CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
     steps:
       - name: enable windows longpaths
         run: |
@@ -127,6 +130,20 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: "Set up macOS signing"
+        if: "runner.os == 'macOS'"
+        run: |
+          cert=$(printf '%s' "$CERT_P12" | tr -d '\r\n ')
+          echo "::add-mask::$cert"
+          {
+            echo "CODESIGN_CERTIFICATE=$cert"
+            echo "CODESIGN_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+            echo "CODESIGN_IDENTITY=Developer ID Application: JORDON DANIEL DEHOOG (7YZ4RG7YHP)"
+            echo "CODESIGN_OPTIONS=runtime"
+          } >> "$GITHUB_ENV"
+        env:
+          "CERT_P12": "${{ secrets.MACOS_CERT_P12 }}"
+          "CERT_PASSWORD": "${{ secrets.MACOS_CERT_PASSWORD }}"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
@@ -292,15 +309,30 @@ jobs:
       "id-token": "write"
       "packages": "write"
 
+  custom-notarize-macos:
+    needs:
+      - plan
+      - host
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    uses: ./.github/workflows/notarize-macos.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
+    # publish jobs get escalated permissions
+    permissions:
+      "id-token": "write"
+      "packages": "write"
+
   announce:
     needs:
       - plan
       - host
       - custom-publish-homebrew
+      - custom-notarize-macos
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.custom-publish-homebrew.result == 'skipped' || needs.custom-publish-homebrew.result == 'success') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.custom-publish-homebrew.result == 'skipped' || needs.custom-publish-homebrew.result == 'success') && (needs.custom-notarize-macos.result == 'skipped' || needs.custom-notarize-macos.result == 'success') }}
     runs-on: "ubuntu-26.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

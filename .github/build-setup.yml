@@ -1,0 +1,20 @@
+# Steps dist puts in its build-local-artifacts job (github-build-setup in dist-workspace.toml).
+# dist signs the macOS binaries (macos-sign) from CODESIGN_CERTIFICATE (a base64 .p12),
+# CODESIGN_CERTIFICATE_PASSWORD and CODESIGN_IDENTITY, with CODESIGN_OPTIONS as codesign's
+# --options; notarisation needs the hardened runtime. The repository keeps the certificate as
+# MACOS_CERT_P12 and MACOS_CERT_PASSWORD, so this step sets dist's names from them (values set
+# through GITHUB_ENV win over the job's empty CODESIGN_* from dist's template).
+- name: Set up macOS signing
+  if: runner.os == 'macOS'
+  env:
+    CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+    CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+  run: |
+    cert=$(printf '%s' "$CERT_P12" | tr -d '\r\n ')
+    echo "::add-mask::$cert"
+    {
+      echo "CODESIGN_CERTIFICATE=$cert"
+      echo "CODESIGN_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+      echo "CODESIGN_IDENTITY=Developer ID Application: JORDON DANIEL DEHOOG (7YZ4RG7YHP)"
+      echo "CODESIGN_OPTIONS=runtime"
+    } >> "$GITHUB_ENV"

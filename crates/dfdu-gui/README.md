@@ -62,6 +62,19 @@ directory, beside the scan history. `DFDU_STATE_DIR` moves it, which is handy fo
 DFDU_STATE_DIR=$(mktemp -d) cargo run -p dfdu-gui
 ```
 
+## macOS app
+
+```sh
+scripts/macos-app.sh out                       # out/dfdu.app, signed ad hoc (no helper)
+scripts/macos-app.sh out "Apple Development: …"  # helper works on this machine
+NOTARY_PROFILE=dfdu scripts/macos-release.sh out "Developer ID Application: …"
+```
+
+`macos-release.sh` writes `dfdu-gui-TARGET.dmg` and `dfdu-gui-TARGET.app.tar.gz`, signed,
+notarised and stapled. `NOTARY_PROFILE` names credentials saved once with
+`xcrun notarytool store-credentials dfdu --key KEY.p8 --key-id ID --issuer ISSUER`;
+`DFDU_NO_NOTARIZE=1` skips notarisation. `DFDU_TARGET` builds another architecture.
+
 ## Tests and lints
 
 ```sh

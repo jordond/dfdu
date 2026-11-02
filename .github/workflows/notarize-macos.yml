@@ -1,0 +1,60 @@
+name: notarize-macos
+
+# Notarises the macOS CLI binaries of a release (publish-jobs in dist-workspace.toml). dist signs
+# them in its build job (macos-sign, hardened runtime from .github/build-setup.yml); bare
+# binaries cannot be stapled, so Gatekeeper looks the ticket up online. Each archive's binary is
+# checked for a Developer ID signature with hardened runtime and a timestamp, zipped and sent to
+# notarytool (scripts/macos-notarize.sh).
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  notarize:
+    name: Notarize the macOS binaries
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - name: Check and notarize
+        env:
+          NOTARY_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          export NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          .github/scripts/notary-key.sh "$NOTARY_KEY"
+          found=0
+          for archive in artifacts/*-apple-darwin.tar.xz; do
+            [ -e "$archive" ] || continue
+            found=1
+            dir="$RUNNER_TEMP/$(basename "$archive" .tar.xz)"
+            mkdir -p "$dir"
+            tar -C "$dir" -xJf "$archive"
+            bin=$(find "$dir" -type f -name dfdu -perm -u+x | head -n 1)
+            [ -n "$bin" ] || { echo "no dfdu binary in $archive" >&2; exit 1; }
+            codesign --verify --strict --verbose=2 "$bin"
+            info=$(codesign --display --verbose=4 "$bin" 2>&1)
+            echo "$info" | grep -q '^Authority=Developer ID Application: .*(7YZ4RG7YHP)$' ||
+              { echo "$bin: not signed with the Developer ID" >&2; echo "$info" >&2; exit 1; }
+            echo "$info" | grep -q '^CodeDirectory .*flags=.*(runtime)' ||
+              { echo "$bin: no hardened runtime" >&2; echo "$info" >&2; exit 1; }
+            echo "$info" | grep -q '^Timestamp=' ||
+              { echo "$bin: no secure timestamp" >&2; echo "$info" >&2; exit 1; }
+            ditto -c -k "$bin" "$dir.zip"
+            scripts/macos-notarize.sh "$dir.zip"
+          done
+          rm -f "$NOTARY_KEY"
+          [ "$found" = 1 ] || { echo "no macOS archives among the artifacts" >&2; exit 1; }

@@ -8,8 +8,14 @@ ci = "github"
 # Shell installs on macOS and Linux go through install.sh at the repo root.
 installers = ["powershell", "homebrew"]
 tap = "jordond/homebrew-tap"
-# "./publish-homebrew" is dist's Homebrew job with the man pages and completions linked.
-publish-jobs = ["./publish-homebrew"]
+# "./publish-homebrew" is dist's Homebrew job with the man pages and completions linked;
+# "./notarize-macos" notarises the macOS binaries dist signed.
+publish-jobs = ["./publish-homebrew", "./notarize-macos"]
+# Developer ID signing of the macOS binaries (secrets CODESIGN_CERTIFICATE, a base64 .p12,
+# CODESIGN_CERTIFICATE_PASSWORD and CODESIGN_IDENTITY), with hardened runtime set by
+# .github/build-setup.yml.
+macos-sign = true
+github-build-setup = "../build-setup.yml"
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",

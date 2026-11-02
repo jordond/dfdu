@@ -10,6 +10,8 @@
 	<string>dfdu</string>
 	<key>CFBundleExecutable</key>
 	<string>dfdu-gui</string>
+	<key>CFBundleIconFile</key>
+	<string>dfdu</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

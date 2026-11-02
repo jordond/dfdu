@@ -1,0 +1,70 @@
+name: gui-macos
+
+# Builds the GUI's macOS release files per architecture with scripts/macos-release.sh: dfdu.app
+# signed with the Developer ID (hardened runtime), in a signed .dmg and an .app.tar.gz, notarised,
+# stapled and checked by Gatekeeper. Runs when the signing files change on main, by hand, and
+# from the release workflow (Phase 9, GUI-PLAN.md), which uploads the files to the release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gui-macos.yml
+      - .github/scripts/macos-keychain.sh
+      - .github/scripts/notary-key.sh
+      - scripts/macos-*.sh
+      - crates/dfdu-gui/macos/**
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  app:
+    name: dfdu.app (${{ matrix.target }})
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Add the Rust target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup target add "$TARGET"
+      - name: Import the Developer ID certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: .github/scripts/macos-keychain.sh "$RUNNER_TEMP/signing.keychain-db"
+      - name: Build, sign and notarize
+        env:
+          DFDU_TARGET: ${{ matrix.target }}
+          NOTARY_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          export NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          .github/scripts/notary-key.sh "$NOTARY_KEY"
+          scripts/macos-release.sh dist "Developer ID Application: JORDON DANIEL DEHOOG (7YZ4RG7YHP)"
+          rm -f "$NOTARY_KEY"
+      - name: Upload the app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gui-macos-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
