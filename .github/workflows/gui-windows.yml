@@ -1,0 +1,114 @@
+name: gui-windows
+
+# Builds the GUI's Windows release files with scripts/windows-package.sh: an NSIS installer that
+# installs for the current user, and a portable .zip, both unsigned. Then checks them: the
+# installer runs silently into a temporary directory, registers under HKCU and makes the Start
+# menu shortcut; the installed dfdu-gui.exe carries the icon and answers --help; the uninstaller
+# removes it all again; the zip holds what it should and its exe runs too. Runs when the
+# packaging files change on main, by hand, and from the release workflow (Phase 9,
+# GUI-PLAN.md), which uploads the files to the release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gui-windows.yml
+      - scripts/windows-package.sh
+      - crates/dfdu-gui/build.rs
+      - crates/dfdu-gui/windows/**
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  package:
+    name: installer (${{ matrix.target }})
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc]
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Add the Rust target
+        run: rustup target add "$TARGET"
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Build the installer and the zip
+        env:
+          DFDU_TARGET: ${{ matrix.target }}
+        run: scripts/windows-package.sh dist
+      - name: Install, run and uninstall
+        run: |
+          set -euo pipefail
+          # Git Bash rewrites arguments that look like POSIX paths, which would turn switches
+          # such as /S into drives; `win` runs a program with its arguments as given.
+          win() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$@"; }
+          setup="dist/dfdu-gui-$TARGET-setup.exe"
+          dir=$(cygpath -u "$RUNNER_TEMP")/dfdu-install
+          key='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\dfdu'
+          menu="$(cygpath -u "$APPDATA")/Microsoft/Windows/Start Menu/Programs/dfdu/dfdu.lnk"
+
+          # /S is silent; /D= (last, unquoted) picks the directory over %LOCALAPPDATA%\dfdu.
+          win "$setup" /S "/D=$(cygpath -w "$dir")"
+          ls -l "$dir"
+          for file in dfdu-gui.exe LICENSE README.txt uninstall.exe; do
+            test -f "$dir/$file" || { echo "not installed: $file" >&2; exit 1; }
+          done
+          test -f "$menu" || { echo "no Start menu shortcut at $menu" >&2; exit 1; }
+          win reg query "$key" /v UninstallString
+
+          # The icon's 256 px image, a PNG in dfdu.ico, is in the exe's resources (build.rs).
+          python - "$dir/dfdu-gui.exe" crates/dfdu-gui/windows/dfdu.ico <<'EOF'
+          import struct, sys
+          exe, ico = (open(p, "rb").read() for p in sys.argv[1:3])
+          size, offset = struct.unpack_from("<II", ico, 6 + 8)
+          assert ico[offset:offset + size] in exe, "dfdu-gui.exe has no icon resource"
+          print("icon resource: found")
+          EOF
+
+          # A console program, so --help prints here.
+          "$dir/dfdu-gui.exe" --help | tee "$RUNNER_TEMP/help.txt"
+          grep -q 'Usage: dfdu-gui' "$RUNNER_TEMP/help.txt"
+
+          # _?= runs the uninstaller in place, so it waits (and leaves only itself behind).
+          win "$dir/uninstall.exe" /S "_?=$(cygpath -w "$dir")"
+          test ! -e "$dir/dfdu-gui.exe" || { echo "uninstall left dfdu-gui.exe" >&2; exit 1; }
+          test ! -e "$menu" || { echo "uninstall left the Start menu shortcut" >&2; exit 1; }
+          if win reg query "$key" >/dev/null 2>&1; then
+            echo "uninstall left $key" >&2
+            exit 1
+          fi
+          rm -rf "$dir"
+      - name: Check the zip
+        run: |
+          set -euo pipefail
+          bsdtar="$(cygpath -u "$SYSTEMROOT")/System32/tar.exe"
+          zip="dist/dfdu-gui-$TARGET.zip"
+          "$bsdtar" -tvf "$zip"
+          test "$("$bsdtar" -tf "$zip" | sort | tr '\n' ' ')" = "LICENSE README.txt dfdu-gui.exe "
+          unpacked=$(cygpath -u "$RUNNER_TEMP")/dfdu-zip
+          mkdir -p "$unpacked"
+          "$bsdtar" -xf "$zip" -C "$unpacked"
+          "$unpacked/dfdu-gui.exe" --help >/dev/null
+      - name: Upload the installer and the zip
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gui-windows-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error

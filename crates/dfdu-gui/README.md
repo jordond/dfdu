@@ -95,6 +95,22 @@ icon; the sources are in `linux/`.
 The `gui-linux` workflow builds both on Ubuntu 24.04, installs the .deb and runs the program
 from each.
 
+## Windows packages
+
+```sh
+cargo install cargo-packager --version 0.11.8 --locked
+scripts/windows-package.sh out                 # in Git Bash
+```
+
+`windows-package.sh` writes `dfdu-gui-TARGET-setup.exe`, an NSIS installer made by cargo-packager
+from `windows/Packager.toml`, and `dfdu-gui-TARGET.zip`, with `dfdu-gui.exe`, `LICENSE` and a
+`README.txt` to run without installing. The installer puts dfdu in `%LOCALAPPDATA%\dfdu` for the
+current user, so it asks for no administrator, and adds a Start menu shortcut and an uninstaller;
+`/S` installs silently and `/D=DIR` (last) picks the directory. Neither file is signed yet, so
+SmartScreen warns on the first run. `build.rs` puts `windows/dfdu.ico` (16 to 256 px, from the
+mark) into the exe for Explorer and the shortcut. CI's `gui-windows` workflow builds both, then
+installs, runs and uninstalls on a Windows runner.
+
 ## Tests and lints
 
 ```sh

@@ -1,0 +1,24 @@
+# cargo-packager 0.11.8 configuration of the GUI's Windows installer (NSIS), used by
+# scripts/windows-package.sh. The script copies this file into a staging directory beside
+# dfdu-gui.exe, dfdu.ico, LICENSE and README.txt, and replaces @VERSION@ with dfdu-gui's version
+# from Cargo.toml (with `--config`, cargo-packager reads no Cargo.toml), so the paths here are
+# relative to that directory, not to this one.
+# `name` is required in practice: without it 0.11.8 looks for a package name by changing into
+# the config file's path as if it were a directory, and fails.
+name = "dfdu-gui"
+productName = "dfdu"
+version = "@VERSION@"
+identifier = "app.dfdu"
+publisher = "dfdu"
+description = "Desktop browser for dfdu, in a window"
+homepage = "https://github.com/jordond/dfdu"
+copyright = "Copyright (c) 2026 Jordon de Hoog"
+formats = ["nsis"]
+binariesDir = "."
+binaries = [{ path = "dfdu-gui", main = true }]
+resources = ["LICENSE", "README.txt"]
+
+[nsis]
+# Into %LOCALAPPDATA%\dfdu, registered under HKCU: no administrator, so no UAC prompt.
+installMode = "currentUser"
+installerIcon = "dfdu.ico"
