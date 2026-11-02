@@ -34,8 +34,9 @@ for tool in cargo dpkg-deb objdump curl sha256sum desktop-file-validate; do
 	command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 
-version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/crates/dfdu-gui/Cargo.toml" | head -n 1)
-[ -n "$version" ] || die "no version in crates/dfdu-gui/Cargo.toml"
+version=$(cargo metadata --no-deps --format-version 1 --manifest-path "$root/Cargo.toml" |
+	sed -n 's/.*"name":"dfdu-gui","version":"\([^"]*\)".*/\1/p')
+[ -n "$version" ] || die "no dfdu-gui version in cargo metadata"
 target_dir=${CARGO_TARGET_DIR:-$root/target}
 case $target_dir in
 /*) ;;

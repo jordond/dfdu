@@ -294,7 +294,8 @@ pub fn import(file: &Path) -> io::Result<dfdu_tree::Tree> {
     Ok(opened.tree)
 }
 
-#[cfg(test)]
+// The paths are Unix ones (an administrator's scan goes through pkexec, on Linux only).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

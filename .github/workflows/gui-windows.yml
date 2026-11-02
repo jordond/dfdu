@@ -101,7 +101,7 @@ jobs:
           bsdtar="$(cygpath -u "$SYSTEMROOT")/System32/tar.exe"
           zip="dist/dfdu-gui-$TARGET.zip"
           "$bsdtar" -tvf "$zip"
-          test "$("$bsdtar" -tf "$zip" | sort | tr '\n' ' ')" = "LICENSE README.txt dfdu-gui.exe "
+          test "$("$bsdtar" -tf "$zip" | LC_ALL=C sort | tr -d '\r' | tr '\n' ' ')" = "LICENSE README.txt dfdu-gui.exe "
           unpacked=$(cygpath -u "$RUNNER_TEMP")/dfdu-zip
           mkdir -p "$unpacked"
           "$bsdtar" -xf "$zip" -C "$unpacked"

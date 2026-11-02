@@ -167,6 +167,14 @@ fn a_link_without_an_authorization_is_refused() {
 #[test]
 fn an_authorization_for_another_right_is_refused() {
     let Some(me) = this_binary() else { return };
+    // Some machines grant every right without asking (CI runners whose policy database lets
+    // the admin user through); there a refusal cannot be seen.
+    let never = std::ffi::CString::new("app.dfdu.test.never-defined").unwrap();
+    let empty = Authorization::create(never.clone()).unwrap();
+    if super::authorization::check(Some(&empty.external_form().unwrap()), &never).is_ok() {
+        eprintln!("skipped: this machine grants {never:?} without asking");
+        return;
+    }
     let (tx, rx) = mpsc::channel();
     let server = Anonymous::listen(&me, "app.dfdu.test.never-defined", move |p| {
         tx.send(p).unwrap();
