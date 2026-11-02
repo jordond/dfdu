@@ -82,7 +82,7 @@ jobs:
           print("icon resource: found")
           EOF
 
-          # A console program, so --help prints here.
+          # A GUI-subsystem program: its output reaches a pipe it is handed (not a console).
           "$dir/dfdu-gui.exe" --help | tee "$RUNNER_TEMP/help.txt"
           grep -q 'Usage: dfdu-gui' "$RUNNER_TEMP/help.txt"
 

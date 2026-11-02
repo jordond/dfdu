@@ -15,6 +15,9 @@
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start, with dfdu's mark as
 //! its icon.
 
+// No console window behind the GUI on Windows; a shell's console is attached at start instead.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod access;
 mod admin;
 mod app;
@@ -66,6 +69,8 @@ const NAME: &str = "dfdu";
 const ICON: &[u8] = include_bytes!("../../../assets/logo/dfdu-mark-512.png");
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    dfdu_sys::attach_parent_console();
     let args = args::Args::parse();
     if args.agent {
         return launch::agent();

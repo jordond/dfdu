@@ -112,6 +112,22 @@ pub fn is_privileged() -> bool {
     ok != 0 && elevation.TokenIsElevated != 0
 }
 
+/// Attaches a program built for the GUI subsystem (`dfdu-gui`, which has no console of its
+/// own) to the console of the program that started it, so `--help` and errors print in the
+/// shell it was typed in. Does nothing when standard output already goes somewhere (a pipe or
+/// file the parent handed over) or the parent has no console (started from the Start menu).
+pub fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: `GetStdHandle` takes a constant and returns a handle or null, owned by nobody.
+    let out = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    if out.is_null() || out == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+        // SAFETY: no pointers; failure (no parent console) leaves the process as it was.
+        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
+}
+
 /// Renames `from` to `to`, failing with `AlreadyExists` if `to` exists: `MoveFileExW` without
 /// `MOVEFILE_REPLACE_EXISTING` (and without `MOVEFILE_COPY_ALLOWED`, so never a copy).
 ///
