@@ -93,6 +93,23 @@ jobs:
             .local/share/zsh/site-functions/_dfdu .config/fish/completions/dfdu.fish; do
             test -f "$HOME/$f" || { echo "::error::install.sh did not install ~/$f"; exit 1; }
           done
+      # The latest release predates the GUI (1.0), so --gui must install the CLI and then fail.
+      - name: Check install.sh --gui on a release without a GUI
+        if: ${{ !cancelled() }}
+        env:
+          HOME: ${{ runner.temp }}/install-gui-home
+          XDG_CONFIG_HOME: ""
+          XDG_DATA_HOME: ""
+        run: |
+          mkdir -p "$HOME"
+          latest="$("$RUNNER_TEMP/install-home/.local/bin/dfdu" --version | cut -d ' ' -f 2)"
+          if dash install.sh --gui --version "$latest" 2>"$RUNNER_TEMP/gui-err"; then
+            echo "::error::install.sh --gui succeeded on $latest, which has no GUI build"; exit 1
+          fi
+          cat "$RUNNER_TEMP/gui-err"
+          grep -qF "dfdu $latest has no GUI build; the GUI ships from 1.0" "$RUNNER_TEMP/gui-err" ||
+            { echo "::error::install.sh --gui did not name the release without a GUI"; exit 1; }
+          "$HOME/.local/bin/dfdu" --version
       - name: Find unused dependencies
         if: ${{ !cancelled() }}
         run: cargo xtask machete
