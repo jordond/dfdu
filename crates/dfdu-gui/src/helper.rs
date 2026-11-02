@@ -4,8 +4,10 @@
 //! the Administrator access window, `crate::admin`).
 //!
 //! For each scan the window makes a socket pair and sends one end to the helper over XPC
-//! ([`connect`]); the helper checks that the window is signed by dfdu's team as `app.dfdu`,
-//! and runs `--agent` as root on that socket, acting for the window's user
+//! ([`connect`]) with an administrator's authorization for [`RIGHT`] (the system's sheet, which
+//! asks again only after the right's timeout); the helper checks that the window is signed by
+//! dfdu's team as `app.dfdu` and that the authorization holds the right, and runs `--agent` as
+//! root on that socket, acting for the window's user
 //! (`DFDU_ACTING_UID`). The window checks the helper the same way before sending anything. The
 //! helper exits a minute after its last agent ends; launchd starts it again for the next scan.
 
@@ -13,11 +15,12 @@ use std::io;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use dfdu_engine::RemoteIo;
+use dfdu_sys::helper::{Authorization, Right};
 
 /// The launch daemon's plist in the app bundle, as SMAppService names it.
 pub const PLIST: &str = "app.dfdu.helper.plist";
@@ -28,20 +31,43 @@ pub const SERVICE: &str = "app.dfdu.helper";
 /// name the team in the leaf's organizational unit).
 pub const REQUIREMENT: &str = r#"anchor apple generic and identifier "app.dfdu" and certificate leaf[subject.OU] = "7YZ4RG7YHP""#;
 
+/// The right each scan as root asks an administrator for, defined by the helper in the
+/// system's policy database. A rescan within the timeout does not ask again.
+pub const RIGHT: Right<'static> = Right {
+    name: "app.dfdu.scan-as-root",
+    prompt: "dfdu wants to scan as an administrator.",
+    timeout: Duration::from_secs(300),
+};
+
+/// The window's authorization, kept so rescans within [`RIGHT`]'s timeout do not ask again.
+static AUTHORIZATION: Mutex<Option<Authorization>> = Mutex::new(None);
+
 /// How long the helper stays after its last agent, before launchd has to start it again.
 const IDLE: Duration = Duration::from_secs(60);
 /// How long the window waits for the helper to answer.
 const ANSWER: Duration = Duration::from_secs(15);
 
-/// Connects to the helper and returns the link its agent will speak over.
+/// Connects to the helper and returns the link its agent will speak over, after asking an
+/// administrator to authorize it (the system's sheet, unless they did within [`RIGHT`]'s
+/// timeout). Blocks while the sheet is up.
 ///
 /// # Errors
 ///
-/// When the helper is not installed or approved, its signature does not match, or it does not
+/// When the user cancels the sheet (`dfdu_sys::helper::is_cancelled`) or is not authorized,
+/// the helper is not installed or approved, its signature does not match, or it does not
 /// answer: the message says which.
 pub fn connect() -> io::Result<RemoteIo> {
+    let mut kept = AUTHORIZATION.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(a) = kept.as_ref() {
+        a.confirm()?;
+    } else {
+        *kept = Some(Authorization::obtain(&RIGHT)?);
+    }
+    let auth = kept
+        .as_ref()
+        .ok_or_else(|| io::Error::other("no authorization"))?;
     let (ours, theirs) = UnixStream::pair()?;
-    dfdu_sys::helper::connect(SERVICE, REQUIREMENT, theirs.as_fd(), ANSWER)?;
+    dfdu_sys::helper::connect(SERVICE, REQUIREMENT, theirs.as_fd(), auth, ANSWER)?;
     // The helper has its own copy of `theirs` now.
     drop(theirs);
     let reader = io::BufReader::new(ours.try_clone()?);
@@ -112,7 +138,7 @@ pub fn serve() -> ExitCode {
             Err(e) => Err(format!("the helper cannot start the agent: {e}")),
         }
     };
-    let e = dfdu_sys::helper::serve(SERVICE, REQUIREMENT, on_peer);
+    let e = dfdu_sys::helper::serve(SERVICE, REQUIREMENT, &RIGHT, on_peer);
     eprintln!("dfdu helper: {e}");
     ExitCode::from(1)
 }
