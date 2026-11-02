@@ -55,14 +55,15 @@ fn a_client_with_another_signature_is_refused() {
     let err = server
         .connect(&me, theirs.as_fd(), Duration::from_secs(2))
         .unwrap_err();
-    eprintln!("refused: {err:?}");
+    assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]
 fn a_helper_with_another_signature_is_not_trusted() {
     let me = this_binary();
-    let server = Anonymous::listen(&me, |_| {}).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let server = Anonymous::listen(&me, move |p| tx.send(p).unwrap()).unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
     let err = server
         .connect(
@@ -72,6 +73,7 @@ fn a_helper_with_another_signature_is_not_trusted() {
         )
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]
@@ -97,10 +99,14 @@ fn no_helper_is_not_found() {
 fn serving_a_service_launchd_did_not_give_is_an_error() {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(super::serve("app.dfdu.helper.missing", "anchor apple generic", |_| {}));
+        let _ = tx.send(super::serve(
+            "app.dfdu.helper.missing",
+            "anchor apple generic",
+            |_| {},
+        ));
     });
     let err = rx.recv_timeout(WAIT).expect("serve returns");
-    eprintln!("serve: {err}");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
 }
 
 fn failure(code: isize) -> Failure {
@@ -126,6 +132,9 @@ fn registering_maps_waiting_for_approval_to_a_status() {
         Status::Enabled
     );
     let err = registered(Err(failure(3)), Status::NotRegistered).unwrap_err();
-    assert!(err.to_string().contains("SMAppServiceErrorDomain 3"), "{err}");
+    assert!(
+        err.to_string().contains("SMAppServiceErrorDomain 3"),
+        "{err}"
+    );
     assert!(registered(Err(failure(1)), Status::Enabled).is_err());
 }

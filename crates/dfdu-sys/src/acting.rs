@@ -75,13 +75,19 @@ pub fn detect() -> Option<User> {
     if !rustix::process::geteuid().is_root() {
         return None;
     }
-    let uid = [ACTING_UID_VAR, "PKEXEC_UID", "SUDO_UID"]
-        .iter()
-        .find_map(|v| std::env::var(v).ok()?.trim().parse::<u32>().ok())?;
+    let uid = acting_uid(|v| std::env::var(v).ok())?;
     if uid == 0 {
         return None;
     }
     unix::lookup(uid)
+}
+
+/// The first of [`ACTING_UID_VAR`], `PKEXEC_UID` and `SUDO_UID` that `var` has a uid in.
+#[cfg(unix)]
+fn acting_uid(var: impl Fn(&str) -> Option<String>) -> Option<u32> {
+    [ACTING_UID_VAR, "PKEXEC_UID", "SUDO_UID"]
+        .iter()
+        .find_map(|v| var(v)?.trim().parse::<u32>().ok())
 }
 
 #[cfg(not(unix))]
@@ -397,6 +403,30 @@ mod tests {
         assert_eq!(adopt().unwrap(), Adopted::Nobody);
         assert_eq!(current(), None);
         assert_eq!(owner_uid(), rustix::process::getuid().as_raw());
+    }
+
+    #[test]
+    fn the_helper_s_uid_comes_first() {
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |k: &str| vars.iter().find(|v| v.0 == k).map(|v| v.1.to_owned())
+        };
+        assert_eq!(
+            acting_uid(env(&[
+                ("SUDO_UID", "502"),
+                ("PKEXEC_UID", "503"),
+                (ACTING_UID_VAR, "501")
+            ])),
+            Some(501)
+        );
+        assert_eq!(
+            acting_uid(env(&[("SUDO_UID", "502"), ("PKEXEC_UID", "503")])),
+            Some(503)
+        );
+        assert_eq!(
+            acting_uid(env(&[(ACTING_UID_VAR, "x"), ("SUDO_UID", "502")])),
+            Some(502)
+        );
+        assert_eq!(acting_uid(env(&[])), None);
     }
 
     #[test]
