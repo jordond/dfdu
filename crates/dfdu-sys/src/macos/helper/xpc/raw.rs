@@ -56,6 +56,17 @@ unsafe extern "C" {
         value: *const c_char,
     );
     pub(super) fn xpc_dictionary_get_bool(dictionary: XpcObject, key: *const c_char) -> bool;
+    pub(super) fn xpc_dictionary_get_data(
+        dictionary: XpcObject,
+        key: *const c_char,
+        length: *mut usize,
+    ) -> *const c_void;
+    pub(super) fn xpc_dictionary_set_data(
+        dictionary: XpcObject,
+        key: *const c_char,
+        bytes: *const c_void,
+        length: usize,
+    );
     pub(super) fn xpc_dictionary_get_value(dictionary: XpcObject, key: *const c_char) -> XpcObject;
     pub(super) fn xpc_dictionary_get_string(
         dictionary: XpcObject,

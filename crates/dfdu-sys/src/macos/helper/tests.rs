@@ -4,11 +4,22 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use super::Authorization;
 use super::service::{Failure, Status, registered};
 use super::xpc::Anonymous;
 
 const WAIT: Duration = Duration::from_secs(10);
 const OTHER: &str = r#"identifier "app.dfdu" and anchor apple generic"#;
+/// A right everyone holds without being asked: it falls under the `config.add.` rule, of
+/// class allow. So the tests need no sheet, and change nothing in the policy database.
+const ALLOWED: &str = "config.add.app.dfdu.test";
+
+/// An authorization holding [`ALLOWED`].
+fn auth() -> Authorization {
+    let a = Authorization::create(std::ffi::CString::new(ALLOWED).unwrap()).unwrap();
+    a.confirm().unwrap();
+    a
+}
 
 /// A requirement this test binary meets: its code signing identifier (the linker signs it ad
 /// hoc on Apple silicon). `None`, after saying so, when it is not signed.
@@ -31,13 +42,13 @@ fn this_binary() -> Option<String> {
 fn the_link_reaches_the_helper() {
     let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(&me, move |p| {
+    let server = Anonymous::listen(&me, ALLOWED, move |p| {
         tx.send(p).unwrap();
         Ok(())
     })
     .unwrap();
     let (mut mine, theirs) = UnixStream::pair().unwrap();
-    server.connect(&me, theirs.as_fd(), WAIT).unwrap();
+    server.connect(&me, theirs.as_fd(), &auth(), WAIT).unwrap();
     drop(theirs);
     let peer = rx.recv_timeout(WAIT).unwrap();
     assert_eq!(peer.euid, rustix::process::geteuid().as_raw());
@@ -52,35 +63,41 @@ fn the_link_reaches_the_helper() {
 #[test]
 fn a_failed_start_reaches_the_client() {
     let Some(me) = this_binary() else { return };
-    let server = Anonymous::listen(&me, |_| Err("no agent today".to_owned())).unwrap();
+    let server = Anonymous::listen(&me, ALLOWED, |_| Err("no agent today".to_owned())).unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
-    let err = server.connect(&me, theirs.as_fd(), WAIT).unwrap_err();
+    let err = server
+        .connect(&me, theirs.as_fd(), &auth(), WAIT)
+        .unwrap_err();
     assert!(err.to_string().contains("no agent today"), "{err}");
 }
 
 #[test]
 fn a_panic_in_the_start_answers_an_error() {
     let Some(me) = this_binary() else { return };
-    let server = Anonymous::listen(&me, |_| panic!("on purpose")).unwrap();
+    let server = Anonymous::listen(&me, ALLOWED, |_| panic!("on purpose")).unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
-    let err = server.connect(&me, theirs.as_fd(), WAIT).unwrap_err();
+    let err = server
+        .connect(&me, theirs.as_fd(), &auth(), WAIT)
+        .unwrap_err();
     assert!(err.to_string().contains("failed starting"), "{err}");
     // The helper goes on serving.
     let (_mine, theirs) = UnixStream::pair().unwrap();
-    assert!(server.connect(&me, theirs.as_fd(), WAIT).is_err());
+    assert!(server.connect(&me, theirs.as_fd(), &auth(), WAIT).is_err());
 }
 
 #[test]
 fn a_link_that_is_not_a_socket_is_refused() {
     let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(&me, move |p| {
+    let server = Anonymous::listen(&me, ALLOWED, move |p| {
         tx.send(p).unwrap();
         Ok(())
     })
     .unwrap();
     let (read, _write) = std::io::pipe().unwrap();
-    let err = server.connect(&me, read.as_fd(), WAIT).unwrap_err();
+    let err = server
+        .connect(&me, read.as_fd(), &auth(), WAIT)
+        .unwrap_err();
     assert!(err.to_string().contains("not a socket"), "{err}");
     assert!(rx.try_recv().is_err());
 }
@@ -89,14 +106,14 @@ fn a_link_that_is_not_a_socket_is_refused() {
 fn a_client_with_another_signature_is_refused() {
     let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(OTHER, move |p| {
+    let server = Anonymous::listen(OTHER, ALLOWED, move |p| {
         tx.send(p).unwrap();
         Ok(())
     })
     .unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
     let err = server
-        .connect(&me, theirs.as_fd(), Duration::from_secs(2))
+        .connect(&me, theirs.as_fd(), &auth(), Duration::from_secs(2))
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ConnectionAborted, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
@@ -110,16 +127,57 @@ fn a_link_alone_from_another_signature_never_arrives() {
         return;
     }
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(OTHER, move |p| {
+    let server = Anonymous::listen(OTHER, ALLOWED, move |p| {
         tx.send(p).unwrap();
         Ok(())
     })
     .unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
     let err = server
-        .send_link(theirs.as_fd(), Duration::from_secs(2))
+        .send_link(theirs.as_fd(), None, Duration::from_secs(2))
         .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ConnectionAborted, "{err}");
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+}
+
+/// A client that meets the requirement but sends no authorization, or bytes that are none, is
+/// refused before `on_peer`.
+#[test]
+fn a_link_without_an_authorization_is_refused() {
+    let Some(me) = this_binary() else { return };
+    let (tx, rx) = mpsc::channel();
+    let server = Anonymous::listen(&me, ALLOWED, move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    for (auth, why) in [
+        (None, "no authorization"),
+        (Some(&[7u8; 32][..]), "not valid"),
+        (Some(&[7u8; 5][..]), "malformed"),
+    ] {
+        let (_mine, theirs) = UnixStream::pair().unwrap();
+        let err = server.send_link(theirs.as_fd(), auth, WAIT).unwrap_err();
+        assert!(err.to_string().contains(why), "{err}");
+    }
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+}
+
+/// An authorization without the right the helper asks for is refused.
+#[test]
+fn an_authorization_for_another_right_is_refused() {
+    let Some(me) = this_binary() else { return };
+    let (tx, rx) = mpsc::channel();
+    let server = Anonymous::listen(&me, "app.dfdu.test.never-defined", move |p| {
+        tx.send(p).unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let (_mine, theirs) = UnixStream::pair().unwrap();
+    let err = server
+        .connect(&me, theirs.as_fd(), &auth(), WAIT)
+        .unwrap_err();
+    assert!(err.to_string().contains("not authorized"), "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
@@ -127,20 +185,24 @@ fn a_link_alone_from_another_signature_never_arrives() {
 fn a_helper_with_another_signature_is_not_trusted() {
     let Some(me) = this_binary() else { return };
     let (tx, rx) = mpsc::channel();
-    let server = Anonymous::listen(&me, move |p| {
+    let server = Anonymous::listen(&me, ALLOWED, move |p| {
         tx.send(p).unwrap();
         Ok(())
     })
     .unwrap();
     let (_mine, theirs) = UnixStream::pair().unwrap();
-    let err = server.connect(OTHER, theirs.as_fd(), WAIT).unwrap_err();
+    let err = server
+        .connect(OTHER, theirs.as_fd(), &auth(), WAIT)
+        .unwrap_err();
     assert_eq!(err.kind(), ErrorKind::PermissionDenied, "{err}");
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]
 fn an_invalid_requirement_is_an_error() {
-    let err = Anonymous::listen("identifier (", |_| Ok(())).err().unwrap();
+    let err = Anonymous::listen("identifier (", ALLOWED, |_| Ok(()))
+        .err()
+        .unwrap();
     assert_eq!(err.kind(), ErrorKind::InvalidInput, "{err}");
 }
 
@@ -151,6 +213,7 @@ fn no_helper_is_not_found() {
         "app.dfdu.helper.missing",
         "anchor apple generic",
         theirs.as_fd(),
+        &auth(),
         WAIT,
     )
     .unwrap_err();
@@ -159,11 +222,22 @@ fn no_helper_is_not_found() {
 
 #[test]
 fn serving_a_service_launchd_did_not_give_is_an_error() {
+    // As root, `serve` would define the right in the policy database.
+    if rustix::process::geteuid().is_root() {
+        eprintln!("skipped: run as root");
+        return;
+    }
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        let right = super::Right {
+            name: ALLOWED,
+            prompt: "dfdu wants to test.",
+            timeout: Duration::from_secs(300),
+        };
         let _ = tx.send(super::serve(
             "app.dfdu.helper.missing",
             "anchor apple generic",
+            &right,
             |_| Ok(()),
         ));
     });

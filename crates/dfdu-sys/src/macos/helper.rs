@@ -2,15 +2,18 @@
 //! `dfdu.app`, registered with [`service::register`], that runs an agent as root for the user of
 //! each GUI that asks.
 //!
-//! The GUI makes a socket pair and sends one end with [`connect`]. The daemon, in [`serve`],
-//! checks the client's code signature, takes the socket and the client's euid ([`Peer`]), and
+//! The GUI obtains an administrator's [`Authorization`] for dfdu's [`Right`], makes a socket
+//! pair and sends one end with [`connect`]. The daemon, in [`serve`], checks the client's code
+//! signature and the authorization, takes the socket and the client's euid ([`Peer`]), and
 //! starts the agent with the socket as its standard input and output and `DFDU_ACTING_UID` set
 //! to that euid ([`crate::acting`]). From then on dfdu's own protocol runs over the socket, as
 //! it does over ssh or pkexec.
 
+mod authorization;
 pub mod service;
 mod xpc;
 
+pub use authorization::{Authorization, Right, is_cancelled};
 pub use xpc::{Peer, Started, connect, serve};
 
 #[cfg(test)]
