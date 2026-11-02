@@ -28,7 +28,9 @@ enum Screen {
     /// agent ([`launch::elevate`]).
     Elevating {
         path: PathBuf,
-        opened: crossbeam_channel::Receiver<Result<dfdu_session::elevate::Elevated, String>>,
+        opened: crossbeam_channel::Receiver<launch::Elevating>,
+        /// The start screen to show again if the password dialog is cancelled.
+        back: Option<(Start, StartLocal)>,
     },
     /// What was chosen could not be opened.
     Failed(String),
@@ -92,8 +94,13 @@ impl Gui {
                 }
             }
             Source::Local {
-                path: Some(path), ..
-            } if admin => gui.elevate(path, ctx),
+                path: Some(path),
+                start,
+            } if admin => {
+                let mut back = Start::new(ctx);
+                back.admin = true;
+                gui.elevate(path, Some((back, start)), ctx)
+            }
             source => gui.open(source, ctx),
         };
         gui
@@ -125,9 +132,16 @@ impl Gui {
                     self.choose(choice, ui.ctx());
                 }
             }
-            Screen::Elevating { path, opened } => match opened.try_recv() {
+            Screen::Elevating { path, opened, back } => match opened.try_recv() {
                 Ok(Ok(elevated)) => self.screen = self.open(elevated.source(), ui.ctx()),
-                Ok(Err(e)) => self.screen = Screen::Failed(e),
+                Ok(Err(Some(e))) => self.screen = Screen::Failed(e),
+                Ok(Err(None)) => {
+                    self.screen = match back.take() {
+                        Some((start, local)) => Screen::Start { start, local },
+                        None => Screen::Closed,
+                    };
+                    ui.ctx().request_repaint();
+                }
                 Err(_) => {
                     let text = format!(
                         "Waiting for an administrator's password to scan {}…",
@@ -190,7 +204,7 @@ impl Gui {
                 self.admin = Some(crate::admin::Panel::new());
                 Screen::Start { start, local }
             }
-            Chosen::Folder(path) if start.admin => self.elevate(path, ctx),
+            Chosen::Folder(path) if start.admin => self.elevate(path, Some((start, local)), ctx),
             Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
             Chosen::Export(file) => match launch::import(&file) {
                 Ok(tree) => self.open(Source::Imported(tree), ctx),
@@ -302,9 +316,14 @@ impl Gui {
     }
 
     /// The screen waiting for an administrator's scan of `path` to start.
-    fn elevate(&self, path: PathBuf, ctx: &egui::Context) -> Screen {
+    fn elevate(
+        &self,
+        path: PathBuf,
+        back: Option<(Start, StartLocal)>,
+        ctx: &egui::Context,
+    ) -> Screen {
         let opened = launch::elevate(path.clone(), &self.settings, ctx);
-        Screen::Elevating { path, opened }
+        Screen::Elevating { path, opened, back }
     }
 
     /// The browser of `source`, showing its list as the settings say, or why it could not be

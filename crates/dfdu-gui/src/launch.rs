@@ -74,6 +74,15 @@ pub fn prepare(args: &Args) -> Result<Launch, String> {
     })
 }
 
+/// Whether `e` says the user dismissed the password dialog: the authorization sheet on macOS;
+/// on Linux pkexec exits without the agent, which reads as refused or cancelled alike.
+fn cancelled(e: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    return dfdu_sys::helper::is_cancelled(e);
+    #[cfg(not(target_os = "macos"))]
+    return e.kind() == io::ErrorKind::PermissionDenied;
+}
+
 /// The agent of an administrator's scan: this program with `--agent`, or inside an AppImage
 /// the AppImage file itself, since its mount is not readable by root.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -88,6 +97,10 @@ fn agent_command() -> io::Result<Vec<OsString>> {
     Ok(vec![exe.into_os_string(), "--agent".into()])
 }
 
+/// What an administrator's scan opened, or why not: `Err(None)` when the password dialog was
+/// cancelled (the start screen shows again), otherwise the reason.
+pub type Elevating = Result<dfdu_session::elevate::Elevated, Option<String>>;
+
 /// Starts an administrator's scan of `path` on a thread of its own, since the system's
 /// password dialog keeps the agent from answering until it is done; the source it opens, or why
 /// it cannot, comes back on the channel, with a frame asked of `ctx`.
@@ -95,7 +108,7 @@ pub fn elevate(
     path: PathBuf,
     settings: &Settings,
     ctx: &egui::Context,
-) -> crossbeam_channel::Receiver<Result<dfdu_session::elevate::Elevated, String>> {
+) -> crossbeam_channel::Receiver<Elevating> {
     let (tx, rx) = crossbeam_channel::bounded(1);
     let rules = settings.rules.then(|| {
         let (files, errors) = dfdu_rules::sources(dfdu_sys::dirs::rules_dir().as_deref());
@@ -122,7 +135,10 @@ pub fn elevate(
                 }
                 e
             })
-            .map_err(|e| format!("Cannot scan {} as an administrator: {e}", path.display()));
+            .map_err(|e| {
+                (!cancelled(&e))
+                    .then(|| format!("Cannot scan {} as an administrator: {e}", path.display()))
+            });
         let _ = tx.send(opened);
         ctx.request_repaint();
     };
@@ -131,7 +147,7 @@ pub fn elevate(
         .spawn(connect)
     {
         let (tx, rx) = crossbeam_channel::bounded(1);
-        let _ = tx.send(Err(format!("cannot start a thread: {e}")));
+        let _ = tx.send(Err(Some(format!("cannot start a thread: {e}"))));
         return rx;
     }
     rx
