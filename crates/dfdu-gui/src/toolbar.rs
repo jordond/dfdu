@@ -78,6 +78,10 @@ fn menu(ui: &mut Ui, s: &SessionState, view: &mut ViewState, out: &mut Vec<Inten
             view.help = Some(crate::help::Help::new());
             ui.close();
         }
+        if ui.button("Administrator access…").clicked() {
+            view.admin_open = true;
+            ui.close();
+        }
         ui.separator();
         ui.label(kit::label("Theme", 11.0).weak());
         for (i, name) in view.themes.iter().enumerate() {

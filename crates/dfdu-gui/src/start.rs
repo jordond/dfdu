@@ -97,6 +97,10 @@ pub struct Start {
     /// Scan what is chosen as an administrator ([`dfdu_session::elevate`]), where the system
     /// offers it.
     pub admin: bool,
+    /// Where that stands, checked at most every second ([`crate::admin`]).
+    admin_step: (crate::admin::Step, std::time::Instant),
+    /// The Administrator access window was asked for, for the window to open.
+    pub setup: bool,
 }
 
 /// The frame of a screen without a browser: the window's background, 32 in from its edges.
@@ -145,7 +149,17 @@ impl Start {
             folder: String::new(),
             dropped: None,
             admin: false,
+            admin_step: (crate::admin::step(), std::time::Instant::now()),
+            setup: false,
         }
+    }
+
+    /// Where scanning as an administrator stands, checked again after a second.
+    pub fn admin_step(&mut self) -> &crate::admin::Step {
+        if self.admin_step.1.elapsed() >= std::time::Duration::from_secs(1) {
+            self.admin_step = (crate::admin::step(), std::time::Instant::now());
+        }
+        &self.admin_step.0
     }
 
     /// The rows listed, or none.
@@ -410,7 +424,8 @@ impl Start {
             let row = self
                 .chosen_row()
                 .map(|r| (name(&r.disk), r.disk.mount_point.clone()));
-            let admin = &mut self.admin;
+            let step = self.admin_step().clone();
+            let (admin, setup) = (&mut self.admin, &mut self.setup);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Some((disk, mount)) = row {
                     let text = format!("Scan {disk}");
@@ -419,7 +434,14 @@ impl Start {
                     }
                     ui.add_space(SPACE_3);
                 }
-                if dfdu_session::elevate::elevator().is_some() {
+                if !matches!(step, crate::admin::Step::Unavailable(_)) {
+                    if *admin && !step.usable() {
+                        if ui.link(kit::sans("Set up…", 12.0)).clicked() {
+                            *setup = true;
+                        }
+                    } else if *admin {
+                        ui.label(kit::sans(step.summary(), 11.0).color(dim));
+                    }
                     ui.checkbox(admin, kit::sans("As administrator", 12.0))
                         .on_hover_text(
                             "Scan as root: folders you cannot read are counted too. \

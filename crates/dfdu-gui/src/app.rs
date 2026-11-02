@@ -46,6 +46,8 @@ pub struct Gui {
     theme_dir: Option<PathBuf>,
     /// The names of the theme files in it, as they were when the window opened.
     theme_files: Vec<String>,
+    /// The Administrator access window, while open ([`crate::admin`]).
+    admin: Option<crate::admin::Panel>,
 }
 
 impl Gui {
@@ -77,6 +79,7 @@ impl Gui {
             file,
             theme_dir,
             theme_files,
+            admin: None,
         };
         gui.choose(gui.prefs.theme.clone(), ctx);
         gui.screen = match source {
@@ -103,13 +106,20 @@ impl Gui {
         let current = self.themes().iter().position(|t| *t == self.prefs.theme);
         match &mut self.screen {
             Screen::Start { start, .. } => {
-                if let Some(chosen) = start.show(ui, &colors) {
+                let chosen = start.show(ui, &colors);
+                if std::mem::take(&mut start.setup) {
+                    self.admin = Some(crate::admin::Panel::new());
+                }
+                if let Some(chosen) = chosen {
                     self.chosen(chosen, ui.ctx());
                 }
             }
             Screen::Browse(b) => {
                 b.view_mut().theme_current = current;
                 b.show(ui, &colors);
+                if std::mem::take(&mut b.view_mut().admin_open) {
+                    self.admin = Some(crate::admin::Panel::new());
+                }
                 let pick = b.view_mut().theme_pick.take();
                 if let Some(choice) = pick.and_then(|i| self.themes().get(i).cloned()) {
                     self.choose(choice, ui.ctx());
@@ -133,6 +143,11 @@ impl Gui {
         if !self.browsing() {
             self.menu(ui.ctx(), &colors);
         }
+        if let Some(panel) = &mut self.admin
+            && !panel.show(ui.ctx(), &colors)
+        {
+            self.admin = None;
+        }
     }
 
     /// The View menu of the screens without a browser, quiet in the window's top right corner:
@@ -145,6 +160,11 @@ impl Gui {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::containers::menu::MenuButton::from_button(quiet).ui(ui, |ui| {
+                    if ui.button("Administrator access…").clicked() {
+                        self.admin = Some(crate::admin::Panel::new());
+                        ui.close();
+                    }
+                    ui.separator();
                     ui.label(kit::label("Theme", 11.0).weak());
                     for choice in self.themes() {
                         if ui
@@ -166,6 +186,10 @@ impl Gui {
             return;
         };
         self.screen = match chosen {
+            Chosen::Folder(_) if start.admin && !crate::admin::step().usable() => {
+                self.admin = Some(crate::admin::Panel::new());
+                Screen::Start { start, local }
+            }
             Chosen::Folder(path) if start.admin => self.elevate(path, ctx),
             Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
             Chosen::Export(file) => match launch::import(&file) {

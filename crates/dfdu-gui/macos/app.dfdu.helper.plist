@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The launch daemon of dfdu's helper (crates/dfdu-gui/src/helper.rs), installed in
+     dfdu.app/Contents/Library/LaunchDaemons and registered with SMAppService. launchd starts it
+     as root when the window connects to its mach service; it exits when idle. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>app.dfdu.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/dfdu-gui</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>dfdu-gui</string>
+		<string>--helper</string>
+	</array>
+	<key>MachServices</key>
+	<dict>
+		<key>app.dfdu.helper</key>
+		<true/>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>app.dfdu</string>
+	</array>
+</dict>
+</plist>
