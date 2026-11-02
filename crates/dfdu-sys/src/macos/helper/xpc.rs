@@ -1,7 +1,8 @@
 //! The XPC handshake between the GUI and the helper daemon, over the C API in libSystem
 //! (`<xpc/xpc.h>`). Two requests, each answered `{ok: true}` or `{error: "..."}`: first an empty
-//! one, then `{link: <fd>}`, one end of a socket pair the client made, answered once the daemon
-//! has started the agent on it. Both sides require a code signature of the other
+//! one, then `{link: <fd>, auth: <32 bytes>}`, one end of a socket pair the client made and the
+//! external form of an administrator's authorization ([`super::authorization`]), answered once
+//! the daemon has checked the authorization and started the agent on the socket. Both sides require a code signature of the other
 //! (`xpc_connection_set_peer_code_signing_requirement`, macOS 12+). The daemon's requirement
 //! drops every message of a client that does not meet it, which then sees the connection
 //! interrupted. The client's requirement only screens what it receives, so a daemon that does
@@ -15,7 +16,12 @@
 
 #![allow(unsafe_code)]
 
+#[cfg(test)]
+mod anonymous;
 mod raw;
+
+#[cfg(test)]
+pub(super) use anonymous::Anonymous;
 
 use std::ffi::{CStr, CString, c_void};
 use std::io;
@@ -27,6 +33,8 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 
+use super::authorization::{self, Authorization, Right};
+
 use raw::{
     _xpc_error_connection_interrupted, _xpc_error_connection_invalid, _xpc_error_key_description,
     _xpc_error_termination_imminent, _xpc_type_connection, _xpc_type_dictionary, _xpc_type_error,
@@ -35,12 +43,14 @@ use raw::{
     xpc_connection_cancel, xpc_connection_create, xpc_connection_create_mach_service,
     xpc_connection_get_euid, xpc_connection_send_message, xpc_connection_send_message_with_reply,
     xpc_connection_set_event_handler, xpc_dictionary_create, xpc_dictionary_create_reply,
-    xpc_dictionary_dup_fd, xpc_dictionary_get_bool, xpc_dictionary_get_remote_connection,
-    xpc_dictionary_get_string, xpc_dictionary_get_value, xpc_dictionary_set_bool,
-    xpc_dictionary_set_string, xpc_dictionary_set_value, xpc_fd_create, xpc_get_type,
+    xpc_dictionary_dup_fd, xpc_dictionary_get_bool, xpc_dictionary_get_data,
+    xpc_dictionary_get_remote_connection, xpc_dictionary_get_string, xpc_dictionary_get_value,
+    xpc_dictionary_set_bool, xpc_dictionary_set_data, xpc_dictionary_set_string,
+    xpc_dictionary_set_value, xpc_fd_create, xpc_get_type,
 };
 
 const LINK: &CStr = c"link";
+const AUTH: &CStr = c"auth";
 const OK: &CStr = c"ok";
 const ERROR: &CStr = c"error";
 
@@ -59,24 +69,32 @@ pub struct Peer {
 pub type Started = Result<(), String>;
 
 /// Listens on the launchd mach service `service` (the daemon's `MachServices` key) and hands
-/// every client that meets the code signing `requirement` and sends a socket to `on_peer`, on a
-/// queue of XPC's: `on_peer` should start the agent and return. Its result is the client's
+/// every client that meets the code signing `requirement`, holds `right` (an administrator
+/// authorized it) and sends a socket to `on_peer`, on a queue of XPC's: `on_peer` should start the agent and return. Its result is the client's
 /// answer, so a failed start reaches the client as an error; a panic in it answers an error
 /// too. Requests without a link are answered `ok` (the client checking who answers); a client
 /// that sends more than one link gets an error for the later ones.
 ///
-/// Returns only when listening fails: an invalid requirement, or launchd not having the
-/// service for this process (the program was not started by launchd for it).
+/// `right` is defined in the system's policy database first, when it is missing or differs,
+/// which only root may do without asking.
+///
+/// Returns only when listening fails: an invalid requirement, `right` not defined, or launchd
+/// not having the service for this process (the program was not started by launchd for it).
 #[must_use]
 pub fn serve(
     service: &str,
     requirement: &str,
+    right: &Right<'_>,
     on_peer: impl Fn(Peer) -> Started + Send + Sync + 'static,
 ) -> io::Error {
-    let (name, requirement) = match (cstring(service), checked(requirement)) {
-        (Ok(n), Ok(r)) => (n, r),
-        (Err(e), _) | (_, Err(e)) => return e,
-    };
+    let (name, requirement, right_name) =
+        match (cstring(service), checked(requirement), cstring(right.name)) {
+            (Ok(n), Ok(r), Ok(a)) => (n, r, a),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return e,
+        };
+    if let Err(e) = authorization::define(right) {
+        return e;
+    }
     let queue = Queue::new(c"app.dfdu.helper");
     // SAFETY: `name` is NUL-terminated and `queue` a live queue (the connection retains it).
     // The new connection is ours and goes to `listen`, which owns it from then on.
@@ -84,7 +102,8 @@ pub fn serve(
         xpc_connection_create_mach_service(name.as_ptr(), queue.0, MACH_SERVICE_LISTENER)
     };
     let (tx, rx) = mpsc::channel();
-    let _listener = match listen(listener, requirement, Arc::new(on_peer), move |e| {
+    let on_peer = Arc::new(on_peer);
+    let _listener = match listen(listener, requirement, right_name, on_peer, move |e| {
         let _ = tx.send(e);
     }) {
         Ok(l) => l,
@@ -94,8 +113,9 @@ pub fn serve(
         .unwrap_or_else(|_| io::Error::other("the helper stopped listening"))
 }
 
-/// Sends `link` to the daemon behind the mach service `service`, which must meet the code
-/// signing `requirement`, and waits up to `timeout` for its answer. The caller keeps `link`
+/// Sends `link` and `auth` to the daemon behind the mach service `service`, which must meet
+/// the code signing `requirement`, and waits up to `timeout` for its answer. `auth` must hold
+/// the daemon's right already ([`Authorization::confirm`] just before). The caller keeps `link`
 /// (XPC sends a duplicate) and runs dfdu's protocol over its other end once this returns.
 ///
 /// # Errors
@@ -104,92 +124,32 @@ pub fn serve(
 /// signature does not meet `requirement` (no socket was sent then), `ConnectionAborted` when it
 /// dropped the connection without answering, as it does to a client whose signature it does
 /// not accept, `TimedOut` without an answer in time, and the daemon's own refusal, such as the
-/// agent not starting.
+/// authorization not holding its right or the agent not starting.
 pub fn connect(
     service: &str,
     requirement: &str,
     link: BorrowedFd<'_>,
+    auth: &Authorization,
     timeout: Duration,
 ) -> io::Result<()> {
     let name = cstring(service)?;
     let requirement = cstring(requirement)?;
+    let form = auth.external_form()?;
     let queue = Queue::new(c"app.dfdu.helper.client");
     // SAFETY: as in `serve`; the connection goes to `request`, which owns it from then on.
     let conn = unsafe {
         xpc_connection_create_mach_service(name.as_ptr(), queue.0, MACH_SERVICE_PRIVILEGED)
     };
-    request(conn, &queue, Some(&requirement), link, timeout)
-}
-
-/// An anonymous listener in this process, so the client and server code runs without launchd.
-#[cfg(test)]
-pub(super) struct Anonymous {
-    listener: Active,
-    _queue: Queue,
-}
-
-#[cfg(test)]
-impl Anonymous {
-    pub(super) fn listen(
-        requirement: &str,
-        on_peer: impl Fn(Peer) -> Started + Send + Sync + 'static,
-    ) -> io::Result<Self> {
-        let requirement = checked(requirement)?;
-        let queue = Queue::new(c"app.dfdu.helper.test");
-        // SAFETY: a NULL name makes an anonymous listener; `queue` is live. Ours, to `listen`.
-        let listener = unsafe { xpc_connection_create(std::ptr::null(), queue.0) };
-        let listener = listen(listener, requirement, Arc::new(on_peer), |_| {})?;
-        Ok(Self {
-            listener,
-            _queue: queue,
-        })
-    }
-
-    /// [`connect`], to this listener.
-    pub(super) fn connect(
-        &self,
-        requirement: &str,
-        link: BorrowedFd<'_>,
-        timeout: Duration,
-    ) -> io::Result<()> {
-        let requirement = cstring(requirement)?;
-        self.with_client(|conn, queue| request(conn, queue, Some(&requirement), link, timeout))
-    }
-
-    /// Sends `{link}` alone, without the empty request first and without requiring anything of
-    /// the listener: what a client of its own making could send.
-    pub(super) fn send_link(&self, link: BorrowedFd<'_>, timeout: Duration) -> io::Result<()> {
-        self.with_client(|conn, queue| {
-            let ignore: RcBlock<dyn Fn(XpcObject)> = RcBlock::new(|_: XpcObject| {});
-            let conn = start(conn, None, &ignore)?;
-            send(&conn, queue, &link_message(link)?, deadline(timeout))
-        })
-    }
-
-    /// Runs `f` with a new connection to this listener (inactive, for `f` to own, or NULL)
-    /// and its queue.
-    fn with_client<T>(&self, f: impl FnOnce(XpcObject, &Queue) -> T) -> T {
-        let queue = Queue::new(c"app.dfdu.helper.test.client");
-        // SAFETY: the listener is an active anonymous listener; the endpoint is ours and
-        // released when `endpoint` drops, after the connection made from it (which keeps
-        // what it needs of it). The new connection is inactive, so its target queue may be
-        // set; it goes to `f`.
-        unsafe {
-            let endpoint = Owned(raw::xpc_endpoint_create(self.listener.0));
-            let conn = raw::xpc_connection_create_from_endpoint(endpoint.0);
-            if !conn.is_null() {
-                raw::xpc_connection_set_target_queue(conn, queue.0);
-            }
-            f(conn, &queue)
-        }
-    }
+    request(conn, &queue, Some(&requirement), link, Some(&form), timeout)
 }
 
 /// Starts the listener `listener` (new, inactive, ours): each new client gets `requirement`
-/// and a handler for its messages; listener errors other than termination go to `on_error`.
+/// and a handler for its messages, which checks that it holds `right`; listener errors other
+/// than termination go to `on_error`.
 fn listen(
     listener: XpcObject,
     requirement: CString,
+    right: CString,
     on_peer: Arc<dyn Fn(Peer) -> Started + Send + Sync>,
     on_error: impl Fn(io::Error) + 'static,
 ) -> io::Result<Active> {
@@ -197,7 +157,7 @@ fn listen(
         // SAFETY: `event` is the object XPC hands the handler, live for the call.
         let kind = unsafe { xpc_get_type(event) };
         if kind == &raw const _xpc_type_connection {
-            accept(event, &requirement, &on_peer);
+            accept(event, &requirement, &right, &on_peer);
         } else if event.cast_const() == &raw const _xpc_error_connection_invalid {
             on_error(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -216,9 +176,11 @@ fn listen(
 fn accept(
     peer: XpcObject,
     requirement: &CStr,
+    right: &CStr,
     on_peer: &Arc<dyn Fn(Peer) -> Started + Send + Sync>,
 ) {
     let served = AtomicBool::new(false);
+    let right = right.to_owned();
     let on_peer = Arc::clone(on_peer);
     let on_message: RcBlock<dyn Fn(XpcObject)> = RcBlock::new(move |msg: XpcObject| {
         // SAFETY: `msg` is live for the call. Errors (the client going away) need nothing.
@@ -234,7 +196,7 @@ fn accept(
         let started = if served.swap(true, Ordering::Relaxed) {
             Err("one link per connection".to_owned())
         } else {
-            take_link(msg).and_then(|peer| {
+            take_link(msg, &right).and_then(|peer| {
                 // A panic must not unwind into XPC; the daemon goes on serving.
                 catch_unwind(AssertUnwindSafe(|| on_peer(peer)))
                     .unwrap_or_else(|_| Err("the helper failed starting the agent".to_owned()))
@@ -259,8 +221,9 @@ fn accept(
     }
 }
 
-/// The client and socket of the message `msg`, a dictionary live for the call.
-fn take_link(msg: XpcObject) -> Result<Peer, String> {
+/// The client and socket of the message `msg`, a dictionary live for the call, once its
+/// authorization holds `right`.
+fn take_link(msg: XpcObject, right: &CStr) -> Result<Peer, String> {
     // SAFETY: `msg` is a live dictionary; the remote connection it names is not ours and
     // lives at least as long as the message.
     let euid = unsafe {
@@ -276,6 +239,7 @@ fn take_link(msg: XpcObject) -> Result<Peer, String> {
         u32::MAX => return Err("the client has gone".to_owned()),
         _ => {}
     }
+    authorization::check(data(msg, AUTH).as_deref(), right)?;
     // SAFETY: `LINK` is NUL-terminated; a descriptor returned is a new one, ours to close.
     let fd = unsafe { xpc_dictionary_dup_fd(msg, LINK.as_ptr()) };
     if fd < 0 {
@@ -318,13 +282,26 @@ fn answer(msg: XpcObject, started: &Started) {
     }
 }
 
-/// Sends an empty request and then `link` on `conn` (new, inactive, ours, targeting `queue`,
-/// or NULL when it could not be made), each time waiting for the answer, both within `timeout`.
+/// The bytes at `key` in the dictionary `msg` (live for the call), copied.
+fn data(msg: XpcObject, key: &CStr) -> Option<Vec<u8>> {
+    let mut len = 0;
+    // SAFETY: `msg` is live and `key` NUL-terminated; the bytes returned, when not NULL, are
+    // `len` bytes that belong to `msg` and are copied before this returns.
+    unsafe {
+        let p = xpc_dictionary_get_data(msg, key.as_ptr(), &mut len);
+        (!p.is_null()).then(|| std::slice::from_raw_parts(p.cast::<u8>(), len).to_vec())
+    }
+}
+
+/// Sends an empty request and then `link` and `auth` on `conn` (new, inactive, ours,
+/// targeting `queue`, or NULL when it could not be made), each time waiting for the answer,
+/// both within `timeout`.
 fn request(
     conn: XpcObject,
     queue: &Queue,
     requirement: Option<&CStr>,
     link: BorrowedFd<'_>,
+    auth: Option<&[u8]>,
     timeout: Duration,
 ) -> io::Result<()> {
     // Errors outside a reply need nothing: the reply handler gets them too.
@@ -334,7 +311,7 @@ fn request(
     // SAFETY: an empty dictionary, ours.
     let hello = Owned(unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) });
     send(&conn, queue, &hello, deadline)?;
-    send(&conn, queue, &link_message(link)?, deadline)
+    send(&conn, queue, &link_message(link, auth)?, deadline)
 }
 
 /// `timeout` from now; one too long for an `Instant` is no timeout: a year.
@@ -344,8 +321,8 @@ fn deadline(timeout: Duration) -> Instant {
         .unwrap_or(now + Duration::from_secs(365 * 86_400))
 }
 
-/// The message `{link}`, ours.
-fn link_message(link: BorrowedFd<'_>) -> io::Result<Owned> {
+/// The message `{link, auth}` (without `auth` when `None`), ours.
+fn link_message(link: BorrowedFd<'_>, auth: Option<&[u8]>) -> io::Result<Owned> {
     // SAFETY: `link` is open for the call; XPC duplicates it into the new object, ours.
     let fd = unsafe { xpc_fd_create(link.as_raw_fd()) };
     if fd.is_null() {
@@ -356,6 +333,11 @@ fn link_message(link: BorrowedFd<'_>) -> io::Result<Owned> {
     let msg = Owned(unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) });
     // SAFETY: `msg` and `fd` are live objects of ours and `LINK` NUL-terminated.
     unsafe { xpc_dictionary_set_value(msg.0, LINK.as_ptr(), fd.0) };
+    if let Some(auth) = auth {
+        // SAFETY: `msg` is ours, `AUTH` NUL-terminated, and `auth` valid for its length; XPC
+        // copies the bytes.
+        unsafe { xpc_dictionary_set_data(msg.0, AUTH.as_ptr(), auth.as_ptr().cast(), auth.len()) };
+    }
     Ok(msg)
 }
 
