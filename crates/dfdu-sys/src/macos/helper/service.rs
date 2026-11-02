@@ -3,13 +3,15 @@
 //! an administrator approves it once in System Settings, Login Items (macOS 13+).
 //!
 //! `SMAppService` reads the plist from the bundle of the running app, so these calls only mean
-//! something from inside a signed `dfdu.app`; elsewhere the status is [`Status::NotFound`].
+//! something from inside a signed `dfdu.app`; elsewhere the status is [`Status::NotFound`]. It
+//! is new in macOS 13: before, the status is `NotFound` too and registering is `Unsupported`.
 
 #![allow(unsafe_code)]
 
 use std::io;
 
 use objc2::rc::autoreleasepool;
+use objc2::runtime::AnyClass;
 use objc2_foundation::NSString;
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
@@ -42,6 +44,9 @@ impl From<SMAppServiceStatus> for Status {
 /// (`app.dfdu.helper.plist`).
 #[must_use]
 pub fn status(plist: &str) -> Status {
+    if !available() {
+        return Status::NotFound;
+    }
     autoreleasepool(|_| {
         // SAFETY: `daemonServiceWithPlistName:` takes any string and returns a new object;
         // `status` takes no arguments. Both are thread safe (Apple documents no thread
@@ -61,6 +66,7 @@ pub fn status(plist: &str) -> Status {
 /// What `SMAppService` reports when the daemon is not registered after: an invalid signature or
 /// plist, no such plist, launchd refusing it.
 pub fn register(plist: &str) -> io::Result<Status> {
+    supported()?;
     autoreleasepool(|_| {
         // SAFETY: as in `status`; `registerAndReturnError:` takes no arguments besides the
         // error out-pointer, which the binding manages.
@@ -82,6 +88,7 @@ pub fn register(plist: &str) -> io::Result<Status> {
 ///
 /// What `SMAppService` reports, such as the daemon not being registered.
 pub fn unregister(plist: &str) -> io::Result<()> {
+    supported()?;
     autoreleasepool(|_| {
         // SAFETY: as in `register`.
         unsafe {
@@ -98,10 +105,29 @@ pub fn unregister(plist: &str) -> io::Result<()> {
     })
 }
 
-/// Opens System Settings at Login Items, where the daemon is approved.
+/// Opens System Settings at Login Items, where the daemon is approved. Does nothing before
+/// macOS 13.
 pub fn open_login_items() {
-    // SAFETY: a class method without arguments.
-    unsafe { SMAppService::openSystemSettingsLoginItems() }
+    if available() {
+        // SAFETY: a class method without arguments.
+        unsafe { SMAppService::openSystemSettingsLoginItems() }
+    }
+}
+
+/// Whether this macOS has `SMAppService` (13+); the binding's class lookup panics otherwise.
+fn available() -> bool {
+    AnyClass::get(c"SMAppService").is_some()
+}
+
+fn supported() -> io::Result<()> {
+    if available() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the helper needs macOS 13 or later",
+        ))
+    }
 }
 
 /// An `NSError` from `SMAppService`, copied out.
