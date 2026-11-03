@@ -114,7 +114,8 @@ fn the_graft_puts_the_old_root_under_the_folder_and_the_folders_between() {
     let r = t.roots().next().unwrap();
     assert_eq!(t.host_path(r), path("/p"));
     let c = node_at(&t, "a/c");
-    assert_eq!(t.host_path(c), path("/p/a/c"));
+    // Joined as the tree joins, with `\` on a Windows host.
+    assert_eq!(t.host_path(c), path("/p").join(b"a").join(b"c"));
     assert_eq!(t.total(c), old);
     assert_eq!(t.dev_ino(c), (1, 10));
     // Listed again by the resume: shown incomplete until then.

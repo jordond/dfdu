@@ -248,7 +248,8 @@ fn an_empty_prompt_lists_the_mounts_when_they_arrive() {
         return;
     };
     let frame = render(&mut app, t0, 120, 20);
-    assert!(frame.contains(&first.point), "{frame}");
+    // The frame shows `\` as `/` (`crate::tests::text`).
+    assert!(frame.contains(&first.point.replace('\\', "/")), "{frame}");
     app.key(press(KeyCode::Down), t0);
     app.key(press(KeyCode::Tab), t0);
     let Overlay::GoTo(p) = &app.overlay else {
