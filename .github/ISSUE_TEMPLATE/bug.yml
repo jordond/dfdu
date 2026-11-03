@@ -36,7 +36,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `dfdu --version`, or the desktop app's About window.
+      description: Output of `dfdu --version` or `dfdu-gui --version`.
       placeholder: dfdu 0.3.0
     validations:
       required: true

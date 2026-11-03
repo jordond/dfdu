@@ -28,6 +28,13 @@ Fuzzing needs nightly and cargo-fuzz, or Docker with the `dfdu-fuzz` image: `car
 The site at [dfdu.app](https://dfdu.app) is `website/`: an Astro landing page and the Starlight docs, whose pages (the rules, themes and benchmarks guides among them) are in `website/src/content/docs/docs/`. It serves the GIFs and icons from `assets/`, copied at build time. `.github/workflows/website.yml` deploys `main` to Cloudflare and comments a preview URL on pull requests; `cargo xtask website deploy` does the same by hand (`--preview pr-12` for a preview).
 The simulation (`crates/dfdu-sim`) is the main test of the data pipeline: it runs the real worker, watchdog and applier code against an in-memory filesystem with injected faults, random rescans, deletes and cancels, in a seeded schedule, and compares the result with the filesystem. CI runs 5,000 seeds per suite on every push.
 
+## Publishing a new crate to crates.io
+
+Releases publish to crates.io from `publish-crates.yml` with Trusted Publishing, which can't create a crate. A crate published for the first time (all of them, before the first release from CI) takes two steps:
+
+1. Publish its first version by hand: `cargo xtask release publish --dry-run`, then `cargo xtask release publish` with a crates.io token scoped to publishing new crates. crates.io limits how fast new crates are created; if it stops partway, publish the rest one at a time with `cargo publish -p <crate>` in the order the dry run lists them. Revoke the token afterwards.
+2. In the crate's settings on crates.io, add a trusted publisher: GitHub, owner `jordond`, repository `dfdu`, workflow `release.yml` (the calling workflow, not `publish-crates.yml`), environment `release`.
+
 ## The crates
 
 How a scan flows through the crates, and how each part is tested, is described in [Architecture](https://dfdu.app/docs/architecture/).

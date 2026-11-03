@@ -5,14 +5,16 @@ charset = utf-8
 end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
+
+[*.rs]
 indent_style = space
 indent_size = 4
 
-[*.{yml,yaml,json,jsonc,toml,js,mjs,ts,astro,css,html,nix}]
+[*.{yml,yaml,json,jsonc,js,mjs,ts,astro,css,html,nix}]
+indent_style = space
 indent_size = 2
 
-[*.sh]
-indent_style = tab
+# TOML and shell scripts mix styles across the repository: keep each file's own.
 
 [*.md]
 trim_trailing_whitespace = false
@@ -21,4 +23,3 @@ trim_trailing_whitespace = false
 [{assets/man/**,assets/completions/**,**/snapshots/*.snap,Cargo.lock,website/bun.lock}]
 trim_trailing_whitespace = unset
 insert_final_newline = unset
-indent_size = unset

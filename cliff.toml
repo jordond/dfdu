@@ -25,8 +25,10 @@ body = """
 ### {{ group | striptags | trim }}
 {% for commit in commits %}
 - {% if commit.breaking %}**Breaking:** {% endif %}\
-{% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
-{{ commit.message | split(pat="\n") | first | upper_first | trim }}\
+{% set line = commit.message | split(pat="\n") | first | trim %}\
+{% if commit.scope %}**{{ commit.scope }}:** {{ line }}\
+{% elif line is starting_with("macOS") %}{{ line }}\
+{% else %}{{ line | upper_first }}{% endif %}\
 {% endfor %}
 {% endfor %}\n
 """
@@ -52,6 +54,9 @@ commit_parsers = [
     { message = '^fix', group = "<!-- 2 -->Fixed" },
     { message = '^perf', group = "<!-- 3 -->Performance" },
     { message = '^revert', group = "<!-- 4 -->Removed" },
+    # A breaking change of any other type is listed, not left out.
+    { message = '^[a-z]+(\([^)]*\))?!:', group = "<!-- 1 -->Changed" },
+    { footer = '^BREAKING[ -]CHANGE', group = "<!-- 1 -->Changed" },
     { message = '^(chore|ci|test|docs|style|build|refactor)', skip = true },
 
     # Plain commits from before v0.3.0. Left out: releases, merges, dependencies, CI, tests,

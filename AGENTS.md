@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository. [CONTRIBUTING.md](CON
 
 ## Commits: Conventional Commits
 
-Every commit, and every pull request title (pull requests are squash-merged), follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). The changelog and the next version are generated from them (`cliff.toml`, `cargo xtask release bump`), so a wrong type ends up as a wrong release.
+Every commit, and every pull request title (pull requests are squash-merged with the title as the commit subject, and `.github/workflows/pr-title.yml` checks it), follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). The changelog and the next version are generated from them (`cliff.toml`, `cargo xtask release bump`), so a wrong type ends up as a wrong release.
 
 ```
 <type>(<scope>): <summary>

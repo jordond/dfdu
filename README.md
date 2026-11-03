@@ -1,18 +1,18 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/dfdu-logo-dark.svg">
-  <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jordond/dfdu/main/assets/logo/dfdu-logo-dark.svg">
+  <img width="320" src="https://raw.githubusercontent.com/jordond/dfdu/main/assets/logo/dfdu-logo.svg" alt="dfdu">
 </picture>
 
 [![CI](https://github.com/jordond/dfdu/actions/workflows/ci.yml/badge.svg)](https://github.com/jordond/dfdu/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jordond/dfdu)](https://github.com/jordond/dfdu/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/dfdu)](https://crates.io/crates/dfdu)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.95-orange)](Cargo.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/jordond/dfdu/blob/main/LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95-orange)](https://github.com/jordond/dfdu/blob/main/Cargo.toml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/jordond/dfdu/badge)](https://scorecard.dev/viewer/?uri=github.com/jordond/dfdu)
 
 A disk usage browser for the terminal and the desktop. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
-![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
+![Browsing a home directory, the treemap and the cleanup view](https://raw.githubusercontent.com/jordond/dfdu/main/assets/demos/browse.gif)
 
 ## Features
 
@@ -75,7 +75,7 @@ dfdu diff ~ --since 7d    # what grew in the last week
 - [Cleanup rules](https://dfdu.app/docs/rules/): the built-in rules and how to write your own
 - [Themes](https://dfdu.app/docs/themes/): five built-in themes and custom TOML themes
 - [Benchmarks](https://dfdu.app/docs/benchmarks/): scan time and memory against other tools
-- [Contributing](CONTRIBUTING.md): building, testing and releasing
+- [Contributing](https://github.com/jordond/dfdu/blob/main/CONTRIBUTING.md): building, testing and releasing
 
 ## Similar tools
 
@@ -89,4 +89,4 @@ Other disk usage tools worth a look:
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/jordond/dfdu/blob/main/LICENSE)

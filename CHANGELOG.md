@@ -7,13 +7,13 @@ Notable changes to dfdu, newest first. Generated from the commits by git-cliff a
 ### Added
 
 - Scan as an administrator from the GUI on Linux through pkexec
-- **sys:** MacOS privileged helper over SMAppService and XPC
+- **sys:** macOS privileged helper over SMAppService and XPC
 - Scan as an administrator on macOS through a helper, with a setup window
-- **sys:** Ask an administrator's authorization for each scan as root on macOS
-- **gui:** Ask an administrator's authorization before each scan through the macOS helper
+- **sys:** ask an administrator's authorization for each scan as root on macOS
+- **gui:** ask an administrator's authorization before each scan through the macOS helper
 - Show the start screen again when the administrator's password dialog is cancelled
 - Offer to install the macOS helper when SMAppService says it is not found
-- **gui:** Put Full disk access on the start screen and redo its setup window
+- **gui:** put Full disk access on the start screen and redo its setup window
 - Install the GUI from the release with install.sh --gui
 - Package the GUI for Linux as a .deb and an AppImage
 - Package the GUI for Windows as an NSIS installer and a portable zip
@@ -31,8 +31,8 @@ Notable changes to dfdu, newest first. Generated from the commits by git-cliff a
 
 ### Fixed
 
-- **sys:** Check the helper's signature before sending the link, and run on older macOS
-- **sys:** Answer the helper's client after the agent starts, and tighten the XPC boundary
+- **sys:** check the helper's signature before sending the link, and run on older macOS
+- **sys:** answer the helper's client after the agent starts, and tighten the XPC boundary
 
 ## [0.2.0] - 2026-11-01
 
@@ -90,8 +90,8 @@ Notable changes to dfdu, newest first. Generated from the commits by git-cliff a
 - Add deletion and the terminal browser
 - Support btrfs subvolumes, snapshots and reflinks
 - Add macOS and Windows scan backends
-- **engine:** Resume lists changed directories again and keeps the loaded subdirectories they still have
-- **store:** Snapshot format 4 with the last full scan, a stepwise writer, and the scan cache store
+- **engine:** resume lists changed directories again and keeps the loaded subdirectories they still have
+- **store:** snapshot format 4 with the last full scan, a stepwise writer, and the scan cache store
 - The browser opens the cached scan of PATH at once and saves complete scans; dfdu cache list|clear, --no-cache
 
 ### Changed
@@ -141,10 +141,10 @@ Notable changes to dfdu, newest first. Generated from the commits by git-cliff a
 ### Fixed
 
 - Keep the browser responsive during scans
-- **engine:** A resume counts the loaded hard links with those its rescans find
-- **engine:** Resume journal query on a joinable, cancellable thread
-- **tui:** Save and record only once every command sent is applied
-- **store:** Use an existing cache directory as it is, or not at all
+- **engine:** a resume counts the loaded hard links with those its rescans find
+- **engine:** resume journal query on a joinable, cancellable thread
+- **tui:** save and record only once every command sent is applied
+- **store:** use an existing cache directory as it is, or not at all
 - Fix the docs off macOS, imports on Windows and the loom match
 
 ### Performance
