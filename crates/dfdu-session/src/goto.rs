@@ -501,15 +501,6 @@ pub fn up_at_root(s: &mut SessionState, armed: Option<Instant>, now: Instant) ->
     None
 }
 
-/// [`complete`] for the browser `s`: from this machine's directories on a scan of this machine,
-/// and nothing on another host's scan ([`tab`] asks its agent).
-pub fn complete_in(s: &SessionState, input: &str) -> Completion {
-    if !s.outside.local {
-        return Completion::default();
-    }
-    complete(input, &s.snap.dir_path, s.home.as_deref(), true, list_local)
-}
-
 /// The scan root is shown, its scan is over and it holds nothing: the list says so, and how
 /// to go up or elsewhere.
 #[must_use]
