@@ -1,5 +1,7 @@
 # Contributing
 
+Commits and pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat(tui): ...`, `fix(clean): ...`): the changelog and the version are generated from them. [AGENTS.md](AGENTS.md) lists the types and scopes.
+
 Common tasks go through `cargo xtask` (`crates/xtask`), which runs the same commands as the CI jobs of the same names; `cargo xtask --help` lists them all.
 
 ```sh
@@ -21,7 +23,39 @@ cargo xtask website serve                         # the built site as Cloudflare
 DFDU_CHECK=1 cargo run --release -- scan /usr     # check every invariant after every slice
 ```
 
-Fuzzing needs nightly and cargo-fuzz, or Docker with the `dfdu-fuzz` image: `cargo xtask fuzz snapshot --seconds 600` runs one target from its corpus, seeds (`fuzz/seeds`) and regressions; without a target it runs each in turn, and `--list` names them. Releases: `cargo xtask release check` (assets, advisories, `dist plan`), `cargo xtask release bump 0.2.0 --commit` (version, lockfile, man pages and completions, commit and tag; pushing the tag publishes), and `cargo xtask release manifests 0.2.0` for the Scoop, winget and AUR files.
+Fuzzing needs nightly and cargo-fuzz, or Docker with the `dfdu-fuzz` image: `cargo xtask fuzz snapshot --seconds 600` runs one target from its corpus, seeds (`fuzz/seeds`) and regressions; without a target it runs each in turn, and `--list` names them. Releases: `cargo xtask release check` (assets, advisories, `dist plan`), `cargo xtask release bump --commit` (the version the conventional commits since the last tag call for, or the one given as in `bump 0.4.0`; lockfile, man pages and completions, the new `CHANGELOG.md` section from git-cliff, commit and tag; without `--commit` to edit the changelog first; pushing the tag publishes the GitHub release, and `dfdu` and the crates it needs to crates.io through `.github/workflows/publish-crates.yml` with Trusted Publishing), `cargo xtask release publish` (the same crates.io publish by hand with your token, for a new crate's first version, which trusted publishing cannot create; `--dry-run` packages and builds them without uploading), and `cargo xtask release manifests 0.2.0` for the Scoop, winget and AUR files.
 
 The site at [dfdu.app](https://dfdu.app) is `website/`: an Astro landing page and the Starlight docs, whose pages (the rules, themes and benchmarks guides among them) are in `website/src/content/docs/docs/`. It serves the GIFs and icons from `assets/`, copied at build time. `.github/workflows/website.yml` deploys `main` to Cloudflare and comments a preview URL on pull requests; `cargo xtask website deploy` does the same by hand (`--preview pr-12` for a preview).
 The simulation (`crates/dfdu-sim`) is the main test of the data pipeline: it runs the real worker, watchdog and applier code against an in-memory filesystem with injected faults, random rescans, deletes and cancels, in a seeded schedule, and compares the result with the filesystem. CI runs 5,000 seeds per suite on every push.
+
+## Publishing a new crate to crates.io
+
+Releases publish to crates.io from `publish-crates.yml` with Trusted Publishing, which can't create a crate. A crate published for the first time (all of them, before the first release from CI) takes two steps:
+
+1. Publish its first version by hand: `cargo xtask release publish --dry-run`, then `cargo xtask release publish` with a crates.io token scoped to publishing new crates. crates.io limits how fast new crates are created; if it stops partway, publish the rest one at a time with `cargo publish -p <crate>` in the order the dry run lists them. Revoke the token afterwards.
+2. In the crate's settings on crates.io, add a trusted publisher: GitHub, owner `jordond`, repository `dfdu`, workflow `release.yml` (the calling workflow, not `publish-crates.yml`), environment `release`.
+
+## The crates
+
+How a scan flows through the crates, and how each part is tested, is described in [Architecture](https://dfdu.app/docs/architecture/).
+
+| Crate | What it owns |
+|---|---|
+| `dfdu` | The binary: command line, subcommands, JSON output |
+| `dfdu-tui` | The terminal browser |
+| `dfdu-gui` | The desktop app |
+| `dfdu-session` | What a front end shows besides drawing and input: views, marks, filters, the treemap, the cleanup view, actions, key effects, scanning another host over ssh |
+| `dfdu-engine` | The applier (the tree's single writer), jobs, classifier and measurer pools, resume from the change journal, the remote agent and its protocol |
+| `dfdu-scan` | The scanner: workers, backends, byte budget, watchdog, change journals (FSEvents, USN, btrfs) |
+| `dfdu-tree` | The tree of scanned nodes: slots, generational references, size aggregation |
+| `dfdu-rules` | Categories and cleanup rules: schema, loader, the built-in pack (`src/builtin.toml`), protected paths, matcher |
+| `dfdu-clean` | Deleting: plans, verification against the scan, trash and permanent delete, journal |
+| `dfdu-dupes` | The duplicate finder: size, then partial hash, then full hash |
+| `dfdu-store` | Persistence: ncdu import and export, snapshots, the scan cache and history |
+| `dfdu-update` | Updates: the latest release, checked downloads, replacing a running binary, and how this copy was installed |
+| `dfdu-sys` | Unsafe OS calls behind safe wrappers, the disk list, dfdu's directories, the macOS privileged helper |
+| `dfdu-sim` | Seeded simulation of the scanner and applier with fault injection (tests only) |
+| `dfdu-hangfs` | A FUSE filesystem that never answers, for watchdog tests (Linux, tests only) |
+| `dfdu-demofs` | A FUSE filesystem with a made-up home directory, for the demo recordings (Linux) |
+| `dfdu-bench` | Synthetic trees for the benchmarks |
+| `xtask` | Repository tasks (`cargo xtask --help`) |

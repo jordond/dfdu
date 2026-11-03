@@ -59,6 +59,7 @@ export default defineConfig({
         {
           label: 'Project',
           items: [
+            { label: 'Architecture', slug: 'docs/architecture' },
             { label: 'Releases', link: `${repo}/releases`, attrs: { target: '_blank' } },
             { label: 'Contributing', link: `${repo}/blob/main/CONTRIBUTING.md`, attrs: { target: '_blank' } },
           ],

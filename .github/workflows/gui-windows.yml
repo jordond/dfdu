@@ -5,8 +5,8 @@ name: gui-windows
 # installer runs silently into a temporary directory, registers under HKCU and makes the Start
 # menu shortcut; the installed dfdu-gui.exe carries the icon and answers --help; the uninstaller
 # removes it all again; the zip holds what it should and its exe runs too. Runs when the
-# packaging files change on main, by hand, and from the release workflow (Phase 9,
-# GUI-PLAN.md), which uploads the files to the release.
+# packaging files change on main, by hand, and from the release workflow
+# (gui-release.yml), which uploads the files to the release.
 on:
   push:
     branches: [main]

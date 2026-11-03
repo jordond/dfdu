@@ -16,9 +16,14 @@ publish-jobs = ["./publish-homebrew", "./notarize-macos"]
 # .github/build-setup.yml.
 # The GUI's installers (.github/workflows/gui-release.yml), uploaded to the release once dist
 # has created it; after the announcement so prereleases get them too (publish jobs skip those).
-post-announce-jobs = ["./gui-release"]
-github-custom-job-permissions = { "gui-release" = { contents = "write" } }
+# "./publish-crates" publishes to crates.io with Trusted Publishing, after the announcement so
+# a crates.io failure (a crate not yet created by hand, say) holds back neither the release nor
+# the GUI; it skips prereleases itself.
+post-announce-jobs = ["./gui-release", "./publish-crates"]
+github-custom-job-permissions = { "gui-release" = { contents = "write", id-token = "write", attestations = "write" }, "publish-crates" = { contents = "read", id-token = "write" } }
 macos-sign = true
+# SLSA build provenance for the archives dist builds (`gh attestation verify`).
+github-attestations = true
 github-build-setup = "../build-setup.yml"
 targets = [
     "aarch64-apple-darwin",
@@ -39,6 +44,7 @@ include = ["assets/man/", "assets/completions/"]
 "actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
 "actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
 "actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+"actions/attest" = "1e69f48acb82d1966a394da916b4c1698aa569d6" # v4.2.2
 
 # dist 0.32 builds aarch64-apple-darwin on macos-14, which GitHub retires on 2026-11-02.
 [dist.github-custom-runners]

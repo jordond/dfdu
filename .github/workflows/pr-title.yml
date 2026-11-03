@@ -1,0 +1,44 @@
+name: pr-title
+
+# Pull requests are squash-merged, so the title becomes the commit on main that git-cliff reads
+# for the changelog and the next version: it must be a Conventional Commit (AGENTS.md).
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: Conventional title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read # read the title
+    steps:
+      - name: Check the title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            revert
+            refactor
+            test
+            docs
+            build
+            ci
+            chore
+            style
+          requireScope: false
+          subjectPattern: ^[^A-Z].+$
+          subjectPatternError: |
+            The summary "{subject}" starts with a capital letter; start it lower case
+            (AGENTS.md).

@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in dfdu doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security problem, please don't open an issue: see [SECURITY.md](https://github.com/jordond/dfdu/security/policy).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. dfdu ~/dev
+        2. press d on node_modules
+        3. ...
+  - type: dropdown
+    id: face
+    attributes:
+      label: Where
+      options:
+        - Terminal (dfdu)
+        - Desktop app (dfdu-gui)
+        - A command (report, clean, diff, scan ...)
+        - Install script or package
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `dfdu --version` or `dfdu-gui --version`.
+      placeholder: dfdu 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 26.1, Ubuntu 26.04, Windows 11 ...
+    validations:
+      required: true
+  - type: input
+    id: fs
+    attributes:
+      label: Filesystem and storage
+      description: If it is about scanning, sizes or deleting.
+      placeholder: APFS on internal SSD, btrfs, NTFS, NFS mount, external HDD ...
+  - type: input
+    id: install
+    attributes:
+      label: How you installed dfdu
+      placeholder: install.sh, Homebrew, cargo, release download, Nix ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: Error messages or a screenshot.
+      render: text

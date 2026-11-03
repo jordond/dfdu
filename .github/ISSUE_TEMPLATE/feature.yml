@@ -1,0 +1,27 @@
+name: Feature request
+description: An idea for dfdu
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The problem or the task, not only the solution. What do you do today instead?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Keys, commands, options, or a sketch of the UI.
+  - type: dropdown
+    id: face
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - Terminal (dfdu)
+        - Desktop app (dfdu-gui)
+        - Commands and scripting
+        - Cleanup rules
+        - Other

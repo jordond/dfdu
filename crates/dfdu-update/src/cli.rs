@@ -343,6 +343,8 @@ pub enum Managed {
     Nix,
     Scoop,
     Winget,
+    /// `cargo install`, from crates.io or git.
+    Cargo,
     /// A system directory (`/usr/bin`, MacPorts' `/opt/local/bin`): a package manager.
     System,
 }
@@ -372,6 +374,9 @@ impl Managed {
         {
             return Some(Managed::Winget);
         }
+        if installed_by_cargo(&exe) {
+            return Some(Managed::Cargo);
+        }
         let dir = s.rsplit_once('/').map_or("", |(dir, _)| dir);
         [
             "/usr/bin",
@@ -394,9 +399,27 @@ impl Managed {
             }
             Managed::Scoop => "installed with Scoop; update it with: scoop update dfdu",
             Managed::Winget => "installed with winget; update it with: winget upgrade jordond.dfdu",
+            Managed::Cargo => "installed with cargo; update it with: cargo install --locked dfdu",
             Managed::System => "installed by a package manager; update it with that",
         }
     }
+}
+
+/// Whether `cargo install` put the program at `exe` there: it is in a `bin` directory whose
+/// parent (cargo's home) records a `dfdu` package in `.crates2.json`. dist's installers use the
+/// same `bin` directory but don't write that record.
+fn installed_by_cargo(exe: &Path) -> bool {
+    let Some(bin) = exe.parent() else {
+        return false;
+    };
+    if bin.file_name().is_none_or(|n| n != "bin") {
+        return false;
+    }
+    let Some(home) = bin.parent() else {
+        return false;
+    };
+    // Keys look like "dfdu 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)".
+    std::fs::read_to_string(home.join(".crates2.json")).is_ok_and(|s| s.contains("\"dfdu "))
 }
 
 #[cfg(test)]

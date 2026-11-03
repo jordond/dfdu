@@ -10,7 +10,6 @@ homepage.workspace = true
 readme = "../../README.md"
 keywords = ["disk-usage", "du", "ncdu", "tui", "cleanup"]
 categories = ["command-line-utilities", "filesystem"]
-publish.workspace = true
 
 [lints]
 workspace = true
@@ -56,7 +55,7 @@ rustix = { workspace = true, features = ["pty", "termios"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 dfdu-hangfs.workspace = true
 
-# Released through `dist` (dist-workspace.toml) although it is not published to crates.io.
+# Released through `dist` (dist-workspace.toml) as well as published to crates.io.
 [package.metadata.dist]
 dist = true
 

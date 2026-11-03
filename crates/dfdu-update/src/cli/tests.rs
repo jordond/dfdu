@@ -157,3 +157,28 @@ fn package_managers_are_recognised_by_path() {
     assert_eq!(m("/home/u/.local/bin/dfdu"), None);
     assert_eq!(m("/home/u/.cargo/bin/dfdu"), None);
 }
+
+#[test]
+fn cargo_installs_are_recognised_by_cargos_record() {
+    let home = tempfile::tempdir().unwrap();
+    let bin = home.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let exe = bin.join("dfdu");
+    std::fs::write(&exe, b"binary").unwrap();
+    // dist's installer puts dfdu in the same directory without cargo's record.
+    assert_eq!(Managed::of(&exe), None);
+    let record = home.path().join(".crates2.json");
+    let index = "(registry+https://github.com/rust-lang/crates.io-index)";
+    std::fs::write(
+        &record,
+        format!(r#"{{"installs":{{"ripgrep 14.1.1 {index}":{{}}}}}}"#),
+    )
+    .unwrap();
+    assert_eq!(Managed::of(&exe), None);
+    std::fs::write(
+        &record,
+        format!(r#"{{"installs":{{"dfdu 0.3.0 {index}":{{}}}}}}"#),
+    )
+    .unwrap();
+    assert_eq!(Managed::of(&exe), Some(Managed::Cargo));
+}

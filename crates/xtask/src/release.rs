@@ -1,5 +1,5 @@
-//! `cargo xtask release`: the dist plan, the release checks, the version bump and the package
-//! manager manifests.
+//! `cargo xtask release`: the dist plan, the release checks, the version bump, the package
+//! manager manifests and the crates.io publish.
 
 use std::fs;
 use std::path::PathBuf;
@@ -17,10 +17,12 @@ pub(crate) enum Release {
     Plan,
     /// The checks a release needs on top of CI: assets current, advisories, dist plan.
     Check,
-    /// Set the workspace version, update Cargo.lock and the assets; with --commit, commit and tag.
+    /// Set the workspace version, update Cargo.lock, the assets and CHANGELOG.md; with --commit,
+    /// commit and tag.
     Bump {
-        /// The new version, e.g. 0.2.0.
-        version: String,
+        /// The new version, e.g. 0.2.0; by default the one the conventional commits since the
+        /// last tag call for (git-cliff --bumped-version).
+        version: Option<String>,
         #[arg(long)]
         commit: bool,
     },
@@ -29,6 +31,15 @@ pub(crate) enum Release {
         version: String,
         /// Output directory (default target/pkg/VERSION).
         out: Option<PathBuf>,
+    },
+    /// Publish dfdu and the crates it needs to crates.io, in dependency order (`cargo publish
+    /// --workspace`); the crates with `publish = false` stay out. Releases publish from CI
+    /// (publish-crates.yml); this is for a new crate's first version, which trusted publishing
+    /// can't create.
+    Publish {
+        /// Package and verify every crate without uploading.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -45,14 +56,42 @@ pub(crate) fn release(r: Release) -> anyhow::Result<()> {
             ),
             ("advisories", Box::new(|| deny(true))),
             ("dist plan", Box::new(|| release(Release::Plan))),
+            (
+                "crates.io",
+                Box::new(|| {
+                    run(&mut cargo([
+                        "publish",
+                        "--workspace",
+                        "--locked",
+                        "--dry-run",
+                    ]))
+                }),
+            ),
         ]),
-        Release::Bump { version, commit } => bump(&version, commit),
+        Release::Bump { version, commit } => {
+            need("git-cliff")?;
+            let version = match version {
+                Some(v) => v,
+                None => {
+                    let v = output(Command::new("git-cliff").arg("--bumped-version"))?;
+                    v.trim_start_matches('v').to_owned()
+                }
+            };
+            bump(&version, commit)
+        }
         Release::Manifests { version, out } => {
             need("gh")?;
             let mut c = Command::new("scripts/package-manifests.sh");
             c.arg(&version);
             if let Some(o) = out {
                 c.arg(o);
+            }
+            run(&mut c)
+        }
+        Release::Publish { dry_run } => {
+            let mut c = cargo(["publish", "--workspace", "--locked"]);
+            if dry_run {
+                c.arg("--dry-run");
             }
             run(&mut c)
         }
@@ -68,11 +107,28 @@ fn is_version(version: &str) -> bool {
             .is_some_and(|m| m.parse::<u64>().is_ok())
 }
 
-/// `manifest` with its first `version = "old"` set to `new`: [workspace.package]'s, since
-/// dependencies use inline tables.
+/// `manifest` with [workspace.package]'s `version = "old"` (the first on a line of its own) set
+/// to `new`, and with it the `version = "old"` of the workspace's own crates in
+/// [workspace.dependencies] (the inline tables with a `path`), which crates.io needs. Other
+/// dependencies keep theirs.
 fn set_version(manifest: &str, old: &str, new: &str) -> String {
-    let line = format!("version = \"{old}\"");
-    manifest.replacen(&line, &format!("version = \"{new}\""), 1)
+    let (from, to) = (
+        format!("version = \"{old}\""),
+        format!("version = \"{new}\""),
+    );
+    let mut package_done = false;
+    manifest
+        .split_inclusive('\n')
+        .map(|l| {
+            let package = !package_done && l.trim_end() == from;
+            package_done |= package;
+            if package || (l.contains("path = \"crates/") && l.contains(&from)) {
+                l.replacen(&from, &to, 1)
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect()
 }
 
 fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
@@ -84,6 +140,15 @@ fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
     }
     let manifest = fs::read_to_string("Cargo.toml")?;
     let old = toml_value(&manifest, "version").context("no version in Cargo.toml")?;
+    if old == version {
+        bail!(
+            "the version is already {version} (git-cliff finds nothing to bump without a feat, fix or perf commit since the last tag)"
+        );
+    }
+    let changes = fs::read_to_string("CHANGELOG.md").context("reading CHANGELOG.md")?;
+    if has_section(&changes, version) {
+        bail!("CHANGELOG.md already has a section for {version}");
+    }
     fs::write("Cargo.toml", set_version(&manifest, &old, version))?;
     eprintln!("version {old} -> {version}");
     run(&mut cargo(["update", "--workspace"]))?;
@@ -96,18 +161,80 @@ fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
         "fuzz/Cargo.toml",
     ]))?;
     assets()?;
+    changelog(version)?;
     if commit {
         let tag = format!("v{version}");
-        run(Command::new("git").args(["commit", "-am", &format!("Release {tag}")]))?;
+        run(Command::new("git").args(["commit", "-am", &format!("chore(release): {tag}")]))?;
         run(Command::new("git").args(["tag", "-a", &tag, "-m", &tag]))?;
         eprintln!("\npush to publish: git push origin HEAD {tag}");
+        eprintln!("the release workflow publishes to crates.io (publish-crates.yml)");
+    } else {
+        eprintln!("\nedit CHANGELOG.md's new section, then commit and tag v{version}");
     }
     Ok(())
+}
+
+/// Inserts `version`'s section, from the commits since the last tag (cliff.toml), into
+/// CHANGELOG.md above the newest release's, so the sections edited by hand stay as they are.
+fn changelog(version: &str) -> anyhow::Result<()> {
+    let tag = format!("v{version}");
+    let section = output(Command::new("git-cliff").args([
+        "--unreleased",
+        "--tag",
+        &tag,
+        "--strip",
+        "header",
+    ]))?;
+    let file = fs::read_to_string("CHANGELOG.md").context("reading CHANGELOG.md")?;
+    fs::write("CHANGELOG.md", insert_section(&file, &section))?;
+    eprintln!("CHANGELOG.md: added {tag}'s section");
+    Ok(())
+}
+
+/// Whether `changelog` has a `## [version]` heading.
+fn has_section(changelog: &str, version: &str) -> bool {
+    let heading = format!("## [{version}]");
+    changelog.lines().any(|l| l.starts_with(&heading))
+}
+
+/// `changelog` with `section` before its first `## ` heading, or at the end if it has none.
+fn insert_section(changelog: &str, section: &str) -> String {
+    let section = section.trim();
+    let at = if changelog.starts_with("## ") {
+        Some(0)
+    } else {
+        changelog.find("\n## ").map(|i| i + 1)
+    };
+    match at {
+        Some(i) => format!("{}{section}\n\n{}", &changelog[..i], &changelog[i..]),
+        None => format!("{}\n\n{section}\n", changelog.trim_end()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_version_has_a_section_only_under_its_own_heading() {
+        let file = "# Changelog\n\n## [0.3.0] - 2026-11-03\n\n- Mentions [0.2.0]\n";
+        assert!(has_section(file, "0.3.0"));
+        assert!(!has_section(file, "0.2.0"));
+        assert!(!has_section(file, "0.3"));
+    }
+
+    #[test]
+    fn a_section_goes_above_the_newest_release() {
+        let file = "# Changelog\n\nIntro.\n\n## [0.1.0] - 2026-10-30\n\n- One\n";
+        assert_eq!(
+            insert_section(file, "## [0.2.0] - 2026-11-01\n\n- Two\n"),
+            "# Changelog\n\nIntro.\n\n## [0.2.0] - 2026-11-01\n\n- Two\n\n## [0.1.0] - 2026-10-30\n\n- One\n"
+        );
+        assert_eq!(
+            insert_section("# Changelog\n", "## [0.1.0]\n\n- One"),
+            "# Changelog\n\n## [0.1.0]\n\n- One\n"
+        );
+    }
 
     #[test]
     fn versions_need_three_parts_and_a_numeric_major() {
@@ -120,11 +247,23 @@ mod tests {
     }
 
     #[test]
-    fn only_the_workspace_version_is_set() {
+    fn the_workspace_version_and_its_crates_dependencies_are_set() {
         let manifest = "[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\n\
-                        dfdu-tree = { path = \"crates/dfdu-tree\", version = \"0.1.0\" }\n";
+                        dfdu-tree = { path = \"crates/dfdu-tree\", version = \"0.1.0\" }\n\
+                        dfdu-bench = { path = \"crates/dfdu-bench\" }\n\
+                        dfdu-scan = { path = \"crates/dfdu-scan\", version = \"0.1.0\" }\n\
+                        other = { version = \"0.1.0\" }\n\
+                        another = \"0.1.0\"\n";
         let got = set_version(manifest, "0.1.0", "0.2.0");
+        assert_eq!(
+            got,
+            "[workspace.package]\nversion = \"0.2.0\"\n\n[workspace.dependencies]\n\
+             dfdu-tree = { path = \"crates/dfdu-tree\", version = \"0.2.0\" }\n\
+             dfdu-bench = { path = \"crates/dfdu-bench\" }\n\
+             dfdu-scan = { path = \"crates/dfdu-scan\", version = \"0.2.0\" }\n\
+             other = { version = \"0.1.0\" }\n\
+             another = \"0.1.0\"\n"
+        );
         assert_eq!(toml_value(&got, "version").as_deref(), Some("0.2.0"));
-        assert!(got.contains("version = \"0.1.0\" }"));
     }
 }
