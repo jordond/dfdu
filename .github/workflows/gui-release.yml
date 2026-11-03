@@ -74,6 +74,11 @@ jobs:
         run: |
           tag=$(jq -r .announcement_tag <<<"$PLAN")
           gh release upload "$tag" gui/* --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Add the GUI to the release notes
+        run: |
+          tag=$(jq -r .announcement_tag <<<"$PLAN")
+          pre=$(jq -r .announcement_is_prerelease <<<"$PLAN")
+          .github/scripts/gui-release-notes.sh "$tag" "$pre"
       - name: Keep the checksums for the cask
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

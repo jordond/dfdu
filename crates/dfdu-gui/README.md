@@ -145,6 +145,7 @@ Enter).
 The GUI has the workspace's version and ships on the CLI's tag, though `dist` leaves it out
 (`dist = false`). After dist announces a release, `.github/workflows/gui-release.yml` (a
 post-announce job) runs `gui-macos`, `gui-linux` and `gui-windows`, uploads their files with a
-`.sha256` each and `gui-sha256.sum` to the same release, and pushes the `dfdu-gui` cask to
+`.sha256` each and `gui-sha256.sum` to the same release, adds a desktop app section to the
+release notes (`.github/scripts/gui-release-notes.sh`), and pushes the `dfdu-gui` cask to
 `jordond/homebrew-tap` (not for prereleases). `cargo xtask release manifests VERSION` fills
 the GUI's Scoop and winget manifests too when the release has `gui-sha256.sum`.
