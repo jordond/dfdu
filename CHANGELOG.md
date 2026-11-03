@@ -2,6 +2,24 @@
 
 Notable changes to dfdu, newest first. Generated from the commits by git-cliff and edited by hand.
 
+## [0.4.0] - 2026-11-03
+
+### Added
+
+- Add dfdu update, update checks in the GUI, and installing the CLI from the GUI ([#17](https://github.com/jordond/dfdu/pull/17))
+- **gui:** scan another computer over ssh from the start screen ([#19](https://github.com/jordond/dfdu/pull/19))
+
+### Changed
+
+- Run the AppImage as the agent only from inside its own AppDir
+- Let SUDO_UID decide whom root acts for before PKEXEC_UID
+- Never give back to the user what is staged
+- Stage by file descriptor, checking the item again
+- Make the journal in its directory as opened, not through a symlink
+- Put a staged item back only if it is still the one staged, and as root stage only into root's directories
+- Check install.sh --gui installs the latest release's GUI, which ships from 0.3.0
+- Stack the GUI face's sheets at their natural height on narrow screens
+
 ## [0.3.0] - 2026-11-03
 
 ### Added
