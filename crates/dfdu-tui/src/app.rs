@@ -24,7 +24,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::features::{debug, details, treemap};
 use crate::input::{line_keys, mouse};
 
-use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
+use crate::overlay::{confirm, error_list, goto, help, mark_pattern, palette, type_filter};
 use crate::state::filter;
 use crate::state::motion::Motion;
 use crate::theme::{ColorLevel, Rgb, Theme};
@@ -47,6 +47,8 @@ pub enum Overlay {
     Types(type_filter::TypePicker),
     /// The glob that marks the names it matches.
     MarkPattern(mark_pattern::Prompt),
+    /// The path of a folder to go to.
+    GoTo(goto::Prompt),
 }
 
 pub struct App {
@@ -68,6 +70,8 @@ pub struct App {
     pub columns: crate::view::columns::Columns,
     pub overlay: Overlay,
     pub quit: bool,
+    /// A new scan of this path is asked for, outside the scan shown: the run loop opens it.
+    pub reopen: Option<HostPath>,
     pub details: details::Details,
     /// The marks pane, in the place of the details pane while it is open.
     pub marks_pane: crate::features::marks_pane::MarksPane,
@@ -97,6 +101,7 @@ impl App {
             columns: crate::view::columns::Columns::default(),
             overlay: Overlay::None,
             quit: false,
+            reopen: None,
             details: details::Details::default(),
             marks_pane: crate::features::marks_pane::MarksPane::default(),
             debug: debug::Debug::default(),
@@ -124,6 +129,9 @@ impl App {
         s.home.clone_from(&ui.home);
         s.types = ui.types.clone();
         s.read_only = ui.read_only;
+        s.from_file = ui.from_file.then_some(dfdu_session::goto::FROM_FILE);
+        s.elevated = ui.elevated;
+        s.status.clone_from(&ui.notice);
         s.outside.local = ui.local;
         app
     }
@@ -146,15 +154,36 @@ impl App {
         self.overlay = Overlay::Errors { list, cursor: 0 };
     }
 
-    /// Handles a key: the delete confirmation or the open overlay takes it first, then the filter input while it is
-    /// edited, then the marks pane while it is open, then the details pane while it has the
-    /// focus, then the view shown (the treemap's moves between tiles once it is drawn), and
-    /// otherwise the action bound to it in `keys::ACTIONS`.
+    /// Handles a key: the delete confirmation or the open overlay takes it first, then the
+    /// filter input while it is edited, then the marks pane while it is open, then the details
+    /// pane while it has the focus, then the view shown (the treemap's moves between tiles once
+    /// it is drawn), and otherwise the action bound to it in `keys::ACTIONS`.
     pub fn key(&mut self, k: KeyEvent, now: Instant) -> Vec<Effect> {
         if k.kind == KeyEventKind::Release {
             return Vec::new();
         }
         self.session.note_input(now);
+        // Only an action bound to the key can be the second `Parent` at the scan root: a key
+        // an overlay, the filter, a pane or a view takes disarms the first, and its notice goes.
+        let armed = self.session.up_armed.take();
+        let notice = armed.clone();
+        let fx = self.key_armed(k, now, armed);
+        if self.session.up_armed.is_none()
+            && let Some(a) = &notice
+        {
+            self.session.drop_notice(a);
+        }
+        fx
+    }
+
+    /// [`App::key`] with the first `Parent` at the scan root taken out: `armed` is put back
+    /// only for the action bound to the key.
+    fn key_armed(
+        &mut self,
+        k: KeyEvent,
+        now: Instant,
+        armed: Option<dfdu_session::goto::Armed>,
+    ) -> Vec<Effect> {
         if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
             self.quit = true;
             return Vec::new();
@@ -169,6 +198,7 @@ impl App {
             Overlay::Palette { .. } => return palette::key(self, k),
             Overlay::Types(_) => return type_filter::key(self, k),
             Overlay::MarkPattern(_) => return mark_pattern::key(self, k),
+            Overlay::GoTo(_) => return goto::key(self, k),
         }
         if filter::editing(self) {
             // `↑`/`↓` move the cursor in the list; the other keys edit the query.
@@ -204,6 +234,7 @@ impl App {
             return fx;
         }
         self.session.status = None;
+        self.session.up_armed = armed;
         match keys::action_for(&k) {
             Some(a) => keys::run(self, a),
             None => Vec::new(),

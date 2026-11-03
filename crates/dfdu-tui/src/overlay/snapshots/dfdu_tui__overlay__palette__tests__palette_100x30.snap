@@ -4,7 +4,7 @@ assertion_line: 446
 expression: frame
 ---
  dfdu │ 1 Files │ 2 Map │ 3 Cleanup │ 4 Duplicates │ 5 Largest                     ⠋ scanning 00:00
- /r         ┌ Commands 65/65 ──────────────────────────────────────────────────────────┐ze ↓ · disk
+ /r         ┌ Commands 66/66 ──────────────────────────────────────────────────────────┐ze ↓ · disk
         size│ : ▌                                                                      │
      3.0 GiB│ tick what Cleanup or Duplicates suggests deleting                 act  A │
    625.0 MiB│ duplicates: compare the files again                               act  R │

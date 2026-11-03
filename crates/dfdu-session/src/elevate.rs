@@ -136,6 +136,7 @@ impl Elevated {
             path: self.path,
             job: self.job,
             local: true,
+            elevated: self.privileged,
         }
     }
 }
@@ -169,12 +170,20 @@ mod tests {
         std::fs::write(dir.path().join("a/f"), vec![1u8; 10_000]).unwrap();
         let (io, agent) = agent();
         let opts = EngineOptions::default();
-        let e = connect(io, dir.path(), None, opts.clone(), JobOptions::default()).unwrap();
+        let mut e = connect(io, dir.path(), None, opts.clone(), JobOptions::default()).unwrap();
+        // The agent runs as this test does; as the helper or pkexec starts it, it says root.
+        e.privileged = true;
         let source = e.source();
-        let Source::Remote { path, local, .. } = &source else {
+        let Source::Remote {
+            path,
+            local,
+            elevated,
+            ..
+        } = &source
+        else {
             panic!("not an agent's source");
         };
-        assert!(*local);
+        assert!(*local && *elevated);
         assert_eq!(
             path.to_local(),
             dunce::canonicalize(dir.path()).unwrap(),
@@ -190,6 +199,30 @@ mod tests {
         );
         assert_eq!(setup.home, dfdu_engine::home_dir());
         assert!(setup.jobs.history.is_none(), "not recorded in the history");
+        assert!(
+            setup.elevated,
+            "a folder outside it is not looked up as this user"
+        );
+        started.engine.shutdown(std::time::Duration::from_secs(1));
+        agent.join().unwrap();
+    }
+
+    #[test]
+    fn an_agent_that_runs_as_the_user_is_not_elevated() {
+        let dir = tempfile::tempdir().unwrap();
+        let (io, agent) = agent();
+        let opts = EngineOptions::default();
+        let mut e = connect(io, dir.path(), None, opts.clone(), JobOptions::default()).unwrap();
+        // An elevation program that ran the agent as the user.
+        e.privileged = false;
+        let Ok(Opened::Native(started)) = open(e.source(), &opts, true) else {
+            panic!("not opened");
+        };
+        assert!(started.setup.local);
+        assert!(
+            !started.setup.elevated,
+            "a folder outside it is looked up as this user"
+        );
         started.engine.shutdown(std::time::Duration::from_secs(1));
         agent.join().unwrap();
     }

@@ -24,6 +24,11 @@ pub fn op(k: &KeyEvent) -> Option<TextOp> {
     })
 }
 
+/// Whether `k` completes what is typed (`Tab`), in an input that offers completion.
+pub fn completes(k: &KeyEvent) -> bool {
+    k.code == KeyCode::Tab
+}
+
 /// Applies `k` to `input`: [`Edit::Ignored`] when it is no [`TextOp`].
 pub fn edit(input: &mut LineInput, k: &KeyEvent) -> Edit {
     op(k).map_or(Edit::Ignored, |op| input.apply(op))

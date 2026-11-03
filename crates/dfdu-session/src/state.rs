@@ -91,6 +91,18 @@ pub struct SessionState {
     /// Nothing is deleted: the actions that delete are left out and cleanup commands run only
     /// as dry runs.
     pub read_only: bool,
+    /// The scan was read from a file: nothing outside it can be opened ([`crate::goto`]). The
+    /// text is what the status line says when something outside it is asked for, in the front
+    /// end's words ([`crate::goto::FROM_FILE`] in a terminal).
+    pub from_file: Option<&'static str>,
+    /// The scan runs as an administrator: what this user cannot read can still be in it, so
+    /// a folder is not looked up as this user before it is opened ([`crate::goto::go`]).
+    pub elevated: bool,
+    /// When `Parent` was pressed at the scan root and said what a second press does: the next
+    /// action, if it is `Parent` within [`crate::goto::ARMED_FOR`], opens a scan of the root's
+    /// parent ([`crate::goto::up_at_root`]). Any other input clears it ([`SessionState::disarm`]),
+    /// and so does a tick after it expired ([`SessionState::expire_arm`]).
+    pub up_armed: Option<crate::goto::Armed>,
     /// When the rows are sorted again.
     pub sort_schedule: SortSchedule,
     /// The Map view's depth and colouring.
@@ -144,6 +156,9 @@ impl SessionState {
             cached: None,
             outside: Outside::default(),
             read_only: false,
+            from_file: None,
+            elevated: false,
+            up_armed: None,
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
             cleanup: Cleanup::default(),
@@ -189,6 +204,39 @@ impl SessionState {
     /// Records user input at `now`: automatic re-sorts wait until the user is idle.
     pub fn note_input(&mut self, now: Instant) {
         self.sort_schedule.note_input(now);
+    }
+
+    /// Input other than an action (a click, a key an overlay or the filter took): a first
+    /// `Parent` at the scan root no longer makes a second one open a scan of its parent.
+    /// Its notice leaves the status line unless something else replaced it.
+    pub fn disarm(&mut self) {
+        let _ = self.take_arm();
+    }
+
+    /// Disarms a first `Parent` at the scan root, as [`SessionState::disarm`], and returns when
+    /// it was pressed.
+    pub fn take_arm(&mut self) -> Option<Instant> {
+        let armed = self.up_armed.take()?;
+        self.drop_notice(&armed);
+        Some(armed.at)
+    }
+
+    /// Clears the status line if it still shows the notice of `armed`.
+    pub fn drop_notice(&mut self, armed: &crate::goto::Armed) {
+        if self.status.as_deref() == Some(armed.notice.as_str()) {
+            self.status = None;
+        }
+    }
+
+    /// Disarms a first `Parent` at the scan root that expired by `now`. Returns whether the
+    /// status line changed.
+    pub fn expire_arm(&mut self, now: Instant) -> bool {
+        if self.up_armed.as_ref().is_none_or(|a| now < a.expires_at()) {
+            return false;
+        }
+        let before = self.status.is_some();
+        self.disarm();
+        before && self.status.is_none()
     }
 
     /// The file type filter is on: folders cannot be marked, as their sizes count only some

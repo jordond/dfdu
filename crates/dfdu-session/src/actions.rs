@@ -16,6 +16,7 @@ pub enum Action {
     Open,
     Enter,
     Parent,
+    GoTo,
     SortSize,
     SortName,
     SortItems,
@@ -155,6 +156,7 @@ pub const ACTIONS: &[ActionInfo] = &[
         "parent directory (tree mode: collapse)",
         Group::Navigate,
     ),
+    row(Action::GoTo, "Ctrl-G", "go to folder…", Group::Navigate),
     row(
         Action::SortSize,
         "s",

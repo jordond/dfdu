@@ -260,24 +260,29 @@ impl MountArgs {
     /// Whether scans of `path` list NTFS volumes from their master file tables: with --mft,
     /// when the table can be read. Says why it cannot be used.
     fn use_mft(self, path: &Path) -> bool {
+        self.mft_for(path).unwrap_or_else(|why| {
+            eprintln!("dfdu: {why}");
+            false
+        })
+    }
+
+    /// [`MountArgs::use_mft`] without writing anything: why --mft cannot be used is returned,
+    /// for a browser that holds the terminal to show.
+    fn mft_for(self, path: &Path) -> Result<bool, String> {
         if !self.mft {
-            return false;
+            return Ok(false);
         }
         #[cfg(windows)]
         match dfdu_scan::check_mft(path) {
-            Ok(()) => true,
-            Err(e) => {
-                eprintln!(
-                    "dfdu: --mft: the master file table cannot be read ({e}); listing directories"
-                );
-                false
-            }
+            Ok(()) => Ok(true),
+            Err(e) => Err(format!(
+                "--mft: the master file table cannot be read ({e}); listing directories"
+            )),
         }
         #[cfg(not(windows))]
         {
             let _ = path;
-            eprintln!("dfdu: --mft: only on Windows; listing directories");
-            false
+            Err("--mft: only on Windows; listing directories".into())
         }
     }
 

@@ -157,6 +157,8 @@ pub struct Then {
     /// directory left and puts back the one of the directory opened, as the session does with
     /// the selection.
     pub entered: Option<Moved>,
+    /// Open a new scan of this path, outside the scan shown ([`crate::goto`]).
+    pub reopen: Option<HostPath>,
 }
 
 /// A path to show in Files, below `root` (the scan root, or the directory the path is

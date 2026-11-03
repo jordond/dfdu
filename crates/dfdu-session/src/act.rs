@@ -1,8 +1,12 @@
 //! Carrying out the actions of the registry ([`run`]): what each does to the state of the
 //! browser, and the effects it leaves. Some are only the front end's (quitting, the help, the
 //! command palette, the debug panel, the list's columns, the type picker and the prompt of mark
-//! by pattern, moving the focus to a pane, the clipboard): [`run`] leaves those to it
-//! ([`Ran::FrontEnd`]). In a read-only browser an action that deletes only says so.
+//! by pattern and of go to folder, moving the focus to a pane, the clipboard): [`run`] leaves
+//! those to it ([`Ran::FrontEnd`]). `Parent` at the scan root goes up past it in two presses
+//! soon after each other ([`goto::up_at_root`]). In a read-only browser an action that deletes
+//! only says so.
+
+use std::time::Instant;
 
 use dfdu_engine::{Command, Mode, SizeMode};
 
@@ -14,7 +18,7 @@ use crate::snapshot::Mark;
 use crate::state::{READ_ONLY, SessionState};
 use crate::view::{self, Then, View};
 use crate::{cleanup, confirm, details, dupes, filter, largest, marks, selected_path, treemap};
-use crate::{tree, type_filter};
+use crate::{goto, tree, type_filter};
 
 /// What [`run`] did with an action.
 #[derive(Debug)]
@@ -36,8 +40,10 @@ impl Ran {
     }
 }
 
-/// Carries out `a` on the browser (no overlay open), as its key does.
-pub fn run(s: &mut SessionState, a: Action) -> Ran {
+/// Carries out `a` on the browser (no overlay open) at `now`, as its key does.
+pub fn run(s: &mut SessionState, a: Action, now: Instant) -> Ran {
+    // Any action but a second `Parent` at the scan root disarms the first.
+    let armed = s.take_arm();
     if s.read_only && a.deletes() {
         s.status = Some(READ_ONLY.into());
         return Ran::nothing();
@@ -53,7 +59,8 @@ pub fn run(s: &mut SessionState, a: Action) -> Ran {
         | Action::Debug
         | Action::Types
         | Action::FocusDetails
-        | Action::CopyPath => return Ran::FrontEnd,
+        | Action::CopyPath
+        | Action::GoTo => return Ran::FrontEnd,
         Action::MarkPattern if !s.read_only => return Ran::FrontEnd,
         Action::MarkPattern => s.status = Some(READ_ONLY.into()),
         Action::Up => s.move_by(-1),
@@ -72,6 +79,9 @@ pub fn run(s: &mut SessionState, a: Action) -> Ran {
             }
         }
         Action::Parent if tree::act::left(s) => {}
+        Action::Parent if s.snap.at_root && !s.snap.root_path.is_empty() => {
+            then.reopen = goto::up_at_root(s, armed, now);
+        }
         Action::Parent => then.entered = s.up(),
         Action::SortSize => sort_by(s, SortKey::Size),
         Action::SortName => sort_by(s, SortKey::Name),

@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Receiver;
 use dfdu_engine::Engine;
 use dfdu_scan::Backend;
+use dfdu_tree::HostPath;
 
 use crate::act::{self, Ran};
 use crate::actions::Action;
@@ -33,6 +34,7 @@ use crate::cache_link::{CacheLink, Cacher};
 use crate::debug;
 use crate::effect::{self, Effect, Output};
 use crate::extras::{self, Applied, Read};
+use crate::goto::{self, Gone};
 use crate::history_link::{HistoryLink, Recorder};
 use crate::snapshot::{self, Snapshot};
 use crate::state::{Moved, SessionState};
@@ -114,6 +116,9 @@ pub struct Acted {
     /// The browser went to another directory to show an entry, which the front end shows from
     /// the top ([`Then::moved`]).
     pub went: Option<Moved>,
+    /// Open a new scan of this path, outside the scan shown: up past the scan root, or a
+    /// folder gone to ([`crate::goto`]). The front end opens it, then shuts this session down.
+    pub reopen: Option<HostPath>,
 }
 
 /// The engine, owned by the session or by its caller.
@@ -215,6 +220,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             self.note_change();
         }
         let polled = self.poll();
+        let expired = self.front.state_mut().expire_arm(now);
         let s = self.front.state();
         let read = self.pacing.read_due(s, self.front.breakdown(), now);
         let sort_due = s.next_sort_at().is_some_and(|t| now >= t);
@@ -224,7 +230,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             Read::Extras => self.read_extras(now),
             Read::Nothing => self.front.reorder(now),
         }
-        let changed = polled || read != Read::Nothing || sort_due || spinner_due;
+        let changed = polled || expired || read != Read::Nothing || sort_due || spinner_due;
         let wake_at = self
             .pacing
             .wake_at(self.front.state(), changed, self.polling(), now);
@@ -263,13 +269,26 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         let s = self.front.state_mut();
         s.note_input(now);
         s.status = None;
-        match act::run(s, a) {
+        match act::run(s, a, now) {
             Ran::Done(then) => self.follow(then),
             Ran::FrontEnd => Acted {
                 front_end: true,
                 ..Acted::default()
             },
         }
+    }
+
+    /// Goes to the folder `input` names ([`goto::go`]), looking a path inside the scan up in
+    /// the engine's tree: opens it when it is a folder there, stays when it is not, or returns
+    /// a path outside the scan for the front end to open a new scan of.
+    ///
+    /// # Errors
+    ///
+    /// What is wrong with the path, to show where it was typed.
+    pub fn go_to_path(&mut self, input: &str) -> Result<Gone, String> {
+        let engine = self.engine.get();
+        let s = self.front.state_mut();
+        goto::go(s, input, |p| engine.read(|m| goto::reach(&m.tree, p)))
     }
 
     /// Follows what an action or an intent of a view left: shows a path in Files and carries
@@ -286,6 +305,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             front_end: false,
             entered: then.entered,
             went,
+            reopen: then.reopen,
         }
     }
 

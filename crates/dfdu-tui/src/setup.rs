@@ -120,6 +120,24 @@ pub(crate) fn restore_terminal(mouse: bool) {
     let _ = execute!(io::stdout(), cursor::Show);
 }
 
+/// Takes the terminal back after [`restore_terminal`]: raw mode, the alternate screen and mouse
+/// capture (`mouse`) again, and the screen drawn in full with the next frame.
+pub(crate) fn resume_terminal(
+    terminal: &mut ratatui::DefaultTerminal,
+    mouse: bool,
+) -> io::Result<()> {
+    ratatui::crossterm::terminal::enable_raw_mode()?;
+    execute!(
+        io::stdout(),
+        ratatui::crossterm::terminal::EnterAlternateScreen
+    )?;
+    if mouse {
+        execute!(io::stdout(), ratatui::crossterm::event::EnableMouseCapture)?;
+    }
+    terminal.hide_cursor()?;
+    terminal.clear()
+}
+
 /// Restores the terminal ([`restore_terminal`]) when dropped, so that every way out of the
 /// browser leaves it as it was. On a panic the hook has restored it already.
 pub(crate) struct Restore {

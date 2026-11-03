@@ -243,7 +243,11 @@ pub fn open(
     Ok(
         match startup::open(source, &settings.engine, settings.record)? {
             Opened::Native(s) => Box::new(Browser::new(s, ctx)),
-            Opened::Imported(s) => Box::new(Browser::new(s, ctx)),
+            Opened::Imported(s) => {
+                let mut b = Browser::new(s, ctx);
+                b.state_mut().from_file = Some(crate::goto::FROM_FILE);
+                Box::new(b)
+            }
         },
     )
 }
@@ -254,6 +258,29 @@ pub fn picked(path: PathBuf, start: StartLocal) -> Source {
     Source::Local {
         path: Some(path),
         start,
+    }
+}
+
+/// The source of a scan of `path` on this machine asked for from a browser (up past its root,
+/// or a folder gone to), as `dfdu PATH` opens it: from its cached scan when there is one, with
+/// the rules unless they are off.
+pub fn reopened(path: PathBuf, settings: &Settings) -> Source {
+    reopened_in(path, settings, dfdu_store::cache::Cache::open_default())
+}
+
+/// [`reopened`] with `cache`: `None` when it is off.
+fn reopened_in(
+    path: PathBuf,
+    settings: &Settings,
+    cache: Option<io::Result<dfdu_store::cache::Cache>>,
+) -> Source {
+    let start = local(settings.rules.then(load_rules));
+    match slot_in(cache, &path) {
+        Some(slot) => Source::Cached { path, slot, start },
+        None => Source::Local {
+            path: Some(path),
+            start,
+        },
     }
 }
 
@@ -296,7 +323,15 @@ fn load_rules() -> Arc<RuleSet> {
 /// Where the scan of `path` is cached; `None` when the cache is off, refused (said on standard
 /// error), or `path` is not a directory (the scan then says why).
 fn cache_slot(path: &Path) -> Option<dfdu_store::cache::Slot> {
-    let cache = match dfdu_store::cache::Cache::open_default()? {
+    slot_in(dfdu_store::cache::Cache::open_default(), path)
+}
+
+/// [`cache_slot`] in `cache`: `None` when it is off.
+fn slot_in(
+    cache: Option<io::Result<dfdu_store::cache::Cache>>,
+    path: &Path,
+) -> Option<dfdu_store::cache::Slot> {
+    let cache = match cache? {
         Ok(cache) => cache,
         Err(e) => {
             eprintln!("dfdu-gui: {e}; the scan cache is not used");
@@ -347,6 +382,71 @@ mod tests {
             exe.into(),
             deb_agent,
         )
+    }
+
+    #[test]
+    fn a_folder_asked_for_from_a_browser_opens_from_its_cached_scan_when_there_is_a_cache() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let folder = tmp.path().join("disk1");
+        std::fs::create_dir(&folder).expect("mkdir");
+        let settings = Settings {
+            engine: EngineOptions::default(),
+            record: false,
+            rules: false,
+        };
+        let cache = dfdu_store::cache::Cache::at(tmp.path().join("cache"));
+        match reopened_in(folder.clone(), &settings, Some(cache)) {
+            Source::Cached { path, .. } => assert_eq!(path, folder),
+            _ => panic!("not from the cache"),
+        }
+        match reopened_in(folder.clone(), &settings, None) {
+            Source::Local { path, .. } => assert_eq!(path, Some(folder.clone())),
+            _ => panic!("not scanned afresh"),
+        }
+        // A cache that may not be used is left out, and the folder scanned afresh.
+        let refused = Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        match reopened_in(folder.clone(), &settings, Some(refused)) {
+            Source::Local { path, .. } => assert_eq!(path, Some(folder)),
+            _ => panic!("not scanned afresh"),
+        }
+    }
+
+    /// The browser of an administrator's scan, from the helper's agent on macOS or pkexec's
+    /// elsewhere (here on a thread of this process, reporting itself as `privileged`).
+    fn elevated_browser(privileged: bool) -> Box<dyn Browse> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (down_r, down_w) = std::io::pipe().expect("pipe");
+        let (up_r, up_w) = std::io::pipe().expect("pipe");
+        let journal = tempfile::tempdir().expect("temp dir").keep();
+        std::thread::spawn(move || {
+            let backend = native_backend(dfdu_sys::Storage::Unknown, false);
+            let _ = dfdu_engine::agent::run(backend, 1, Some(journal), down_r, up_w);
+        });
+        let io = dfdu_engine::RemoteIo {
+            reader: Box::new(io::BufReader::new(up_r)),
+            writer: Box::new(down_w),
+            child: None,
+        };
+        let opts = EngineOptions::default();
+        let job = JobOptions::default();
+        let mut e = dfdu_session::elevate::connect(io, dir.path(), None, opts.clone(), job)
+            .expect("connected");
+        e.privileged = privileged;
+        let settings = Settings {
+            engine: opts,
+            record: false,
+            rules: false,
+        };
+        open(e.source(), &settings, &egui::Context::default()).expect("opened")
+    }
+
+    #[test]
+    fn an_administrators_scan_does_not_look_up_a_folder_as_this_user() {
+        let b = elevated_browser(true);
+        assert!(b.state().outside.local && b.state().elevated);
+        let b = elevated_browser(false);
+        let s = b.state();
+        assert!(s.outside.local && !s.elevated, "the agent runs as the user");
     }
 
     #[test]

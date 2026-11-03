@@ -58,6 +58,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
     let up = match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             app.session.note_input(now);
+            app.session.disarm();
             return click(app, at, now);
         }
         MouseEventKind::ScrollUp => true,
@@ -65,6 +66,7 @@ pub fn event(app: &mut App, m: MouseEvent, now: Instant) -> Option<Vec<Effect>> 
         _ => return None,
     };
     app.session.note_input(now);
+    app.session.disarm();
     if !matches!(app.overlay, Overlay::None)
         || crate::overlay::confirm::is_open(app)
         || over_debug(app, at)

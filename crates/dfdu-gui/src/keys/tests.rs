@@ -81,6 +81,22 @@ fn the_platform_shortcuts_trash_copy_and_filter() {
 }
 
 #[test]
+fn cmd_l_and_cmd_shift_g_go_to_a_folder_as_ctrl_g_does() {
+    let goto = Some(Action::GoTo);
+    assert_eq!(action(&key(Key::L, Modifiers::COMMAND)), goto);
+    let shift_g = Modifiers::COMMAND | Modifiers::SHIFT;
+    assert_eq!(action(&key(Key::G, shift_g)), goto);
+    assert_eq!(action(&key(Key::G, Modifiers::CTRL)), goto);
+    // Not with Alt; a read-only browser goes to folders too.
+    assert_eq!(action(&key(Key::G, shift_g | Modifiers::ALT)), None);
+    assert_eq!(
+        action(&key(Key::L, Modifiers::COMMAND | Modifiers::ALT)),
+        None
+    );
+    assert_eq!(action_for(&key(Key::L, Modifiers::COMMAND), true), goto);
+}
+
+#[test]
 fn the_help_and_the_palette_have_the_terminal_s_keys() {
     assert_eq!(action(&text("?")), Some(Action::Help));
     assert_eq!(action(&key(Key::F1, Modifiers::NONE)), Some(Action::Help));

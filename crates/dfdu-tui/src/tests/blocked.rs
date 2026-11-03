@@ -189,7 +189,7 @@ fn scan(root: &Path, ui: Ui, block: Duration) -> Outcome {
             let backend = CrosstermBackend::new(GatedWriter(g));
             let viewport = Viewport::Fixed(Rect::new(0, 0, 120, 40));
             let mut terminal = Terminal::with_options(backend, TerminalOptions { viewport })?;
-            crate::event_loop(&mut terminal, &*e, input)
+            crate::event_loop(&mut terminal, &*e, input).map(|_| ())
         }
         Ui::BlockedHoldingLock => {
             let _ = go_rx.recv();

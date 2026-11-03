@@ -49,12 +49,14 @@ pub enum Source {
     /// ([`dfdu_engine::Connected::root`]). It deletes there too (unless
     /// [`EngineOptions::read_only`]); nothing is recorded in the history. The agent is on
     /// another host, or with `local` on this one, run as root ([`crate::elevate`]), so the
-    /// tree is this machine's.
+    /// tree is this machine's. `elevated`: the agent reported itself privileged, so it sees
+    /// what this user cannot ([`Setup::elevated`]).
     Remote {
         engine: Engine<dfdu_scan::NativeBackend>,
         path: dfdu_tree::HostPath,
         job: JobOptions,
         local: bool,
+        elevated: bool,
     },
 }
 
@@ -93,6 +95,11 @@ pub struct Setup {
     pub read_only: bool,
     /// The user's home directory, shown as `~`: `None` for another machine's scan.
     pub home: Option<PathBuf>,
+    /// The scan runs as an administrator ([`crate::elevate`]): this machine's, read by an
+    /// agent that can see more than this process, whether it was started through pkexec or
+    /// the macOS helper. A scan by this process (`sudo dfdu`) is not: a folder looked up here
+    /// is looked up with the rights the scan has.
+    pub elevated: bool,
 }
 
 /// The engine of a source: the scans of this machine and of others run on the native backend,
@@ -122,6 +129,7 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
                 local: true,
                 read_only,
                 home: home(),
+                elevated: false,
             },
         })
     };
@@ -135,6 +143,7 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
                 // Most files are of this machine's scans; another system's paths are left
                 // alone by their host.
                 home: home(),
+                elevated: false,
             },
         }),
         Source::Remote {
@@ -142,6 +151,7 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
             path,
             job,
             local,
+            elevated,
         } => {
             engine.send(Command::Scan { path, opts: job });
             Opened::Native(Started {
@@ -152,6 +162,8 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
                     read_only,
                     // Another host's paths are not below this one's home directory.
                     home: if local { home() } else { None },
+                    // Only an agent of this machine sees more of it than this user.
+                    elevated: local && elevated,
                 },
             })
         }

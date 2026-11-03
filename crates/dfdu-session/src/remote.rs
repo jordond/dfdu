@@ -450,6 +450,7 @@ impl Opened {
             path: self.path,
             job: self.job,
             local: false,
+            elevated: false,
         }
     }
 }

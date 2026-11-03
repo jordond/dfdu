@@ -1,10 +1,9 @@
-//! The toolbar and the tab bar. The toolbar: the wordmark, the breadcrumbs from the scan root
-//! to the current directory, the scan's state and totals, disk usage or apparent size, the
+//! The toolbar and the tab bar. The toolbar: the wordmark, the breadcrumbs to the current
+//! directory (`crumbs`), the scan's state and totals, disk usage or apparent size, the
 //! filter, and the View menu (theme, keys, palette). The tab bar: the tabs of the views (with
 //! Cleanup's reclaimable total and the number of groups of duplicates), and on its right what
 //! the list shows (tree mode, hidden files, the details sheet, file types) and Rescan.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use dfdu_engine::SizeMode;
@@ -14,7 +13,6 @@ use dfdu_session::palette::Token;
 use dfdu_session::state::Cached;
 use dfdu_session::view::View;
 use dfdu_session::{SessionState, cleanup, dupes};
-use dfdu_tree::HostPath;
 use egui::{
     Align, CornerRadius, Id, Key, Layout, Rect, Sense, Shape, Stroke, StrokeKind, TextEdit, Ui,
     WidgetInfo, vec2,
@@ -25,8 +23,10 @@ use crate::kit;
 use crate::theme::Colors;
 use crate::theme::style::{self, RADIUS_MD};
 
-/// Between two breadcrumbs.
-const SEPARATOR: &str = "/";
+mod crumbs;
+
+use crumbs::breadcrumbs;
+
 /// The filter field's id, to tell whether it has the keyboard.
 const FILTER: &str = "dfdu-filter";
 /// The views the window shows, in the order of their tabs.
@@ -504,138 +504,12 @@ fn spinner(ui: &mut Ui, color: egui::Color32, elapsed: Duration) {
         .add(Shape::line(points, Stroke::new(2.0, color)));
 }
 
-/// One breadcrumb: a directory on the way from the scan root to the current one.
-#[derive(Debug, PartialEq)]
-pub struct Segment {
-    pub text: String,
-    pub dir: HostPath,
-}
-
-/// The breadcrumbs of `dir`, as the terminal shows them: the scan root `root` as its path, with
-/// the home directory `home` shown as `~`, then one per directory below it. All of `dir` is one
-/// breadcrumb when it is not below `root` (before the first snapshot).
-pub fn segments(dir: &HostPath, root: &HostPath, home: Option<&Path>) -> Vec<Segment> {
-    let (root, below) = match dir.rel(root) {
-        Some(below) if !root.is_empty() => (root, below),
-        _ => (dir, Vec::new()),
-    };
-    let text = dfdu_engine::tilde(root, home);
-    let mut out = vec![Segment {
-        text,
-        dir: root.clone(),
-    }];
-    let mut dir = root.clone();
-    for part in below {
-        dir.push(part);
-        out.push(Segment {
-            text: String::from_utf8_lossy(part).into_owned(),
-            dir: dir.clone(),
-        });
-    }
-    out
-}
-
-/// Which breadcrumbs fit in `room` when each is `widths[i]` wide and a separator `sep`:
-/// the first and the last ones always, the middle ones from the end while they fit, the
-/// others one `…` (`None`).
-pub fn fitting(widths: &[f32], sep: f32, ellipsis: f32, room: f32) -> Vec<Option<usize>> {
-    let n = widths.len();
-    let total: f32 = widths.iter().sum::<f32>() + sep * n.saturating_sub(1) as f32;
-    if total <= room || n <= 2 {
-        return (0..n).map(Some).collect();
-    }
-    let mut used = widths[0] + widths[n - 1] + 2.0 * sep + ellipsis + sep;
-    let mut kept = Vec::new();
-    for i in (1..n - 1).rev() {
-        if used + widths[i] + sep > room {
-            break;
-        }
-        used += widths[i] + sep;
-        kept.push(i);
-    }
-    kept.reverse();
-    let mut out = vec![Some(0)];
-    if kept.first() != Some(&1) {
-        out.push(None);
-    }
-    out.extend(kept.into_iter().map(Some));
-    out.push(Some(n - 1));
-    out
-}
-
-/// The breadcrumbs in mono: the directories above as dim links, the current one in `dir`.
-/// When they do not fit, the middle ones fold into `…` and the current one is cut short.
-fn breadcrumbs(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Intent>) {
-    let snap = &s.snap;
-    let segs = segments(&snap.dir_path, &snap.root_path, s.home.as_deref());
-    let last = segs.len() - 1;
-    let gap = 6.0;
-    ui.spacing_mut().item_spacing.x = gap;
-    let font = egui::FontId::new(13.0, egui::FontFamily::Monospace);
-    let width = |t: &str| {
-        ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), egui::Color32::WHITE)
-            .size()
-            .x
-    };
-    let widths: Vec<f32> = segs.iter().map(|g| width(&g.text)).collect();
-    let sep = width(SEPARATOR) + 2.0 * gap;
-    let room = ui.available_width();
-    let shown = fitting(&widths, sep, width("…"), room);
-    for (k, at) in shown.iter().enumerate() {
-        if k > 0 {
-            ui.label(kit::mono(SEPARATOR, 13.0).color(colors.fg(Token::Border)));
-        }
-        let Some(i) = *at else {
-            ui.label(kit::mono("…", 13.0).color(colors.fg(Token::FgDim)));
-            continue;
-        };
-        let seg = &segs[i];
-        if i == last {
-            let label =
-                egui::Label::new(kit::mono_bold(&seg.text, 13.0).color(colors.fg(Token::Dir)))
-                    .truncate();
-            ui.add(label).on_hover_text(seg.text.as_str());
-            break;
-        }
-        let link = egui::Link::new(kit::mono(&seg.text, 13.0).color(colors.fg(Token::FgDim)));
-        if ui.add(link).clicked() {
-            out.push(Intent::GoTo {
-                child: segs[i + 1].dir.clone(),
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn breadcrumbs_run_from_the_root_with_home_as_tilde() {
-        let home = Path::new("/home/u");
-        let root = HostPath::from("/home/u/dev");
-        // Joined as the tree joins them: with `\` on Windows.
-        let dir = root.join(b"a").join(b"b");
-        let segs = segments(&dir, &root, Some(home));
-        let texts: Vec<&str> = segs.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(texts, ["~/dev", "a", "b"]);
-        assert_eq!(segs[1].dir, root.join(b"a"));
-        // Before the first snapshot the root is not known: the directory is one breadcrumb.
-        let segs = segments(&dir, &HostPath::from(""), Some(home));
-        assert_eq!(segs.len(), 1);
+    fn elapsed_time_is_minutes_and_seconds() {
         assert_eq!(mmss(Duration::from_secs(75)), "01:15");
-    }
-
-    #[test]
-    fn breadcrumbs_that_do_not_fit_fold_the_middle_ones() {
-        let w = [50.0, 30.0, 30.0, 30.0, 40.0];
-        assert_eq!(fitting(&w, 10.0, 10.0, 1000.0).len(), 5);
-        // Room for the ends, the ellipsis and one more.
-        assert_eq!(
-            fitting(&w, 10.0, 10.0, 50.0 + 40.0 + 30.0 + 10.0 + 4.0 * 10.0),
-            [Some(0), None, Some(3), Some(4)]
-        );
-        assert_eq!(fitting(&w, 10.0, 10.0, 0.0), [Some(0), None, Some(4)]);
     }
 }

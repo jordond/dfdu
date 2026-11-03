@@ -1,10 +1,11 @@
 //! The overlays, drawn over the browser and taking every key while open: `help`, `error_list`,
-//! `confirm` (the delete confirmation), `palette`, `type_filter` (the file type picker) and
-//! `mark_pattern` (the glob that marks names).
-//! Also the sizing and cursor keys the searchable lists among them share.
+//! `confirm` (the delete confirmation), `palette`, `type_filter` (the file type picker),
+//! `mark_pattern` (the glob that marks names) and `goto` (the path of a folder to go to). Also
+//! the sizing and cursor keys the searchable lists among them share.
 
 pub(crate) mod confirm;
 pub(crate) mod error_list;
+pub(crate) mod goto;
 pub(crate) mod help;
 pub(crate) mod mark_pattern;
 pub(crate) mod palette;

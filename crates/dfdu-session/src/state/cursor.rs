@@ -137,6 +137,27 @@ impl SessionState {
         })
     }
 
+    /// Opens the directory at `path`, found by path once its rows are read, with the selection
+    /// it had when it was left. `None` when it is the directory shown or being opened.
+    pub fn open_dir(&mut self, path: HostPath) -> Option<Moved> {
+        if path == self.target.path {
+            return None;
+        }
+        let left = self.save_cursor();
+        let saved = self.list.cursors.get(&path).cloned();
+        self.list.moved = saved.is_some();
+        self.selected = saved.flatten();
+        self.target = Target {
+            node: None,
+            path: path.clone(),
+            ident: None,
+        };
+        Some(Moved {
+            left,
+            opened: Some(path),
+        })
+    }
+
     /// Goes to an entry below the scan root `root`: opens its parent directory and selects it.
     /// `None` when `path` is the root or has no parent.
     pub fn go_to(&mut self, path: &HostPath, root: &HostPath) -> Option<Moved> {

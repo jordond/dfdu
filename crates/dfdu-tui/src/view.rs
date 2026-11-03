@@ -26,7 +26,7 @@ use crate::app::views::{self, View};
 use crate::app::{App, Overlay};
 use crate::features::{debug, details, treemap};
 use crate::input::line::LineInput;
-use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
+use crate::overlay::{confirm, error_list, goto, help, mark_pattern, palette, type_filter};
 use crate::state::motion;
 
 /// Where the last frame drew each part of the screen, for mapping mouse positions.
@@ -121,6 +121,7 @@ pub fn draw(f: &mut Frame, app: &mut App, now: Instant) {
         Overlay::Palette { .. } => Some(palette::draw(f, app, area)),
         Overlay::Types(_) => Some(type_filter::draw(f, app, area)),
         Overlay::MarkPattern(_) => Some(mark_pattern::draw(f, app, area)),
+        Overlay::GoTo(_) => Some(goto::draw(f, app, area)),
     };
     motion::post_process(app, f.buffer_mut(), now);
 }

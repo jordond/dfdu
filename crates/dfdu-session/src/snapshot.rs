@@ -241,7 +241,7 @@ pub struct Snapshot {
     pub tree: Option<crate::tree::Found>,
 }
 
-fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
+pub(crate) fn mark_of(tree: &Tree, ix: Ix, rescanning: &HashSet<NodeRef>) -> Mark {
     if tree.flags(ix).has(dfdu_tree::NodeFlags::DELETING) {
         return Mark::Deleting;
     }

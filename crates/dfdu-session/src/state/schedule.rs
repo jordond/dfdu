@@ -47,6 +47,12 @@ impl SortSchedule {
         self.last_input = now;
     }
 
+    /// When the last input was noted ([`SortSchedule::note_input`]).
+    #[must_use]
+    pub fn last_input(&self) -> Instant {
+        self.last_input
+    }
+
     /// A snapshot that changed came in since the last sort.
     pub fn changed(&self) -> bool {
         self.changed

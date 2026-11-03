@@ -15,6 +15,7 @@ mod frames;
 mod matrix;
 mod navigation;
 mod read_only;
+mod reopen;
 mod review;
 mod soak;
 mod tree;

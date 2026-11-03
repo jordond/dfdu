@@ -292,6 +292,13 @@ fn overlay_hints(overlay: &Overlay, arrows: &str) -> Option<Vec<Hint>> {
         Overlay::MarkPattern(_) => {
             vec![hint("Enter", "mark", 0), hint("Esc", "cancel", 0)]
         }
+        Overlay::GoTo(_) => {
+            vec![
+                hint("Tab", "complete", 0),
+                hint("Enter", "go", 0),
+                hint("Esc", "cancel", 0),
+            ]
+        }
     })
 }
 

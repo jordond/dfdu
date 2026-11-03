@@ -10,6 +10,7 @@ use dfdu_session::type_filter::Row;
 use dfdu_session::{cleanup, confirm, dupes, largest};
 use dfdu_tree::HostPath;
 
+use crate::goto::GoTo;
 use crate::help::Help;
 use crate::palette::Palette;
 
@@ -30,6 +31,10 @@ pub enum Intent {
     GoTo {
         child: HostPath,
     },
+    /// A click on a breadcrumb above the scan root: a new scan of its directory.
+    Reopen(HostPath),
+    /// `Enter` in the go-to window, with the path typed.
+    GoToFolder(String),
     /// The filter's text changed.
     Filter(String),
     /// `Enter` in the filter.
@@ -100,6 +105,8 @@ pub struct ViewState {
     pub palette: Option<Palette>,
     /// The help, while it is open.
     pub help: Option<Help>,
+    /// The go-to window, while it is open.
+    pub goto: Option<GoTo>,
     /// The names of the themes the palette offers, as the window lists them.
     pub themes: Vec<String>,
     /// The theme chosen in the palette, by its index in `themes`, for the window to apply.
@@ -110,9 +117,55 @@ pub struct ViewState {
     pub admin_open: bool,
     /// The Updates window was asked for, for the window to open.
     pub updates_open: bool,
+    /// A scan of this path was asked for, outside the scan shown, for the window to open with
+    /// the settings of this one.
+    pub reopen: Option<HostPath>,
     /// The folders macOS keeps from the window that the scan could not read, as the banner
     /// on Full Disk Access names them, until it is dismissed (`access`).
     pub no_access: Option<Vec<String>>,
     /// The finished scan was checked for those folders.
     pub access_checked: bool,
+}
+
+impl ViewState {
+    /// A window over the list takes the keys (the error list, the type picker, the help, the
+    /// command palette, the go-to window), or the delete dialog of `s` is open.
+    pub fn takes_keys(&self, s: &dfdu_session::SessionState) -> bool {
+        self.errors.is_some()
+            || self.types.is_some()
+            || self.help.is_some()
+            || self.palette.is_some()
+            || self.goto.is_some()
+            || s.confirm.is_some()
+    }
+}
+
+impl Intent {
+    /// Only an action can be the second `Parent` at the scan root: anything else the user did
+    /// (a click, a filter edited) disarms the first.
+    pub fn keeps_armed(&self) -> bool {
+        matches!(self, Intent::Act(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use dfdu_session::SessionState;
+
+    use super::*;
+
+    #[test]
+    fn only_an_action_or_the_list_keeps_parent_armed() {
+        assert!(Intent::Act(Action::Parent).keeps_armed());
+        assert!(!Intent::Select(0).keeps_armed());
+        assert!(!Intent::Filter("x".into()).keeps_armed());
+
+        let s = SessionState::new(Instant::now());
+        let mut view = ViewState::default();
+        assert!(!view.takes_keys(&s));
+        view.goto = Some(GoTo::default());
+        assert!(view.takes_keys(&s));
+    }
 }

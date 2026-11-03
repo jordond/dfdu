@@ -1,14 +1,17 @@
 //! The window's contents: the start screen until a directory or an export is chosen, with a
 //! View menu in its top right corner, then the browser of its scan, or why it could not be
-//! opened. The browser is stopped when the
-//! window closes. The settings (`settings`) are applied when a browser opens and saved from it.
-//! Cmd-Q and Cmd-W (Ctrl-Q, Ctrl-W) close the window. The View menu chooses the theme: the system's dark or light one, either of them, or a theme
+//! opened. The browser is stopped when the window closes. The settings (`settings`) are applied
+//! when a browser opens and saved from it. Cmd-Q and Cmd-W (Ctrl-Q, Ctrl-W) close the window.
+//! The View menu chooses the theme: the system's dark or light one, either of them, or a theme
 //! file of dfdu's theme directory (`theme`), read when it is chosen.
+//!
+//! A browser that asks for a scan of a folder outside its own gets one opened the way its own
+//! was (`reopen`).
 
+mod reopen;
+
+use std::io;
 use std::path::PathBuf;
-
-use dfdu_session::palette::{ThemeFile, Token};
-use dfdu_session::startup::{Source, StartLocal};
 
 use crate::browser::Browse;
 use crate::kit;
@@ -16,6 +19,9 @@ use crate::launch::{self, Launch, Settings};
 use crate::settings::{Prefs, ThemeChoice};
 use crate::start::{self, Chosen, Start};
 use crate::theme::{self, Colors};
+use dfdu_session::palette::{ThemeFile, Token};
+use dfdu_session::startup::{Source, StartLocal};
+use reopen::{Back, Origin};
 
 enum Screen {
     /// The start screen, with how a directory chosen on it is scanned.
@@ -23,21 +29,21 @@ enum Screen {
         start: Start,
         local: StartLocal,
     },
-    Browse(Box<dyn Browse>),
+    Browse(Box<dyn Browse>, Origin),
     /// An administrator's scan of `path`, waiting for the system's password dialog and the
     /// agent ([`launch::elevate`]).
     Elevating {
         path: PathBuf,
         opened: crossbeam_channel::Receiver<launch::Elevating>,
-        /// The start screen to show again if the password dialog is cancelled.
-        back: Option<(Start, StartLocal)>,
+        /// The screen to show again if the password dialog is cancelled.
+        back: Option<Back>,
     },
     /// A scan of another computer, while ssh connects and the agent starts there
     /// ([`crate::remote`]).
     Connecting {
         conn: Box<crate::remote::Connecting>,
-        /// The start screen to show again if it fails or is cancelled.
-        back: (Start, StartLocal),
+        /// The screen to show again if it fails or is cancelled.
+        back: Back,
     },
     /// What was chosen could not be opened.
     Failed(String),
@@ -112,9 +118,15 @@ impl Gui {
             } if admin => {
                 let mut back = Start::new(ctx);
                 back.admin = true;
-                gui.elevate(path, Some((back, start)), ctx)
+                gui.elevate(path, Some(Back::Start(back, start)), ctx)
             }
-            source => gui.open(source, ctx),
+            source => {
+                let origin = match source {
+                    Source::Imported(_) => Origin::Imported,
+                    _ => Origin::Local,
+                };
+                gui.open(source, origin, None, ctx)
+            }
         };
         gui
     }
@@ -124,6 +136,7 @@ impl Gui {
         window_keys(ui.ctx());
         let colors = Colors::new(ui.ctx().theme(), self.file_in_use());
         let current = self.themes().iter().position(|t| *t == self.prefs.theme);
+        let mut reopen = None;
         match &mut self.screen {
             Screen::Start { start, .. } => {
                 if let Some(w) = self.secrets.warning() {
@@ -137,7 +150,7 @@ impl Gui {
                     self.chosen(chosen, ui.ctx());
                 }
             }
-            Screen::Browse(b) => {
+            Screen::Browse(b, _) => {
                 b.view_mut().theme_current = current;
                 if let Some(w) = self.secrets.warning() {
                     b.state_mut().status = Some(w);
@@ -150,18 +163,18 @@ impl Gui {
                     self.updates.open(ui.ctx());
                 }
                 let pick = b.view_mut().theme_pick.take();
+                reopen = b.view_mut().reopen.take();
                 if let Some(choice) = pick.and_then(|i| self.themes().get(i).cloned()) {
                     self.choose(choice, ui.ctx());
                 }
             }
             Screen::Elevating { path, opened, back } => match opened.try_recv() {
-                Ok(Ok(elevated)) => self.screen = self.open(elevated.source(), ui.ctx()),
-                Ok(Err(Some(e))) => self.screen = Screen::Failed(e),
-                Ok(Err(None)) => {
-                    self.screen = match back.take() {
-                        Some((start, local)) => Screen::Start { start, local },
-                        None => Screen::Closed,
-                    };
+                Ok(Ok(elevated)) => {
+                    let old = back.take().and_then(Back::into_browser);
+                    self.screen = self.open(elevated.source(), Origin::Admin, old, ui.ctx());
+                }
+                Ok(Err(why)) => {
+                    self.screen = reopen::not_elevated(back.take(), why);
                     ui.ctx().request_repaint();
                 }
                 Err(_) => {
@@ -180,6 +193,9 @@ impl Gui {
             }
             Screen::Failed(e) => message(ui, &colors, e, colors.fg(Token::StatusError)),
             Screen::Closed => {}
+        }
+        if let Some(path) = reopen {
+            self.reopen(&path, ui.ctx());
         }
         // The browser's toolbar has its own View menu.
         if !self.browsing() {
@@ -240,41 +256,45 @@ impl Gui {
                 self.admin = Some(crate::admin::Panel::new());
                 Screen::Start { start, local }
             }
-            Chosen::Folder(path) if start.admin => self.elevate(path, Some((start, local)), ctx),
-            Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
+            Chosen::Folder(path) if start.admin => {
+                self.elevate(path, Some(Back::Start(start, local)), ctx)
+            }
+            Chosen::Folder(path) => {
+                self.open(launch::picked(path, local), Origin::Local, None, ctx)
+            }
             Chosen::Remote(target) => {
                 start.remote_error = None;
                 let conn = crate::remote::Connecting::start(target, &self.settings, ctx);
                 Screen::Connecting {
                     conn: Box::new(conn),
-                    back: (start, local),
+                    back: Back::Start(start, local),
                 }
             }
             Chosen::Export(file) => match launch::import(&file) {
-                Ok(tree) => self.open(Source::Imported(tree), ctx),
+                Ok(tree) => self.open(Source::Imported(tree), Origin::Imported, None, ctx),
                 Err(e) => Screen::Failed(format!("Cannot open {}: {e}", file.display())),
             },
         };
         ctx.request_repaint();
     }
 
-    /// Opens the scan of the other computer connected to, or shows the start screen again
-    /// with why it could not.
+    /// Opens the scan of the other computer connected to, or shows the screen it was asked
+    /// from again with why it could not.
     fn connected(&mut self, outcome: crate::remote::Outcome, ctx: &egui::Context) {
         let Screen::Connecting { conn, back } = std::mem::replace(&mut self.screen, Screen::Closed)
         else {
             return;
         };
-        let (mut start, local) = back;
+        let target = conn.target.clone();
         self.screen = match outcome {
             crate::remote::Outcome::Opened(opened) => {
-                crate::remote::remember(&mut self.prefs.remotes, &conn.target);
-                self.open(opened.source(), ctx)
+                if back.remembers() {
+                    crate::remote::remember(&mut self.prefs.remotes, &target);
+                }
+                let old = back.into_browser();
+                self.open(opened.source(), Origin::Remote(target), old, ctx)
             }
-            crate::remote::Outcome::Failed(why) => {
-                start.failed_remote(&conn.target, why);
-                Screen::Start { start, local }
-            }
+            crate::remote::Outcome::Failed(why) => reopen::not_connected(back, &target, why),
         };
         ctx.request_repaint();
     }
@@ -312,7 +332,7 @@ impl Gui {
                 Err(e) => {
                     let problem = format!("theme {name}: {e}");
                     match &mut self.screen {
-                        Screen::Browse(b) => b.state_mut().status = Some(problem),
+                        Screen::Browse(b, _) => b.state_mut().status = Some(problem),
                         _ => eprintln!("dfdu-gui: {problem}"),
                     }
                     return;
@@ -333,7 +353,7 @@ impl Gui {
     /// The settings to keep: the theme, and how the browser shows its list.
     pub fn prefs(&self) -> Prefs {
         match &self.screen {
-            Screen::Browse(b) => Prefs {
+            Screen::Browse(b, _) => Prefs {
                 tree: b.state().tree.is_some(),
                 details: b.state().details.open,
                 ..self.prefs.clone()
@@ -350,13 +370,13 @@ impl Gui {
 
     /// A browser is shown.
     pub fn browsing(&self) -> bool {
-        matches!(self.screen, Screen::Browse(_))
+        matches!(self.screen, Screen::Browse(..))
     }
 
     /// The browser shown has finished its scan.
     pub fn scan_done(&self) -> bool {
         match &self.screen {
-            Screen::Browse(b) => b.state().done_at.is_some() && !b.state().snap.busy,
+            Screen::Browse(b, _) => b.state().done_at.is_some() && !b.state().snap.busy,
             _ => false,
         }
     }
@@ -365,7 +385,7 @@ impl Gui {
     #[cfg(test)]
     pub fn browser(&self) -> Option<&dyn Browse> {
         match &self.screen {
-            Screen::Browse(b) => Some(b.as_ref()),
+            Screen::Browse(b, _) => Some(b.as_ref()),
             _ => None,
         }
     }
@@ -374,47 +394,61 @@ impl Gui {
     #[cfg(test)]
     pub fn browser_mut(&mut self) -> Option<&mut dyn Browse> {
         match &mut self.screen {
-            Screen::Browse(b) => Some(b.as_mut()),
+            Screen::Browse(b, _) => Some(b.as_mut()),
             _ => None,
         }
     }
 
-    /// Stops the browser, if one is shown.
+    /// Stops the browser, if one is shown or waits for the scan that replaces it.
     pub fn close(&mut self) {
-        if let Screen::Browse(b) = std::mem::replace(&mut self.screen, Screen::Closed) {
-            b.shutdown();
+        match std::mem::replace(&mut self.screen, Screen::Closed) {
+            Screen::Browse(b, _)
+            | Screen::Elevating {
+                back: Some(Back::Browse(b, _)),
+                ..
+            } => b.shutdown(),
+            Screen::Connecting { mut conn, back } => {
+                conn.cancel();
+                if let Back::Browse(b, _) = back {
+                    b.shutdown();
+                }
+            }
+            _ => {}
         }
     }
 
     /// The screen waiting for an administrator's scan of `path` to start.
-    fn elevate(
-        &self,
-        path: PathBuf,
-        back: Option<(Start, StartLocal)>,
-        ctx: &egui::Context,
-    ) -> Screen {
+    fn elevate(&self, path: PathBuf, back: Option<Back>, ctx: &egui::Context) -> Screen {
         let opened = launch::elevate(path.clone(), &self.settings, ctx);
         Screen::Elevating { path, opened, back }
     }
 
-    /// The browser of `source`, showing its list as the settings say, or why it could not be
-    /// opened.
-    fn open(&self, source: Source, ctx: &egui::Context) -> Screen {
+    /// The browser of `source`, opened as `origin` says, showing its list as the settings
+    /// say; the browser `old` it replaces is stopped. When it cannot be opened, `old` shows
+    /// again with why, or the screen says why.
+    fn open(
+        &self,
+        source: Source,
+        origin: Origin,
+        old: Option<(Box<dyn Browse>, Origin)>,
+        ctx: &egui::Context,
+    ) -> Screen {
+        reopen::replaced(self.start_browser(source, ctx), origin, old)
+    }
+
+    /// The browser of `source`, showing its list as the settings say.
+    fn start_browser(&self, source: Source, ctx: &egui::Context) -> io::Result<Box<dyn Browse>> {
         let themes = self.themes().iter().map(|t| t.label().to_owned()).collect();
-        match launch::open(source, &self.settings, ctx) {
-            Ok(mut b) => {
-                let s = b.state_mut();
-                if self.prefs.tree {
-                    dfdu_session::tree::act::toggle(s);
-                }
-                if self.prefs.details {
-                    dfdu_session::details::toggle(s);
-                }
-                b.view_mut().themes = themes;
-                Screen::Browse(b)
-            }
-            Err(e) => Screen::Failed(format!("Cannot open it: {e}")),
+        let mut b = launch::open(source, &self.settings, ctx)?;
+        let s = b.state_mut();
+        if self.prefs.tree {
+            dfdu_session::tree::act::toggle(s);
         }
+        if self.prefs.details {
+            dfdu_session::details::toggle(s);
+        }
+        b.view_mut().themes = themes;
+        Ok(b)
     }
 }
 
