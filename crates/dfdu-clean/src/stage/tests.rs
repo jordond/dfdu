@@ -170,7 +170,8 @@ fn a_swapped_item_is_not_staged() {
     let mut s = Stager::new("s".into(), None);
     let to = s.target(&item, tmp.path()).unwrap();
 
-    fs::remove_file(&f).unwrap();
+    // Kept aside, not removed: a new file could get the freed inode back (ext4, tmpfs).
+    fs::rename(&f, a.join("f.old")).unwrap();
     fs::write(&f, b"other").unwrap();
     let e = s.stage(&f, &item.identity, &to).unwrap_err();
     assert!(e.to_string().contains("no longer"), "{e}");

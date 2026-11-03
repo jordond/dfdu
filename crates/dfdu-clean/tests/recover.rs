@@ -141,7 +141,9 @@ fn finish_leaves_a_swapped_stage_path_alone() {
 }
 
 /// Restoring a staged item whose stage path now names something else is refused, moves
-/// nothing, and leaves the item restorable once it is back.
+/// nothing, and leaves the item restorable once it is back. Unix only: Windows restores by path
+/// (no root acting for a user there).
+#[cfg(unix)]
 #[test]
 fn restore_leaves_a_swapped_stage_path_alone() {
     let tmp = canonical_tempdir();
