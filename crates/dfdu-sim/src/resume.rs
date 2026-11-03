@@ -127,7 +127,7 @@ pub fn run_resumed(seed: u64, cfg: &SimConfig) -> Result<SimReport, SimError> {
 
 /// Up to [`CHANGES`] entries to create or remove: live, in a directory without faults (so
 /// that no fault moves), and not inside or above one another or one of `not`.
-fn pick(spec: &Spec, rng: &mut Rng, not: &[u32]) -> Vec<u32> {
+pub(crate) fn pick(spec: &Spec, rng: &mut Rng, not: &[u32]) -> Vec<u32> {
     let mut out: Vec<u32> = Vec::new();
     let n = spec.nodes.len();
     for _ in 0..rng.below(CHANGES + 1) {
@@ -141,12 +141,12 @@ fn pick(spec: &Spec, rng: &mut Rng, not: &[u32]) -> Vec<u32> {
 }
 
 /// A spec node's number as the spec stores it.
-fn id(i: usize) -> u32 {
+pub(crate) fn id(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(ROOT)
 }
 
 /// Whether `i` is `a` or below it.
-fn below(spec: &Spec, mut i: u32, a: u32) -> bool {
+pub(crate) fn below(spec: &Spec, mut i: u32, a: u32) -> bool {
     loop {
         if i == a {
             return true;
@@ -158,7 +158,7 @@ fn below(spec: &Spec, mut i: u32, a: u32) -> bool {
     }
 }
 
-fn restore_subtree(spec: &Spec, i: u32) {
+pub(crate) fn restore_subtree(spec: &Spec, i: u32) {
     let mut stack = vec![i];
     while let Some(n) = stack.pop() {
         spec.restore(n);
@@ -167,7 +167,7 @@ fn restore_subtree(spec: &Spec, i: u32) {
 }
 
 /// The path of `i` relative to the root.
-fn rel_path(spec: &Spec, mut i: u32) -> PathBuf {
+pub(crate) fn rel_path(spec: &Spec, mut i: u32) -> PathBuf {
     let mut names = Vec::new();
     while i != ROOT {
         names.push(String::from_utf8_lossy(&spec.nodes[i as usize].name).into_owned());

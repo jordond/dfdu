@@ -26,6 +26,7 @@ mod config;
 mod deleter;
 mod end;
 mod error;
+mod graft;
 mod random;
 mod resume;
 mod spec;
@@ -39,6 +40,7 @@ pub use backend::{SimBackend, SimClock, SimSink, SimStream};
 pub use check::sim_check;
 pub use config::{SimConfig, SimReport, sim_rules};
 pub use error::SimError;
+pub use graft::{run_grafted, scan_above, scan_old};
 pub use resume::run_resumed;
 pub use spec::{
     CACHEDIR_TAG, Fault, ROOT, ROOT_NAME, Rng, SimPiece, Spec, SpecBuilder, SpecConfig, SpecNode,
