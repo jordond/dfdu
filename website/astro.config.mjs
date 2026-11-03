@@ -15,7 +15,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'dfdu',
-      description: 'Docs for dfdu, a disk usage browser for the terminal.',
+      description: 'Docs for dfdu, a disk usage browser for the terminal and the desktop.',
       logo: {
         light: '../assets/logo/dfdu-logo.svg',
         dark: '../assets/logo/dfdu-logo-dark.svg',
@@ -45,6 +45,7 @@ export default defineConfig({
             { label: 'Install', slug: 'docs/install' },
             { label: 'Browsing', slug: 'docs/usage' },
             { label: 'Command line', slug: 'docs/cli' },
+            { label: 'Desktop app', slug: 'docs/desktop' },
           ],
         },
         {

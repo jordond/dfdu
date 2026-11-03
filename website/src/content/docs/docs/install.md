@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install dfdu with the install script, Homebrew, cargo binstall, Nix, the PowerShell installer, a release binary or from source.
+description: Install dfdu with the install script, Homebrew, cargo binstall, Nix, the PowerShell installer, a release binary or from source. The desktop app has its own downloads.
 ---
 
 ## Install script
@@ -96,3 +96,14 @@ With Rust 1.95 or newer:
 ```sh
 cargo install --locked --git https://github.com/jordond/dfdu dfdu
 ```
+
+## Desktop app
+
+From 0.3.0, the desktop app is a separate download:
+
+```sh
+brew install --cask jordond/tap/dfdu-gui                       # macOS
+curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui        # macOS, Linux x86_64, with the CLI
+```
+
+The [latest release](https://github.com/jordond/dfdu/releases/latest) has a disk image for macOS, a `.deb` and an AppImage for Linux, and an installer and a portable zip for Windows. [Desktop app](/docs/desktop/#install) covers each one.

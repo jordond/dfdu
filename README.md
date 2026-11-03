@@ -3,7 +3,7 @@
   <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
 </picture>
 
-A disk usage browser for the terminal. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
+A disk usage browser for the terminal and the desktop. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
 ![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
 
@@ -15,6 +15,7 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
 - **History.** Every scan is recorded, so you can ask what grew since last week.
 - **Remote.** Browse and delete on another machine over ssh.
+- **Desktop app.** The same browser in a window for macOS, Linux and Windows, with the same keys as the terminal browser and a command palette.
 - **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
 - **Safe by default.** Deletes go to the Trash; permanent deletes ask you to type `delete`. `--read-only` removes the delete keys.
 
@@ -23,11 +24,7 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 ```sh
 curl -fsSL https://dfdu.app/install.sh | sh                 # macOS, Linux
 brew install jordond/tap/dfdu                               # macOS, Linux
-cargo binstall --git https://github.com/jordond/dfdu dfdu
-nix run github:jordond/dfdu
 ```
-
-The install script puts `dfdu` in `~/.local/bin` with its man pages and shell completions; `dfdu update` (or running the script again) updates it. Add `-s -- --bin-dir DIR` to install elsewhere or `--version VER` to pin a release; [the install docs](https://dfdu.app/docs/install/) have the details.
 
 Windows:
 
@@ -35,56 +32,39 @@ Windows:
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/releases/latest/download/dfdu-installer.ps1 | iex"
 ```
 
-Binaries for macOS, Linux (static) and Windows are on the [releases page](https://github.com/jordond/dfdu/releases), with man pages and shell completions. To build from source (Rust 1.95+): `cargo install --locked --git https://github.com/jordond/dfdu dfdu`.
+The desktop app:
+
+```sh
+brew install --cask jordond/tap/dfdu-gui                    # macOS
+curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui     # macOS, Linux x86_64, with the CLI
+```
+
+[The install docs](https://dfdu.app/docs/install/) cover release binaries, cargo, Nix, the install script's options, and the desktop app's downloads for Linux and Windows.
 
 ## Usage
 
 ```sh
-dfdu                      # browse the current directory
 dfdu ~                    # browse a directory
 dfdu --disks              # pick a disk first
-dfdu --type video ~       # only video files
-dfdu --remote server /srv # another host over ssh (sends dfdu there if needed)
+dfdu --remote server /srv # another host over ssh
 ```
 
-Keys follow ncdu. Press `?` in the app for the full list.
-
-| Key | Action | Key | Action |
-| --- | --- | --- | --- |
-| `↑↓←→` / `hjkl` | Move, open, go back | `1` `2` | List, treemap |
-| `s` `n` `C` `M` | Sort by size, name, count, date | `3` | Cleanup |
-| `T` | Tree mode | `4` | Duplicates |
-| `/` `t` | Filter by name, by file type | `5` | Largest files |
-| `v` | Mark a range | `d` | Move to Trash |
-| `o` `y` | Open in file manager, copy path | `D` | Delete permanently |
-| `r` | Rescan | `q` | Quit |
-
-Unreadable entries are marked `!` with the reason. Press `!` to list them all.
-
-Like `ncdu -x`, a scan stays on one filesystem. Add `--cross-mounts` for other local filesystems and `--network` for network mounts.
-
-Scans that took 3 s or more are cached, so the next `dfdu PATH` opens at once and refreshes in the background (`cached 3 h ago, refreshing` in the header). On macOS, Windows and btrfs only the changed directories are read again. A cache is used for 14 days and the cache keeps at most 1 GiB, readable only by you. `--no-cache` scans afresh, `DFDU_CACHE=0` turns it off, `dfdu cache list` and `dfdu cache clear` manage it.
-
-## Command line
+Keys follow ncdu. Press `?` in the app for the full list, or see [Browsing](https://dfdu.app/docs/usage/).
 
 ```sh
-dfdu scan ~                                 # print a summary
-dfdu scan ~ --by-type                       # usage by file type
-dfdu disks                                  # disks and free space, like df -h
-dfdu dupes ~ --min-size 10MiB               # duplicate files
-dfdu report ~/dev                           # what the cleanup rules found
-dfdu report ~/dev --format json --fail-above 20GiB   # CI: exit 4 over the limit
-dfdu clean ~/dev                            # dry run of the recommended deletes
-dfdu clean ~/dev --yes                      # move them to the Trash
-dfdu diff ~ --since 7d                      # what grew in the last week
-dfdu export ~ --snapshot -o home.snap       # save a scan
-dfdu -f home.snap                           # browse a saved scan or an ncdu export
+dfdu report ~/dev         # what the cleanup rules found
+dfdu clean ~/dev          # dry run of the recommended deletes
+dfdu diff ~ --since 7d    # what grew in the last week
 ```
 
-`clean` changes nothing without `--yes`. JSON output is versioned; the schemas are in [`schema/`](schema). `dfdu --help` lists every option and exit code.
+[Command line](https://dfdu.app/docs/cli/) has the commands for scripts and CI, with JSON output and size limits.
 
 ## Docs
 
+- [Install](https://dfdu.app/docs/install/): every install method, options and uninstalling
+- [Browsing](https://dfdu.app/docs/usage/): keys, views, mounts and the scan cache
+- [Command line](https://dfdu.app/docs/cli/): the commands for scripts and CI
+- [Desktop app](https://dfdu.app/docs/desktop/): installing and using the desktop app
 - [Cleanup rules](https://dfdu.app/docs/rules/): the built-in rules and how to write your own
 - [Themes](https://dfdu.app/docs/themes/): five built-in themes and custom TOML themes
 - [Benchmarks](https://dfdu.app/docs/benchmarks/): scan time and memory against other tools
