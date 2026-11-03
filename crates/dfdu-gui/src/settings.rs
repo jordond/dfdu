@@ -1,7 +1,9 @@
 //! The settings kept between runs in eframe's storage, beside the window's size and position
 //! (which eframe keeps itself): the theme chosen (a built-in one, or a theme file by its name),
-//! and how the last browser showed its list (tree mode, the details panel). They are one line
-//! of `key=value` pairs under [`KEY`]; a value that does not read is left at its default.
+//! how the last browser showed its list (tree mode, the details panel), and the update check
+//! (whether it runs, when it last did, what it found and which release was dismissed). They are
+//! one line of `key=value` pairs under [`KEY`]; a value that does not read is left at its
+//! default.
 //!
 //! The storage is `gui.ron` in dfdu's state directory (`DFDU_STATE_DIR` when set), beside the
 //! scan history ([`path`]).
@@ -58,24 +60,55 @@ impl ThemeChoice {
 }
 
 /// The settings kept between runs.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prefs {
     pub theme: ThemeChoice,
     /// The list was in tree mode.
     pub tree: bool,
     /// The details panel was open.
     pub details: bool,
+    /// Check for a newer release at start and once a day (on unless turned off).
+    pub updates: bool,
+    /// When the last check answered, in seconds since the Unix epoch.
+    pub checked: u64,
+    /// The latest release it found.
+    pub latest: Option<String>,
+    /// The release whose notice was dismissed.
+    pub skipped: Option<String>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            theme: ThemeChoice::default(),
+            tree: false,
+            details: false,
+            updates: true,
+            checked: 0,
+            latest: None,
+            skipped: None,
+        }
+    }
 }
 
 impl Prefs {
-    /// `theme=dark tree=1 details=0`.
+    /// `theme=dark tree=1 details=0 updates=1 checked=0`, then `latest=` and `skipped=` when
+    /// known.
     pub fn encode(&self) -> String {
-        format!(
-            "theme={} tree={} details={}",
+        let mut s = format!(
+            "theme={} tree={} details={} updates={} checked={}",
             self.theme.name(),
             u8::from(self.tree),
-            u8::from(self.details)
-        )
+            u8::from(self.details),
+            u8::from(self.updates),
+            self.checked,
+        );
+        for (key, v) in [("latest", &self.latest), ("skipped", &self.skipped)] {
+            if let Some(v) = v {
+                s += &format!(" {key}={v}");
+            }
+        }
+        s
     }
 
     /// The settings `text` stores; those missing or that do not read are the defaults.
@@ -94,6 +127,10 @@ impl Prefs {
                 "theme" => p.theme = ThemeChoice::from_name(value).unwrap_or(p.theme),
                 "tree" => p.tree = flag.unwrap_or(p.tree),
                 "details" => p.details = flag.unwrap_or(p.details),
+                "updates" => p.updates = flag.unwrap_or(p.updates),
+                "checked" => p.checked = value.parse().unwrap_or(p.checked),
+                "latest" => p.latest = version(value).or(p.latest),
+                "skipped" => p.skipped = version(value).or(p.skipped),
                 _ => {}
             }
         }
@@ -110,6 +147,11 @@ impl Prefs {
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY, self.encode());
     }
+}
+
+/// `value` when it is a version.
+fn version(value: &str) -> Option<String> {
+    dfdu_update::Version::parse(value).map(|v| v.to_string())
 }
 
 /// Where eframe keeps the settings: `gui.ron` in dfdu's state directory, `None` (eframe's own
@@ -133,6 +175,10 @@ mod tests {
                     theme: theme.clone(),
                     tree,
                     details,
+                    updates: !tree,
+                    checked: 1_700_000_000,
+                    latest: details.then(|| "0.4.0".into()),
+                    skipped: tree.then(|| "0.4.0-rc.1".into()),
                 };
                 assert_eq!(Prefs::decode(&p.encode()), p);
             }
@@ -141,10 +187,10 @@ mod tests {
             Prefs {
                 theme: ThemeChoice::Dark,
                 tree: true,
-                details: false,
+                ..Prefs::default()
             }
             .encode(),
-            "theme=dark tree=1 details=0"
+            "theme=dark tree=1 details=0 updates=1 checked=0"
         );
     }
 
@@ -156,14 +202,17 @@ mod tests {
             Prefs::decode("theme=file:nord").theme,
             ThemeChoice::File("nord".into())
         );
-        let p = Prefs::decode("theme=sepia tree=yes details=1 font=12 junk");
+        let p = Prefs::decode(
+            "theme=sepia tree=yes details=1 font=12 junk updates=2 checked=x latest=new skipped=1",
+        );
         assert_eq!(
             p,
             Prefs {
-                theme: ThemeChoice::System,
-                tree: false,
                 details: true,
+                ..Prefs::default()
             }
         );
+        // Settings from before the update check have it on.
+        assert!(Prefs::decode("theme=dark tree=0 details=0").updates);
     }
 }

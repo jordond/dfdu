@@ -61,6 +61,9 @@ _dfdu() {
             dfdu,scan)
                 cmd="dfdu__subcmd__scan"
                 ;;
+            dfdu,update)
+                cmd="dfdu__subcmd__update"
+                ;;
             dfdu__subcmd__cache,clear)
                 cmd="dfdu__subcmd__cache__subcmd__clear"
                 ;;
@@ -124,6 +127,9 @@ _dfdu() {
             dfdu__subcmd__help,scan)
                 cmd="dfdu__subcmd__help__subcmd__scan"
                 ;;
+            dfdu__subcmd__help,update)
+                cmd="dfdu__subcmd__help__subcmd__update"
+                ;;
             dfdu__subcmd__help__subcmd__cache,clear)
                 cmd="dfdu__subcmd__help__subcmd__cache__subcmd__clear"
                 ;;
@@ -137,7 +143,7 @@ _dfdu() {
 
     case "${cmd}" in
         dfdu)
-            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --remote-agent --type --no-history --no-cache --theme --color --bars --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover cache man completions agent help"
+            opts="-x -f -h -V --one-file-system --cross-mounts --network --mft --no-rules --disks --resume-from --file --read-only --remote --remote-agent --type --no-history --no-cache --theme --color --bars --no-mouse --debug-stats --help --version scan disks report clean diff history dupes export import recover cache man update completions agent help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -479,7 +485,7 @@ _dfdu() {
             return 0
             ;;
         dfdu__subcmd__help)
-            opts="scan disks report clean diff history dupes export import recover cache man completions agent help"
+            opts="scan disks report clean diff history dupes export import recover cache man update completions agent help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -730,6 +736,20 @@ _dfdu() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        dfdu__subcmd__help__subcmd__update)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         dfdu__subcmd__history)
             opts="-h --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
@@ -907,6 +927,20 @@ _dfdu() {
                     COMPREPLY=($(compgen -W "native portable" -- "${cur}"))
                     return 0
                     ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        dfdu__subcmd__update)
+            opts="-h --check --force --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 *)
                     COMPREPLY=()
                     ;;

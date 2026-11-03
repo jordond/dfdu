@@ -203,7 +203,19 @@ fn the_start_screen_names_its_controls() {
         },
         ..super::local(tmp.path(), true, None)
     };
-    let mut h = harness(start);
+    // A newer release known from the last check: the notice shows.
+    let prefs = crate::settings::Prefs {
+        latest: Some("99.0.0".into()),
+        checked: crate::update::unix_now(),
+        ..crate::settings::Prefs::default()
+    };
+    let mut h = super::harness_with(start, prefs, None);
     until(&mut h, "the start screen", |h| shown(h, "Browse…"));
-    all_named(&mut h, "the start screen");
+    until(&mut h, "the notice", |h| shown(h, "Not now"));
+    all_named(&mut h, "the start screen and the update notice");
+
+    // The Updates window, its check failed (the tests' server is a closed port).
+    h.get_by_label("Update…").click();
+    until(&mut h, "the Updates window", |h| shown(h, "Try again"));
+    all_named(&mut h, "the Updates window");
 }

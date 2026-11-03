@@ -353,12 +353,12 @@ impl Panel {
 }
 
 /// Wrapped copy in `color`.
-fn copy(ui: &mut Ui, text: &str, color: Color32, size: f32) {
+pub(crate) fn copy(ui: &mut Ui, text: &str, color: Color32, size: f32) {
     ui.add(egui::Label::new(kit::sans(text, size).color(color)).wrap());
 }
 
 /// The window's top: `title` and `line` under it, and a close button on the right.
-fn header(ui: &mut Ui, colors: &Colors, title: &str, line: &str, open: &mut bool) {
+pub(crate) fn header(ui: &mut Ui, colors: &Colors, title: &str, line: &str, open: &mut bool) {
     Frame::new()
         .inner_margin(Margin {
             left: 24,
@@ -406,7 +406,7 @@ fn close_button(ui: &mut Ui, colors: &Colors) -> egui::Response {
 }
 
 /// The window's bottom: a `divider` rule, then `add` on `surface.hover` with 24 of room.
-fn footer(ui: &mut Ui, colors: &Colors, add: impl FnOnce(&mut Ui)) {
+pub(crate) fn footer(ui: &mut Ui, colors: &Colors, add: impl FnOnce(&mut Ui)) {
     ui.add_space(SPACE_2);
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     ui.painter().hline(
@@ -463,7 +463,7 @@ fn banner(ui: &mut Ui, colors: &Colors, rest: &str) {
 }
 
 /// `text` in mono on the window's background, as a command to type.
-fn code(ui: &mut Ui, colors: &Colors, text: &str) {
+pub(crate) fn code(ui: &mut Ui, colors: &Colors, text: &str) {
     Frame::new()
         .fill(colors.chrome.bg)
         .corner_radius(CornerRadius::same(RADIUS_SM))

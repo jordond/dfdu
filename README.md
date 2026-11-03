@@ -27,7 +27,7 @@ cargo binstall --git https://github.com/jordond/dfdu dfdu
 nix run github:jordond/dfdu
 ```
 
-The install script puts `dfdu` in `~/.local/bin` with its man pages and shell completions, and updates it when run again. Add `-s -- --bin-dir DIR` to install elsewhere or `--version VER` to pin a release; [the install docs](https://dfdu.app/docs/install/) have the details.
+The install script puts `dfdu` in `~/.local/bin` with its man pages and shell completions; `dfdu update` (or running the script again) updates it. Add `-s -- --bin-dir DIR` to install elsewhere or `--version VER` to pin a release; [the install docs](https://dfdu.app/docs/install/) have the details.
 
 Windows:
 

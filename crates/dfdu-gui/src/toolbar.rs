@@ -82,6 +82,10 @@ fn menu(ui: &mut Ui, s: &SessionState, view: &mut ViewState, out: &mut Vec<Inten
             view.admin_open = true;
             ui.close();
         }
+        if ui.button("Updates and command-line tool…").clicked() {
+            view.updates_open = true;
+            ui.close();
+        }
         ui.separator();
         ui.label(kit::label("Theme", 11.0).weak());
         for (i, name) in view.themes.iter().enumerate() {

@@ -32,15 +32,16 @@ serde_json.workspace = true
 dunce.workspace = true
 sha2.workspace = true
 hex.workspace = true
-ureq = { workspace = true, optional = true }
-lzma-rust2 = { workspace = true, optional = true }
-tar = { workspace = true, optional = true }
+dfdu-update.workspace = true
 
 [features]
-default = ["agent-download"]
+default = ["agent-download", "self-update"]
 # Downloads the release agent for `--remote` hosts of another platform. Without it, only this
 # build and `DFDU_AGENT_DIR` can be sent.
-agent-download = ["dep:ureq", "dep:lzma-rust2", "dep:tar"]
+agent-download = ["dfdu-update/net"]
+# `dfdu update` downloads and installs the latest release. Without it, it says the build has no
+# downloads.
+self-update = ["dfdu-update/net"]
 
 [dev-dependencies]
 tempfile.workspace = true

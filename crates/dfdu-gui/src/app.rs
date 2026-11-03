@@ -50,6 +50,8 @@ pub struct Gui {
     theme_files: Vec<String>,
     /// The Full disk access window, while open ([`crate::admin`]).
     admin: Option<crate::admin::Panel>,
+    /// The update check, its notice and the Updates window ([`crate::update`]).
+    updates: crate::update::Updates,
 }
 
 impl Gui {
@@ -82,6 +84,7 @@ impl Gui {
             theme_dir,
             theme_files,
             admin: None,
+            updates: crate::update::Updates::new(),
         };
         gui.choose(gui.prefs.theme.clone(), ctx);
         gui.screen = match source {
@@ -127,6 +130,9 @@ impl Gui {
                 if std::mem::take(&mut b.view_mut().admin_open) {
                     self.admin = Some(crate::admin::Panel::new());
                 }
+                if std::mem::take(&mut b.view_mut().updates_open) {
+                    self.updates.open(ui.ctx());
+                }
                 let pick = b.view_mut().theme_pick.take();
                 if let Some(choice) = pick.and_then(|i| self.themes().get(i).cloned()) {
                     self.choose(choice, ui.ctx());
@@ -162,10 +168,13 @@ impl Gui {
         {
             self.admin = None;
         }
+        self.updates.tick(ui.ctx(), &mut self.prefs);
+        self.updates.notice(ui.ctx(), &colors, &mut self.prefs);
+        self.updates.window(ui.ctx(), &colors, &mut self.prefs);
     }
 
     /// The View menu of the screens without a browser, quiet in the window's top right corner:
-    /// the theme.
+    /// Full disk access, Updates and the theme.
     fn menu(&mut self, ctx: &egui::Context, colors: &Colors) {
         let quiet = egui::Button::new(kit::label("View", 12.0).color(colors.fg(Token::FgDim)))
             .frame_when_inactive(false);
@@ -176,6 +185,10 @@ impl Gui {
                 egui::containers::menu::MenuButton::from_button(quiet).ui(ui, |ui| {
                     if ui.button("Full disk access…").clicked() {
                         self.admin = Some(crate::admin::Panel::new());
+                        ui.close();
+                    }
+                    if ui.button("Updates and command-line tool…").clicked() {
+                        self.updates.open(ui.ctx());
                         ui.close();
                     }
                     ui.separator();
@@ -275,6 +288,12 @@ impl Gui {
             },
             _ => self.prefs.clone(),
         }
+    }
+
+    /// No automatic update check, and no notice of a newer release: the window as screenshots
+    /// show it.
+    pub fn quiet_updates(&mut self) {
+        self.updates.quiet = true;
     }
 
     /// A browser is shown.

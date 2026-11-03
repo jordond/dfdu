@@ -72,6 +72,23 @@ Homebrew installs the binary, the man page and the shell completions.
 
 Binaries for macOS (arm64, x86_64), Linux (static musl, arm64 and x86_64) and Windows (x86_64) are on the [releases page](https://github.com/jordond/dfdu/releases), with man pages and shell completions.
 
+## Updating
+
+```sh
+dfdu update            # install the latest release over this dfdu
+dfdu update --check    # only say whether there is a newer one
+```
+
+`dfdu update` downloads the release for your machine from GitHub, checks it against its published SHA-256 and replaces the running binary, along with any man pages and completions the install script put in place. A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to that manager, and the command prints how to update it (`brew upgrade dfdu`). If the binary's directory is not writable, run `sudo dfdu update`. `--force` reinstalls the latest release even when you already have it.
+
+The desktop app checks for a new release when it starts and once a day after that, and shows a notice when one is out. View > Updates and command-line tool… checks again and installs the update:
+
+- macOS: `dfdu.app` is replaced where it is, then restarted. An app installed with the Homebrew cask is updated with `brew upgrade --cask dfdu-gui` instead.
+- Linux: the AppImage is replaced. The .deb is updated with your package manager.
+- Windows: the installer is downloaded and started, and the app closes for it. A Scoop install is updated with `scoop update dfdu-gui`, the zip by hand.
+
+Turn the check off in that window, or set `DFDU_NO_UPDATE_CHECK=1`. The same window installs the command-line tool of the app's version: `dfdu` goes into `~/.local/bin` with its man pages and completions, or on Windows into `%LOCALAPPDATA%\Programs\dfdu`, which is added to your `PATH`.
+
 ## From source
 
 With Rust 1.95 or newer:

@@ -10,7 +10,8 @@
 //! tokens (`theme`), with the terminal's keys (`keys`). On macOS a banner says when the window
 //! lacks Full Disk Access (`access`). A thread asks for a frame when the
 //! engine's model changes (`bridge`). The theme chosen and how the list was shown are kept
-//! between runs (`settings`).
+//! between runs (`settings`). Updates are checked for, installed, and the command-line tool
+//! installed from the Updates window (`update`).
 //!
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start, with dfdu's mark as
 //! its icon.
@@ -46,6 +47,7 @@ mod start;
 mod status_bar;
 mod theme;
 mod toolbar;
+mod update;
 mod windows;
 
 #[cfg(test)]
@@ -154,8 +156,12 @@ fn run(
                 }
                 None => theme::saved(&mut prefs.theme, themes.as_deref()),
             };
-            let gui = Gui::new(launch, prefs, file, themes, &cc.egui_ctx);
-            Ok(match std::env::var_os(shot::VAR) {
+            let mut gui = Gui::new(launch, prefs, file, themes, &cc.egui_ctx);
+            let picture = std::env::var_os(shot::VAR);
+            if picture.is_some() {
+                gui.quiet_updates();
+            }
+            Ok(match picture {
                 Some(path) => Box::new(shot::Shot {
                     gui,
                     path: Some(path.into()),
