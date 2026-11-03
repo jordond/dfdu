@@ -91,6 +91,11 @@ pub struct SessionState {
     /// Nothing is deleted: the actions that delete are left out and cleanup commands run only
     /// as dry runs.
     pub read_only: bool,
+    /// The scan was read from a file: nothing outside it can be opened ([`crate::goto`]).
+    pub from_file: bool,
+    /// `Parent` was pressed at the scan root and said what a second press does: the next
+    /// action, if it is `Parent`, opens a scan of the root's parent ([`crate::goto::up_at_root`]).
+    pub up_armed: bool,
     /// When the rows are sorted again.
     pub sort_schedule: SortSchedule,
     /// The Map view's depth and colouring.
@@ -144,6 +149,8 @@ impl SessionState {
             cached: None,
             outside: Outside::default(),
             read_only: false,
+            from_file: false,
+            up_armed: false,
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
             cleanup: Cleanup::default(),

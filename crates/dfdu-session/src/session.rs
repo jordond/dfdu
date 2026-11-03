@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Receiver;
 use dfdu_engine::Engine;
 use dfdu_scan::Backend;
+use dfdu_tree::HostPath;
 
 use crate::act::{self, Ran};
 use crate::actions::Action;
@@ -33,6 +34,7 @@ use crate::cache_link::{CacheLink, Cacher};
 use crate::debug;
 use crate::effect::{self, Effect, Output};
 use crate::extras::{self, Applied, Read};
+use crate::goto::{self, Gone};
 use crate::history_link::{HistoryLink, Recorder};
 use crate::snapshot::{self, Snapshot};
 use crate::state::{Moved, SessionState};
@@ -114,6 +116,9 @@ pub struct Acted {
     /// The browser went to another directory to show an entry, which the front end shows from
     /// the top ([`Then::moved`]).
     pub went: Option<Moved>,
+    /// Open a new scan of this path, outside the scan shown: up past the scan root, or a
+    /// folder gone to ([`crate::goto`]). The front end opens it, then shuts this session down.
+    pub reopen: Option<HostPath>,
 }
 
 /// The engine, owned by the session or by its caller.
@@ -272,6 +277,21 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         }
     }
 
+    /// Goes to the folder `input` names ([`goto::go`]): opens it when it is in the scan and
+    /// returns `None`, or returns the path for the front end to open a new scan of.
+    ///
+    /// # Errors
+    ///
+    /// What is wrong with the path, to show where it was typed.
+    pub fn go_to_path(&mut self, input: &str) -> Result<Option<HostPath>, String> {
+        let s = self.front.state_mut();
+        s.status = None;
+        match goto::go(s, input)? {
+            Gone::Within(_) => Ok(None),
+            Gone::Outside(p) => Ok(Some(p)),
+        }
+    }
+
     /// Follows what an action or an intent of a view left: shows a path in Files and carries
     /// out the effects.
     pub fn follow(&mut self, then: Then) -> Acted {
@@ -286,6 +306,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             front_end: false,
             entered: then.entered,
             went,
+            reopen: then.reopen,
         }
     }
 

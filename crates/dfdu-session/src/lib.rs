@@ -16,7 +16,7 @@
 //! (`largest`). The actions with their keys and labels (`actions`), the delete confirmation
 //! (`confirm`), the details of an entry (`details`), the debug counters (`debug`), the list of
 //! what could not be read (`error_list`), the file type filter (`type_filter`), mark by pattern
-//! (`mark_pattern`), the text for numbers (`format`), the theme's tokens, built-in themes and
+//! (`mark_pattern`), go to folder and up past the scan root (`goto`), the text for numbers (`format`), the theme's tokens, built-in themes and
 //! theme files (`palette`), and the single-line text input (`line`).
 
 pub mod act;
@@ -35,6 +35,7 @@ pub mod file_manager;
 pub mod filter;
 pub mod format;
 pub mod fuzzy;
+pub mod goto;
 pub mod growth;
 pub mod history_link;
 pub mod largest;
