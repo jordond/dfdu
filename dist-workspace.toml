@@ -9,18 +9,20 @@ ci = "github"
 installers = ["powershell", "homebrew"]
 tap = "jordond/homebrew-tap"
 # "./publish-homebrew" is dist's Homebrew job with the man pages and completions linked;
-# "./notarize-macos" notarises the macOS binaries dist signed; "./publish-crates" publishes to
-# crates.io with Trusted Publishing.
-publish-jobs = ["./publish-homebrew", "./notarize-macos", "./publish-crates"]
+# "./notarize-macos" notarises the macOS binaries dist signed.
+publish-jobs = ["./publish-homebrew", "./notarize-macos"]
 # Developer ID signing of the macOS binaries (secrets CODESIGN_CERTIFICATE, a base64 .p12,
 # CODESIGN_CERTIFICATE_PASSWORD and CODESIGN_IDENTITY), with hardened runtime set by
 # .github/build-setup.yml.
 # The GUI's installers (.github/workflows/gui-release.yml), uploaded to the release once dist
 # has created it; after the announcement so prereleases get them too (publish jobs skip those).
-post-announce-jobs = ["./gui-release"]
+# "./publish-crates" publishes to crates.io with Trusted Publishing, after the announcement so
+# a crates.io failure (a crate not yet created by hand, say) holds back neither the release nor
+# the GUI; it skips prereleases itself.
+post-announce-jobs = ["./gui-release", "./publish-crates"]
 github-custom-job-permissions = { "gui-release" = { contents = "write", id-token = "write", attestations = "write" }, "publish-crates" = { contents = "read", id-token = "write" } }
 macos-sign = true
-# SLSA build provenance for every release artifact (`gh attestation verify`).
+# SLSA build provenance for the archives dist builds (`gh attestation verify`).
 github-attestations = true
 github-build-setup = "../build-setup.yml"
 targets = [

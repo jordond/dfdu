@@ -1,7 +1,7 @@
 name: publish-crates
 
-# Publishes dfdu and the crates it needs to crates.io (publish-jobs in dist-workspace.toml),
-# from the tagged commit, once dist has built the release.
+# Publishes dfdu and the crates it needs to crates.io (post-announce-jobs in
+# dist-workspace.toml), from the tagged commit, once dist has published the GitHub release.
 #
 # Authenticates with crates.io's Trusted Publishing: rust-lang/crates-io-auth-action trades
 # this job's GitHub OIDC token for a publish token that expires after 30 minutes and is revoked
@@ -38,13 +38,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install Rust
+        # rust-toolchain.toml names stable: update it to the current release, not the image's.
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo --version
       # No cache: a release build shouldn't read what other workflows could have written.
+      # Package and build every crate from its packaged sources before there is a token, so no
+      # dependency's build script or proc macro runs while one is in the environment.
+      - name: Verify the packages
+        run: cargo publish --workspace --locked --dry-run
       - name: Authenticate with crates.io
         id: auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        # The toolchain is rust-toolchain.toml's. Cargo publishes the publishable crates in
-        # dependency order and builds each from its packaged sources first.
-        run: cargo publish --workspace --locked
+        # In dependency order; verified above, so no build runs here.
+        run: cargo publish --workspace --locked --no-verify
