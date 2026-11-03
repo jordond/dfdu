@@ -9,6 +9,12 @@ use crate::act::{self, Ran};
 use crate::snapshot::{EntryData, test_entry};
 use crate::state::tests::browser;
 
+/// `p` with `/` for each separator: a Windows host joins with `\`, so tests compare paths in
+/// one form on every platform.
+fn slashed(p: &HostPath) -> String {
+    String::from_utf8_lossy(p.as_bytes()).replace('\\', "/")
+}
+
 /// A browser of the scan root `/r` with the directory `lib`, a scan of another host.
 fn at_root() -> SessionState {
     let lib = EntryData {
@@ -152,14 +158,16 @@ fn go_opens_a_directory_of_the_scan_or_returns_one_outside_it() {
     let mut s = at_root();
     s.status = Some("left from before".into());
     match go(&mut s, "lib/x/..", dir) {
-        Ok(Gone::Within(Some(m))) => assert_eq!(m.opened, Some(HostPath::from("/r/lib"))),
+        Ok(Gone::Within(Some(m))) => {
+            assert_eq!(m.opened.as_ref().map(slashed).as_deref(), Some("/r/lib"));
+        }
         other => panic!("{other:?}"),
     }
     assert_eq!(s.status, None, "the status line is cleared");
-    assert_eq!(s.target.path, HostPath::from("/r/lib"));
+    assert_eq!(slashed(&s.target.path), "/r/lib");
     assert!(matches!(go(&mut s, "/r", dir), Ok(Gone::Within(Some(_)))));
     match go(&mut s, "/elsewhere", |_| unreachable!("outside the scan")) {
-        Ok(Gone::Outside(p)) => assert_eq!(p, HostPath::from("/elsewhere")),
+        Ok(Gone::Outside(p)) => assert_eq!(slashed(&p), "/elsewhere"),
         other => panic!("{other:?}"),
     }
     s.from_file = Some(FROM_FILE);
@@ -180,7 +188,10 @@ fn go_stays_where_it_is_when_the_tree_has_no_folder_there() {
         other => panic!("{other:?}"),
     }
     let err = go(&mut s, "lib", |_| Reach::NotDir).err();
-    assert_eq!(err.as_deref(), Some("not a folder: /r/lib"));
+    assert_eq!(
+        err.map(|e| e.replace('\\', "/")).as_deref(),
+        Some("not a folder: /r/lib")
+    );
     let after = (s.target.path.clone(), s.selected.clone().map(|x| x.name));
     assert_eq!(after, before, "the user's place is kept");
     assert!(
