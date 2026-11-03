@@ -35,6 +35,11 @@ pub enum Intent {
     Reopen(HostPath),
     /// `Enter` in the go-to window, with the path typed.
     GoToFolder(String),
+    /// `Tab` in the go-to window, with the path typed: complete it, or list the mounts.
+    GoToTab(String),
+    /// The go-to window's path changed to this: what was asked for the old one is dropped,
+    /// and the mounts are asked for when nothing or only the root is typed.
+    GoToEdited(String),
     /// The filter's text changed.
     Filter(String),
     /// `Enter` in the filter.

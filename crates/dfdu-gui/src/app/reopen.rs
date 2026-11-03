@@ -88,8 +88,10 @@ pub(super) fn replaced(
     old: Option<(Box<dyn Browse>, Origin)>,
 ) -> Screen {
     match opened {
-        Ok(b) => {
+        Ok(mut b) => {
             if let Some((old, _)) = old {
+                // The folder come from is selected once the new scan lists it.
+                b.state_mut().came_from = Some(old.state().snap.root_path.clone());
                 old.shutdown();
             }
             Screen::Browse(b, origin)
