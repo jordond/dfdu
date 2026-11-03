@@ -3,6 +3,13 @@
   <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
 </picture>
 
+[![CI](https://github.com/jordond/dfdu/actions/workflows/ci.yml/badge.svg)](https://github.com/jordond/dfdu/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/jordond/dfdu)](https://github.com/jordond/dfdu/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/dfdu)](https://crates.io/crates/dfdu)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.95-orange)](Cargo.toml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/jordond/dfdu/badge)](https://scorecard.dev/viewer/?uri=github.com/jordond/dfdu)
+
 A disk usage browser for the terminal and the desktop. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
 ![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)

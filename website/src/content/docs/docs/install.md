@@ -91,7 +91,13 @@ Turn the check off in that window, or set `DFDU_NO_UPDATE_CHECK=1`. The same win
 
 ## From source
 
-With Rust 1.95 or newer:
+With Rust 1.95 or newer, from crates.io:
+
+```sh
+cargo install --locked dfdu
+```
+
+Or the latest commit on `main`:
 
 ```sh
 cargo install --locked --git https://github.com/jordond/dfdu dfdu

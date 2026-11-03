@@ -1,0 +1,43 @@
+name: Cleanup rule
+description: Something dfdu should recognise in the cleanup view, or a rule that is wrong
+labels: [rules]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [Cleanup rules](https://dfdu.app/docs/rules/) for the safety levels and the rule format. A rule you have written and tried in your own rule file is also welcome as a pull request against `crates/dfdu-rules/src/builtin.toml`.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - New rule
+        - A rule matches something it shouldn't
+        - A rule misses something it should match
+        - A rule's safety level or explanation is wrong
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it is
+      description: The tool or app that creates it, and its paths on each platform you know of.
+      placeholder: |
+        Bazel's output base: ~/.cache/bazel on Linux, /private/var/tmp/_bazel_$USER on macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: safety
+    attributes:
+      label: How safe it is to delete
+      options:
+        - safe (a pure cache, rebuilt automatically)
+        - regenerable (rebuilt at a real cost)
+        - review (may hold the user's own data)
+        - manual (only report, or clean with the tool's own command)
+        - Not sure
+  - type: textarea
+    id: lost
+    attributes:
+      label: What deleting it loses
+      description: And whether the tool has its own cleanup command (e.g. `docker system prune`).
