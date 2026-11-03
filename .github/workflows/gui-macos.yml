@@ -3,7 +3,7 @@ name: gui-macos
 # Builds the GUI's macOS release files per architecture with scripts/macos-release.sh: dfdu.app
 # signed with the Developer ID (hardened runtime), in a signed .dmg and an .app.tar.gz, notarised,
 # stapled and checked by Gatekeeper. Runs when the signing files change on main, by hand, and
-# from the release workflow (Phase 9, GUI-PLAN.md), which uploads the files to the release.
+# from the release workflow (gui-release.yml), which uploads the files to the release.
 on:
   push:
     branches: [main]

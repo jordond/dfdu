@@ -4,7 +4,7 @@ name: gui-linux
 # script and its polkit action) and an AppImage, for x86_64 glibc. Checks what the .deb holds,
 # installs it and runs it, and runs the program in the AppImage. Built on Ubuntu 24.04, not the
 # newest runner, so the glibc it needs is older. Runs when the packaging changes on main,
-# by hand, and from the release workflow (Phase 9, GUI-PLAN.md), which uploads the files to the
+# by hand, and from the release workflow (gui-release.yml), which uploads the files to the
 # release.
 on:
   push:
