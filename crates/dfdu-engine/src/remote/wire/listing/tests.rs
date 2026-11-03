@@ -90,11 +90,16 @@ fn mounts_and_errors_past_their_bounds_are_refused() {
 }
 
 #[test]
-fn a_path_to_list_must_be_given_and_not_too_long() {
-    let list = |path: Vec<u8>| ToAgent::List { id: 1, path }.encode();
-    assert!(ToAgent::decode(&list(vec![b'/'; MAX_PATH]), None).is_ok());
-    assert!(ToAgent::decode(&list(vec![b'/'; MAX_PATH + 1]), None).is_err());
-    assert!(ToAgent::decode(&list(Vec::new()), None).is_err());
+fn a_path_to_list_decodes_even_when_the_agent_cannot_list_it() {
+    // The agent answers these with why; refusing them here would end the link.
+    for path in [vec![b'/'; MAX_PATH], vec![b'/'; MAX_PATH + 1], Vec::new()] {
+        let down = ToAgent::List {
+            id: 1,
+            path: path.clone(),
+        };
+        let got = ToAgent::decode(&down.encode(), None).unwrap();
+        assert!(matches!(got, ToAgent::List { id: 1, path: p } if p == path));
+    }
 }
 
 #[test]

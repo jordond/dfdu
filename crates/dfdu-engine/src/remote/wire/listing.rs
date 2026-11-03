@@ -2,7 +2,8 @@
 //! entries of one directory ([`ToAgent::List`](super::ToAgent::List)) and the mounted
 //! filesystems ([`ToAgent::Mounts`](super::ToAgent::Mounts)). Both answers are bounded:
 //! at most [`MAX_ENTRIES`] entries and [`MAX_MOUNTS`] mounts, each name at most
-//! [`MAX_NAME`] bytes and each path at most [`MAX_PATH`]; decoding refuses more.
+//! [`MAX_NAME`] bytes and each mount point at most [`MAX_PATH`]; decoding refuses more. A
+//! path asked for is not checked when decoded: the agent answers one it cannot list with why.
 
 use super::codec::{Dec, Enc, R, bad};
 

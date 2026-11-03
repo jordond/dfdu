@@ -259,8 +259,9 @@ pub enum ToAgent {
     Check(Vec<CheckReq>),
     /// Files to measure on the agent's host, one directory per request.
     Measure(Vec<MeasureReq>),
-    /// List the directory at `path` on the agent's host (at most [`listing::MAX_PATH`]
-    /// bytes), answered by [`FromAgent::Listed`] with the same `id`.
+    /// List the directory at `path` on the agent's host, answered by [`FromAgent::Listed`]
+    /// with the same `id`. A path that is empty, longer than [`listing::MAX_PATH`] bytes or
+    /// not absolute is answered with an error.
     List {
         id: u64,
         path: Vec<u8>,

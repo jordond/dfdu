@@ -32,9 +32,6 @@ fuzz_target!(|data: &[u8]| {
             _ => {}
         }
     }
-    if let Ok(ToAgent::List { path, .. }) = ToAgent::decode(data, None) {
-        assert!(!path.is_empty() && path.len() <= wire::listing::MAX_PATH);
-    }
     let _ = ToAgent::decode(data, rules);
     let _ = ToAgent::decode(data, None);
     let mut r = data;

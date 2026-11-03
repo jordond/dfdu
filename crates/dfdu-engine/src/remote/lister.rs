@@ -1,10 +1,12 @@
 //! Listing on the agent's host from the local side ([`Lister`]): a directory's entries and the
 //! mounted filesystems, each asked with an id and answered through the reader
-//! ([`super::pump`]). Nothing waits on the link: each ask returns a channel the answer arrives
-//! on, which disconnects without one when the link ends.
+//! ([`super::pump`]). Nothing waits on the link: each ask is sent from a thread of its own and
+//! returns a channel the answer arrives on, which disconnects without one when the link ends
+//! or the thread cannot be started.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
+use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use dfdu_tree::{Host, HostPath};
@@ -52,12 +54,18 @@ impl Lister {
     }
 
     /// Asks for the entries of `dir` on the agent's host. The answer arrives on the channel
-    /// returned; it disconnects without one when the link ends first.
+    /// returned; it disconnects without one when the link ends first. A path that is empty
+    /// or too long is answered at once, without asking.
     #[must_use]
     pub fn list(&self, dir: &HostPath) -> Receiver<ListAnswer> {
         let (tx, rx) = bounded(1);
-        if dir.as_bytes().len() > MAX_PATH {
-            let _ = tx.send(Err("the path is too long".into()));
+        let why = match dir.as_bytes().len() {
+            0 => Some("no folder to list"),
+            n if n > MAX_PATH => Some("the path is too long"),
+            _ => None,
+        };
+        if let Some(why) = why {
+            let _ = tx.send(Err(why.into()));
             return rx;
         }
         let path = dir.as_bytes().to_vec();
@@ -73,8 +81,9 @@ impl Lister {
         rx
     }
 
-    /// Sends the request `req` builds with a new id, `waiting` for its answer; on a dead link
-    /// `waiting` is dropped, which disconnects its channel.
+    /// Sends the request `req` builds with a new id from a thread of its own, so the caller
+    /// never waits on the link, `waiting` for its answer. On a dead link, or when the thread
+    /// cannot be started, `waiting` is dropped, which disconnects its channel.
     fn ask(&self, waiting: Waiting, req: impl FnOnce(u64) -> ToAgent) {
         let link = &self.link;
         if link.dead.load(SeqCst) {
@@ -82,9 +91,19 @@ impl Lister {
         }
         let id = link.ask_id.fetch_add(1, SeqCst);
         link.asked.lock().insert(id, waiting);
-        link.send(&req(id));
-        if link.dead.load(SeqCst) {
-            link.asked.lock().clear();
+        let (l, req) = (link.clone(), req(id));
+        let sent = thread::Builder::new()
+            .name("dfdu-link-ask".into())
+            .spawn(move || {
+                l.send(&req);
+                // The reader may have ended the link, and cleared what was asked, before
+                // this ask was in.
+                if l.dead.load(SeqCst) {
+                    l.asked.lock().remove(&id);
+                }
+            });
+        if sent.is_err() {
+            link.asked.lock().remove(&id);
         }
     }
 }

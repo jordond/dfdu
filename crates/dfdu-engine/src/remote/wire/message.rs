@@ -10,9 +10,7 @@ use super::jobs::{
     dec_check_msg, dec_check_req, dec_measure_msg, dec_measure_req, enc_check_msg, enc_check_req,
     enc_measure_msg, enc_measure_req,
 };
-use super::listing::{
-    MAX_PATH, dec_entries, dec_mounts, dec_result, enc_entries, enc_mounts, enc_result,
-};
+use super::listing::{dec_entries, dec_mounts, dec_result, enc_entries, enc_mounts, enc_result};
 use super::scan::{dec_msg, dec_wclass, enc_msg, enc_wclass};
 use super::{FromAgent, ToAgent};
 
@@ -320,12 +318,11 @@ impl ToAgent {
             down::ABORT_DELETE => ToAgent::AbortDelete,
             down::CHECK => ToAgent::Check(d.list(2, |d| dec_check_req(d, rules))?),
             down::MEASURE => ToAgent::Measure(d.list(3, dec_measure_req)?),
+            // The agent answers a path it cannot list with why, so the path is not checked
+            // here: refusing it would end the link.
             down::LIST => ToAgent::List {
                 id: d.var()?,
-                path: match d.capped(MAX_PATH, "path")? {
-                    [] => return bad("path"),
-                    p => p.to_vec(),
-                },
+                path: d.bytes()?.to_vec(),
             },
             down::MOUNTS => ToAgent::Mounts { id: d.var()? },
             down::RULES => ToAgent::Rules {
