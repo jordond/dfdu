@@ -11,6 +11,7 @@ mod measure;
 mod nanos;
 mod recent;
 mod remote;
+pub mod reuse;
 mod runtime;
 mod shown;
 #[cfg(any(test, feature = "test-support"))]
@@ -40,6 +41,7 @@ pub use recent::{Event, RECENT, Recent};
 pub use remote::{
     Connected, DEAD, ListAnswer, Lister, MountsAnswer, Process, RemoteIo, RemoteRules, agent, wire,
 };
+pub use reuse::Scanned;
 pub use runtime::{Engine, EngineOptions, JournalQuery, WaitIdle, workers_for};
 pub use shown::{
     ErrorItem, ErrorList, LIST_MAX, Listed, NotEntered, SizeMode, Verdict, describe, errors,

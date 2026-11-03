@@ -44,6 +44,8 @@ After going up, the folder you came from is selected in the new scan once it app
 
 The new scan starts before the old one stops, so if it cannot start you stay where you were and the status line says why. Going up from `/mnt/cache` scans `/mnt` on its own filesystem only, so the other disks mounted there are listed but not entered; press `m` on one to scan it.
 
+On this computer, a scan of a folder above the old one keeps what the old scan read. Only the rest of the folder is listed. Each folder already read is checked by its modification time and read again if it changed. The old scan must have ended complete, with nothing being deleted or waiting to be undone. Otherwise, or when the folder's scan is in the cache, the folder is scanned as usual.
+
 On a scan of another host (`--remote`), going up or to a folder outside the scan connects again with the new folder. dfdu gives the terminal back while it connects, so ssh can ask for a password. `Tab` asks the host for its folders and shows them when they arrive, and the mount list is the host's. The prompt does not wait for the answer: you can keep typing. A scan read from a file (`dfdu --import`) cannot leave the file: run `dfdu` with a folder instead.
 
 ## Mounts

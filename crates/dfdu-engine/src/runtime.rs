@@ -6,6 +6,7 @@ mod lister;
 mod resume;
 pub use resume::Query as JournalQuery;
 mod options;
+mod reuse;
 
 pub(crate) use options::default_measurers;
 pub use options::{EngineOptions, workers_for};
@@ -67,6 +68,8 @@ pub struct Engine<B: Backend> {
     deleter: Option<JoinHandle<()>>,
     budget: Arc<Budget>,
     sent: Arc<AtomicU64>,
+    /// Seconds since the Unix epoch when it started, before it read anything.
+    started_secs: u64,
 }
 
 impl Engine<PortableBackend> {
@@ -281,6 +284,7 @@ impl<B: Backend> Engine<B> {
             deleter: Some(deleter_thread),
             budget: transit,
             sent,
+            started_secs: reuse::now_secs(),
         }
     }
 

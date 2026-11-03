@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use dfdu_engine::{Command, Engine, EngineOptions, JournalPosition};
 use dfdu_scan::{Backend, JobOptions, NativeBackend, PortableBackend};
 
-use crate::cache_link::CacheLink;
+use crate::cache_link::{CacheLink, Sent};
 use crate::history_link::HistoryLink;
 use crate::session::SessionOptions;
 
@@ -118,6 +118,24 @@ pub enum Opened {
 ///
 /// When a [`Source::Local`] has no path, or a resumed scan has no root.
 pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Opened> {
+    open_reusing(source, opts, record, None)
+}
+
+/// [`open`], keeping what `scanned` read ([`crate::session::Session::scanned`]: another scan
+/// of this machine, of a folder below the one opened) where it is unchanged
+/// ([`Engine::scan_above`]), for a directory of this machine scanned afresh: a
+/// [`Source::Local`], or a [`Source::Cached`] with no cached scan, which is preferred when
+/// there is one. Other sources leave it.
+///
+/// # Errors
+///
+/// As [`open`].
+pub fn open_reusing(
+    source: Source,
+    opts: &EngineOptions,
+    record: bool,
+    scanned: Option<dfdu_engine::Scanned>,
+) -> io::Result<Opened> {
     let home = dfdu_engine::home_dir;
     let read_only = opts.read_only;
     let link = |root: &Path, job: &JobOptions| history(record, root, job, opts);
@@ -184,11 +202,24 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
             let root = slot.key.root().to_path_buf();
             let (engine, job) = start(&path, opts.clone());
             let history = link(&root, &job);
+            let sent = scanned
+                .filter(|_| !slot.cached(dfdu_store::cache::now()))
+                .map(|s| {
+                    // Taken before the scan, as the cache's own scan takes it.
+                    let journal = dfdu_engine::journal_position(&root);
+                    let full_scan = s.full_scan;
+                    let kept = engine.scan_above(&path.as_path().into(), Some(s), job.clone());
+                    Sent {
+                        journal,
+                        full_scan: kept.then_some(full_scan),
+                    }
+                });
             let cache = CacheLink {
                 slot,
                 path,
                 job,
                 save: !read_only,
+                sent,
             };
             local(engine, history, Some(cache))
         }
@@ -205,10 +236,7 @@ pub fn open(source: Source, opts: &EngineOptions, record: bool) -> io::Result<Op
             let root = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
             let (engine, job) = start(&path, opts.clone());
             let history = link(&root, &job);
-            engine.send(Command::Scan {
-                path: path.into(),
-                opts: job,
-            });
+            engine.scan_above(&path.into(), scanned, job);
             local(engine, history, None)
         }
     })
@@ -233,6 +261,8 @@ pub fn history(
 mod tests {
     use std::time::Duration;
 
+    use dfdu_tree::HostPath;
+
     use super::*;
 
     #[test]
@@ -250,5 +280,55 @@ mod tests {
         let local = Source::Local { path: None, start };
         let e = open(local, &opts, false).err().expect("no path");
         assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// An engine on this machine's backend, without rules.
+    fn native() -> StartLocal {
+        Box::new(|_, opts| {
+            let backend = dfdu_scan::native_backend(dfdu_sys::Storage::Unknown, false);
+            (Engine::start(backend, opts), JobOptions::default())
+        })
+    }
+
+    fn wait_totals(e: &Engine<NativeBackend>) -> (u64, u64) {
+        assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
+        e.read(|m| {
+            let r = m.tree.roots().next().expect("root");
+            (m.tree.total(r).items, m.tree.total(r).apparent)
+        })
+    }
+
+    /// A folder above another scan's root, opened with what it read, ends as a fresh scan of
+    /// the folder does.
+    #[test]
+    fn a_folder_opened_with_a_scan_below_it_ends_as_a_fresh_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let top = dunce::canonicalize(tmp.path()).unwrap();
+        let c = top.join("a").join("c");
+        std::fs::create_dir_all(c.join("d")).unwrap();
+        std::fs::write(c.join("d").join("f"), b"0123456789").unwrap();
+        std::fs::write(top.join("h"), b"012").unwrap();
+        let opts = EngineOptions::default();
+        let open_local = |p: &Path, scanned| {
+            let source = Source::Local {
+                path: Some(p.to_path_buf()),
+                start: native(),
+            };
+            match open_reusing(source, &opts, false, scanned) {
+                Ok(Opened::Native(s)) => s.engine,
+                _ => panic!("a local scan"),
+            }
+        };
+        let old = open_local(&c, None);
+        wait_totals(&old);
+        let scanned = old.scanned(&HostPath::local(&top));
+        assert!(scanned.is_some(), "the old scan can be kept");
+        old.shutdown(Duration::from_millis(200));
+        let fresh = open_local(&top, None);
+        let want = wait_totals(&fresh);
+        fresh.shutdown(Duration::from_millis(200));
+        let new = open_local(&top, scanned);
+        assert_eq!(wait_totals(&new), want);
+        new.shutdown(Duration::from_millis(200));
     }
 }

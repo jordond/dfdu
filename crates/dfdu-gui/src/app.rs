@@ -433,13 +433,19 @@ impl Gui {
         old: Option<(Box<dyn Browse>, Origin)>,
         ctx: &egui::Context,
     ) -> Screen {
-        reopen::replaced(self.start_browser(source, ctx), origin, old)
+        reopen::replaced(self.start_browser(source, None, ctx), origin, old)
     }
 
-    /// The browser of `source`, showing its list as the settings say.
-    fn start_browser(&self, source: Source, ctx: &egui::Context) -> io::Result<Box<dyn Browse>> {
+    /// The browser of `source`, keeping what `scanned` read ([`launch::open`]), showing its
+    /// list as the settings say.
+    fn start_browser(
+        &self,
+        source: Source,
+        scanned: Option<dfdu_engine::Scanned>,
+        ctx: &egui::Context,
+    ) -> io::Result<Box<dyn Browse>> {
         let themes = self.themes().iter().map(|t| t.label().to_owned()).collect();
-        let mut b = launch::open(source, &self.settings, ctx)?;
+        let mut b = launch::open(source, scanned, &self.settings, ctx)?;
         let s = b.state_mut();
         if self.prefs.tree {
             dfdu_session::tree::act::toggle(s);
