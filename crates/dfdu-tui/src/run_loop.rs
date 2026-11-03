@@ -133,8 +133,10 @@ where
     loop {
         let now = Instant::now();
         let tick = session.tick(now)?;
+        // What the scanned host answered the go-to prompt, which the tick took in.
+        let answered = goto::poll(session.front_mut());
         let motion_due = (session.front().motion.next_frame_at()).is_some_and(|t| now >= t);
-        if tick.changed || input_dirty || motion_due {
+        if tick.changed || answered || input_dirty || motion_due {
             let drawing = Instant::now();
             let app = session.front_mut();
             terminal.draw(|f| view::draw(f, app, now))?;

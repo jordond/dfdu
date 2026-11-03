@@ -115,6 +115,7 @@ fn settled_with_panels(
         from_file: false,
         elevated: false,
         notice: None,
+        came_from: None,
     };
     thread::scope(|scope| {
         let (tx, rx) = unbounded();

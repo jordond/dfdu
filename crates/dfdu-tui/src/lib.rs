@@ -132,6 +132,9 @@ pub struct UiOptions {
     pub elevated: bool,
     /// What the status line says when the browser opens.
     pub notice: Option<String>,
+    /// The root of the scan this browser was opened from: going up from it selects the folder
+    /// come from once the new scan lists it.
+    pub came_from: Option<HostPath>,
 }
 
 impl UiOptions {
@@ -155,6 +158,7 @@ impl UiOptions {
             from_file: false,
             elevated: false,
             notice: None,
+            came_from: None,
         }
     }
 }
@@ -202,7 +206,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         },
         source => source,
     };
-    let ui_opts = |setup: Setup, from_file: bool, notice: Option<String>| UiOptions {
+    let ui_opts = |setup: Setup, from_file: bool, notice: Option<String>, came_from| UiOptions {
         theme: theme.clone(),
         color_level: colors.level,
         background: colors.background,
@@ -217,10 +221,13 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         from_file,
         elevated: setup.elevated,
         notice,
+        came_from,
     };
     let reader = Reader::spawn()?;
     let (engine_opts, history, mut reopen) = (opts.engine, opts.history, opts.reopen);
     let mut opened = (startup::open(source, &engine_opts, history)?, None);
+    // The root of the scan the next one is opened from.
+    let mut left: Option<HostPath> = None;
     loop {
         let mut open = |terminal: &mut ratatui::DefaultTerminal, path: &HostPath| {
             let Some(reopen) = reopen.as_mut() else {
@@ -238,25 +245,25 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         let (next, notice) = opened;
         let next = match next {
             Opened::Native(s) => {
-                let ui = ui_opts(s.setup, false, notice);
+                let ui = ui_opts(s.setup, false, notice, left.take());
                 browse(
                     &mut terminal,
                     &reader,
                     &mut restore,
                     s.engine,
                     ui,
-                    &mut open,
+                    (&mut open, &mut left),
                 )
             }
             Opened::Imported(s) => {
-                let ui = ui_opts(s.setup, true, notice);
+                let ui = ui_opts(s.setup, true, notice, left.take());
                 browse(
                     &mut terminal,
                     &reader,
                     &mut restore,
                     s.engine,
                     ui,
-                    &mut open,
+                    (&mut open, &mut left),
                 )
             }
         }?;
@@ -295,19 +302,23 @@ fn restore_on_panic(mouse: bool) {
 }
 
 /// Runs the loop on `engine` until the user quits or `open` opened a scan outside this one,
-/// then stops the engine. When the user quits or the loop fails, the terminal is restored first
-/// (`restore`).
+/// then stops the engine; for a scan opened, `left` is the root of this one. When the user
+/// quits or the loop fails, the terminal is restored first (`restore`).
 fn browse<B: dfdu_scan::Backend, N>(
     terminal: &mut ratatui::DefaultTerminal,
     reader: &Reader,
     restore: &mut Option<setup::Restore>,
     engine: Engine<B>,
     ui: UiOptions,
-    open: &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> io::Result<Result<N, String>>,
+    (open, left): (
+        &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> io::Result<Result<N, String>>,
+        &mut Option<HostPath>,
+    ),
 ) -> io::Result<Option<N>> {
     let debug_stats = ui.debug;
     let result = run_loop::event_loop_opening(terminal, &engine, reader.events(), ui, open);
     if matches!(result, Ok(Some(_))) {
+        *left = engine.read(|m| m.tree.roots().next().map(|r| m.tree.host_path(r)));
         engine.shutdown(Duration::from_millis(200));
         return result;
     }

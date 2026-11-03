@@ -211,6 +211,76 @@ fn a_folder_the_tree_does_not_have_keeps_the_place_and_says_why() {
     assert_eq!(app.reopen, None);
 }
 
+/// An empty prompt on a scan of this machine lists its mounts once they are read, off the
+/// key handler; `↓` picks one and `Tab` puts it in the prompt.
+#[test]
+fn an_empty_prompt_lists_the_mounts_when_they_arrive() {
+    let (mut app, t0) = app();
+    app.session.outside.local = true;
+    go_to(&mut app, "", t0);
+    let Overlay::GoTo(p) = &app.overlay else {
+        panic!("no prompt");
+    };
+    assert!(p.asking, "the key handler does not wait for the mounts");
+    let frame = render(&mut app, t0, 90, 14);
+    assert!(frame.contains("asking the host"), "{frame}");
+    let until = Instant::now() + std::time::Duration::from_secs(10);
+    while !app.session.goto.poll() {
+        assert!(Instant::now() < until, "the mounts were not read");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(poll(&mut app));
+    let Overlay::GoTo(p) = &app.overlay else {
+        panic!("no prompt");
+    };
+    assert!(!p.asking);
+    let Some(first) = p.mounts.first().cloned() else {
+        // A machine that lists no mounts (a sandbox) has nothing to pick.
+        return;
+    };
+    let frame = render(&mut app, t0, 120, 20);
+    assert!(frame.contains(&first.point), "{frame}");
+    app.key(press(KeyCode::Down), t0);
+    app.key(press(KeyCode::Tab), t0);
+    let Overlay::GoTo(p) = &app.overlay else {
+        panic!("no prompt");
+    };
+    assert_eq!(p.input.text(), first.text(app.session.snap.dir_path.host()));
+    assert!(p.mounts.is_empty() && p.pick.is_none());
+}
+
+#[test]
+fn an_answer_for_another_text_is_not_shown() {
+    let (mut app, t0) = app();
+    app.session.outside.local = true;
+    go_to(&mut app, "", t0);
+    typed(&mut app, "/r", t0);
+    let Overlay::GoTo(p) = &app.overlay else {
+        panic!("no prompt");
+    };
+    assert!(
+        !p.asking && !app.session.goto.pending(),
+        "the edit forgot the ask"
+    );
+    assert!(!poll(&mut app));
+}
+
+#[test]
+fn an_empty_scan_root_says_how_to_get_out() {
+    let t0 = Instant::now();
+    let mut app = App::new(Theme::no_color(), t0);
+    let mut snap = snap_with_totals(Vec::new(), 1);
+    snap.dir_path = HostPath::from("/mnt/cache");
+    snap.root_path = HostPath::from("/mnt/cache");
+    snap.busy = false;
+    app.refresh(snap, t0);
+    let frame = render(&mut app, t0, 120, 12);
+    assert!(
+        frame.contains("This folder is empty: press ← twice to scan its parent, or Ctrl-G"),
+        "{frame}"
+    );
+}
+
 #[test]
 fn a_folder_gone_to_clears_the_status_line() {
     let (mut app, t0) = app();
