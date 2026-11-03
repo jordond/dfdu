@@ -1,0 +1,18 @@
+# The screenshots `cargo xtask demo --gui` takes, one per line: NAME THEME KEYS.
+#
+# Each opens dfdu-gui on the home fixture (fixtures/home.toml) at the fixture's time, waits for
+# the scan, types KEYS one at a time (DFDU_GUI_SCREENSHOT_KEYS, crates/dfdu-gui/src/shot.rs),
+# and writes out/NAME.png at twice the window's size (2200x1440). THEME is dark or light. In
+# KEYS, `\s` is a space (marks the selected entry), `\n` is Enter, and `-` alone types nothing.
+files          dark   i
+tree           dark   Tl
+map            dark   2
+cleanup        dark   3
+delete         dark   3d
+largest        dark   5
+# The comparison takes a few seconds: the j and k pairs wait for it and leave the selection
+# where it was.
+dupes          dark   4\njkjkjkjkjkjkjkjkjkjkjkjkjkjkjkjkjkjkjkjk
+files-light    light  i
+map-light      light  2
+cleanup-light  light  3

@@ -50,3 +50,27 @@ The shell a tape types into runs in a root of its own, so the disk list (`dfdu d
   them.
 
 `env.sh` then `chroot`s into it as the demo user. VHS itself stays in the container's root.
+
+## Screenshots of the desktop app
+
+`cargo xtask demo --gui` takes the PNGs in `assets/gui/` from the list in `gui/shots`, against
+the same home fixture, at its time:
+
+```sh
+cargo xtask demo --gui              # every screenshot
+cargo xtask demo --gui map cleanup  # only these
+cargo xtask demo --gui --list
+```
+
+- `gui/Dockerfile`: Xvfb with Mesa's software renderers, FUSE and libfaketime (Debian trixie,
+  as the `rust` image the binaries are built in).
+- `gui/run.sh`: the container's entry point; mounts `fixtures/home.toml` at `/home/demo`,
+  starts an X server at scale 2, and runs `dfdu-gui /home/demo` once per shot with
+  `DFDU_GUI_SCREENSHOT` (`crates/dfdu-gui/src/shot.rs`): the window waits for the scan, types
+  the shot's keys and writes what it shows. Each shot gets settings and history of its own.
+- `gui/shots`: one `NAME THEME KEYS` line per screenshot; the file says how keys are written.
+
+The window scans the fixture live rather than opening a saved scan, which would be read-only
+and skip the cleanup rules. All shots run in one container; `--bin-dir` then needs `dfdu-gui`
+and `dfdu-demofs`. The pictures hold the window's contents only, with no title bar, and the
+home shows as `~`, so nothing in them says Linux.

@@ -92,7 +92,8 @@ enum Cmd {
     },
     /// Rewrite the man pages and completions in assets/.
     Assets,
-    /// Record the demo GIFs (demo/tapes) with VHS in Docker, against made-up files.
+    /// Record the demo GIFs (demo/tapes) with VHS in Docker, against made-up files; with --gui,
+    /// take the desktop app's screenshots (demo/gui/shots).
     Demo(DemoArgs),
     /// Release tasks.
     #[command(subcommand)]
