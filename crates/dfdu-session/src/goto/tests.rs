@@ -136,3 +136,36 @@ fn completion_on_this_machine_lists_only_directories() {
     let sep = char::from(Host::LOCAL.sep());
     assert_eq!(c.text, Some(format!("alpha{sep}")));
 }
+
+#[test]
+fn the_entry_come_from_is_the_first_name_below_the_new_root() {
+    let name = |from: &str, root: &str| came_from_name(&unix(from), &unix(root));
+    assert_eq!(name("/mnt/cache", "/mnt"), Some(b"cache".to_vec()));
+    assert_eq!(name("/mnt/cache/a", "/"), Some(b"mnt".to_vec()));
+    assert_eq!(name("/mnt", "/mnt"), None);
+    assert_eq!(name("/srv/x", "/mnt"), None);
+    let win = |p: &str| HostPath::new(Host::Windows, p.as_bytes().to_vec());
+    assert_eq!(
+        came_from_name(&win(r"c:\users\Alice"), &win(r"C:\Users")),
+        Some(b"Alice".to_vec()),
+        "a Windows host's names compare without case"
+    );
+}
+
+#[test]
+fn an_empty_root_is_one_whose_scan_finished_with_nothing() {
+    let mut s = SessionState::new(std::time::Instant::now());
+    s.snap.dir_path = unix("/mnt/cache");
+    s.snap.root_path = unix("/mnt/cache");
+    assert!(!empty_root(&s), "nothing read yet");
+    s.snap.dir_node = Some(crate::snapshot::test_entry(1, "cache", 0).node);
+    assert!(empty_root(&s));
+    s.snap.busy = true;
+    assert!(!empty_root(&s), "still scanning");
+    s.snap.busy = false;
+    s.snap.dir_mark = Some(Mark::Error);
+    assert!(!empty_root(&s), "could not be read");
+    s.snap.dir_mark = None;
+    s.snap.dir_path = unix("/mnt/cache/a");
+    assert!(!empty_root(&s), "below the root");
+}

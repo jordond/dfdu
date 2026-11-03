@@ -93,3 +93,50 @@ fn an_untouched_cursor_keeps_the_first_screen_sorted() {
     assert!(r.resorted.is_none());
     assert!(s.sort_pending());
 }
+
+/// After going up from `/r/sub`, the scan of `/r` selects `sub` once it lists it, and a
+/// browser that moved first keeps its own selection.
+#[test]
+fn the_folder_come_from_is_selected_once_it_appears() {
+    let t0 = Instant::now();
+    let snap = |names: &[&str], v: u64| {
+        let entries = (names.iter().zip(0u32..))
+            .map(|(n, i)| test_entry(i, n, 100 - u64::from(i)))
+            .collect();
+        Snapshot {
+            root_path: HostPath::from("/r"),
+            ..scanning(entries, v)
+        }
+    };
+    let name = |s: &SessionState| s.selected_entry().map(|e| e.name.to_vec());
+    let mut s = SessionState::new(t0);
+    s.came_from = Some(HostPath::from("/r/sub/deeper"));
+    let _ = s.refresh(snap(&["a"], 1), t0, false);
+    assert_eq!(name(&s), Some(b"a".to_vec()));
+    assert!(s.came_from.is_some(), "kept until sub appears");
+    // New rows wait for a sort while the scan runs; it gets one when it ends.
+    let done = Snapshot {
+        busy: false,
+        ..snap(&["a", "b", "sub"], 2)
+    };
+    let _ = s.refresh(done, t0 + Duration::from_secs(5), false);
+    assert_eq!(name(&s), Some(b"sub".to_vec()));
+    assert!(s.came_from.is_none());
+
+    let mut s = SessionState::new(t0);
+    s.came_from = Some(HostPath::from("/r/sub"));
+    let _ = s.refresh(snap(&["a"], 1), t0, false);
+    s.note_input(t0);
+    let done = Snapshot {
+        busy: false,
+        ..snap(&["a", "sub"], 2)
+    };
+    let _ = s.refresh(done, t0 + Duration::from_secs(5), false);
+    assert_eq!(name(&s), Some(b"a".to_vec()));
+
+    // A scan that is not above the one come from forgets it.
+    let mut s = SessionState::new(t0);
+    s.came_from = Some(HostPath::from("/elsewhere/x"));
+    let _ = s.refresh(snap(&["a"], 1), t0, false);
+    assert!(s.came_from.is_none());
+}

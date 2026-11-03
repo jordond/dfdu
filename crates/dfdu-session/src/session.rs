@@ -160,7 +160,9 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         Session::with(Held::Borrowed(engine), front, opts)
     }
 
-    fn with(engine: Held<'e, B>, front: F, opts: SessionOptions) -> Self {
+    fn with(engine: Held<'e, B>, mut front: F, opts: SessionOptions) -> Self {
+        // A go-to prompt on another host's scan lists through its agent.
+        front.state_mut().goto.remote = engine.get().lister();
         Session {
             engine,
             pacing: Pacing::new(front.state().size_mode),
@@ -329,7 +331,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         }
     }
 
-    /// Polls the history, the cache and the lookups: true when one of them has something new
+    /// Polls the history, the cache, the lookups and the go-to prompt's ask: true when one of them has something new
     /// to show.
     fn poll(&mut self) -> bool {
         let engine = self.engine.get();
@@ -337,12 +339,13 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         let history = self.recorder.poll_into(s, engine);
         let cache = self.cacher.poll(s, engine);
         let outside = s.outside.poll();
-        history || cache || outside
+        let goto = s.goto.poll();
+        history || cache || outside || goto
     }
 
-    /// The history or the cache has more to take in.
+    /// The history, the cache or the go-to prompt's ask has more to take in.
     fn polling(&self) -> bool {
-        self.recorder.busy() || self.cacher.busy()
+        self.recorder.busy() || self.cacher.busy() || self.front.state().goto.pending()
     }
 
     /// Reads a new snapshot and the extras, and folds them in.
