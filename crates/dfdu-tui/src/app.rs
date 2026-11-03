@@ -24,7 +24,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::features::{debug, details, treemap};
 use crate::input::{line_keys, mouse};
 
-use crate::overlay::{confirm, error_list, help, mark_pattern, palette, type_filter};
+use crate::overlay::{confirm, error_list, goto, help, mark_pattern, palette, type_filter};
 use crate::state::filter;
 use crate::state::motion::Motion;
 use crate::theme::{ColorLevel, Rgb, Theme};
@@ -47,6 +47,8 @@ pub enum Overlay {
     Types(type_filter::TypePicker),
     /// The glob that marks the names it matches.
     MarkPattern(mark_pattern::Prompt),
+    /// The path of a folder to go to.
+    GoTo(goto::Prompt),
 }
 
 pub struct App {
@@ -68,6 +70,8 @@ pub struct App {
     pub columns: crate::view::columns::Columns,
     pub overlay: Overlay,
     pub quit: bool,
+    /// A new scan of this path is asked for, outside the scan shown: the run loop opens it.
+    pub reopen: Option<HostPath>,
     pub details: details::Details,
     /// The marks pane, in the place of the details pane while it is open.
     pub marks_pane: crate::features::marks_pane::MarksPane,
@@ -97,6 +101,7 @@ impl App {
             columns: crate::view::columns::Columns::default(),
             overlay: Overlay::None,
             quit: false,
+            reopen: None,
             details: details::Details::default(),
             marks_pane: crate::features::marks_pane::MarksPane::default(),
             debug: debug::Debug::default(),
@@ -124,6 +129,7 @@ impl App {
         s.home.clone_from(&ui.home);
         s.types = ui.types.clone();
         s.read_only = ui.read_only;
+        s.from_file = ui.from_file;
         s.outside.local = ui.local;
         app
     }
@@ -169,6 +175,7 @@ impl App {
             Overlay::Palette { .. } => return palette::key(self, k),
             Overlay::Types(_) => return type_filter::key(self, k),
             Overlay::MarkPattern(_) => return mark_pattern::key(self, k),
+            Overlay::GoTo(_) => return goto::key(self, k),
         }
         if filter::editing(self) {
             // `↑`/`↓` move the cursor in the list; the other keys edit the query.

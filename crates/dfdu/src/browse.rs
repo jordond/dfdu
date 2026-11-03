@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dfdu_engine::EngineOptions;
-use dfdu_tui::{Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
+use dfdu_tree::HostPath;
+use dfdu_tui::{Reopen, Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
 
 use crate::launch::Local;
 use crate::transfer::read_export;
-use crate::{Cli, remote};
+use crate::{Cli, MountArgs, RuleArgs, remote};
 
 /// `dfdu [PATH]` on a terminal: the browser, on PATH, a disk from the picker, a scan read from a
 /// file, or a directory on another host.
@@ -26,9 +27,17 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         ..EngineOptions::from_env()
     };
     let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
+    let mut reopen = None;
     let source = if let Some(f) = &cli.import {
         Source::Imported(read_export(f)?.tree)
     } else if let Some(host) = &cli.remote {
+        reopen = Some(reopen_remote(
+            host,
+            &engine,
+            cli.mounts,
+            cli.rules,
+            cli.remote_agent,
+        ));
         // Connected before the browser takes the terminal, so ssh can ask for a password.
         // Deletion runs on the agent, journalled on its host.
         let rules = cli.rules.remote();
@@ -51,11 +60,13 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         let header = resumed.as_ref().and_then(|(_, h)| h.as_ref());
         // Checked before the browser takes the terminal. With --disks the directory is not
         // known yet, and --mft is not used.
+        let rules = cli.rules.load();
+        reopen = Some(reopen_local(cli.mounts, cli.no_cache, rules.clone()));
         let local = Local {
             mft: !cli.disks && cli.mounts.use_mft(root.as_deref().unwrap_or(&path)),
             threads: None,
             job: cli.mounts.job_resuming(header),
-            rules: cli.rules.load(),
+            rules,
         };
         // The cache is for a directory named on the command line, not one read from a file or
         // chosen from the disks.
@@ -80,6 +91,7 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         source,
         engine,
         history: !cli.no_history && cli.import.is_none(),
+        reopen,
         ui: UiSettings {
             theme,
             color: cli.color.0,
@@ -95,6 +107,69 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             eprintln!("dfdu: {e}");
             Err(ExitCode::from(1))
         }
+    }
+}
+
+/// Opens a scan of another directory on this host as `dfdu PATH` does: the mounts and rules of
+/// the command line (`rules` loaded once, so their errors are not written over the browser),
+/// and the scan cache unless it is off.
+fn reopen_local(
+    mounts: MountArgs,
+    no_cache: bool,
+    rules: Option<std::sync::Arc<dfdu_rules::RuleSet>>,
+) -> Reopen {
+    let source = move |path: &HostPath| {
+        let path = path.to_local();
+        let local = Local {
+            mft: mounts.use_mft(&path),
+            threads: None,
+            job: mounts.job(),
+            rules: rules.clone(),
+        };
+        let slot = (!no_cache).then(|| cache_slot(&path, &local)).flatten();
+        let start: StartLocal = Box::new(move |path, opts| local.start(path, opts));
+        Ok(match slot {
+            Some(slot) => Source::Cached { path, slot, start },
+            None => Source::Local {
+                path: Some(path),
+                start,
+            },
+        })
+    };
+    Reopen {
+        source: Box::new(source),
+        suspend: false,
+    }
+}
+
+/// Opens a scan of another directory on `host` through a new connection, with the mounts and
+/// rules of the command line. ssh may ask for a password, so the browser gives it the terminal.
+fn reopen_remote(
+    host: &str,
+    engine: &EngineOptions,
+    mounts: MountArgs,
+    rule_args: RuleArgs,
+    mode: Option<remote::AgentMode>,
+) -> Reopen {
+    let (host, engine) = (host.to_owned(), engine.clone());
+    let source = move |path: &HostPath| {
+        let typed = PathBuf::from(dfdu_tree::name_os(path.as_bytes()).into_owned());
+        let rules = rule_args.remote();
+        match remote::engine(&host, engine.clone(), mounts.job(), &typed, rules, mode) {
+            Ok((engine, job, root)) => Ok(Source::Remote {
+                engine,
+                path: root,
+                job,
+                local: false,
+            }),
+            Err(_) => Err(std::io::Error::other(format!(
+                "cannot connect to {host} (the reason is on the terminal after dfdu quits)"
+            ))),
+        }
+    };
+    Reopen {
+        source: Box::new(source),
+        suspend: true,
     }
 }
 

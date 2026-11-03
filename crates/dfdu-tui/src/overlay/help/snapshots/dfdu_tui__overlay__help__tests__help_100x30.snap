@@ -20,16 +20,16 @@ expression: frame
   ┃                  tree mode                             command (dry run first)               ┃
   ┃ ← h Backspace <  parent directory (tree         v      mark a range: moving marks every row  ┃
   ┃                  mode: collapse)                       passed (v or Esc ends)                ┃
-  ┃                                                 :      mark by pattern: names in this        ┃
-  ┃ Sort                                                   directory matching a glob (in the     ┃
-  ┃ s  sort by size (again: reverse)                       palette)                              ┃
-  ┃ n  sort by name (again: reverse)                :      invert the marks in this directory,   ┃
-  ┃ C  sort by items (again: reverse)                      as * does in the marks pane (in the   ┃
-  ┃ M  sort by modification time (again:                   palette)                              ┃
-  ┃    reverse)                                     y      copy the selected path (through the   ┃
-  ┃ S  re-sort now                                         terminal, OSC 52)                     ┃
-  ┃                                                 o      open in the file manager (a file: its ┃
-  ┃ Display                                                folder)                               ┃
-  ┃ 1  Files view: the entries of this directory    d      move to Trash                         ┃
+  ┃ Ctrl-G           go to folder…                  :      mark by pattern: names in this        ┃
+  ┃                                                        directory matching a glob (in the     ┃
+  ┃ Sort                                                   palette)                              ┃
+  ┃ s  sort by size (again: reverse)                :      invert the marks in this directory,   ┃
+  ┃ n  sort by name (again: reverse)                       as * does in the marks pane (in the   ┃
+  ┃ C  sort by items (again: reverse)                      palette)                              ┃
+  ┃ M  sort by modification time (again:            y      copy the selected path (through the   ┃
+  ┃    reverse)                                            terminal, OSC 52)                     ┃
+  ┃ S  re-sort now                                  o      open in the file manager (a file: its ┃
+  ┃                                                        folder)                               ┃
+  ┃ Display                                         d      move to Trash                         ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ↓ more ┛
  ↑↓ scroll  PgUp PgDn page  / search  Esc close

@@ -1,6 +1,8 @@
 //! The browser's loop: ticks the session driver ([`Session`]), which reads the engine model when
 //! scan data or input calls for it, draws when it or input asks for a frame, and sleeps until
-//! the next key, engine change or timed wake. The pacing rules are in the crate docs.
+//! the next key, engine change or timed wake. The pacing rules are in the crate docs. It
+//! returns when the user quits, or with a new scan opened when the user asked for a path outside
+//! the scan ([`Exit::Reopen`]).
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -9,6 +11,7 @@ use crossbeam_channel::{Receiver, select};
 use dfdu_engine::Engine;
 use dfdu_session::effect::Output;
 use dfdu_session::{Session, SessionOptions};
+use dfdu_tree::HostPath;
 use ratatui::Terminal;
 use ratatui::crossterm::event::Event;
 
@@ -21,6 +24,16 @@ use crate::{UiOptions, view};
 /// Longest sleep when nothing is going on.
 const IDLE: Duration = Duration::from_secs(3600);
 
+/// Why the browser's loop returned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exit {
+    /// The user quit, or the input closed.
+    Quit,
+    /// The user asked for a scan of this path, outside the scan shown: up past the scan root,
+    /// or a folder gone to.
+    Reopen(HostPath),
+}
+
 /// The browser's loop with [`UiOptions::from_env`]. Public for `tests/latency.rs`, which passes
 /// a recording backend and a channel it writes keys to.
 ///
@@ -31,7 +44,7 @@ pub fn event_loop<T, B>(
     terminal: &mut Terminal<T>,
     engine: &Engine<B>,
     input: Receiver<Event>,
-) -> io::Result<()>
+) -> io::Result<Exit>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
     B: dfdu_scan::Backend,
@@ -40,9 +53,10 @@ where
 }
 
 /// The browser's loop: terminal events from `input`, frames to `terminal`. Returns when the user
-/// quits or `input` closes, once the session has stopped what runs beside the engine (a
-/// comparison of duplicates, a save to the cache, a record in the history); the engine is the
-/// caller's to shut down.
+/// quits or `input` closes ([`Exit::Quit`]) or asks for a scan outside this one
+/// ([`Exit::Reopen`]), once the session has stopped what runs beside the engine (a comparison
+/// of duplicates, a save to the cache, a record in the history); the engine is the caller's to
+/// shut down.
 ///
 /// # Errors
 ///
@@ -59,7 +73,25 @@ pub fn event_loop_with<T, B>(
     engine: &Engine<B>,
     input: Receiver<Event>,
     ui: UiOptions,
-) -> io::Result<()>
+) -> io::Result<Exit>
+where
+    T: ratatui::backend::Backend<Error = io::Error>,
+    B: dfdu_scan::Backend,
+{
+    let opened = event_loop_opening(terminal, engine, &input, ui, |_, path| Ok(path.clone()))?;
+    Ok(opened.map_or(Exit::Quit, Exit::Reopen))
+}
+
+/// [`event_loop_with`], opening the scan of a path outside this one with `open` while this one
+/// still runs: what it opened is returned, or what went wrong is shown on the status line and
+/// the loop goes on.
+pub(crate) fn event_loop_opening<T, B, N>(
+    terminal: &mut Terminal<T>,
+    engine: &Engine<B>,
+    input: &Receiver<Event>,
+    ui: UiOptions,
+    mut open: impl FnMut(&mut Terminal<T>, &HostPath) -> Result<N, String>,
+) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
     B: dfdu_scan::Backend,
@@ -74,22 +106,20 @@ where
         cache: ui.cache.clone(),
     };
     let mut session = Session::over(engine, app, jobs);
-    let result = run(terminal, &mut session, input, ui.mouse);
+    let result = run(terminal, &mut session, input, ui.mouse, &mut open);
     session.shutdown(Duration::ZERO);
     result
 }
 
-/// The loop itself, until the user quits or `input` closes.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the loop owns the input channel, so the input thread's sends fail once it returns"
-)]
-fn run<T, B>(
+/// The loop itself, until the user quits, `input` closes or `open` opened a scan outside this
+/// one.
+fn run<T, B, N>(
     terminal: &mut Terminal<T>,
     session: &mut Session<'_, B, App>,
-    input: Receiver<Event>,
+    input: &Receiver<Event>,
     mouse_on: bool,
-) -> io::Result<()>
+    open: &mut impl FnMut(&mut Terminal<T>, &HostPath) -> Result<N, String>,
+) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
     B: dfdu_scan::Backend,
@@ -112,7 +142,17 @@ where
             input_dirty = false;
         }
         if session.front().quit {
-            return Ok(());
+            return Ok(None);
+        }
+        if let Some(path) = session.front_mut().reopen.take() {
+            match open(terminal, &path) {
+                Ok(opened) => return Ok(Some(opened)),
+                Err(e) => {
+                    session.front_mut().session.status = Some(e);
+                    input_dirty = true;
+                    continue;
+                }
+            }
         }
 
         let wake = [session.wake_at(now), session.front().motion.next_frame_at()]
@@ -137,7 +177,7 @@ where
                 Ok(Event::Resize(..)) => input_dirty = true,
                 Ok(_) => {}
                 // The input thread ended (terminal closed): leave.
-                Err(_) => return Ok(()),
+                Err(_) => return Ok(None),
             },
             recv(changes) -> _ => session.note_change(),
             default(wake) => {}

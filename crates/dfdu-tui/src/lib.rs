@@ -34,23 +34,23 @@ mod view;
 
 use std::io;
 use std::path::PathBuf;
-use std::thread;
 use std::time::Duration;
 
-use crossbeam_channel::unbounded;
 use dfdu_engine::{Engine, EngineOptions};
 use dfdu_session::startup::{self, Opened, Setup};
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
+use dfdu_tree::HostPath;
+use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
 use features::picker::Picked;
+use input::reader::Reader;
 
 pub use app::{IDLE_BEFORE_SORT, MIN_SORT_INTERVAL};
 pub use dfdu_session::cache_link::CacheLink;
 pub use dfdu_session::history_link::HistoryLink;
 pub use dfdu_session::startup::{Source, StartLocal};
 pub use features::debug::summary as debug_summary;
-pub use run_loop::{event_loop, event_loop_with};
+pub use run_loop::{Exit, event_loop, event_loop_with};
 pub use setup::{ThemeChoice, UiSettings};
 pub use state::motion::MAX_STEP as MAX_EASING_STEP;
 pub use theme::{Bars, BuiltinTheme, ColorLevel, Theme, ThemeError, ThemeFile, parse_color_flag};
@@ -67,6 +67,22 @@ pub struct RunOptions {
     /// Record a scan of this host's files in the history once it finishes, and show what grew
     /// since the last.
     pub history: bool,
+    /// How a scan of another path on the same host is opened: up past the scan root, or a
+    /// folder gone to outside the scan. `None` offers neither.
+    pub reopen: Option<Reopen>,
+}
+
+/// Builds the source for a scan of a path, with the options of the first scan.
+pub type SourceFor = Box<dyn FnMut(&HostPath) -> io::Result<Source>>;
+
+/// How the browser opens a scan of another path on the host it scans, with the options of the
+/// first scan.
+pub struct Reopen {
+    /// The source for a scan of the path.
+    pub source: SourceFor,
+    /// Building it talks to the user on the terminal (ssh asking for a password): the browser
+    /// gives the terminal back while it runs, and takes it again after.
+    pub suspend: bool,
 }
 
 /// How the browser looks and behaves, decided before the loop starts.
@@ -100,6 +116,8 @@ pub struct UiOptions {
     /// Nothing is deleted (`--read-only`, imported scans): the delete keys are left out and
     /// cleanup commands run only as dry runs.
     pub read_only: bool,
+    /// The scan was read from a file: nothing outside it can be opened.
+    pub from_file: bool,
 }
 
 impl UiOptions {
@@ -120,12 +138,14 @@ impl UiOptions {
             types: dfdu_tree::filetype::TypeFilter::default(),
             local: false,
             read_only: false,
+            from_file: false,
         }
     }
 }
 
 /// Opens the browser on `opts.source` (or a disk chosen in the picker) and returns when the user
-/// quits. Before the alternate screen is entered, the colour level is detected and, when the
+/// quits. A scan of a path outside the one shown is opened with `opts.reopen`, before the one
+/// shown is shut down, so a failure leaves the user where they were with the error shown. Before the alternate screen is entered, the colour level is detected and, when the
 /// theme depends on it, the terminal is asked for its background colour (waiting at most
 /// `BACKGROUND_QUERY` for terminals that do not answer).
 ///
@@ -147,7 +167,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     }
     let mut terminal = ratatui::try_init()?;
     let mouse = ui.mouse;
-    let restore = setup::Restore { mouse };
+    let mut restore = Some(setup::Restore { mouse });
     restore_on_panic(mouse);
     if mouse {
         execute!(io::stdout(), EnableMouseCapture)?;
@@ -163,8 +183,8 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         },
         source => source,
     };
-    let ui_opts = |setup: Setup| UiOptions {
-        theme,
+    let ui_opts = |setup: Setup, from_file: bool| UiOptions {
+        theme: theme.clone(),
         color_level: colors.level,
         background: colors.background,
         mouse,
@@ -175,11 +195,84 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         types: ui.types.clone(),
         local: setup.local,
         read_only: setup.read_only,
+        from_file,
     };
-    match startup::open(source, &opts.engine, opts.history)? {
-        Opened::Native(s) => browse(&mut terminal, restore, s.engine, ui_opts(s.setup)),
-        Opened::Imported(s) => browse(&mut terminal, restore, s.engine, ui_opts(s.setup)),
+    let reader = Reader::spawn()?;
+    let (engine_opts, history, mut reopen) = (opts.engine, opts.history, opts.reopen);
+    let mut opened = startup::open(source, &engine_opts, history)?;
+    loop {
+        let mut open = |terminal: &mut ratatui::DefaultTerminal, path: &HostPath| {
+            let reopen = reopen.as_mut().ok_or_else(|| NO_REOPEN.to_owned())?;
+            open_other(
+                terminal,
+                &reader,
+                mouse,
+                reopen,
+                path,
+                &engine_opts,
+                history,
+            )
+        };
+        let next = match opened {
+            Opened::Native(s) => {
+                let ui = ui_opts(s.setup, false);
+                browse(
+                    &mut terminal,
+                    &reader,
+                    &mut restore,
+                    s.engine,
+                    ui,
+                    &mut open,
+                )
+            }
+            Opened::Imported(s) => {
+                let ui = ui_opts(s.setup, true);
+                browse(
+                    &mut terminal,
+                    &reader,
+                    &mut restore,
+                    s.engine,
+                    ui,
+                    &mut open,
+                )
+            }
+        }?;
+        match next {
+            Some(next) => opened = next,
+            None => return Ok(()),
+        }
     }
+}
+
+/// What the browser says when it has no way to open another scan.
+const NO_REOPEN: &str = "another folder cannot be scanned from here: quit and run dfdu with it";
+
+/// Opens a scan of `path` with `reopen` and the options of the first scan (`engine`,
+/// `history`). When `reopen` talks to the user, the terminal is given back while it runs, the
+/// input thread paused so no key is taken from it.
+fn open_other(
+    terminal: &mut ratatui::DefaultTerminal,
+    reader: &Reader,
+    mouse: bool,
+    reopen: &mut Reopen,
+    path: &HostPath,
+    engine: &EngineOptions,
+    history: bool,
+) -> Result<Opened, String> {
+    let mut open = || (reopen.source)(path).and_then(|s| startup::open(s, engine, history));
+    let opened = if reopen.suspend {
+        let paused = reader.pause();
+        setup::restore_terminal(mouse);
+        eprintln!("dfdu: scanning {path}…");
+        let opened = open();
+        let back = setup::resume_terminal(terminal, mouse);
+        drop(paused);
+        back.map_err(|e| format!("cannot take the terminal back: {e}"))?;
+        opened
+    } else {
+        open()
+    };
+    opened.map_err(|e| format!("cannot scan {path}: {e}"))
 }
 
 /// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
@@ -202,30 +295,23 @@ fn restore_on_panic(mouse: bool) {
     }));
 }
 
-/// Runs the loop on `engine` until the user quits, then restores the terminal (`restore`) and
-/// stops the engine.
+/// Runs the loop on `engine` until the user quits or `open` opened a scan outside this one,
+/// then stops the engine. When the user quits, the terminal is restored first (`restore`).
 fn browse<B: dfdu_scan::Backend>(
     terminal: &mut ratatui::DefaultTerminal,
-    restore: setup::Restore,
+    reader: &Reader,
+    restore: &mut Option<setup::Restore>,
     engine: Engine<B>,
     ui: UiOptions,
-) -> io::Result<()> {
+    open: &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> Result<Opened, String>,
+) -> io::Result<Option<Opened>> {
     let debug_stats = ui.debug;
-    let (tx, input) = unbounded();
-    let spawned = thread::Builder::new()
-        .name("dfdu-input".into())
-        .spawn(move || {
-            while let Ok(ev) = event::read() {
-                if tx.send(ev).is_err() {
-                    break;
-                }
-            }
-        });
-    let result = match spawned {
-        Ok(_) => event_loop_with(terminal, &engine, input, ui),
-        Err(e) => Err(e),
-    };
-    drop(restore);
+    let result = run_loop::event_loop_opening(terminal, &engine, reader.events(), ui, open);
+    if matches!(result, Ok(Some(_))) {
+        engine.shutdown(Duration::from_millis(200));
+        return result;
+    }
+    drop(restore.take());
     if debug_stats {
         let summary = debug_summary(&engine);
         if !summary.is_empty() {
