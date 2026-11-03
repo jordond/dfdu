@@ -168,7 +168,10 @@ pub fn tab(s: &mut SessionState, input: &str) -> Option<Offer> {
         return None;
     }
     let home = s.home.as_deref();
-    let Some(query) = Query::of(input, &s.snap.dir_path, home, s.outside.local) else {
+    // Before the scan has its root no folder is shown, and a relative path names no folder.
+    let Some(query) =
+        Query::of(input, &s.snap.dir_path, home, s.outside.local).filter(|q| q.dir.is_absolute())
+    else {
         return Some(Offer::Completed(Completion::default()));
     };
     if let Some(l) = &s.goto.remote {

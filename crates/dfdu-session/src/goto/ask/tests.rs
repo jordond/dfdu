@@ -52,6 +52,22 @@ fn a_tab_on_this_machine_completes_at_once() {
 }
 
 #[test]
+fn a_tab_before_the_root_is_shown_asks_for_nothing() {
+    // No folder is shown yet: a relative path would name one in dfdu's own working
+    // directory (the crate's, under the test runner, which has `src`).
+    let mut s = browser("");
+    s.outside.local = true;
+    for input in ["src/", "src/go", "disk"] {
+        assert_eq!(
+            tab(&mut s, input),
+            Some(Offer::Completed(Completion::default())),
+            "{input:?}"
+        );
+        assert!(!s.goto.pending());
+    }
+}
+
+#[test]
 fn a_scan_read_from_a_file_lists_nothing() {
     let mut s = browser("/r");
     assert_eq!(
