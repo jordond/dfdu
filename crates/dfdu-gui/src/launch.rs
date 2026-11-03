@@ -243,7 +243,11 @@ pub fn open(
     Ok(
         match startup::open(source, &settings.engine, settings.record)? {
             Opened::Native(s) => Box::new(Browser::new(s, ctx)),
-            Opened::Imported(s) => Box::new(Browser::new(s, ctx)),
+            Opened::Imported(s) => {
+                let mut b = Browser::new(s, ctx);
+                b.state_mut().from_file = true;
+                Box::new(b)
+            }
         },
     )
 }
@@ -254,6 +258,20 @@ pub fn picked(path: PathBuf, start: StartLocal) -> Source {
     Source::Local {
         path: Some(path),
         start,
+    }
+}
+
+/// The source of a scan of `path` on this machine asked for from a browser (up past its root,
+/// or a folder gone to), as `dfdu PATH` opens it: from its cached scan when there is one, with
+/// the rules unless they are off.
+pub fn reopened(path: PathBuf, settings: &Settings) -> Source {
+    let start = local(settings.rules.then(load_rules));
+    match cache_slot(&path) {
+        Some(slot) => Source::Cached { path, slot, start },
+        None => Source::Local {
+            path: Some(path),
+            start,
+        },
     }
 }
 

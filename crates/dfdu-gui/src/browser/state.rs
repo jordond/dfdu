@@ -10,6 +10,7 @@ use dfdu_session::type_filter::Row;
 use dfdu_session::{cleanup, confirm, dupes, largest};
 use dfdu_tree::HostPath;
 
+use crate::goto::GoTo;
 use crate::help::Help;
 use crate::palette::Palette;
 
@@ -30,6 +31,10 @@ pub enum Intent {
     GoTo {
         child: HostPath,
     },
+    /// A click on a breadcrumb above the scan root: a new scan of its directory.
+    Reopen(HostPath),
+    /// `Enter` in the go-to window, with the path typed.
+    GoToFolder(String),
     /// The filter's text changed.
     Filter(String),
     /// `Enter` in the filter.
@@ -100,6 +105,8 @@ pub struct ViewState {
     pub palette: Option<Palette>,
     /// The help, while it is open.
     pub help: Option<Help>,
+    /// The go-to window, while it is open.
+    pub goto: Option<GoTo>,
     /// The names of the themes the palette offers, as the window lists them.
     pub themes: Vec<String>,
     /// The theme chosen in the palette, by its index in `themes`, for the window to apply.
@@ -110,6 +117,9 @@ pub struct ViewState {
     pub admin_open: bool,
     /// The Updates window was asked for, for the window to open.
     pub updates_open: bool,
+    /// A scan of this path was asked for, outside the scan shown, for the window to open with
+    /// the settings of this one.
+    pub reopen: Option<HostPath>,
     /// The folders macOS keeps from the window that the scan could not read, as the banner
     /// on Full Disk Access names them, until it is dismissed (`access`).
     pub no_access: Option<Vec<String>>,

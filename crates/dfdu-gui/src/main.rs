@@ -32,6 +32,7 @@ mod cleanup;
 mod details;
 mod dialog;
 mod dupes;
+mod goto;
 mod help;
 #[cfg(target_os = "macos")]
 mod helper;

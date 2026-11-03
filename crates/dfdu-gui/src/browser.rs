@@ -32,12 +32,13 @@ use dfdu_session::{
 
 use crate::access;
 use crate::bridge::Bridge;
+use crate::goto::GoTo;
 use crate::help::Help;
 use crate::kit;
 use crate::palette::Palette;
 use crate::theme::{Colors, style};
 use crate::{
-    cleanup as cleanup_view, details, dialog, dupes as dupes_view, help, keys,
+    cleanup as cleanup_view, details, dialog, dupes as dupes_view, goto, help, keys,
     largest as largest_view, list, map, palette, review, status_bar, toolbar, windows,
 };
 
@@ -148,6 +149,27 @@ impl<B: Backend> Browser<B> {
                     let went = s.go_to(&child, &root).is_some();
                     self.view().follow |= went;
                 }
+                Intent::Reopen(path) => {
+                    if s.from_file {
+                        s.status = Some(goto::FROM_FILE.into());
+                    } else {
+                        s.status = None;
+                        self.view().reopen = Some(path);
+                    }
+                }
+                Intent::GoToFolder(text) => match self.session.go_to_path(&text) {
+                    Ok(gone) => {
+                        let view = self.view();
+                        view.goto = None;
+                        view.follow = true;
+                        view.reopen = gone;
+                    }
+                    Err(why) => {
+                        if let Some(g) = &mut self.view().goto {
+                            g.failed(why);
+                        }
+                    }
+                },
                 Intent::Filter(text) => self.set_filter(&text, now),
                 Intent::FilterSubmit => {
                     if filter::edit(s, TextOp::Submit) == Edited::Enter {
@@ -270,6 +292,7 @@ impl<B: Backend> Browser<B> {
                 || view.types.take().is_some()
                 || view.help.take().is_some()
                 || view.palette.take().is_some()
+                || view.goto.take().is_some()
             {
                 return;
             }
@@ -288,6 +311,13 @@ impl<B: Backend> Browser<B> {
             return;
         }
         let acted = self.session.act(a, now);
+        let s = self.session.state_mut();
+        if let Some(msg) = s.status.take() {
+            s.status = Some(goto::worded(msg));
+        }
+        if acted.reopen.is_some() {
+            self.view().reopen.clone_from(&acted.reopen);
+        }
         if acted.front_end {
             self.front_end(a, ctx);
         }
@@ -310,7 +340,7 @@ impl<B: Backend> Browser<B> {
     }
 
     /// The actions the session leaves to the window: copying the selected path, the type
-    /// picker, the help and the command palette. The others (columns, quitting...) are not
+    /// picker, the help, the command palette and the go-to window. The others (columns, quitting...) are not
     /// offered in this version.
     fn front_end(&mut self, a: Action, ctx: &egui::Context) {
         match a {
@@ -339,6 +369,10 @@ impl<B: Backend> Browser<B> {
                 };
             }
             Action::Palette => self.view().palette = Some(Palette::new()),
+            Action::GoTo => {
+                let g = GoTo::new(self.session.state());
+                self.view().goto = Some(g);
+            }
             _ => {}
         }
     }
@@ -542,6 +576,7 @@ impl<B: Backend> Browse for Browser<B> {
         windows::types(&ctx, s, colors, view, &mut intents);
         help::show(&ctx, s.read_only, colors, view);
         palette::show(&ctx, s.read_only, colors, view, &mut intents);
+        goto::show(&ctx, s, colors, view, &mut intents);
         cleanup_view::pane::show(&ctx, s, colors, &mut intents);
         dialog::show(&ctx, s, colors, view, &mut intents);
         let s = self.session.state_mut();
