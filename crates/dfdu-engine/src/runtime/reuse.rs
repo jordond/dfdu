@@ -33,8 +33,8 @@ impl<B: Backend> Engine<B> {
     /// `path` and the folders down to the old root are listed again, and each directory below
     /// is kept when its stat is the one it was read with. Without `scanned`, or when `path`,
     /// a folder between or the old root is not a directory on the device and mount of `path`
-    /// now (the old root became a mount, or one is in between), `path` is scanned as
-    /// [`Command::Scan`] does. Stats those folders on the caller's thread. Whether it kept.
+    /// now (the old root became a mount, or one is in between), or the tree it would start
+    /// from has no root, `path` is scanned as [`Command::Scan`] does. Stats those folders on the caller's thread. Whether it kept.
     pub fn scan_above(&self, path: &HostPath, scanned: Option<Scanned>, opts: JobOptions) -> bool {
         let start = scanned.filter(|_| self.link.is_none()).and_then(|s| {
             let backend = &self.shared.backend;
@@ -44,14 +44,14 @@ impl<B: Backend> Engine<B> {
                     .ok()
             })
         });
-        let Some((tree, changed, since)) = start else {
+        let Some((tree, changed, since, root)) = start.and_then(|(t, c, s)| {
+            let r = t.roots().next()?;
+            Some((t, c, s, r))
+        }) else {
             self.send(Command::Scan {
                 path: path.clone(),
                 opts,
             });
-            return false;
-        };
-        let Some(root) = tree.roots().next() else {
             return false;
         };
         let node = tree.node_ref(root);
