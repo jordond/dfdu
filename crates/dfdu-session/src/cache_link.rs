@@ -37,6 +37,19 @@ pub struct CacheLink {
     pub job: JobOptions,
     /// Save complete scans; off for a read-only browser.
     pub save: bool,
+    /// The scan was sent when the session started, keeping another scan's tree
+    /// ([`crate::startup::open_reusing`]): nothing cached is loaded and no scan is sent.
+    pub sent: Option<Sent>,
+}
+
+/// A scan of the directory sent when its session started, because nothing was cached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sent {
+    /// Where the change journal stood before it was sent.
+    pub journal: Option<JournalPosition>,
+    /// Seconds since the Unix epoch when what it keeps of another scan was last read in full;
+    /// `None` when it keeps nothing.
+    pub full_scan: Option<u64>,
 }
 
 pub use crate::state::Cached;
@@ -89,6 +102,8 @@ struct Run {
     /// A resume from the change journal keeps the cached scan's last full scan and its
     /// duration; a full scan replaces them.
     kept: Option<ScanTiming>,
+    /// A scan that kept another scan's tree: when that was last read in full.
+    full_scan: Option<u64>,
     /// Where the change journal stood before it started.
     journal: Option<JournalPosition>,
     saved_as: SavedAs,
@@ -178,6 +193,17 @@ impl Cacher {
         engine: &Engine<B>,
     ) {
         let now = cache::now();
+        if let Some(sent) = link.sent {
+            self.run = Some(Run {
+                full_scan: sent.full_scan,
+                ..Run::new(None, sent.journal)
+            });
+            let slot = link.slot.clone();
+            let _ = thread::Builder::new()
+                .name("dfdu-cache".into())
+                .spawn(move || slot.sweep(now));
+            return;
+        }
         if link.slot.cached(now) {
             let slot = link.slot.clone();
             let root = link.slot.key.root().to_path_buf();
@@ -269,9 +295,15 @@ impl Cacher {
         let Some((complete, version)) = ended(engine) else {
             return false;
         };
-        let timing = run
-            .kept
-            .unwrap_or_else(|| ScanTiming::ended_now(run.started, run.started_secs));
+        let timing = run.kept.unwrap_or_else(|| {
+            let t = ScanTiming::ended_now(run.started, run.started_secs);
+            ScanTiming {
+                last_full_scan: run
+                    .full_scan
+                    .map_or(t.last_full_scan, |f| f.min(t.last_full_scan)),
+                ..t
+            }
+        });
         let worth = complete && link.save && timing.scan_ms >= self.min_scan_ms;
         run.saved_as = if worth {
             SavedAs::Save(timing)
@@ -283,6 +315,14 @@ impl Cacher {
             return self.save(link, s, engine, version) | shown;
         }
         shown
+    }
+
+    /// When the tree shown was last read in full, when that is before the session started: it
+    /// was brought up to date from the cached scan, or kept another scan's tree.
+    #[must_use]
+    pub fn full_scan(&self) -> Option<u64> {
+        let run = self.run.as_ref()?;
+        run.kept.map(|k| k.last_full_scan).or(run.full_scan)
     }
 
     /// Something is being loaded, saved or waited for, so [`Cacher::poll`] has more to take
@@ -302,6 +342,7 @@ impl Run {
             started: Instant::now(),
             started_secs: cache::now(),
             kept,
+            full_scan: None,
             journal,
             saved_as: SavedAs::Pending,
         }

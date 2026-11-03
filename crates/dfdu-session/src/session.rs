@@ -123,7 +123,7 @@ pub struct Acted {
 
 /// The engine, owned by the session or by its caller.
 enum Held<'e, B: Backend> {
-    Owned(Engine<B>),
+    Owned(Box<Engine<B>>),
     Borrowed(&'e Engine<B>),
 }
 
@@ -150,7 +150,7 @@ pub struct Session<'e, B: Backend, F: FrontEnd = SessionState> {
 impl<B: Backend, F: FrontEnd> Session<'static, B, F> {
     /// A session that owns `engine` and shuts it down with itself ([`Session::shutdown`]).
     pub fn new(engine: Engine<B>, front: F, opts: SessionOptions) -> Self {
-        Session::with(Held::Owned(engine), front, opts)
+        Session::with(Held::Owned(Box::new(engine)), front, opts)
     }
 }
 
@@ -176,6 +176,17 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
 
     pub fn state(&self) -> &SessionState {
         self.front.state()
+    }
+
+    /// What this scan read below its root, for a scan of `above`, a folder above it, to keep
+    /// ([`crate::startup::open_reusing`]); `None` when it cannot ([`Engine::scanned`]). Copies
+    /// the tree under the read lock.
+    pub fn scanned(&self, above: &HostPath) -> Option<dfdu_engine::Scanned> {
+        let mut s = self.engine.get().scanned(above)?;
+        if let Some(t) = self.cacher.full_scan() {
+            s.read_in_full_at(t);
+        }
+        Some(s)
     }
 
     pub fn state_mut(&mut self) -> &mut SessionState {

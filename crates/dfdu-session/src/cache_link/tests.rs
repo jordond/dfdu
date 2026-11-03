@@ -22,6 +22,7 @@ pub(super) fn link(tmp: &Path) -> CacheLink {
         path: dir,
         job: JobOptions::default(),
         save: true,
+        sent: None,
     }
 }
 
@@ -300,4 +301,42 @@ fn measure_opening_a_million() {
     );
     drop(c);
     e.shutdown(Duration::from_millis(500));
+}
+
+/// A scan sent when the session started, keeping another scan's tree, is not sent again, and
+/// is saved as read in full when that tree was: its next opening scans it all again.
+#[test]
+fn a_scan_sent_with_another_scans_tree_is_saved_as_read_when_that_was() {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = CacheLink {
+        sent: Some(Sent {
+            journal: None,
+            full_scan: Some(5),
+        }),
+        ..link(tmp.path())
+    };
+    let e = Engine::portable(2);
+    e.send(Command::Scan {
+        path: link.path.as_path().into(),
+        opts: link.job.clone(),
+    });
+    let mut s = SessionState::new(Instant::now());
+    let mut c = cacher(&link);
+    poll_until(&mut c, &mut s, &e, |c, _| {
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
+    });
+    assert_eq!(c.full_scan(), Some(5));
+    assert_eq!(
+        e.read(|m| m.status.jobs.len()),
+        1,
+        "the cacher sent no scan of its own"
+    );
+    let hit = link.slot.load(cache::now()).unwrap().expect("saved");
+    assert_eq!(hit.loaded.header.last_full_scan, 5);
+    assert!(hit.full_rescan, "rescanned in full next time");
+    drop(c);
+    e.shutdown(Duration::from_millis(200));
 }
