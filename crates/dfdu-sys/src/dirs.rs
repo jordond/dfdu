@@ -100,6 +100,16 @@ pub fn journal_dir() -> Option<PathBuf> {
     Some(state_dir()?.join("ops"))
 }
 
+/// The name of the staging directory in [`state_dir`], where staged items wait for their
+/// undo window to end (`stage/<session>/`).
+pub const STAGE_DIR_NAME: &str = "stage";
+
+/// The staging directory: [`STAGE_DIR_NAME`] in [`state_dir`].
+#[must_use]
+pub fn stage_dir() -> Option<PathBuf> {
+    Some(state_dir()?.join(STAGE_DIR_NAME))
+}
+
 /// Crash reports: `crash` in [`state_dir`].
 #[must_use]
 pub fn crash_dir() -> Option<PathBuf> {
@@ -114,9 +124,11 @@ pub fn history_path() -> Option<PathBuf> {
 
 /// Gives dfdu's own directories back to the user a root dfdu acts for
 /// ([`crate::acting`]): the configuration, state and cache directories with everything in
-/// them, and on Linux the home trash's directories (not what was trashed, which keeps its
-/// owner). Run when starting and before exiting, so files a root run created (history, journals,
-/// staging, cached scans) stay usable without root. Does nothing when acting for no one.
+/// them, except what is staged ([`stage_dir`] itself is given back, its sessions and the items in
+/// them keep their owner: a staged root-owned file must not come back from an undo as the
+/// user's), and on Linux the home trash's directories (not what was trashed, which keeps its
+/// owner). Run when starting and before exiting, so files a root run created (history,
+/// journals, cached scans) stay usable without root. Does nothing when acting for no one.
 pub fn give_back() {
     if crate::acting::current().is_none() {
         return;
@@ -124,10 +136,10 @@ pub fn give_back() {
     let cache = etcetera::base_strategy::choose_native_strategy()
         .ok()
         .map(|d| d.cache_dir().join("dfdu"));
-    for d in [config_dir(), state_dir(), cache_dir(), cache]
-        .into_iter()
-        .flatten()
-    {
+    if let Some(d) = state_dir() {
+        crate::acting::give_back_sealed(&d, true, &[STAGE_DIR_NAME]);
+    }
+    for d in [config_dir(), cache_dir(), cache].into_iter().flatten() {
         crate::acting::give_back(&d, true);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -147,6 +159,7 @@ mod tests {
         let Some(state) = state_dir() else { return };
         assert_eq!(journal_dir(), Some(state.join("ops")));
         assert_eq!(crash_dir(), Some(state.join("crash")));
+        assert_eq!(stage_dir(), Some(state.join("stage")));
         assert_eq!(history_path(), Some(state.join("history.sqlite3")));
     }
 

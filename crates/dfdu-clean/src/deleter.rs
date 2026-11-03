@@ -155,7 +155,7 @@ impl State {
         };
         match Journal::create(dir) {
             Ok(j) => {
-                let base = dir.parent().map(|p| p.join("stage"));
+                let base = dir.parent().map(|p| p.join(dfdu_sys::dirs::STAGE_DIR_NAME));
                 self.stager = Some(Stager::new(j.session(), base));
                 self.journal = Some(j);
                 self.journal_err = None;

@@ -118,6 +118,30 @@ fn inner() {
     ] {
         assert_eq!(std::fs::metadata(&p).unwrap().uid(), 0, "{}", p.display());
     }
+    // A sealed directory (staging) is given back, but what is in it keeps its owner.
+    let state = top.join("state");
+    let session = state.join("stage/session");
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::write(session.join("1-staged"), b"root's").unwrap();
+    std::fs::create_dir_all(state.join("ops")).unwrap();
+    std::fs::write(state.join("ops/journal.jsonl"), b"{}").unwrap();
+    dfdu_sys::acting::give_back_sealed(&state, true, &["stage"]);
+    for p in [state.join("stage"), state.join("ops/journal.jsonl")] {
+        assert_eq!(
+            std::fs::symlink_metadata(&p).unwrap().uid(),
+            uid,
+            "{}",
+            p.display()
+        );
+    }
+    for p in [session.clone(), session.join("1-staged")] {
+        assert_eq!(
+            std::fs::symlink_metadata(&p).unwrap().uid(),
+            0,
+            "{}",
+            p.display()
+        );
+    }
     // `..` is refused.
     dfdu_sys::acting::give_back(&top.join("a/../a"), true);
     std::fs::remove_file(&linked_from).unwrap();

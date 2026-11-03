@@ -175,12 +175,27 @@ pub fn adopt() -> std::io::Result<Adopted> {
 /// entered, and `dir` must be below their home, without `..`. Safe against the user changing
 /// the tree meanwhile (see the walk's comment). Does nothing when acting for no one; errors are ignored (the next run tries again).
 pub fn give_back(dir: &Path, deep: bool) {
+    give_back_sealed(dir, deep, &[]);
+}
+
+/// [`give_back`], except that the directories named in `sealed` directly in `dir` are given
+/// back themselves but never entered: what is in them keeps its owner. The staging directory is
+/// one: a root-owned file staged from a root directory would otherwise become the user's, and
+/// an undo would put it back there writable by them.
+pub fn give_back_sealed(dir: &Path, deep: bool, sealed: &[&str]) {
     #[cfg(unix)]
     if let Some(u) = current() {
-        unix::give_back(u, dir, deep);
+        unix::give_back(u, dir, deep, sealed);
     }
     #[cfg(not(unix))]
-    let _ = (dir, deep);
+    let _ = (dir, deep, sealed);
+}
+
+/// Whether the deep walk enters the directory `name`, found `depth` levels below the directory
+/// given back (0: directly in it): not when it is one of the `sealed` names there.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn enters(depth: usize, name: &[u8], sealed: &[&str]) -> bool {
+    depth != 0 || !sealed.iter().any(|s| s.as_bytes() == name)
 }
 
 /// Makes `cmd` run as the user dfdu acts for, with their groups. Does nothing when acting for
@@ -278,7 +293,7 @@ mod unix {
     /// user could have linked a root-owned file from elsewhere (macOS has no
     /// `protected_hardlinks`), and dfdu never makes hard links in its own directories.
     /// Symlinks, devices and other kinds of file are left alone too.
-    pub(super) fn give_back(u: &User, dir: &Path, deep: bool) {
+    pub(super) fn give_back(u: &User, dir: &Path, deep: bool, sealed: &[&str]) {
         use rustix::fs::Mode;
         use std::path::Component;
         let Ok(rel) = dir.strip_prefix(&u.home) else {
@@ -309,7 +324,7 @@ mod unix {
             fd = next;
         }
         if deep {
-            below(u, &fd, dev(&home), 0);
+            below(u, &fd, dev(&home), 0, sealed);
         }
     }
 
@@ -360,7 +375,7 @@ mod unix {
         Some(kind)
     }
 
-    fn below(u: &User, dir: &rustix::fd::OwnedFd, dev: u64, depth: usize) {
+    fn below(u: &User, dir: &rustix::fd::OwnedFd, dev: u64, depth: usize, sealed: &[&str]) {
         use rustix::fs::{Mode, OFlags};
         if depth >= MAX_DEPTH {
             return;
@@ -383,8 +398,10 @@ mod unix {
             let Ok(fd) = rustix::fs::openat(dir, name, flags, Mode::empty()) else {
                 continue;
             };
-            if check(u, &fd, dev) == Some(Kind::Dir) {
-                below(u, &fd, dev, depth + 1);
+            if check(u, &fd, dev) == Some(Kind::Dir)
+                && super::enters(depth, name.to_bytes(), sealed)
+            {
+                below(u, &fd, dev, depth + 1, sealed);
             }
         }
     }
@@ -478,6 +495,17 @@ mod tests {
             cfg!(target_os = "macos").then_some(501)
         );
         assert_eq!(acting_uid(env(&[])), None);
+    }
+
+    #[test]
+    fn the_walk_does_not_enter_a_sealed_directory() {
+        let sealed = ["stage"];
+        // Given back itself (the walk checks it first), but not entered.
+        assert!(!enters(0, b"stage", &sealed));
+        assert!(enters(0, b"ops", &sealed));
+        assert!(enters(0, b"stage", &[]));
+        // Only directly in the directory given back.
+        assert!(enters(1, b"stage", &sealed));
     }
 
     #[test]
