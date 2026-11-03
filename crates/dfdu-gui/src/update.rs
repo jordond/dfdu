@@ -8,7 +8,7 @@
 //! start without checking again within the day. Checks, downloads and installs run on threads
 //! of their own and ask for a frame when they end.
 
-mod install;
+pub mod install;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

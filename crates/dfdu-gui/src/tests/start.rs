@@ -1,6 +1,6 @@
 //! The start screen takes a folder dropped on the window and opens an export read-only, and a
 //! scan of this machine is recorded in the scan history in dfdu's state directory, as `dfdu`
-//! records it. The history test runs this test binary again with `DFDU_STATE_DIR` set, because
+//! records it; another computer is offered with the ones connected to lately. The history test runs this test binary again with `DFDU_STATE_DIR` set, because
 //! changing the environment of a running process needs `unsafe`.
 
 use std::path::{Path, PathBuf};
@@ -179,4 +179,29 @@ fn inner_record() {
         std::thread::sleep(Duration::from_millis(20));
     }
     close(h);
+}
+
+#[test]
+fn the_start_screen_offers_another_computer_and_the_recent_ones() {
+    let tmp = files();
+    let start = Launch {
+        source: Source::Local {
+            path: None,
+            start: launch::local(None),
+        },
+        ..local(tmp.path(), true, None)
+    };
+    let prefs = crate::settings::Prefs {
+        remotes: vec![crate::remote::Target {
+            host: "me@nas".into(),
+            port: Some(2222),
+            identity: None,
+            path: "~/Projects".into(),
+        }],
+        ..crate::settings::Prefs::default()
+    };
+    let mut h = super::harness_with(start, prefs, None);
+    until(&mut h, "the start screen", |h| shown(h, "Another computer"));
+    assert!(shown(&h, "Connect"));
+    assert!(shown(&h, "me@nas:2222  ~/Projects"));
 }

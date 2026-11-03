@@ -13,6 +13,27 @@ use dfdu_rules::{Env, Platform, RuleSet, Source};
 use dfdu_tree::{Host, HostPath};
 use parking_lot::Mutex;
 
+/// The agent's hello: its name, when it speaks this side's protocol version.
+fn greet(reader: &mut Box<dyn Read + Send>, buf: &mut Vec<u8>) -> io::Result<String> {
+    let hello = next_message(
+        reader,
+        buf,
+        io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the agent closed the link before saying hello",
+        ),
+    )?;
+    match hello {
+        FromAgent::Hello { min, max, tool } if (min..=max).contains(&wire::VERSION) => Ok(tool),
+        FromAgent::Hello { min, max, tool } => Err(io::Error::other(format!(
+            "{tool} speaks protocol versions {min}-{max}, this dfdu {}",
+            wire::VERSION
+        ))),
+        FromAgent::Fatal(s) => Err(io::Error::other(s)),
+        _ => Err(io::Error::other("the agent did not say hello")),
+    }
+}
+
 /// Greets the agent: the versions must overlap. With `rules`, sends them and builds the set the
 /// agent built. Returns the link and the agent's reader.
 pub(crate) fn connect(
@@ -26,24 +47,18 @@ pub(crate) fn connect(
         child,
     } = io;
     let mut buf = Vec::new();
-    let hello = next_message(
-        &mut reader,
-        &mut buf,
-        io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "the agent closed the link before saying hello",
-        ),
-    )?;
-    let tool = match hello {
-        FromAgent::Hello { min, max, tool } if (min..=max).contains(&wire::VERSION) => tool,
-        FromAgent::Hello { min, max, tool } => {
-            return Err(io::Error::other(format!(
-                "{tool} speaks protocol versions {min}-{max}, this dfdu {}",
-                wire::VERSION
-            )));
+    let tool = match greet(&mut reader, &mut buf) {
+        Ok(tool) => tool,
+        Err(e) => {
+            // No link to end it: the process is ended and reaped here.
+            if let Some(p) = &child {
+                p.kill();
+                if let Some(mut c) = p.take() {
+                    let _ = c.wait();
+                }
+            }
+            return Err(e);
         }
-        FromAgent::Fatal(s) => return Err(io::Error::other(s)),
-        _ => return Err(io::Error::other("the agent did not say hello")),
     };
     // The agent's host is not known until it says; the greeting carries no paths.
     let host = Host::LOCAL;
@@ -53,7 +68,7 @@ pub(crate) fn connect(
         seq: AtomicU64::new(0),
         pending: Mutex::new(VecDeque::new()),
         pairs: Mutex::new(Vec::new()),
-        child: Mutex::new(child),
+        child,
         dead: AtomicBool::new(false),
         timed_out: AtomicBool::new(false),
         rules: OnceLock::new(),

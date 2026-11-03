@@ -29,6 +29,7 @@ use egui::{
 };
 
 use crate::kit::{self, Kind};
+use crate::remote::Target;
 use crate::theme::Colors;
 use crate::theme::style::{
     MONO_SEMIBOLD_FAMILY, RADIUS_MD, RADIUS_SM, SANS_MEDIUM_FAMILY, SPACE_1, SPACE_2, SPACE_3,
@@ -69,6 +70,8 @@ pub enum Chosen {
     Folder(PathBuf),
     /// A scan saved to a file, to browse read-only.
     Export(PathBuf),
+    /// A folder on another computer.
+    Remote(Target),
 }
 
 /// A disk as the list shows it.
@@ -102,6 +105,62 @@ pub struct Start {
     admin_step: (crate::admin::Step, std::time::Instant),
     /// The Full disk access window was asked for, for the window to open.
     pub setup: bool,
+    /// What the sheet for another computer has typed.
+    remote: RemoteForm,
+    /// Why the last connection to another computer failed.
+    pub remote_error: Option<String>,
+}
+
+/// The fields of the sheet for another computer.
+#[derive(Default)]
+struct RemoteForm {
+    host: String,
+    path: String,
+    port: String,
+    key: String,
+    /// The key file and port are shown.
+    more: bool,
+}
+
+impl RemoteForm {
+    /// The computer the fields name, or why they do not.
+    fn target(&self) -> Result<Target, String> {
+        let host = self.host.trim();
+        if host.is_empty() {
+            return Err("Type the computer's name or address.".into());
+        }
+        if host.starts_with('-') {
+            return Err("A computer's name does not start with -.".into());
+        }
+        let port = match self.port.trim() {
+            "" => None,
+            p => Some(
+                p.parse::<u16>()
+                    .ok()
+                    .filter(|&p| p > 0)
+                    .ok_or_else(|| format!("{p} is not a port."))?,
+            ),
+        };
+        let key = self.key.trim();
+        Ok(Target {
+            host: host.into(),
+            port,
+            identity: (!key.is_empty()).then(|| PathBuf::from(key)),
+            path: self.path.trim().into(),
+        })
+    }
+
+    fn fill(&mut self, t: &Target) {
+        self.host.clone_from(&t.host);
+        self.path.clone_from(&t.path);
+        self.port = t.port.map(|p| p.to_string()).unwrap_or_default();
+        self.key = t
+            .identity
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        self.more = t.port.is_some() || t.identity.is_some();
+    }
 }
 
 /// The frame of a screen without a browser: the window's background, 32 in from its edges.
@@ -152,7 +211,120 @@ impl Start {
             admin: false,
             admin_step: (crate::admin::step(), std::time::Instant::now()),
             setup: false,
+            remote: RemoteForm::default(),
+            remote_error: None,
         }
+    }
+
+    /// The sheet for another computer, `w` wide: the computer and the folder there, the key
+    /// file and port under More, Connect, and the computers connected to lately.
+    fn remote_sheet(
+        &mut self,
+        ui: &mut Ui,
+        colors: &Colors,
+        w: f32,
+        recent: &[Target],
+    ) -> Option<Target> {
+        let mut chosen = None;
+        sheet(ui, colors, w, |ui, inner| {
+            heading(
+                ui,
+                colors,
+                "Another computer",
+                "Over ssh, with your ssh config and keys. dfdu sends its agent there if it has none.",
+            );
+            let f = &mut self.remote;
+            let mut entered = false;
+            let gap = SPACE_2;
+            let half = ((inner - gap) / 2.0).floor();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let host = egui::Id::unique("dfdu-start-remote-host");
+                let r = crate::windows::field(ui, colors, &mut f.host, host, "user@host", half);
+                entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let path = egui::Id::unique("dfdu-start-remote-path");
+                let r = crate::windows::field(ui, colors, &mut f.path, path, "~", half);
+                entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            });
+            if f.more {
+                ui.add_space(SPACE_1);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    let port = egui::Id::unique("dfdu-start-remote-port");
+                    let r = crate::windows::field(ui, colors, &mut f.port, port, "22", 72.0);
+                    entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let key = egui::Id::unique("dfdu-start-remote-key");
+                    let room = (inner - 72.0 - 2.0 * gap - 96.0).max(80.0);
+                    let hint = "key file (default: ssh's)";
+                    let r = crate::windows::field(ui, colors, &mut f.key, key, hint, room);
+                    entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    if kit::button(ui, colors, Kind::Secondary, "Choose…", None, true).clicked() {
+                        let mut pick = rfd::FileDialog::new();
+                        if let Some(ssh) = dfdu_sys::dirs::home_dir().map(|h| h.join(".ssh")) {
+                            pick = pick.set_directory(ssh);
+                        }
+                        if let Some(file) = pick.pick_file() {
+                            f.key = file.display().to_string();
+                        }
+                    }
+                });
+            }
+            ui.add_space(SPACE_1);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let more = if f.more {
+                    "Fewer options"
+                } else {
+                    "Key file and port…"
+                };
+                let dim = colors.fg(Token::FgDim);
+                let link =
+                    egui::Button::new(kit::sans(more, 12.0).color(dim)).frame_when_inactive(false);
+                if ui.add(link).clicked() {
+                    f.more = !f.more;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let typed = !f.host.trim().is_empty();
+                    let go = kit::button(ui, colors, Kind::Secondary, "Connect", None, typed);
+                    if (go.clicked() || entered) && typed {
+                        match f.target() {
+                            Ok(t) => chosen = Some(t),
+                            Err(e) => self.remote_error = Some(e),
+                        }
+                    }
+                });
+            });
+            if let Some(e) = &self.remote_error {
+                ui.add_space(SPACE_1);
+                let red = colors.fg(Token::StatusError);
+                ui.add(egui::Label::new(kit::sans(e, 12.0).color(red)).wrap());
+            }
+            if !recent.is_empty() {
+                ui.add_space(SPACE_2);
+                ui.label(kit::label("Recent", 11.0).color(colors.fg(Token::FgDim)));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(SPACE_1, SPACE_1);
+                    for t in recent {
+                        let chip = egui::Button::new(kit::mono(t.label(), 12.0))
+                            .corner_radius(CornerRadius::same(RADIUS_SM));
+                        if ui.add(chip).on_hover_text("Connect").clicked() {
+                            self.remote.fill(t);
+                            chosen = Some(t.clone());
+                        }
+                    }
+                });
+            }
+        });
+        if chosen.is_some() {
+            self.remote_error = None;
+        }
+        chosen
+    }
+
+    /// Shows the sheet for another computer filled with `target`, saying why it failed.
+    pub fn failed_remote(&mut self, target: &Target, why: String) {
+        self.remote.fill(target);
+        self.remote_error = (!why.is_empty()).then_some(why);
     }
 
     /// Where scanning as an administrator stands, checked again after a second.
@@ -233,7 +405,7 @@ impl Start {
     }
 
     /// Draws the screen; what was chosen, if anything was.
-    pub fn show(&mut self, ui: &mut Ui, colors: &Colors) -> Option<Chosen> {
+    pub fn show(&mut self, ui: &mut Ui, colors: &Colors, recent: &[Target]) -> Option<Chosen> {
         if self.rows.is_none()
             && let Ok(listed) = self.listing.try_recv()
         {
@@ -256,15 +428,15 @@ impl Start {
                         ui.add_space(((room - w) / 2.0).floor());
                         ui.vertical(|ui| {
                             ui.set_width(w);
-                            let (c, e) = self.column(ui, colors, w);
+                            let (c, e) = self.column(ui, colors, w, recent);
                             chosen = chosen.take().or(c);
                             export = e;
                         });
                     });
                 });
             });
-        if let Some(file) = export {
-            return Some(Chosen::Export(file));
+        if let Some(other) = export {
+            return Some(other);
         }
         if let Some(dropped) = dropped(ui.ctx()) {
             match dropped {
@@ -275,13 +447,15 @@ impl Start {
         chosen.map(Chosen::Folder)
     }
 
-    /// The column of the screen, `w` wide: the folder and the export chosen in it.
+    /// The column of the screen, `w` wide: the folder chosen in it, and the export or the
+    /// other computer.
     fn column(
         &mut self,
         ui: &mut Ui,
         colors: &Colors,
         w: f32,
-    ) -> (Option<PathBuf>, Option<PathBuf>) {
+        recent: &[Target],
+    ) -> (Option<PathBuf>, Option<Chosen>) {
         let dim = colors.fg(Token::FgDim);
         let mut chosen = None;
         ui.label(kit::mono_bold("Choose what to scan", 22.0).color(colors.fg(Token::Header)));
@@ -340,7 +514,7 @@ impl Start {
                 chosen = Some(dir);
             }
             if let Some(file) = export_sheet(ui, colors, each) {
-                export = Some(file);
+                export = Some(Chosen::Export(file));
             }
         };
         if two {
@@ -351,6 +525,10 @@ impl Start {
         } else {
             ui.spacing_mut().item_spacing.y = SPACE_3;
             sheets(ui);
+        }
+        ui.add_space(SPACE_3);
+        if let Some(t) = self.remote_sheet(ui, colors, w, recent) {
+            export = Some(Chosen::Remote(t));
         }
         ui.add_space(SPACE_6);
 

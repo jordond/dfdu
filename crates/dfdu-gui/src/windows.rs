@@ -40,6 +40,19 @@ pub fn field(
     hint: &str,
     width: f32,
 ) -> Response {
+    field_masked(ui, colors, text, id, hint, width, false)
+}
+
+/// A [`field`] whose text shows as dots when `masked` (a password).
+pub fn field_masked(
+    ui: &mut Ui,
+    colors: &Colors,
+    text: &mut String,
+    id: Id,
+    hint: &str,
+    width: f32,
+    masked: bool,
+) -> Response {
     let focused = ui.memory(|m| m.has_focus(id));
     let (outer, _) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::hover());
     let edge = if focused {
@@ -62,6 +75,7 @@ pub fn field(
             .layout(Layout::left_to_right(Align::Center)),
     );
     let mut edit = TextEdit::singleline(text)
+        .password(masked)
         .id(id)
         .font(FontId::new(12.0, FontFamily::Monospace))
         .frame(Frame::NONE)

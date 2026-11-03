@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use dfdu_engine::{Engine, EngineOptions, RemoteIo, RemoteRules};
+use dfdu_engine::{Engine, EngineOptions, Process, RemoteIo, RemoteRules};
 use dfdu_scan::JobOptions;
 
 use crate::startup::Source;
@@ -119,21 +119,23 @@ impl Ssh {
 const KEPT_LINES: usize = 8;
 
 /// Stops a connection being made, from another thread: kills ssh, which ends what it waits for.
+/// It holds ssh until the end, so it also stops an agent that never says hello
+/// ([`open`]); cancelling after the scan opened ends the scan's link.
 #[derive(Clone, Default)]
 pub struct Cancel(Arc<Mutex<Slot>>);
 
 #[derive(Default)]
 struct Slot {
     cancelled: bool,
-    child: Option<Child>,
+    ssh: Option<Process>,
 }
 
 impl Cancel {
     pub fn cancel(&self) {
         let mut s = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         s.cancelled = true;
-        if let Some(c) = &mut s.child {
-            let _ = c.kill();
+        if let Some(p) = &s.ssh {
+            p.kill();
         }
     }
 
@@ -145,24 +147,18 @@ impl Cancel {
             .cancelled
     }
 
-    /// Holds `child` to kill on cancel; `Err` (with it killed) when already cancelled.
-    fn hold(&self, mut child: Child) -> io::Result<()> {
+    /// Holds `ssh` to kill on cancel; `Err` (with it killed) when already cancelled.
+    fn hold(&self, ssh: &Process) -> io::Result<()> {
         let mut s = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         if s.cancelled {
-            let _ = child.kill();
-            let _ = child.wait();
+            ssh.kill();
+            if let Some(mut c) = ssh.take() {
+                let _ = c.wait();
+            }
             return Err(cancelled());
         }
-        s.child = Some(child);
+        s.ssh = Some(ssh.clone());
         Ok(())
-    }
-
-    fn take(&self) -> Option<Child> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .child
-            .take()
     }
 }
 
@@ -201,19 +197,21 @@ pub fn connect(ssh: &Ssh, front: &mut dyn Front, cancel: &Cancel) -> io::Result<
     let stdout = child.stdout.take().ok_or_else(|| pipe("stdout"));
     let stdin = child.stdin.take().ok_or_else(|| pipe("stdin"));
     let said = child.stderr.take().map(keep_lines);
-    cancel.hold(child)?;
+    let process = Process::from(child);
+    cancel.hold(&process)?;
     let (mut reader, mut writer) = (BufReader::new(stdout?), stdin?);
     let failed = |e: io::Error, writer: std::process::ChildStdin| {
         drop(writer);
-        let child = cancel.take();
+        let child = process.take();
         if cancel.is_cancelled() {
             if let Some(mut c) = child {
+                let _ = c.kill();
                 let _ = c.wait();
             }
             return cancelled();
         }
         let code = child.and_then(|mut c| exited(&mut c));
-        let lines = said.as_ref().map(Said::text).unwrap_or_default();
+        let lines = said.map(Said::text).unwrap_or_default();
         match code {
             // ssh said why: on the terminal, or in the lines kept.
             Some(code) if code != 0 && e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -239,12 +237,11 @@ pub fn connect(ssh: &Ssh, front: &mut dyn Front, cancel: &Cancel) -> io::Result<
     if cancel.is_cancelled() {
         return Err(failed(cancelled(), writer));
     }
-    let child = cancel.take();
     // The reader keeps what it read past the bootstrap: the start of the agent's hello.
     Ok(RemoteIo {
         reader: Box::new(reader),
         writer: Box::new(writer),
-        child,
+        child: Some(process),
     })
 }
 
@@ -260,13 +257,21 @@ fn no_console(cmd: &mut Command) {
     let _ = cmd;
 }
 
-/// The last lines ssh wrote, read on a thread of their own until it exits.
-#[derive(Clone)]
-struct Said(Arc<Mutex<VecDeque<String>>>);
+/// How long ssh's last lines may take to be read once it exited.
+const SAID_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The last lines ssh wrote, read on a thread of their own until it closes its side.
+struct Said {
+    lines: Arc<Mutex<VecDeque<String>>>,
+    /// Closed when everything ssh wrote was read.
+    read: crossbeam_channel::Receiver<()>,
+}
 
 impl Said {
-    fn text(&self) -> String {
-        let lines = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+    /// The lines, once all were read or a moment passed.
+    fn text(self) -> String {
+        let _ = self.read.recv_timeout(SAID_WAIT);
+        let lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
         lines
             .iter()
             .map(String::as_str)
@@ -276,16 +281,21 @@ impl Said {
 }
 
 fn keep_lines(stderr: std::process::ChildStderr) -> Said {
-    let said = Said(Arc::default());
-    let kept = said.clone();
-    let read = move || {
-        for line in BufReader::new(stderr).lines() {
-            let Ok(line) = line else { break };
-            let line = line.trim_end().to_string();
+    let lines: Arc<Mutex<VecDeque<String>>> = Arc::default();
+    let (done, read) = crossbeam_channel::bounded::<()>(0);
+    let kept = lines.clone();
+    let drain = move || {
+        let _done = done;
+        let mut r = BufReader::new(stderr);
+        let mut buf = Vec::new();
+        // To the end, whatever it is: a pipe left unread would block or end ssh.
+        while matches!(r.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+            let line = String::from_utf8_lossy(&buf).trim_end().to_string();
+            buf.clear();
             if line.is_empty() {
                 continue;
             }
-            let mut lines = kept.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut lines = kept.lock().unwrap_or_else(PoisonError::into_inner);
             if lines.len() == KEPT_LINES {
                 lines.pop_front();
             }
@@ -295,8 +305,8 @@ fn keep_lines(stderr: std::process::ChildStderr) -> Said {
     // Without the thread ssh's messages are lost, nothing more.
     let _ = std::thread::Builder::new()
         .name("dfdu-ssh-stderr".into())
-        .spawn(read);
-    said
+        .spawn(drain);
+    Said { lines, read }
 }
 
 /// The exit code of `child`, given a moment to exit after its output ended; killed if it

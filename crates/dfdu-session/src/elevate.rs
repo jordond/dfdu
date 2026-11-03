@@ -72,7 +72,7 @@ pub fn spawn(agent: &[OsString]) -> io::Result<RemoteIo> {
     Ok(RemoteIo {
         reader: Box::new(reader),
         writer: Box::new(writer),
-        child: Some(child),
+        child: Some(child.into()),
     })
 }
 

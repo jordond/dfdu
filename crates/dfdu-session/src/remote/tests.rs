@@ -19,20 +19,6 @@ fn ssh(mode: AgentMode) -> Ssh {
     }
 }
 
-#[derive(Default)]
-struct Quiet {
-    notes: Vec<String>,
-}
-
-impl Front for Quiet {
-    fn allow(&mut self, _: &str, _: &str) -> io::Result<()> {
-        Err(io::Error::other("declined"))
-    }
-    fn note(&mut self, msg: &str) {
-        self.notes.push(msg.into());
-    }
-}
-
 #[test]
 fn the_port_and_key_go_before_the_host() {
     let mut s = ssh(AgentMode::Installed);
@@ -78,6 +64,16 @@ fn auto_runs_the_bootstrap_and_a_replaced_command_does_not() {
 mod spawned {
     use super::*;
 
+    /// Declines to send an agent.
+    struct Quiet;
+
+    impl Front for Quiet {
+        fn allow(&mut self, _: &str, _: &str) -> io::Result<()> {
+            Err(io::Error::other("declined"))
+        }
+        fn note(&mut self, _: &str) {}
+    }
+
     /// ssh that runs `script` in sh instead.
     fn fake(script: &str) -> Ssh {
         Ssh {
@@ -89,7 +85,7 @@ mod spawned {
     #[test]
     fn a_failed_login_says_what_ssh_said() {
         let s = fake("echo 'me@host: Permission denied (publickey).' >&2; exit 255");
-        let err = connect(&s, &mut Quiet::default(), &Cancel::default())
+        let err = connect(&s, &mut Quiet, &Cancel::default())
             .err()
             .expect("an error");
         assert!(err.to_string().contains("Permission denied"), "{err}");
@@ -99,7 +95,7 @@ mod spawned {
     fn ssh_gets_the_environment_given() {
         let mut s = fake("echo \"askpass is $SSH_ASKPASS\" >&2; exit 255");
         s.env = vec![("SSH_ASKPASS".into(), "/x/helper".into())];
-        let err = connect(&s, &mut Quiet::default(), &Cancel::default())
+        let err = connect(&s, &mut Quiet, &Cancel::default())
             .err()
             .expect("an error");
         assert!(err.to_string().contains("askpass is /x/helper"), "{err}");
@@ -115,19 +111,38 @@ mod spawned {
             other.cancel();
         });
         let started = std::time::Instant::now();
-        let err = connect(&s, &mut Quiet::default(), &cancel)
-            .err()
-            .expect("an error");
+        let err = connect(&s, &mut Quiet, &cancel).err().expect("an error");
         t.join().unwrap();
         assert_eq!(err.kind(), io::ErrorKind::Interrupted, "{err}");
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
+    fn cancel_stops_an_agent_that_never_says_hello() {
+        let s = Ssh {
+            replaced: Some(vec!["sh".into(), "-c".into(), "exec sleep 30".into()]),
+            ..ssh(AgentMode::Auto)
+        };
+        let cancel = Cancel::default();
+        let io = connect(&s, &mut Quiet, &cancel).expect("started");
+        let other = cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            other.cancel();
+        });
+        let started = std::time::Instant::now();
+        let opts = EngineOptions::default();
+        let opened = open(io, Path::new("/"), None, opts, JobOptions::default());
+        t.join().unwrap();
+        assert!(opened.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
     fn cancelled_before_it_starts_starts_nothing() {
         let cancel = Cancel::default();
         cancel.cancel();
-        let err = connect(&fake("exec sleep 30"), &mut Quiet::default(), &cancel)
+        let err = connect(&fake("exec sleep 30"), &mut Quiet, &cancel)
             .err()
             .expect("an error");
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);

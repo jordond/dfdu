@@ -1,6 +1,6 @@
 ---
 title: Desktop app
-description: The dfdu desktop app for macOS, Linux and Windows. Install it, scan a disk or folder, clean up, and scan as an administrator.
+description: The dfdu desktop app for macOS, Linux and Windows. Install it, scan a disk, a folder or another computer, clean up, and scan as an administrator.
 ---
 
 The desktop app, `dfdu-gui`, is the dfdu browser in a window. It shares its scanner, cleanup rules, delete checks, undo and scan history with `dfdu` in the terminal, and has the same five views: Files, Map, Cleanup, Duplicates and Largest. It ships with every release from 0.3.0 and runs on macOS, Linux and Windows.
@@ -60,6 +60,16 @@ dfdu-gui ~/Downloads
 On macOS the app is `dfdu.app`; run `open -a dfdu --args ~/Downloads` to pass it a folder.
 
 As in the terminal, you can browse while the scan is still running, and a folder you scanned before opens from its cached scan at once and refreshes in the background.
+
+## Another computer
+
+**Another computer** on the start screen scans a folder on another machine over ssh, as `dfdu --remote` does. Type the computer as you would to ssh (`me@nas`, or a name from `~/.ssh/config`) and the folder there (`~` when left empty), then **Connect**. **Key file and port** sets a private key to log in with and a port. The computers you scanned lately are listed under the sheet; click one to connect again.
+
+The app runs your own `ssh`, so your ssh config, keys and ssh-agent all work. When ssh needs a password, a key's passphrase, or your say-so to trust a computer it has not connected to before, the app asks in a dialog. This needs OpenSSH 8.4 or newer (on Windows, OpenSSH 8.6 or newer).
+
+Passwords and passphrases are kept in memory until you quit, so scanning the same computer again does not ask again. Turn on **Remember in Keychain** (Credential Manager on Windows, the keyring on Linux) to keep one between runs; it is never written to the app's settings. A remembered password that stops working is forgotten and you are asked again. On Linux and Windows, other programs running as you can read what is in those stores; an ssh key with ssh-agent is the safer choice there.
+
+If the other computer has no dfdu of this version, the app asks before sending its agent there: the release build for that computer, downloaded once and kept on yours (on macOS, your own `dfdu` command-line tool comes first when it is the same version and the other computer is a Mac of the same kind). The agent is kept on that computer for the next scan.
 
 ## Views
 
@@ -137,6 +147,6 @@ dfdu-gui [PATH] [--read-only] [--import FILE] [--no-rules] [--theme NAME] [--adm
 | `--theme NAME` | `auto`, `dark`, `light`, or a theme file's name. |
 | `--admin` | Scan as an administrator (Linux). |
 
-Remote scans over ssh and the command line tools (`scan`, `report`, `clean`, `diff`) are in `dfdu` only.
+The command line tools (`scan`, `report`, `clean`, `diff`) are in `dfdu` only.
 
 The app keeps its settings and window size in `gui.ron` in dfdu's state directory, next to the scan history.

@@ -32,12 +32,15 @@ pub mod agent;
 pub mod wire;
 
 mod handshake;
+mod process;
+
+pub use process::Process;
 
 pub(crate) use handshake::connect;
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::process::Child;
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -66,7 +69,7 @@ pub const DEAD: Duration = Duration::from_secs(10);
 pub struct RemoteIo {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub child: Option<Child>,
+    pub child: Option<Process>,
 }
 
 /// The rules a remote scan classifies with: rule files in load order, as
@@ -103,7 +106,7 @@ pub(crate) struct Link {
     pending: Mutex<VecDeque<u64>>,
     /// `(agent, local)` numbers of confirmed starts, increasing.
     pairs: Mutex<Vec<(u64, u64)>>,
-    child: Mutex<Option<Child>>,
+    child: Option<Process>,
     dead: AtomicBool,
     /// The watchdog ended the link.
     timed_out: AtomicBool,
@@ -178,8 +181,8 @@ impl Link {
 
     fn kill(&self) {
         self.dead.store(true, SeqCst);
-        if let Some(c) = self.child.lock().as_mut() {
-            let _ = c.kill();
+        if let Some(p) = &self.child {
+            p.kill();
         }
     }
 
@@ -277,7 +280,7 @@ impl Link {
 
 impl Drop for Link {
     fn drop(&mut self) {
-        if let Some(mut c) = self.child.lock().take() {
+        if let Some(mut c) = self.child.as_ref().and_then(Process::take) {
             let _ = c.kill();
             let _ = c.wait();
         }
