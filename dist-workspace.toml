@@ -19,8 +19,9 @@ publish-jobs = ["./publish-homebrew", "./notarize-macos"]
 # "./publish-crates" publishes to crates.io with Trusted Publishing, after the announcement so
 # a crates.io failure (a crate not yet created by hand, say) holds back neither the release nor
 # the GUI; it skips prereleases itself.
-post-announce-jobs = ["./gui-release", "./publish-crates"]
-github-custom-job-permissions = { "gui-release" = { contents = "write", id-token = "write", attestations = "write" }, "publish-crates" = { contents = "read", id-token = "write" } }
+# "./publish-aur" pushes dfdu-bin to the AUR; its PKGBUILD downloads the published archives.
+post-announce-jobs = ["./gui-release", "./publish-crates", "./publish-aur"]
+github-custom-job-permissions = { "gui-release" = { contents = "write", id-token = "write", attestations = "write" }, "publish-crates" = { contents = "read", id-token = "write" }, "publish-aur" = { contents = "read" } }
 macos-sign = true
 # SLSA build provenance for the archives dist builds (`gh attestation verify`).
 github-attestations = true

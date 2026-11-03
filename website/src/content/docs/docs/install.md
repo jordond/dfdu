@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install dfdu with the install script, Homebrew, cargo binstall, Nix, the PowerShell installer, a release binary or from source. The desktop app has its own downloads.
+description: Install dfdu with the install script, Homebrew, the AUR, cargo binstall, Nix, the PowerShell installer, a release binary or from source. The desktop app has its own downloads.
 ---
 
 ## Install script
@@ -62,11 +62,18 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/relea
 
 ```sh
 brew install jordond/tap/dfdu                               # macOS, Linux
+yay -S dfdu-bin                                             # Arch Linux, from the AUR
 cargo binstall --git https://github.com/jordond/dfdu dfdu   # prebuilt, through cargo
 nix run github:jordond/dfdu                                 # run from the flake
 ```
 
-Homebrew installs the binary, the man page and the shell completions.
+Homebrew and the AUR packages install the binary, the man pages and the shell completions. The AUR has three, for x86_64 and aarch64, and any AUR helper (`paru`) or `makepkg` installs them:
+
+| Package | Installs |
+| --- | --- |
+| `dfdu-bin` | the release binary |
+| `dfdu` | the release, built from source with cargo |
+| `dfdu-git` | the latest commit on `main`, built from source |
 
 ## Release binaries
 

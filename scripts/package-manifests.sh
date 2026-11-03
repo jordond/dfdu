@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fills the package manifests in pkg/ (Scoop, winget, AUR) for a published release, with the
-# checksums from the release's sha256.sum, and the GUI's (Scoop, winget) from gui-sha256.sum
-# when the release has it. Submitting them is done by hand.
+# checksums from the release's sha256.sum and of the tag's source archive (the AUR's dfdu), and
+# the GUI's (Scoop, winget) from gui-sha256.sum when the release has it. The release workflow
+# publishes the AUR packages (publish-aur.yml); the rest are submitted by hand.
 #
 # Usage: scripts/package-manifests.sh VERSION [OUTDIR]   (default OUTDIR: target/pkg/VERSION)
 set -euo pipefail
@@ -21,8 +22,13 @@ while read -r hash name; do
     args+=(-e "s/@SHA256_${target}@/$hash/g")
 done <<<"$sums"
 
+# GitHub's archive of the tag, which the AUR's dfdu builds from.
+src=$(curl -fsSL "https://github.com/jordond/dfdu/archive/refs/tags/v$version.tar.gz" | sha256sum)
+args+=(-e "s/@SHA256_source@/${src%% *}/g")
+
 # The GUI's checksums (from 1.0 on): gui-sha256.sum, names dfdu-gui-NAME.
-files=(scoop/dfdu.json aur/PKGBUILD winget/jordond.dfdu.yaml winget/jordond.dfdu.installer.yaml
+files=(scoop/dfdu.json aur/dfdu-bin/PKGBUILD aur/dfdu/PKGBUILD aur/dfdu-git/PKGBUILD
+    winget/jordond.dfdu.yaml winget/jordond.dfdu.installer.yaml
     winget/jordond.dfdu.locale.en-US.yaml)
 if gui=$(gh release download "v$version" --repo jordond/dfdu --pattern gui-sha256.sum --output - 2>/dev/null); then
     while read -r hash name; do

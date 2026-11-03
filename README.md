@@ -31,6 +31,7 @@ A disk usage browser for the terminal and the desktop. Browse, sort and delete, 
 ```sh
 curl -fsSL https://dfdu.app/install.sh | sh                 # macOS, Linux
 brew install jordond/tap/dfdu                               # macOS, Linux
+yay -S dfdu-bin                                             # Arch Linux
 ```
 
 Windows:
