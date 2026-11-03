@@ -36,7 +36,7 @@ The cleanup view (`3`) lists what the [cleanup rules](/docs/rules/) found, with 
 
 ## Other folders
 
-The scan starts at the folder you named, but you can leave it. At the top of the scan, `←` says so; press it again to scan the folder above. `Ctrl-G` opens a prompt with the current folder: type a path (absolute, relative to the current folder, or starting with `~`) and press Enter. A folder inside the scan opens at once; one outside it is scanned, with the same options. `Tab` completes a folder name, and Esc closes the prompt.
+The scan starts at the folder you named, but you can leave it. At the top of the scan, `←` says so; press it again within a second or so to scan the folder above. `Ctrl-G` opens a prompt with the current folder: type a path (absolute, or relative to the current folder) and press Enter. On a scan of this computer, a path can also start with `~` for your home folder. A folder inside the scan opens at once; one outside it is scanned, with the same options. A folder inside the scan that the scan has not reached, or a mount it did not enter, keeps you where you are, and the status line says why. `Tab` completes a folder name, and Esc closes the prompt.
 
 The new scan starts before the old one stops, so if it cannot start you stay where you were and the status line says why. Going up from `/mnt/cache` scans `/mnt` on its own filesystem only, so the other disks mounted there are listed but not entered; press `m` on one to scan it.
 
