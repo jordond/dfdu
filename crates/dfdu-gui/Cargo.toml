@@ -29,12 +29,17 @@ eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 rfd.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+keyring = { workspace = true, optional = true }
 
 [features]
-default = ["updates"]
+default = ["updates", "keychain"]
 # Checks for, downloads and installs updates, and the CLI. Without it the Updates window only
 # says this build has no downloads (it keeps ring out of the Windows cross-check).
-updates = ["dfdu-update/net"]
+updates = ["dfdu-update/net", "dfdu-session/agent-download"]
+# Remembers ssh passwords in the system's store when asked to.
+keychain = ["dep:keyring"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit.workspace = true

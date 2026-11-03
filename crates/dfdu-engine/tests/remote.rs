@@ -228,7 +228,7 @@ fn a_silent_agent_is_given_up() {
     let io = RemoteIo {
         reader: Box::new(child.stdout.take().unwrap()),
         writer: Box::new(child.stdin.take().unwrap()),
-        child: Some(child),
+        child: Some(child.into()),
     };
     let (e, c) =
         Engine::start_remote(PortableBackend::default(), opts(), io, Path::new("/"), None).unwrap();

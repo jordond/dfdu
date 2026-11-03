@@ -1,15 +1,13 @@
 //! Scans on another host: `dfdu agent` scans there, and `--remote` starts it through `ssh`,
-//! sending it first when the host has none (`boot`, `fetch`).
+//! sending it first when the host has none (`dfdu_session::remote`).
 
-mod boot;
-mod fetch;
-
-use std::io::{BufReader, IsTerminal};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
 
 use dfdu_engine::{Engine, EngineOptions};
 use dfdu_scan::{JobOptions, NativeBackend, native_backend};
+use dfdu_session::remote;
 use dfdu_tree::HostPath;
 
 /// Which agent `--remote` starts on the host.
@@ -49,6 +47,16 @@ impl AgentMode {
     }
 }
 
+impl From<AgentMode> for remote::AgentMode {
+    fn from(m: AgentMode) -> Self {
+        match m {
+            AgentMode::Auto => remote::AgentMode::Auto,
+            AgentMode::Installed => remote::AgentMode::Installed,
+            AgentMode::Upload => remote::AgentMode::Upload,
+        }
+    }
+}
+
 /// `dfdu agent`: the scanner for a dfdu on another host, over stdin and stdout. With
 /// `protocols`, prints the protocol versions it speaks (`MIN MAX`) instead.
 pub fn agent(threads: Option<usize>, protocols: bool) -> ExitCode {
@@ -77,113 +85,30 @@ pub fn agent(threads: Option<usize>, protocols: bool) -> ExitCode {
     }
 }
 
-/// Starts the agent on `host` through `ssh` (`DFDU_REMOTE_SSH`, split at spaces, replaces
-/// `ssh`), as `mode` says. `DFDU_REMOTE_COMMAND`, split at spaces, replaces the whole command
-/// and skips the bootstrap.
+/// Starts the agent on `host` through `ssh`, as `mode` says, asking on the terminal before
+/// sending one; ssh asks for passwords there itself.
 fn agent_io(host: &str, mode: AgentMode) -> std::io::Result<dfdu_engine::RemoteIo> {
-    use std::process::{Command as Proc, Stdio};
-    let split = |c: String| c.split_whitespace().map(str::to_string).collect::<Vec<_>>();
-    let (argv, boot) = match std::env::var("DFDU_REMOTE_COMMAND") {
-        Ok(c) => (split(c), false),
-        Err(_) => {
-            let mut argv = std::env::var("DFDU_REMOTE_SSH")
-                .map(split)
-                .unwrap_or_else(|_| vec!["ssh".into()]);
-            argv.extend(["--".into(), host.into()]);
-            match mode {
-                AgentMode::Installed => argv.extend(["dfdu".into(), "agent".into()]),
-                AgentMode::Auto | AgentMode::Upload => argv.push(boot::command(mode)),
-            }
-            (argv, mode != AgentMode::Installed)
-        }
+    let this = std::env::current_exe().ok().zip(remote::fetch::own());
+    let ssh = remote::Ssh {
+        stderr: remote::Stderr::Inherit,
+        ..remote::Ssh::new(
+            host.to_string(),
+            mode.into(),
+            remote::fetch::Agents::from_env(this),
+        )
     };
-    let (prog, rest) = argv
-        .split_first()
-        .ok_or_else(|| std::io::Error::other("the remote command is empty"))?;
-    let mut child = Proc::new(prog)
-        .args(rest)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| std::io::Error::new(e.kind(), format!("{prog}: {e}")))?;
-    let pipe = |what| std::io::Error::other(format!("{prog}: no {what} pipe"));
-    let mut reader = BufReader::new(child.stdout.take().ok_or_else(|| pipe("stdout"))?);
-    let mut writer = child.stdin.take().ok_or_else(|| pipe("stdin"))?;
-    if boot {
-        let mut supply = Supply {
-            host,
-            mode,
-            agents: fetch::Agents::from_env(),
-            plan: Vec::new(),
-        };
-        if let Err(e) = boot::run(&mut reader, &mut writer, &mut supply) {
-            drop(writer);
-            return Err(match exited(&mut child) {
-                // ssh said why on stderr.
-                Some(code) if code != 0 && e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    std::io::Error::other(format!("{prog} exited with status {code}"))
-                }
-                _ => e,
-            });
-        }
-    }
-    // The reader keeps what it read past the bootstrap: the start of the agent's hello.
-    Ok(dfdu_engine::RemoteIo {
-        reader: Box::new(reader),
-        writer: Box::new(writer),
-        child: Some(child),
-    })
+    remote::connect(&ssh, &mut Terminal { host }, &remote::Cancel::default())
 }
 
-/// The exit code of `child`, given a moment to exit after its output ended; killed if it
-/// does not.
-fn exited(child: &mut std::process::Child) -> Option<i32> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.code(),
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
-}
-
-/// The agents `boot` sends, asking the user first in `auto` mode.
-struct Supply<'a> {
+/// Asks on the terminal, and says what happens on standard error.
+struct Terminal<'a> {
     host: &'a str,
-    mode: AgentMode,
-    agents: fetch::Agents,
-    /// What may be sent, preferred first.
-    plan: Vec<fetch::Candidate>,
 }
 
-impl boot::Supply for Supply<'_> {
-    fn keys(&mut self, target: &'static str) -> std::io::Result<Vec<String>> {
-        self.plan = self.agents.plan(target)?;
-        Ok(self.plan.iter().map(|c| c.key.clone()).collect())
-    }
-
-    fn allow(&mut self, target: &'static str, dir: &str) -> std::io::Result<()> {
+impl remote::Front for Terminal<'_> {
+    fn allow(&mut self, what: &str, dir: &str) -> std::io::Result<()> {
         let terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        let what = match self.plan.first() {
-            Some(c) if c.is_this() => {
-                let size = c.size().map(|n| format!(", {}", megabytes(n)));
-                format!("this dfdu, {}{}", c.built_for, size.unwrap_or_default())
-            }
-            Some(c) => match c.size() {
-                Some(n) => format!("{}, {}", c.built_for, megabytes(n)),
-                None => format!("{}, downloaded from the release", c.built_for),
-            },
-            None => target.to_string(),
-        };
-        boot::decide(self.mode, terminal, || {
+        decide(terminal, || {
             eprint!(
                 "{} has no dfdu {} agent. Send one ({what}) to {dir}? [y/N] ",
                 self.host,
@@ -196,41 +121,40 @@ impl boot::Supply for Supply<'_> {
         .map_err(std::io::Error::other)
     }
 
-    fn send(&mut self, target: &'static str) -> std::io::Result<(String, Vec<u8>)> {
-        let mut failed = None;
-        for c in &self.plan {
-            if let Some(e) = failed.take() {
-                eprintln!("dfdu: {}: {e}; sending this dfdu instead", self.host);
-            }
-            if c.size().is_none() {
-                eprintln!(
-                    "dfdu: {}: downloading the dfdu {} agent for {}",
-                    self.host,
-                    env!("CARGO_PKG_VERSION"),
-                    c.built_for
-                );
-            }
-            match self.agents.load(target, c) {
-                Ok((key, bin)) => {
-                    eprintln!(
-                        "dfdu: {}: sending dfdu agent ({}, {})",
-                        self.host,
-                        c.built_for,
-                        megabytes(bin.len() as u64)
-                    );
-                    return Ok((key, bin));
-                }
-                Err(e) => failed = Some(e),
-            }
-        }
-        Err(failed.unwrap_or_else(|| std::io::Error::other("no agent to send")))
+    fn note(&mut self, msg: &str) {
+        eprintln!("dfdu: {msg}");
     }
 }
 
-fn megabytes(n: u64) -> String {
-    #[expect(clippy::cast_precision_loss, reason = "a size shown to one decimal")]
-    let mb = n as f64 / 1e6;
-    format!("{mb:.1} MB")
+/// An agent not sent: the user said no, or could not be asked.
+#[derive(Debug)]
+pub struct Declined;
+
+impl std::fmt::Display for Declined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no dfdu {} agent there; install dfdu there or pass --remote-agent upload",
+            env!("CARGO_PKG_VERSION")
+        )
+    }
+}
+
+impl std::error::Error for Declined {}
+
+/// Whether to send an agent in `auto` mode (`upload` never asks): asks when `terminal`
+/// (`answer` reads the reply) and refuses otherwise, so scripts never upload unasked.
+fn decide(
+    terminal: bool,
+    answer: impl FnOnce() -> std::io::Result<String>,
+) -> Result<(), Declined> {
+    if !terminal {
+        return Err(Declined);
+    }
+    match answer() {
+        Ok(a) if matches!(a.trim(), "y" | "Y" | "yes" | "Yes") => Ok(()),
+        _ => Err(Declined),
+    }
 }
 
 /// An engine scanning on `host` through its agent, classifying with `rules`, the options of
@@ -270,5 +194,22 @@ pub fn engine(
             eprintln!("dfdu: {host}: {e}");
             Err(ExitCode::from(1))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_decision() {
+        let never = || -> std::io::Result<String> { panic!("must not ask") };
+        let refused = decide(false, never).unwrap_err().to_string();
+        assert!(refused.contains("--remote-agent upload"), "{refused}");
+        assert!(refused.contains(env!("CARGO_PKG_VERSION")), "{refused}");
+        assert!(decide(true, || Ok("y\n".into())).is_ok());
+        assert!(decide(true, || Ok("\n".into())).is_err());
+        assert!(decide(true, || Ok("n".into())).is_err());
+        assert!(decide(true, || Err(std::io::Error::other("no tty"))).is_err());
     }
 }

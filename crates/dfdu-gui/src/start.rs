@@ -2,17 +2,20 @@
 //! lists them (the data volume first on macOS, disks that do not answer disabled), the system's
 //! folder picker (`rfd`), a field to type a folder's path, a folder dropped on the window, and
 //! the system's file picker for a scan saved to a file (an export), which is browsed read-only
-//! as `--import` browses it.
+//! as `--import` browses it, and other computers to scan over ssh ([`crate::remote`]).
 //!
 //! It is drawn on the window's background with a faint grid ([`backdrop`]), in a column at most
-//! [`COLUMN`] wide: the heading, the disks as rows of one sheet (a key, the name, mount point
-//! and notes, a bar of the use, the free space), then a sheet for a folder and one for an
-//! export, then the keys, the Full disk access switch and the button that scans the chosen disk. On macOS the sealed system
-//! volume is folded into the data volume of its container: both show the container's space,
-//! and the data volume is the one with anything to clean.
+//! [`COLUMN`] wide, as one set of places: the heading; This computer, a list of the disks (a
+//! key, the name, mount point and notes, a bar of the use, the free space) ending in a row for
+//! a folder; Other computers, a list of those scanned lately (a prompt, the name and port, the
+//! folder there) ending in a row to connect to another; a line that opens a saved scan; then
+//! the keys, the Full disk access switch and the button that opens what is chosen. On macOS
+//! the sealed system volume is folded into the data volume of its container: both show the
+//! container's space, and the data volume is the one with anything to clean.
 //!
-//! The arrows choose a disk, Enter scans it, 1 to 9 scan the disk of that number, and Cmd-O
-//! (Ctrl-O) opens the folder picker, while no text field has the keyboard.
+//! The arrows choose a disk or a computer scanned lately, Enter opens it, 1 to 9 scan the disk
+//! of that number, and Cmd-O (Ctrl-O) opens the folder picker, while no text field has the
+//! keyboard.
 
 use std::io;
 use std::path::PathBuf;
@@ -29,6 +32,7 @@ use egui::{
 };
 
 use crate::kit::{self, Kind};
+use crate::remote::Target;
 use crate::theme::Colors;
 use crate::theme::style::{
     MONO_SEMIBOLD_FAMILY, RADIUS_MD, RADIUS_SM, SANS_MEDIUM_FAMILY, SPACE_1, SPACE_2, SPACE_3,
@@ -39,9 +43,13 @@ use crate::theme::style::{
 const COLUMN: f32 = 760.0;
 /// Below this width a row's bar moves under its name, and the two sheets stack.
 const WIDE: f32 = 560.0;
+/// Below this width the footer's keys go on a line of their own, above the switch and the button.
+const FOOTER_ONE_LINE: f32 = 720.0;
 /// A disk's row, with its bar beside the name, then under it.
 const ROW_WIDE: f32 = 64.0;
 const ROW_NARROW: f32 = 80.0;
+/// A computer's row.
+const COMPUTER_ROW: f32 = 44.0;
 /// A row's bar column and free space column.
 const BAR: f32 = 200.0;
 const FREE: f32 = 112.0;
@@ -69,6 +77,8 @@ pub enum Chosen {
     Folder(PathBuf),
     /// A scan saved to a file, to browse read-only.
     Export(PathBuf),
+    /// A folder on another computer.
+    Remote(Target),
 }
 
 /// A disk as the list shows it.
@@ -102,6 +112,62 @@ pub struct Start {
     admin_step: (crate::admin::Step, std::time::Instant),
     /// The Full disk access window was asked for, for the window to open.
     pub setup: bool,
+    /// What the sheet for another computer has typed.
+    remote: RemoteForm,
+    /// Why the last connection to another computer failed.
+    pub remote_error: Option<String>,
+}
+
+/// The fields of the sheet for another computer.
+#[derive(Default)]
+struct RemoteForm {
+    host: String,
+    path: String,
+    port: String,
+    key: String,
+    /// The key file and port are shown.
+    more: bool,
+}
+
+impl RemoteForm {
+    /// The computer the fields name, or why they do not.
+    fn target(&self) -> Result<Target, String> {
+        let host = self.host.trim();
+        if host.is_empty() {
+            return Err("Type the computer's name or address.".into());
+        }
+        if host.starts_with('-') {
+            return Err("A computer's name does not start with -.".into());
+        }
+        let port = match self.port.trim() {
+            "" => None,
+            p => Some(
+                p.parse::<u16>()
+                    .ok()
+                    .filter(|&p| p > 0)
+                    .ok_or_else(|| format!("{p} is not a port."))?,
+            ),
+        };
+        let key = self.key.trim();
+        Ok(Target {
+            host: host.into(),
+            port,
+            identity: (!key.is_empty()).then(|| PathBuf::from(key)),
+            path: self.path.trim().into(),
+        })
+    }
+
+    fn fill(&mut self, t: &Target) {
+        self.host.clone_from(&t.host);
+        self.path.clone_from(&t.path);
+        self.port = t.port.map(|p| p.to_string()).unwrap_or_default();
+        self.key = t
+            .identity
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        self.more = t.port.is_some() || t.identity.is_some();
+    }
 }
 
 /// The frame of a screen without a browser: the window's background, 32 in from its edges.
@@ -152,7 +218,15 @@ impl Start {
             admin: false,
             admin_step: (crate::admin::step(), std::time::Instant::now()),
             setup: false,
+            remote: RemoteForm::default(),
+            remote_error: None,
         }
+    }
+
+    /// Fills the row that connects to a computer with `target`, saying why it failed.
+    pub fn failed_remote(&mut self, target: &Target, why: String) {
+        self.remote.fill(target);
+        self.remote_error = (!why.is_empty()).then_some(why);
     }
 
     /// Where scanning as an administrator stands, checked again after a second.
@@ -176,11 +250,13 @@ impl Start {
         self.listed().get(self.selected).filter(|r| r.enabled())
     }
 
-    /// The keys of the screen, while no text field has the keyboard: what they chose.
-    fn keys(&mut self, ctx: &egui::Context) -> Option<PathBuf> {
+    /// The keys of the screen, while no text field has the keyboard: what they chose. The
+    /// arrows move through the disks, then the computers scanned lately; Enter opens the one
+    /// chosen, and 1 to 9 scan the disk of that number.
+    fn keys(&mut self, ctx: &egui::Context, recent: &[Target]) -> Option<Chosen> {
         let open = ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::O));
         if open {
-            return rfd::FileDialog::new().pick_folder();
+            return rfd::FileDialog::new().pick_folder().map(Chosen::Folder);
         }
         if ctx.egui_wants_keyboard_input() {
             return None;
@@ -201,17 +277,19 @@ impl Start {
             return rows
                 .get(n)
                 .filter(|r| r.enabled())
-                .map(|r| r.disk.mount_point.clone());
+                .map(|r| Chosen::Folder(r.disk.mount_point.clone()));
         }
+        let disks = rows.len();
+        let usable = |at: usize| rows.get(at).map_or(at - disks < recent.len(), Row::enabled);
         let step = |from: usize, forward: bool| {
             let mut at = from;
             loop {
                 at = if forward {
-                    at.checked_add(1).filter(|a| *a < rows.len())?
+                    at.checked_add(1).filter(|a| *a < disks + recent.len())?
                 } else {
                     at.checked_sub(1)?
                 };
-                if rows[at].enabled() {
+                if usable(at) {
                     return Some(at);
                 }
             }
@@ -227,24 +305,34 @@ impl Start {
             self.selected = at;
         }
         if enter {
-            return self.chosen_row().map(|r| r.disk.mount_point.clone());
+            return self.chosen(recent);
         }
         None
     }
 
+    /// What the arrows chose: a disk that can be scanned, or a computer scanned lately.
+    fn chosen(&self, recent: &[Target]) -> Option<Chosen> {
+        let disks = self.listed().len();
+        match self.chosen_row() {
+            Some(r) => Some(Chosen::Folder(r.disk.mount_point.clone())),
+            None => (self.selected.checked_sub(disks))
+                .and_then(|i| recent.get(i))
+                .map(|t| Chosen::Remote(t.clone())),
+        }
+    }
+
     /// Draws the screen; what was chosen, if anything was.
-    pub fn show(&mut self, ui: &mut Ui, colors: &Colors) -> Option<Chosen> {
+    pub fn show(&mut self, ui: &mut Ui, colors: &Colors, recent: &[Target]) -> Option<Chosen> {
         if self.rows.is_none()
             && let Ok(listed) = self.listing.try_recv()
         {
             let listed = listed.map(rows);
             if let Ok(rows) = &listed {
-                self.selected = rows.iter().position(Row::enabled).unwrap_or(0);
+                self.selected = rows.iter().position(Row::enabled).unwrap_or(rows.len());
             }
             self.rows = Some(listed);
         }
-        let mut chosen = self.keys(ui.ctx());
-        let mut export = None;
+        let mut chosen = self.keys(ui.ctx(), recent);
         egui::CentralPanel::default()
             .frame(frame(colors))
             .show(ui, |ui| {
@@ -256,32 +344,33 @@ impl Start {
                         ui.add_space(((room - w) / 2.0).floor());
                         ui.vertical(|ui| {
                             ui.set_width(w);
-                            let (c, e) = self.column(ui, colors, w);
+                            let c = self.column(ui, colors, w, recent);
                             chosen = chosen.take().or(c);
-                            export = e;
                         });
                     });
                 });
             });
-        if let Some(file) = export {
-            return Some(Chosen::Export(file));
-        }
         if let Some(dropped) = dropped(ui.ctx()) {
             match dropped {
-                Ok(dir) => chosen = Some(dir),
+                Ok(dir) => chosen = Some(Chosen::Folder(dir)),
                 Err(note) => self.dropped = Some(note),
             }
         }
-        chosen.map(Chosen::Folder)
+        if let Some(Chosen::Remote(_)) = &chosen {
+            self.remote_error = None;
+        }
+        chosen
     }
 
-    /// The column of the screen, `w` wide: the folder and the export chosen in it.
+    /// The column of the screen, `w` wide: the heading, this computer's disks and a folder,
+    /// the other computers, a saved scan, and the footer; what was chosen in it.
     fn column(
         &mut self,
         ui: &mut Ui,
         colors: &Colors,
         w: f32,
-    ) -> (Option<PathBuf>, Option<PathBuf>) {
+        recent: &[Target],
+    ) -> Option<Chosen> {
         let dim = colors.fg(Token::FgDim);
         let mut chosen = None;
         ui.label(kit::mono_bold("Choose what to scan", 22.0).color(colors.fg(Token::Header)));
@@ -290,117 +379,220 @@ impl Start {
         ui.label(kit::sans(what, 13.0).color(dim));
         ui.add_space(SPACE_6);
 
-        ui.label(kit::label("Disks", 12.0).color(dim));
+        ui.label(kit::label("This computer", 12.0).color(dim));
         ui.add_space(SPACE_2);
-        match &self.rows {
-            None => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(kit::sans("Listing the disks…", 13.0).color(dim));
-                });
-            }
-            Some(Err(e)) => {
-                let text = format!("The disks cannot be listed: {e}");
-                ui.label(kit::sans(text, 13.0).color(colors.fg(Token::StatusError)));
-            }
-            Some(Ok(rows)) if rows.is_empty() => {
-                ui.label(kit::sans("No disks found.", 13.0).color(dim));
-            }
-            Some(Ok(rows)) => {
-                let mut clicked = None;
-                Frame::new()
-                    .fill(colors.chrome.surface)
-                    .stroke(Stroke::new(1.0, colors.chrome.divider))
-                    .corner_radius(CornerRadius::same(RADIUS_MD))
-                    .inner_margin(Margin::same(1))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        let inner = w - 4.0;
-                        for (i, r) in rows.iter().enumerate() {
-                            let last = i + 1 == rows.len();
-                            let resp = row(ui, r, i, i == self.selected, last, colors, inner);
-                            if resp.clicked() && r.enabled() {
-                                clicked = Some(i);
-                            }
+        list(ui, colors, |ui| {
+            let inner = w - 4.0;
+            match &self.rows {
+                None => note_row(ui, colors, inner, "Listing the disks…", Some(dim), true),
+                Some(Err(e)) => {
+                    let text = format!("The disks cannot be listed: {e}");
+                    let red = colors.fg(Token::StatusError);
+                    note_row(ui, colors, inner, &text, Some(red), false);
+                }
+                Some(Ok(rows)) if rows.is_empty() => {
+                    note_row(ui, colors, inner, "No disks found.", Some(dim), false);
+                }
+                Some(Ok(rows)) => {
+                    let mut clicked = None;
+                    for (i, r) in rows.iter().enumerate() {
+                        // The last has no rule: the folder's row draws one above itself.
+                        let last = i + 1 == rows.len();
+                        let resp = row(ui, r, i, i == self.selected, last, colors, inner);
+                        if resp.clicked() && r.enabled() {
+                            clicked = Some(i);
                         }
-                    });
-                if let Some(i) = clicked {
-                    self.selected = i;
-                    chosen = Some(rows[i].disk.mount_point.clone());
+                    }
+                    if let Some(i) = clicked {
+                        self.selected = i;
+                        chosen = Some(Chosen::Folder(rows[i].disk.mount_point.clone()));
+                    }
                 }
             }
-        }
-        ui.add_space(SPACE_6);
-
-        let two = w >= WIDE;
-        let each = if two { (w - SPACE_3) / 2.0 } else { w };
-        let mut export = None;
-        let mut sheets = |ui: &mut Ui| {
-            if let Some(dir) = self.folder_sheet(ui, colors, each) {
-                chosen = Some(dir);
-            }
-            if let Some(file) = export_sheet(ui, colors, each) {
-                export = Some(file);
-            }
-        };
-        if two {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_3;
-                sheets(ui);
-            });
-        } else {
-            ui.spacing_mut().item_spacing.y = SPACE_3;
-            sheets(ui);
-        }
-        ui.add_space(SPACE_6);
-
-        if let Some(dir) = self.footer(ui, colors) {
-            chosen = Some(dir);
-        }
-        (chosen, export)
-    }
-
-    /// The sheet for a folder, `w` wide: the field, Scan, Browse…, and why a dropped file was
-    /// not scanned.
-    fn folder_sheet(&mut self, ui: &mut Ui, colors: &Colors, w: f32) -> Option<PathBuf> {
-        let mut chosen = None;
-        sheet(ui, colors, w, |ui, inner| {
-            heading(
-                ui,
-                colors,
-                "A folder",
-                "Or drop one anywhere on the window.",
-            );
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                let id = egui::Id::unique("dfdu-start-folder");
-                let field = (inner - 148.0).max(80.0);
-                let r =
-                    crate::windows::field(ui, colors, &mut self.folder, id, "~/Projects", field);
-                let typed = !self.folder.trim().is_empty();
-                let entered = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                let scan = kit::button(ui, colors, Kind::Secondary, "Scan", None, typed);
-                if (scan.clicked() || entered) && typed {
-                    chosen = Some(PathBuf::from(self.folder.trim()));
-                }
-                let browse = kit::button(ui, colors, Kind::Secondary, "Browse…", None, true);
-                if browse.clicked()
-                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
-                {
-                    chosen = Some(dir);
-                }
-            });
-            if let Some(note) = &self.dropped {
-                ui.add_space(SPACE_2);
-                let warn = colors.fg(Token::StatusWarn);
-                ui.add(egui::Label::new(kit::sans(note, 12.0).color(warn)).wrap());
+            if let Some(dir) = self.folder_row(ui, colors, inner) {
+                chosen = Some(Chosen::Folder(dir));
             }
         });
+        ui.add_space(SPACE_6);
+
+        ui.label(kit::label("Other computers", 12.0).color(dim));
+        ui.add_space(SPACE_2);
+        list(ui, colors, |ui| {
+            let inner = w - 4.0;
+            let disks = self.listed().len();
+            for (i, t) in recent.iter().enumerate() {
+                let selected = self.selected == disks + i;
+                let last = i + 1 == recent.len();
+                if computer_row(ui, t, selected, last, colors, inner).clicked() {
+                    self.selected = disks + i;
+                    self.remote.fill(t);
+                    chosen = Some(Chosen::Remote(t.clone()));
+                }
+            }
+            if let Some(t) = self.connect_row(ui, colors, inner, !recent.is_empty()) {
+                chosen = Some(Chosen::Remote(t));
+            }
+        });
+        ui.add_space(SPACE_4);
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_2;
+            let open =
+                egui::Button::new(kit::sans("Open a saved scan…", 13.0).color(colors.accent()))
+                    .frame(false);
+            if ui
+                .add(open)
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .clicked()
+                && let Some(file) = rfd::FileDialog::new().pick_file()
+            {
+                chosen = Some(Chosen::Export(file));
+            }
+            let what = "a snapshot or an ncdu export, browsed read-only";
+            ui.label(kit::sans(what, 12.0).color(dim));
+        });
+        ui.add_space(SPACE_6);
+
+        if let Some(c) = self.footer(ui, colors, recent) {
+            chosen = Some(c);
+        }
         chosen
     }
 
-    /// The keys, and the button that scans the chosen disk.
-    fn footer(&mut self, ui: &mut Ui, colors: &Colors) -> Option<PathBuf> {
+    /// The row of a folder, last among this computer's: a field to type it, Scan, Browse…, and
+    /// why something dropped on the window was not scanned.
+    fn folder_row(&mut self, ui: &mut Ui, colors: &Colors, w: f32) -> Option<PathBuf> {
+        let mut chosen = None;
+        let dim = colors.fg(Token::FgDim);
+        divider(ui, colors, w);
+        Frame::new()
+            .inner_margin(Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                let inner = w - 32.0;
+                ui.set_width(inner);
+                ui.spacing_mut().item_spacing = vec2(SPACE_2, SPACE_1);
+                ui.horizontal(|ui| {
+                    let id = egui::Id::unique("dfdu-start-folder");
+                    let field = (inner - 156.0).max(80.0);
+                    let hint = "a folder, such as ~/Projects";
+                    let r = crate::windows::field(ui, colors, &mut self.folder, id, hint, field);
+                    let typed = !self.folder.trim().is_empty();
+                    let entered = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let scan = kit::button(ui, colors, Kind::Secondary, "Scan", None, typed);
+                    if (scan.clicked() || entered) && typed {
+                        chosen = Some(PathBuf::from(self.folder.trim()));
+                    }
+                    let browse = kit::button(ui, colors, Kind::Secondary, "Browse…", None, true);
+                    if browse.clicked()
+                        && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                    {
+                        chosen = Some(dir);
+                    }
+                });
+                match &self.dropped {
+                    Some(note) => {
+                        let warn = colors.fg(Token::StatusWarn);
+                        ui.add(egui::Label::new(kit::sans(note, 12.0).color(warn)).wrap());
+                    }
+                    None => {
+                        let note = "Or drop a folder anywhere on the window.";
+                        ui.label(kit::sans(note, 11.0).color(dim));
+                    }
+                }
+            });
+        chosen
+    }
+
+    /// The row that connects to a computer typed, last among the other computers (under a
+    /// rule when `after` rows): its name and the folder there, Connect, the key file and port
+    /// when asked for, and why it last failed.
+    fn connect_row(&mut self, ui: &mut Ui, colors: &Colors, w: f32, after: bool) -> Option<Target> {
+        let mut chosen = None;
+        let dim = colors.fg(Token::FgDim);
+        if after {
+            divider(ui, colors, w);
+        }
+        Frame::new()
+            .inner_margin(Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                let inner = w - 32.0;
+                ui.set_width(inner);
+                ui.spacing_mut().item_spacing = vec2(SPACE_2, SPACE_1);
+                let f = &mut self.remote;
+                let mut entered = false;
+                let button = 84.0;
+                let room = inner - button - 2.0 * SPACE_2;
+                let host_w = (room * 0.55).floor();
+                ui.horizontal(|ui| {
+                    let id = egui::Id::unique("dfdu-start-remote-host");
+                    let r = crate::windows::field(ui, colors, &mut f.host, id, "user@host", host_w);
+                    entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let id = egui::Id::unique("dfdu-start-remote-path");
+                    let hint = "~ or a folder there";
+                    let r = crate::windows::field(ui, colors, &mut f.path, id, hint, room - host_w);
+                    entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let typed = !f.host.trim().is_empty();
+                    let go = kit::button(ui, colors, Kind::Secondary, "Connect", None, typed);
+                    if (go.clicked() || entered) && typed {
+                        match f.target() {
+                            Ok(t) => chosen = Some(t),
+                            Err(e) => self.remote_error = Some(e),
+                        }
+                    }
+                });
+                if f.more {
+                    ui.add_space(SPACE_1);
+                    ui.horizontal(|ui| {
+                        let id = egui::Id::unique("dfdu-start-remote-port");
+                        let r = crate::windows::field(ui, colors, &mut f.port, id, "port 22", 88.0);
+                        entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        let id = egui::Id::unique("dfdu-start-remote-key");
+                        let key_w = (room - 88.0 - SPACE_2).max(80.0);
+                        let hint = "key file (default: ssh's)";
+                        let r = crate::windows::field(ui, colors, &mut f.key, id, hint, key_w);
+                        entered |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        let choose =
+                            kit::button(ui, colors, Kind::Secondary, "Choose…", None, true);
+                        if choose.clicked() {
+                            let mut pick = rfd::FileDialog::new();
+                            if let Some(ssh) = dfdu_sys::dirs::home_dir().map(|h| h.join(".ssh")) {
+                                pick = pick.set_directory(ssh);
+                            }
+                            if let Some(file) = pick.pick_file() {
+                                f.key = file.display().to_string();
+                            }
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        kit::sans("Over ssh, with your ssh config and keys.", 11.0).color(dim),
+                    );
+                    let more = if f.more {
+                        "Hide key file and port"
+                    } else {
+                        "Key file and port…"
+                    };
+                    let link = egui::Button::new(kit::sans(more, 11.0).color(colors.accent()))
+                        .frame(false);
+                    if ui
+                        .add(link)
+                        .on_hover_cursor(CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        f.more = !f.more;
+                    }
+                });
+                if let Some(e) = &self.remote_error {
+                    let red = colors.fg(Token::StatusError);
+                    ui.add(egui::Label::new(kit::sans(e, 12.0).color(red)).wrap());
+                }
+            });
+        chosen
+    }
+
+    /// The keys, and the button that opens what the arrows chose.
+    fn footer(&mut self, ui: &mut Ui, colors: &Colors, recent: &[Target]) -> Option<Chosen> {
         let dim = colors.fg(Token::FgDim);
         let open = if cfg!(target_os = "macos") {
             "⌘O"
@@ -408,13 +600,14 @@ impl Start {
             "Ctrl O"
         };
         let mut chosen = None;
-        ui.horizontal(|ui| {
+        let choice = self.chosen(recent);
+        let hints: &[(&str, &str)] = if choice.is_some() {
+            &[("↑↓", "choose"), ("Enter", "open"), (open, "open a folder")]
+        } else {
+            &[(open, "open a folder")]
+        };
+        let keys = |ui: &mut Ui| {
             ui.spacing_mut().item_spacing.x = SPACE_1;
-            let hints: &[(&str, &str)] = if self.listed().iter().any(Row::enabled) {
-                &[("↑↓", "choose"), ("Enter", "scan"), (open, "open a folder")]
-            } else {
-                &[(open, "open a folder")]
-            };
             for (n, (key, what)) in hints.iter().enumerate() {
                 if n > 0 {
                     ui.add_space(SPACE_3);
@@ -422,20 +615,32 @@ impl Start {
                 kit::key_cap(ui, colors, key);
                 ui.label(kit::sans(*what, 11.0).color(dim));
             }
-            let row = self
-                .chosen_row()
-                .map(|r| (name(&r.disk), r.disk.mount_point.clone()));
+        };
+        // Narrow: the keys on a line of their own, above the switch and the button.
+        let narrow = ui.available_width() < FOOTER_ONE_LINE;
+        if narrow {
+            ui.horizontal(keys);
+            ui.add_space(SPACE_3);
+        }
+        ui.horizontal(|ui| {
+            if !narrow {
+                keys(ui);
+            }
+            let disk = self.chosen_row().map(|r| name(&r.disk));
             let step = self.admin_step().clone();
             let (admin, setup) = (&mut self.admin, &mut self.setup);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if let Some((disk, mount)) = row {
-                    let text = if *admin && !step.usable() {
-                        "Set up, then scan…".to_owned()
-                    } else {
-                        format!("Scan {disk}")
-                    };
+                let text = match (&choice, &disk) {
+                    (Some(Chosen::Folder(_)), _) if *admin && !step.usable() => {
+                        Some("Set up, then scan…".to_owned())
+                    }
+                    (Some(Chosen::Folder(_)), Some(disk)) => Some(format!("Scan {disk}")),
+                    (Some(Chosen::Remote(t)), _) => Some(format!("Connect to {}", t.host)),
+                    _ => None,
+                };
+                if let Some(text) = text {
                     if kit::button(ui, colors, Kind::Primary, &text, None, true).clicked() {
-                        chosen = Some(mount);
+                        chosen = choice.clone();
                     }
                     ui.add_space(SPACE_4);
                 }
@@ -446,6 +651,157 @@ impl Start {
         });
         chosen
     }
+}
+
+/// A list of rows on `surface`, as the disks are drawn.
+fn list(ui: &mut Ui, colors: &Colors, add: impl FnOnce(&mut Ui)) {
+    Frame::new()
+        .fill(colors.chrome.surface)
+        .stroke(Stroke::new(1.0, colors.chrome.divider))
+        .corner_radius(CornerRadius::same(RADIUS_MD))
+        .inner_margin(Margin::same(1))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            add(ui);
+        });
+}
+
+/// The rule between two rows of a list `w` wide.
+fn divider(ui: &mut Ui, colors: &Colors, w: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
+    ui.painter().hline(
+        rect.x_range().shrink(SPACE_4),
+        rect.center().y,
+        Stroke::new(1.0, colors.chrome.divider),
+    );
+}
+
+/// A row of a list `w` wide that only says `text`, in `color`, after a spinner when `busy`.
+fn note_row(ui: &mut Ui, colors: &Colors, w: f32, text: &str, color: Option<Color32>, busy: bool) {
+    let color = color.unwrap_or_else(|| colors.fg(Token::FgDim));
+    Frame::new()
+        .inner_margin(Margin::symmetric(16, 14))
+        .show(ui, |ui| {
+            ui.set_width(w - 32.0);
+            ui.horizontal(|ui| {
+                if busy {
+                    ui.spinner();
+                }
+                ui.add(egui::Label::new(kit::sans(text, 13.0).color(color)).wrap());
+            });
+        });
+}
+
+/// A computer scanned lately, as a row `w` wide, the whole of it a button: a prompt where the
+/// disks have their keys, its name and port, the folder there, and Connect → on the right
+/// while pointed at or chosen. The `last` has no rule under it.
+fn computer_row(
+    ui: &mut Ui,
+    t: &Target,
+    selected: bool,
+    last: bool,
+    colors: &Colors,
+    w: f32,
+) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, COMPUTER_ROW), Sense::click());
+    resp.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, t.label()));
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+    let c = &colors.chrome;
+    let p = ui.painter();
+    let cursor_bg = colors.bg(Token::Cursor).unwrap_or(c.hover);
+    if selected {
+        p.rect_filled(rect, CornerRadius::same(RADIUS_SM), cursor_bg);
+    } else if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(RADIUS_SM), c.hover);
+    }
+    if resp.has_focus() {
+        let stroke = Stroke::new(2.0, colors.fg(Token::BorderFocus));
+        p.rect_stroke(
+            rect.shrink(1.0),
+            CornerRadius::same(RADIUS_SM),
+            stroke,
+            StrokeKind::Inside,
+        );
+    } else if !selected && !last {
+        p.hline(
+            rect.x_range().shrink(SPACE_4),
+            rect.bottom() - 0.5,
+            Stroke::new(1.0, c.divider),
+        );
+    }
+    let pick = |t: Token| {
+        if selected {
+            colors.fg(Token::Cursor)
+        } else {
+            colors.fg(t)
+        }
+    };
+    let inner = rect.shrink2(vec2(SPACE_4, 0.0));
+    let mid = rect.center().y;
+    let bold = FontId::new(14.0, FontFamily::Name(MONO_SEMIBOLD_FAMILY.into()));
+    let mono = FontId::new(12.0, FontFamily::Monospace);
+    // A prompt in a cap where the disks have their keys, so names line up with theirs.
+    let cap = Rect::from_center_size(pos2(inner.left() + 11.0, mid), vec2(22.0, 18.0));
+    let edge = if selected {
+        colors.fg(Token::Cursor)
+    } else {
+        colors.fg(Token::Border)
+    };
+    p.rect_stroke(
+        cap,
+        CornerRadius::same(RADIUS_SM),
+        Stroke::new(1.0, edge),
+        StrokeKind::Inside,
+    );
+    let glyph = FontId::new(10.0, FontFamily::Name(MONO_SEMIBOLD_FAMILY.into()));
+    p.text(
+        cap.center(),
+        Align2::CENTER_CENTER,
+        ">_",
+        glyph,
+        pick(Token::FgDim),
+    );
+    let x = inner.left() + 22.0 + SPACE_4;
+    let go = "Connect →";
+    let go_w = 90.0;
+    if selected || resp.hovered() {
+        let font = FontId::new(12.0, FontFamily::Name(SANS_MEDIUM_FAMILY.into()));
+        p.text(
+            pos2(inner.right(), mid),
+            Align2::RIGHT_CENTER,
+            go,
+            font,
+            colors.accent(),
+        );
+    }
+    let name_w = ((inner.right() - x - go_w) * 0.45).floor();
+    let mut job = LayoutJob::default();
+    job.append(&t.host, 0.0, TextFormat::simple(bold, pick(Token::Header)));
+    if let Some(port) = t.port {
+        job.append(
+            &format!(":{port}"),
+            0.0,
+            TextFormat::simple(mono.clone(), pick(Token::FgDim)),
+        );
+    }
+    job.wrap = TextWrapping::truncate_at_width(name_w);
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    p.galley(pos2(x, mid - g.size().y / 2.0), g, Color32::PLACEHOLDER);
+    let path = if t.path.trim().is_empty() {
+        "~"
+    } else {
+        t.path.as_str()
+    };
+    let left = x + name_w + SPACE_4;
+    let g = line(
+        ui,
+        path,
+        mono,
+        pick(Token::FgDim),
+        inner.right() - go_w - left,
+    );
+    p.galley(pos2(left, mid - g.size().y / 2.0), g, Color32::PLACEHOLDER);
+    resp
 }
 
 /// The Full disk access switch, laid out right to left in the footer: a scan as an administrator
@@ -537,46 +893,6 @@ fn rows(disks: Vec<Disk>) -> Vec<Row> {
             Row { disk, startup }
         })
         .collect()
-}
-
-/// A sheet `w` wide on `surface`, with `add` given its inner width.
-fn sheet(ui: &mut Ui, colors: &Colors, w: f32, add: impl FnOnce(&mut Ui, f32)) {
-    let pad = SPACE_4;
-    Frame::new()
-        .fill(colors.chrome.surface)
-        .stroke(Stroke::new(1.0, colors.chrome.divider))
-        .corner_radius(CornerRadius::same(RADIUS_MD))
-        .inner_margin(Margin::same(16))
-        .show(ui, |ui| {
-            let inner = w - 2.0 * pad - 2.0;
-            ui.vertical(|ui| {
-                ui.set_width(inner);
-                ui.set_min_height(76.0);
-                ui.spacing_mut().item_spacing.y = SPACE_1;
-                add(ui, inner);
-            });
-        });
-}
-
-/// A sheet's title and the line under it.
-fn heading(ui: &mut Ui, colors: &Colors, title: &str, line: &str) {
-    ui.label(kit::title(title, 15.0).color(colors.fg(Token::Title)));
-    ui.label(kit::sans(line, 12.0).color(colors.fg(Token::FgDim)));
-    ui.add_space(SPACE_2);
-}
-
-/// The sheet for an export, `w` wide.
-fn export_sheet(ui: &mut Ui, colors: &Colors, w: f32) -> Option<PathBuf> {
-    let mut file = None;
-    sheet(ui, colors, w, |ui, _| {
-        let what = "A snapshot or an ncdu export, browsed read-only.";
-        heading(ui, colors, "A saved scan", what);
-        let open = kit::button(ui, colors, Kind::Secondary, "Open file…", None, true);
-        if open.clicked() {
-            file = rfd::FileDialog::new().pick_file();
-        }
-    });
-    file
 }
 
 /// The folder dropped on the window in this frame, or why what was dropped is not scanned.

@@ -22,8 +22,14 @@ crossbeam-channel.workspace = true
 nucleo-matcher.workspace = true
 toml.workspace = true
 dunce.workspace = true
+dfdu-update.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [features]
+# Downloads the release agent for a remote host of another platform. Without it, only the local
+# dfdu and `DFDU_AGENT_DIR` can be sent.
+agent-download = ["dfdu-update/net"]
 # Helpers for the tests of the crates above (`snapshot::build`, `snapshot::test_entry`,
 # `Outside::set_mount`, `Outside::set_linked`, `test_support`).
 test-support = ["dfdu-engine/test-support"]
@@ -31,3 +37,5 @@ test-support = ["dfdu-engine/test-support"]
 [dev-dependencies]
 dfdu-engine = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+tar.workspace = true

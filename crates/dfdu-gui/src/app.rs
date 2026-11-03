@@ -32,6 +32,13 @@ enum Screen {
         /// The start screen to show again if the password dialog is cancelled.
         back: Option<(Start, StartLocal)>,
     },
+    /// A scan of another computer, while ssh connects and the agent starts there
+    /// ([`crate::remote`]).
+    Connecting {
+        conn: Box<crate::remote::Connecting>,
+        /// The start screen to show again if it fails or is cancelled.
+        back: (Start, StartLocal),
+    },
     /// What was chosen could not be opened.
     Failed(String),
     /// Between two screens, and after the browser stopped.
@@ -52,6 +59,8 @@ pub struct Gui {
     admin: Option<crate::admin::Panel>,
     /// The update check, its notice and the Updates window ([`crate::update`]).
     updates: crate::update::Updates,
+    /// The ssh passwords given in this run ([`crate::secrets`]).
+    secrets: crate::secrets::Secrets,
 }
 
 impl Gui {
@@ -85,6 +94,7 @@ impl Gui {
             theme_files,
             admin: None,
             updates: crate::update::Updates::new(),
+            secrets: crate::secrets::Secrets::default(),
         };
         gui.choose(gui.prefs.theme.clone(), ctx);
         gui.screen = match source {
@@ -116,7 +126,10 @@ impl Gui {
         let current = self.themes().iter().position(|t| *t == self.prefs.theme);
         match &mut self.screen {
             Screen::Start { start, .. } => {
-                let chosen = start.show(ui, &colors);
+                if let Some(w) = self.secrets.warning() {
+                    start.remote_error = Some(w);
+                }
+                let chosen = start.show(ui, &colors, &self.prefs.remotes);
                 if std::mem::take(&mut start.setup) {
                     self.admin = Some(crate::admin::Panel::new());
                 }
@@ -126,6 +139,9 @@ impl Gui {
             }
             Screen::Browse(b) => {
                 b.view_mut().theme_current = current;
+                if let Some(w) = self.secrets.warning() {
+                    b.state_mut().status = Some(w);
+                }
                 b.show(ui, &colors);
                 if std::mem::take(&mut b.view_mut().admin_open) {
                     self.admin = Some(crate::admin::Panel::new());
@@ -156,6 +172,12 @@ impl Gui {
                     message(ui, &colors, &text, colors.fg(Token::FgDim));
                 }
             },
+            Screen::Connecting { conn, .. } => {
+                conn.show(ui, &colors);
+                if let Some(outcome) = conn.poll(&mut self.secrets, ui.ctx()) {
+                    self.connected(outcome, ui.ctx());
+                }
+            }
             Screen::Failed(e) => message(ui, &colors, e, colors.fg(Token::StatusError)),
             Screen::Closed => {}
         }
@@ -208,7 +230,8 @@ impl Gui {
     /// Opens what was chosen on the start screen: a folder is scanned afresh, an export is
     /// browsed read-only, as `--import` browses it.
     pub fn chosen(&mut self, chosen: Chosen, ctx: &egui::Context) {
-        let Screen::Start { local, start } = std::mem::replace(&mut self.screen, Screen::Closed)
+        let Screen::Start { local, mut start } =
+            std::mem::replace(&mut self.screen, Screen::Closed)
         else {
             return;
         };
@@ -219,10 +242,39 @@ impl Gui {
             }
             Chosen::Folder(path) if start.admin => self.elevate(path, Some((start, local)), ctx),
             Chosen::Folder(path) => self.open(launch::picked(path, local), ctx),
+            Chosen::Remote(target) => {
+                start.remote_error = None;
+                let conn = crate::remote::Connecting::start(target, &self.settings, ctx);
+                Screen::Connecting {
+                    conn: Box::new(conn),
+                    back: (start, local),
+                }
+            }
             Chosen::Export(file) => match launch::import(&file) {
                 Ok(tree) => self.open(Source::Imported(tree), ctx),
                 Err(e) => Screen::Failed(format!("Cannot open {}: {e}", file.display())),
             },
+        };
+        ctx.request_repaint();
+    }
+
+    /// Opens the scan of the other computer connected to, or shows the start screen again
+    /// with why it could not.
+    fn connected(&mut self, outcome: crate::remote::Outcome, ctx: &egui::Context) {
+        let Screen::Connecting { conn, back } = std::mem::replace(&mut self.screen, Screen::Closed)
+        else {
+            return;
+        };
+        let (mut start, local) = back;
+        self.screen = match outcome {
+            crate::remote::Outcome::Opened(opened) => {
+                crate::remote::remember(&mut self.prefs.remotes, &conn.target);
+                self.open(opened.source(), ctx)
+            }
+            crate::remote::Outcome::Failed(why) => {
+                start.failed_remote(&conn.target, why);
+                Screen::Start { start, local }
+            }
         };
         ctx.request_repaint();
     }

@@ -44,7 +44,7 @@ dfdu-gui [PATH] [--read-only] [--import FILE] [--no-rules] [--theme NAME]
 | `--no-rules` | No categories and no cleanup candidates. |
 | `--theme NAME` | `auto`, `dark`, `light`, or a theme file `NAME.toml` in dfdu's themes directory. |
 
-Remote scans (`--remote`) and root-only features (`--mft`, exact btrfs sizes) are CLI only.
+Root-only features (`--mft`, exact btrfs sizes) are CLI only. Another computer is scanned from the start screen over ssh; ssh's questions are asked in the window through its askpass helper (this program, run by ssh).
 
 ## Using it
 

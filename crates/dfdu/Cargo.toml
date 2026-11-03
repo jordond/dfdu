@@ -25,12 +25,12 @@ dfdu-sys.workspace = true
 dfdu-store.workspace = true
 dfdu-clean.workspace = true
 dfdu-dupes.workspace = true
+dfdu-session.workspace = true
 clap.workspace = true
 clap_mangen.workspace = true
 clap_complete.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
-sha2.workspace = true
 hex.workspace = true
 dfdu-update.workspace = true
 
@@ -38,14 +38,13 @@ dfdu-update.workspace = true
 default = ["agent-download", "self-update"]
 # Downloads the release agent for `--remote` hosts of another platform. Without it, only this
 # build and `DFDU_AGENT_DIR` can be sent.
-agent-download = ["dfdu-update/net"]
+agent-download = ["dfdu-session/agent-download"]
 # `dfdu update` downloads and installs the latest release. Without it, it says the build has no
 # downloads.
 self-update = ["dfdu-update/net"]
 
 [dev-dependencies]
 tempfile.workspace = true
-dfdu-session.workspace = true
 boon.workspace = true
 crossbeam-channel.workspace = true
 lzma-rust2 = { workspace = true, features = ["encoder"] }

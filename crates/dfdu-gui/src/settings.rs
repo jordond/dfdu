@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 /// The key of the settings in eframe's storage.
 pub const KEY: &str = "dfdu-gui";
+/// The key of the other computers scanned lately, one a line.
+pub const REMOTES_KEY: &str = "dfdu-gui-remotes";
 
 /// Which theme the window draws with.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -75,6 +77,8 @@ pub struct Prefs {
     pub latest: Option<String>,
     /// The release whose notice was dismissed.
     pub skipped: Option<String>,
+    /// The other computers scanned lately, the latest first (kept under [`REMOTES_KEY`]).
+    pub remotes: Vec<crate::remote::Target>,
 }
 
 impl Default for Prefs {
@@ -87,6 +91,7 @@ impl Default for Prefs {
             checked: 0,
             latest: None,
             skipped: None,
+            remotes: Vec::new(),
         }
     }
 }
@@ -139,13 +144,21 @@ impl Prefs {
 
     /// The settings in `storage`, the defaults without one.
     pub fn load(storage: Option<&dyn eframe::Storage>) -> Self {
-        storage
+        let prefs = storage
             .and_then(|s| s.get_string(KEY))
-            .map_or_else(Prefs::default, |t| Prefs::decode(&t))
+            .map_or_else(Prefs::default, |t| Prefs::decode(&t));
+        let remotes = storage.and_then(|s| s.get_string(REMOTES_KEY));
+        Prefs {
+            remotes: remotes
+                .map(|t| crate::remote::decode(&t))
+                .unwrap_or_default(),
+            ..prefs
+        }
     }
 
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY, self.encode());
+        storage.set_string(REMOTES_KEY, crate::remote::encode(&self.remotes));
     }
 }
 
@@ -179,6 +192,7 @@ mod tests {
                     checked: 1_700_000_000,
                     latest: details.then(|| "0.4.0".into()),
                     skipped: tree.then(|| "0.4.0-rc.1".into()),
+                    remotes: Vec::new(),
                 };
                 assert_eq!(Prefs::decode(&p.encode()), p);
             }

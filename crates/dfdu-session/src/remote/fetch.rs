@@ -36,7 +36,8 @@ pub struct Own {
     pub glibc: Option<&'static str>,
 }
 
-fn own() -> Option<Own> {
+/// What the running binary is, when it is a build a host could run.
+pub fn own() -> Option<Own> {
     let os = match std::env::consts::OS {
         "linux" => "Linux",
         "macos" => "Darwin",
@@ -97,7 +98,7 @@ impl Candidate {
 pub struct Agents {
     /// `DFDU_AGENT_DIR`.
     pub agent_dir: Option<PathBuf>,
-    /// This binary, and what it is.
+    /// The local dfdu that may be sent itself, and what it is.
     pub this: Option<(PathBuf, Own)>,
     /// The local agent cache (`<dir>/<version>-<target>/dfdu`).
     pub cache: Option<PathBuf>,
@@ -106,11 +107,12 @@ pub struct Agents {
 }
 
 impl Agents {
-    /// From the environment.
-    pub fn from_env() -> Agents {
+    /// From the environment, with `this` the local dfdu that may be sent itself (the running
+    /// CLI, or the one the GUI found) and what it is.
+    pub fn from_env(this: Option<(PathBuf, Own)>) -> Agents {
         Agents {
             agent_dir: std::env::var_os(AGENT_DIR_VAR).map(PathBuf::from),
-            this: std::env::current_exe().ok().zip(own()),
+            this,
             cache: dfdu_sys::dirs::agent_cache_dir(),
             release_url: std::env::var(RELEASE_URL_VAR).unwrap_or_else(|_| RELEASE_URL.into()),
         }

@@ -11,7 +11,9 @@
 //! lacks Full Disk Access (`access`). A thread asks for a frame when the
 //! engine's model changes (`bridge`). The theme chosen and how the list was shown are kept
 //! between runs (`settings`). Updates are checked for, installed, and the command-line tool
-//! installed from the Updates window (`update`).
+//! installed from the Updates window (`update`). Another computer is scanned over ssh from the
+//! start screen (`remote`), ssh's questions asked in the window through this program run as its
+//! askpass helper (`askpass`), the passwords given kept as `secrets` says.
 //!
 //! The window draws with wgpu, or with OpenGL (glow) when wgpu cannot start, with dfdu's mark as
 //! its icon.
@@ -23,6 +25,7 @@ mod access;
 mod admin;
 mod app;
 mod args;
+mod askpass;
 mod bridge;
 mod browser;
 mod cleanup;
@@ -40,7 +43,9 @@ mod list;
 mod map;
 mod menu;
 mod palette;
+mod remote;
 mod review;
+mod secrets;
 mod settings;
 mod shot;
 mod start;
@@ -71,6 +76,11 @@ const NAME: &str = "dfdu";
 const ICON: &[u8] = include_bytes!("../../../assets/logo/dfdu-mark-512.png");
 
 fn main() -> ExitCode {
+    // ssh's askpass helper: first, before a console is attached or the arguments (ssh's
+    // question) are parsed as dfdu-gui's.
+    if askpass::is_helper() {
+        return askpass::client();
+    }
     #[cfg(windows)]
     dfdu_sys::attach_parent_console();
     let args = args::Args::parse();
