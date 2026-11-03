@@ -12,7 +12,7 @@
 #
 # With --gui it then installs the desktop app from the same release, also checked against its
 # SHA-256: dfdu.app in ~/Applications on macOS, or on x86_64 Linux the AppImage as dfdu-gui
-# beside dfdu, with a desktop entry and icon in ~/.local/share. The GUI ships from 1.0.
+# beside dfdu, with a desktop entry and icon in ~/.local/share. The GUI ships from 0.3.0.
 #
 # Windows: use the PowerShell installer instead (https://dfdu.app/docs/install/).
 
@@ -44,7 +44,7 @@ Options:
 
 If DIR is not writable, the binary is installed with sudo and the extras are skipped.
 --gui installs dfdu.app on macOS, and dfdu-gui (an AppImage) in DIR on x86_64 Linux.
-The CLI is installed first; a release with no GUI build (before 1.0), or a machine
+The CLI is installed first; a release with no GUI build (before 0.3.0), or a machine
 with none, then exits with an error.
 DFDU_NO_VERIFY=1 installs without a SHA-256 tool (sha256sum, shasum or openssl).
 EOF
@@ -230,13 +230,13 @@ path_hint() { # bin dir
 # Runs a command, with sudo when the CLI's install needed it ($use_sudo) or the app's directory does.
 as_needed() { if [ "$use_sudo" = 1 ]; then sudo "$@"; else "$@"; fi; }
 
-# Downloads a GUI asset of the release into $tmp and verifies it. Releases before 1.0 have none.
+# Downloads a GUI asset of the release into $tmp and verifies it. Releases before 0.3.0 have none.
 gui_download() { # name
 	info "downloading ${BOLD}$1${RESET} ${DIM}(${version:-latest})${RESET}"
 	rc=0
 	download "$base/$1" "$tmp/$1" || rc=$?
 	if [ "$rc" -eq 4 ]; then
-		die "$release has no GUI build; the GUI ships from 1.0"
+		die "$release has no GUI build; the GUI ships from 0.3.0"
 	elif [ "$rc" -ne 0 ]; then
 		die "could not download $base/$1"
 	fi

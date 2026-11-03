@@ -142,12 +142,12 @@ pass "Linux: --no-extras skips the desktop entry"
 run old "$work/linux-x86_64" -- --gui --version 0.9.0
 [ "$rc" != 0 ] || fail "--gui on 0.9.0 succeeded"
 [ -x "$home/.local/bin/dfdu" ] || fail "--gui on 0.9.0: the CLI is not installed"
-expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 1.0"
+expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 0.3.0"
 pass "a release with no GUI fails after the CLI is installed"
 
 run latest "$work/linux-x86_64" -- --gui
 [ "$rc" != 0 ] || fail "--gui on the latest (0.9.0) succeeded"
-expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 1.0"
+expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 0.3.0"
 pass "the latest release names its version"
 
 run arm "$work/linux-aarch64" -- --gui --version 1.0.0

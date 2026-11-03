@@ -94,7 +94,7 @@ jobs:
             test -f "$HOME/$f" || { echo "::error::install.sh did not install ~/$f"; exit 1; }
           done
       # The latest release predates the GUI (1.0), so --gui must install the CLI and then fail.
-      - name: Check install.sh --gui on a release without a GUI
+      - name: Check install.sh --gui installs the latest release's GUI
         if: ${{ !cancelled() }}
         env:
           HOME: ${{ runner.temp }}/install-gui-home
@@ -102,12 +102,23 @@ jobs:
           XDG_DATA_HOME: ""
         run: |
           mkdir -p "$HOME"
-          latest="$("$RUNNER_TEMP/install-home/.local/bin/dfdu" --version | cut -d ' ' -f 2)"
-          if dash install.sh --gui --version "$latest" 2>"$RUNNER_TEMP/gui-err"; then
-            echo "::error::install.sh --gui succeeded on $latest, which has no GUI build"; exit 1
+          dash install.sh --gui
+          test -x "$HOME/.local/bin/dfdu-gui"
+          test -f "$HOME/.local/share/applications/app.dfdu.desktop"
+          "$HOME/.local/bin/dfdu" --version
+      - name: Check install.sh --gui on a release without a GUI
+        if: ${{ !cancelled() }}
+        env:
+          HOME: ${{ runner.temp }}/install-old-gui-home
+          XDG_CONFIG_HOME: ""
+          XDG_DATA_HOME: ""
+        run: |
+          mkdir -p "$HOME"
+          if dash install.sh --gui --version 0.2.0 2>"$RUNNER_TEMP/gui-err"; then
+            echo "::error::install.sh --gui succeeded on 0.2.0, which has no GUI build"; exit 1
           fi
           cat "$RUNNER_TEMP/gui-err"
-          grep -qF "dfdu $latest has no GUI build; the GUI ships from 1.0" "$RUNNER_TEMP/gui-err" ||
+          grep -qF "dfdu 0.2.0 has no GUI build; the GUI ships from 0.3.0" "$RUNNER_TEMP/gui-err" ||
             { echo "::error::install.sh --gui did not name the release without a GUI"; exit 1; }
           "$HOME/.local/bin/dfdu" --version
       - name: Find unused dependencies
