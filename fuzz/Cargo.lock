@@ -510,8 +510,11 @@ dependencies = [
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
+ "dfdu-update",
  "dunce",
+ "hex",
  "nucleo-matcher",
+ "sha2",
  "toml",
 ]
 
@@ -573,6 +576,15 @@ dependencies = [
  "tachyonfx",
  "terminal-colorsaurus",
  "unicode-width",
+]
+
+[[package]]
+name = "dfdu-update"
+version = "0.3.0"
+dependencies = [
+ "dfdu-sys",
+ "hex",
+ "sha2",
 ]
 
 [[package]]

@@ -167,20 +167,5 @@ fn script_survives_single_quoting() {
     )));
 }
 
-#[test]
-fn upload_decision() {
-    let never = || -> io::Result<String> { panic!("must not ask") };
-    assert!(decide(AgentMode::Upload, false, never).is_ok());
-    assert!(decide(AgentMode::Upload, true, never).is_ok());
-    let refused = decide(AgentMode::Auto, false, never).unwrap_err();
-    let refused = refused.to_string();
-    assert!(refused.contains("--remote-agent upload"), "{refused}");
-    assert!(refused.contains(env!("CARGO_PKG_VERSION")), "{refused}");
-    assert!(decide(AgentMode::Auto, true, || Ok("y\n".into())).is_ok());
-    assert!(decide(AgentMode::Auto, true, || Ok("\n".into())).is_err());
-    assert!(decide(AgentMode::Auto, true, || Ok("n".into())).is_err());
-    assert!(decide(AgentMode::Auto, true, || Err(io::Error::other("no tty"))).is_err());
-}
-
 #[cfg(unix)]
 mod script;

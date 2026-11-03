@@ -1267,7 +1267,6 @@ dependencies = [
  "lzma-rust2",
  "rustix 1.1.6",
  "serde_json",
- "sha2",
  "tar",
  "tempfile",
 ]
@@ -1429,8 +1428,13 @@ dependencies = [
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
+ "dfdu-update",
  "dunce",
+ "hex",
+ "lzma-rust2",
  "nucleo-matcher",
+ "sha2",
+ "tar",
  "tempfile",
  "toml",
 ]

@@ -10,7 +10,7 @@
 //! (`effect`). From outside the UI: the scan history (`history_link`) with what grew since the
 //! last scan (`growth`), the scan cache (`cache_link`), the mounts and links the scan did not
 //! enter (`outside`), the selected path (`selected_path`) and the file manager that shows it
-//! (`file_manager`). What is opened and how it starts (`startup`). The views: the treemap's
+//! (`file_manager`). What is opened and how it starts (`startup`), and scans on another host through ssh (`remote`). The views: the treemap's
 //! layout, depth and lower levels (`treemap`), the cleanup view (`cleanup`), the duplicates
 //! comparison with its keep rules and view (`dupes`), and the largest files below a directory
 //! (`largest`). The actions with their keys and labels (`actions`), the delete confirmation
@@ -44,6 +44,7 @@ pub mod marks;
 pub mod order;
 pub mod outside;
 pub mod palette;
+pub mod remote;
 pub mod selected_path;
 pub mod session;
 pub mod snapshot;
