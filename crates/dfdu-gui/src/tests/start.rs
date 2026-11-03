@@ -75,7 +75,9 @@ fn an_export_chosen_on_the_start_screen_is_browsed_read_only() {
         ..local(tmp.path(), false, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open file…"));
+    until(&mut h, "the start screen", |h| {
+        shown(h, "Open a saved scan…")
+    });
 
     // What the system's file picker returns for the button: the browser of the export.
     let ctx = h.ctx.clone();
@@ -100,7 +102,9 @@ fn an_export_that_does_not_read_says_why() {
         ..local(tmp.path(), false, None)
     };
     let mut h = harness(start);
-    until(&mut h, "the start screen", |h| shown(h, "Open file…"));
+    until(&mut h, "the start screen", |h| {
+        shown(h, "Open a saved scan…")
+    });
     let ctx = h.ctx.clone();
     let gui = h.state_mut().gui.as_mut().expect("the window");
     gui.chosen(Chosen::Export(file), &ctx);
@@ -201,7 +205,7 @@ fn the_start_screen_offers_another_computer_and_the_recent_ones() {
         ..crate::settings::Prefs::default()
     };
     let mut h = super::harness_with(start, prefs, None);
-    until(&mut h, "the start screen", |h| shown(h, "Another computer"));
+    until(&mut h, "the start screen", |h| shown(h, "Other computers"));
     assert!(shown(&h, "Connect"));
     assert!(shown(&h, "me@nas:2222  ~/Projects"));
 }

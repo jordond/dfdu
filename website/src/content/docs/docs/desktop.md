@@ -49,7 +49,7 @@ Every file on the release page has a `.sha256` checksum next to it.
 
 ## Choosing what to scan
 
-Opened without a folder, the app shows a start screen with your disks and how full each one is. Pick a disk with the arrow keys and press Enter, or press its number. You can also open a folder with Cmd-O (Ctrl-O on Linux and Windows), type its path, or drop it anywhere on the window. **Open file** browses a scan saved with `dfdu export` or an ncdu export.
+Opened without a folder, the app shows a start screen listing what you can scan. **This computer** has your disks, with how full each one is, and a row to type a folder's path or browse to one. **Other computers** has the computers you scanned lately and a row to connect to another. Pick a disk or a computer with the arrow keys and press Enter, or press a disk's number. You can also open a folder with Cmd-O (Ctrl-O on Linux and Windows), or drop it anywhere on the window. **Open a saved scan** browses a scan saved with `dfdu export` or an ncdu export.
 
 From a terminal, pass the folder instead:
 
@@ -63,7 +63,7 @@ As in the terminal, you can browse while the scan is still running, and a folder
 
 ## Another computer
 
-**Another computer** on the start screen scans a folder on another machine over ssh, as `dfdu --remote` does. Type the computer as you would to ssh (`me@nas`, or a name from `~/.ssh/config`) and the folder there (`~` when left empty), then **Connect**. **Key file and port** sets a private key to log in with and a port. The computers you scanned lately are listed under the sheet; click one to connect again.
+**Other computers** on the start screen scans a folder on another machine over ssh, as `dfdu --remote` does. Type the computer as you would to ssh (`me@nas`, or a name from `~/.ssh/config`) and the folder there (`~` when left empty), then **Connect**. **Key file and port** sets a private key to log in with and a port. The computers you scanned lately are listed above that row; click one, or choose it with the arrow keys and press Enter, to connect again.
 
 The app runs your own `ssh`, so your ssh config, keys and ssh-agent all work. When ssh needs a password, a key's passphrase, or your say-so to trust a computer it has not connected to before, the app asks in a dialog. This needs OpenSSH 8.4 or newer (on Windows, OpenSSH 8.6 or newer).
 
