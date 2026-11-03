@@ -411,6 +411,44 @@ mod tests {
         }
     }
 
+    /// The browser of an administrator's scan, from the helper's agent on macOS or pkexec's
+    /// elsewhere (here on a thread of this process, reporting itself as `privileged`).
+    fn elevated_browser(privileged: bool) -> Box<dyn Browse> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (down_r, down_w) = std::io::pipe().expect("pipe");
+        let (up_r, up_w) = std::io::pipe().expect("pipe");
+        let journal = tempfile::tempdir().expect("temp dir").keep();
+        std::thread::spawn(move || {
+            let backend = native_backend(dfdu_sys::Storage::Unknown, false);
+            let _ = dfdu_engine::agent::run(backend, 1, Some(journal), down_r, up_w);
+        });
+        let io = dfdu_engine::RemoteIo {
+            reader: Box::new(io::BufReader::new(up_r)),
+            writer: Box::new(down_w),
+            child: None,
+        };
+        let opts = EngineOptions::default();
+        let job = JobOptions::default();
+        let mut e = dfdu_session::elevate::connect(io, dir.path(), None, opts.clone(), job)
+            .expect("connected");
+        e.privileged = privileged;
+        let settings = Settings {
+            engine: opts,
+            record: false,
+            rules: false,
+        };
+        open(e.source(), &settings, &egui::Context::default()).expect("opened")
+    }
+
+    #[test]
+    fn an_administrators_scan_does_not_look_up_a_folder_as_this_user() {
+        let b = elevated_browser(true);
+        assert!(b.state().outside.local && b.state().elevated);
+        let b = elevated_browser(false);
+        let s = b.state();
+        assert!(s.outside.local && !s.elevated, "the agent runs as the user");
+    }
+
     #[test]
     fn agent_is_this_program_by_default() {
         assert_eq!(

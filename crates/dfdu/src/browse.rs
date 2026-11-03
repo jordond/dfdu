@@ -49,6 +49,7 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             path: root,
             job,
             local: false,
+            elevated: false,
         }
     } else {
         let resumed = (cli.resume_from.as_deref().map(read_export))
@@ -179,6 +180,7 @@ fn reopen_remote(
                     path: root,
                     job,
                     local: false,
+                    elevated: false,
                 },
                 notice: None,
             }),
