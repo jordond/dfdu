@@ -61,6 +61,8 @@ On macOS the app is `dfdu.app`; run `open -a dfdu --args ~/Downloads` to pass it
 
 As in the terminal, you can browse while the scan is still running, and a folder you scanned before opens from its cached scan at once and refreshes in the background.
 
+To scan another folder without going back to the start screen, press Cmd-L or Cmd-Shift-G (Ctrl-L or Ctrl-Shift-G on Linux and Windows). The field starts with the current folder; edit it, press Tab to complete a folder name (in a scan of this computer), and press Enter. A folder inside the scan opens at once; one outside it is scanned, the same way as the scan you are in (as an administrator, or on the same other computer). The breadcrumbs at the top also show the folders above the scan's root, dimmed: click one to scan it. At the scan's root, pressing Backspace or `h` once says what is above it, and pressing it again scans that folder. A saved scan has nothing outside it to open; go back to the start screen for that.
+
 ## Another computer
 
 **Other computers** on the start screen scans a folder on another machine over ssh, as `dfdu --remote` does. Type the computer as you would to ssh (`me@nas`, or a name from `~/.ssh/config`) and the folder there (`~` when left empty), then **Connect**. **Key file and port** sets a private key to log in with and a port. The computers you scanned lately are listed above that row; click one, or choose it with the arrow keys and press Enter, to connect again.
@@ -113,6 +115,8 @@ Cmd-K (Ctrl-K on Linux and Windows) opens the command palette, which lists every
 | --- | --- |
 | Cmd-K / Ctrl-K | Command palette |
 | Cmd-F / Ctrl-F | Filter this folder |
+| Cmd-L / Ctrl-L | Go to a folder |
+| Cmd-Shift-G / Ctrl-Shift-G | Go to a folder |
 | Cmd-C / Ctrl-C | Copy the selected path |
 | Delete | Move to Trash |
 | Cmd-W / Ctrl-W | Close the window |
