@@ -8,6 +8,7 @@ url="https://github.com/jordond/dfdu"
 license=('MIT')
 provides=('dfdu')
 conflicts=('dfdu')
+options=('!debug' '!strip')
 source_x86_64=("$url/releases/download/v$pkgver/dfdu-x86_64-unknown-linux-musl.tar.xz")
 source_aarch64=("$url/releases/download/v$pkgver/dfdu-aarch64-unknown-linux-musl.tar.xz")
 sha256sums_x86_64=('@SHA256_x86_64-unknown-linux-musl@')

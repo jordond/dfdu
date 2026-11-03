@@ -1,0 +1,83 @@
+name: publish-aur
+
+# Publishes the AUR packages (post-announce-jobs in dist-workspace.toml) once dist has published
+# the GitHub release: dfdu-bin (the release's archives), dfdu (built from the tag's source) and
+# dfdu-git (built from the latest commit).
+#
+# Fills pkg/aur/*/PKGBUILD with the release's checksums (scripts/package-manifests.sh), builds
+# and installs dfdu-bin and dfdu in an Arch Linux container to check them, writes each
+# .SRCINFO, and pushes them with .github/scripts/aur-push.sh. dfdu-git is pushed only when its
+# PKGBUILD changes. The push uses AUR_SSH_PRIVATE_KEY, a repository secret: the private half
+# of an SSH key added to the maintainer's AUR account.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  aur:
+    name: Publish to the AUR
+    runs-on: ubuntu-26.04
+    # Tags only, and not prereleases: pkgver can't hold a prerelease's `-`.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !fromJson(inputs.plan).announcement_is_prerelease }}
+    # Its deployment rules allow only version tags.
+    environment: release
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PLAN: ${{ inputs.plan }}
+      # archlinux:base-devel, linux/amd64.
+      ARCH_IMAGE: archlinux@sha256:767de6eaa40dcfeda5263a48737ea03a782caabdf3a403b6e6a203c7fd333681
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fill the PKGBUILDs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -r .announcement_tag <<<"$PLAN")
+          version=${version#v}
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+          scripts/package-manifests.sh "$version" "$RUNNER_TEMP/manifests"
+          cp -R "$RUNNER_TEMP/manifests/aur" "$RUNNER_TEMP/aur-build"
+      - name: Build, install and write .SRCINFO
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/aur-build:/pkg" "$ARCH_IMAGE" bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed rust git
+            useradd --create-home builder
+            chown -R builder /pkg
+            for pkg in dfdu-bin dfdu; do
+              cd "/pkg/$pkg"
+              su builder -c "makepkg --printsrcinfo >.SRCINFO && makepkg --cleanbuild --noconfirm"
+              pacman -U --noconfirm ./"$pkg"-[0-9]*.pkg.tar.zst
+              dfdu --version
+              # The image's pacman.conf skips extracting man pages, so check what the package lists.
+              files=$(pacman -Qql "$pkg")
+              grep -qx /usr/share/man/man1/dfdu.1.gz <<<"$files"
+              grep -qx /usr/share/fish/vendor_completions.d/dfdu.fish <<<"$files"
+              pacman -R --noconfirm "$pkg"
+            done
+            cd /pkg/dfdu-git
+            su builder -c "makepkg --printsrcinfo >.SRCINFO"
+          '
+          cat "$RUNNER_TEMP"/aur-build/*/.SRCINFO
+      - name: Push to the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" >~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # The AUR's published ED25519 host key (wiki.archlinux.org/title/AUR_submission_guidelines).
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' >~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          for pkg in dfdu-bin dfdu dfdu-git; do
+            .github/scripts/aur-push.sh "$pkg" "$RUNNER_TEMP/aur-build/$pkg" "$VERSION"
+          done
