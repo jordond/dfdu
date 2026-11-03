@@ -15,6 +15,7 @@ default-members = [
     "crates/dfdu-sys",
     "crates/dfdu-tree",
     "crates/dfdu-tui",
+    "crates/dfdu-update",
 ]
 
 [workspace.package]
@@ -38,6 +39,7 @@ dfdu-sys = { path = "crates/dfdu-sys" }
 dfdu-store = { path = "crates/dfdu-store" }
 dfdu-bench = { path = "crates/dfdu-bench" }
 dfdu-dupes = { path = "crates/dfdu-dupes" }
+dfdu-update = { path = "crates/dfdu-update", default-features = false }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"

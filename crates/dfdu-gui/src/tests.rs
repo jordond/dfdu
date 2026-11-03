@@ -4,7 +4,8 @@
 //! (`start`), the map and the largest files (`views`), the Cleanup view with its native command
 //! pane (`cleanup`), the Duplicates view (`dupes`), the command palette, the help and the
 //! platform's shortcuts (`palette`), the themes (`theme`), the banner on Full Disk Access
-//! (`access`) and the names of every control (`names`). Nothing is moved to the system's
+//! (`access`), the update notice and the Updates window (`updates`) and the names of every
+//! control (`names`). Nothing is moved to the system's
 //! Trash: the delete flows stage instead, and the Trash is tried only up to its dialog. The native commands the tests run are
 //! harmless ones of rules written for them (`ls`, `sleep`, `true`).
 
@@ -17,6 +18,7 @@ mod names;
 mod palette;
 mod start;
 mod theme;
+mod updates;
 mod views;
 
 use std::path::{Path, PathBuf};

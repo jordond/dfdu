@@ -1261,6 +1261,7 @@ dependencies = [
  "dfdu-sys",
  "dfdu-tree",
  "dfdu-tui",
+ "dfdu-update",
  "dunce",
  "hex",
  "lzma-rust2",
@@ -1269,7 +1270,6 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
- "ureq",
 ]
 
 [[package]]
@@ -1370,11 +1370,14 @@ dependencies = [
  "dfdu-store",
  "dfdu-sys",
  "dfdu-tree",
+ "dfdu-update",
  "eframe",
  "egui",
  "egui_extras",
  "egui_kittest",
+ "lzma-rust2",
  "rfd",
+ "tar",
  "tempfile",
  "winit",
 ]
@@ -1511,6 +1514,19 @@ dependencies = [
  "tempfile",
  "terminal-colorsaurus",
  "unicode-width",
+]
+
+[[package]]
+name = "dfdu-update"
+version = "0.3.0"
+dependencies = [
+ "dfdu-sys",
+ "hex",
+ "lzma-rust2",
+ "sha2",
+ "tar",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]

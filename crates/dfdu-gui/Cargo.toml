@@ -22,6 +22,7 @@ dfdu-engine.workspace = true
 dfdu-session.workspace = true
 dfdu-store.workspace = true
 dfdu-sys.workspace = true
+dfdu-update.workspace = true
 clap.workspace = true
 crossbeam-channel.workspace = true
 eframe.workspace = true
@@ -29,11 +30,19 @@ egui.workspace = true
 egui_extras.workspace = true
 rfd.workspace = true
 
+[features]
+default = ["updates"]
+# Checks for, downloads and installs updates, and the CLI. Without it the Updates window only
+# says this build has no downloads (it keeps ring out of the Windows cross-check).
+updates = ["dfdu-update/net"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 winit.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+tar.workspace = true
 tempfile.workspace = true
 
 # Not part of the CLI's release (`dist`): the GUI ships its own installers.

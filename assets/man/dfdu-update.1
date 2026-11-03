@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH dfdu-update 1  "dfdu-update " 
+.SH NAME
+dfdu\-update \- Check for a newer release of dfdu and install it over this one (checked against its published SHA\-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead
+.SH SYNOPSIS
+\fBdfdu update\fR [\fB\-\-check\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Check for a newer release of dfdu and install it over this one (checked against its published SHA\-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead
+.SH OPTIONS
+.TP
+\fB\-\-check\fR
+Only check whether a newer release is out; change nothing
+.TP
+\fB\-\-force\fR
+Install the latest release even when this build is as new (to repair a copy)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

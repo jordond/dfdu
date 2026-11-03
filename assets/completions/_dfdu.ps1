@@ -58,6 +58,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
             [CompletionResult]::new('cache', 'cache', [CompletionResultType]::ParameterValue, 'List or clear the scans the browser cached, which it opens at once next time')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
+            [CompletionResult]::new('update', 'update', [CompletionResultType]::ParameterValue, 'Check for a newer release of dfdu and install it over this one (checked against its published SHA-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
             [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -248,6 +249,13 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'dfdu;update' {
+            [CompletionResult]::new('--check', '--check', [CompletionResultType]::ParameterName, 'Only check whether a newer release is out; change nothing')
+            [CompletionResult]::new('--force', '--force', [CompletionResultType]::ParameterName, 'Install the latest release even when this build is as new (to repair a copy)')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'dfdu;completions' {
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
@@ -273,6 +281,7 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             [CompletionResult]::new('recover', 'recover', [CompletionResultType]::ParameterValue, 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them')
             [CompletionResult]::new('cache', 'cache', [CompletionResultType]::ParameterValue, 'List or clear the scans the browser cached, which it opens at once next time')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Write man pages (dfdu.1 and one per command) into DIR, for packagers')
+            [CompletionResult]::new('update', 'update', [CompletionResultType]::ParameterValue, 'Check for a newer release of dfdu and install it over this one (checked against its published SHA-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script (bash, zsh, fish, elvish, powershell)')
             [CompletionResult]::new('agent', 'agent', [CompletionResultType]::ParameterValue, 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -320,6 +329,9 @@ Register-ArgumentCompleter -Native -CommandName 'dfdu' -ScriptBlock {
             break
         }
         'dfdu;help;man' {
+            break
+        }
+        'dfdu;help;update' {
             break
         }
         'dfdu;help;completions' {

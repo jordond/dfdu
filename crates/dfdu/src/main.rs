@@ -54,6 +54,7 @@ mod remote;
 mod report;
 mod scan;
 mod transfer;
+mod update;
 
 /// The exit codes, for `--help` and the man page.
 const EXIT_CODES: &str = "Exit codes:
@@ -186,6 +187,10 @@ enum Cmd {
     /// Write man pages (dfdu.1 and one per command) into DIR, for packagers.
     #[command(hide = true)]
     Man { dir: PathBuf },
+    /// Check for a newer release of dfdu and install it over this one (checked against its
+    /// published SHA-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package
+    /// manager is left to it: the command to update it is printed instead.
+    Update(update::UpdateArgs),
     /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
     Completions { shell: clap_complete::Shell },
     /// Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what
@@ -387,6 +392,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     match cli.cmd {
         Some(Cmd::Scan(args)) => scan::run(args),
         Some(Cmd::Disks) => disks::run(),
+        Some(Cmd::Update(a)) => Ok(update::run(&a)),
         Some(Cmd::Report(args)) => report::run(&args, &rules()?),
         Some(Cmd::Clean(args)) => clean::run(&args, &rules()?),
         Some(Cmd::Diff(args)) => history::diff(&args),

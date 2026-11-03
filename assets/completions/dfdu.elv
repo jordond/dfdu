@@ -55,6 +55,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
             cand cache 'List or clear the scans the browser cached, which it opens at once next time'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
+            cand update 'Check for a newer release of dfdu and install it over this one (checked against its published SHA-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
             cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
             cand help 'Print this message or the help of the given subcommand(s)'
@@ -226,6 +227,12 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'dfdu;update'= {
+            cand --check 'Only check whether a newer release is out; change nothing'
+            cand --force 'Install the latest release even when this build is as new (to repair a copy)'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'dfdu;completions'= {
             cand -h 'Print help'
             cand --help 'Print help'
@@ -249,6 +256,7 @@ set edit:completion:arg-completer[dfdu] = {|@words|
             cand recover 'List what earlier sessions left unfinished (staged items, interrupted deletes), and finish, restore or dismiss them'
             cand cache 'List or clear the scans the browser cached, which it opens at once next time'
             cand man 'Write man pages (dfdu.1 and one per command) into DIR, for packagers'
+            cand update 'Check for a newer release of dfdu and install it over this one (checked against its published SHA-256). A dfdu installed with Homebrew, Nix, Scoop, winget or a system package manager is left to it: the command to update it is printed instead'
             cand completions 'Print a shell completion script (bash, zsh, fish, elvish, powershell)'
             cand agent 'Scan for a dfdu on another host (`--remote`): reads requests on stdin and writes what it finds to stdout in dfdu''s wire format. Not for use by hand'
             cand help 'Print this message or the help of the given subcommand(s)'
@@ -282,6 +290,8 @@ set edit:completion:arg-completer[dfdu] = {|@words|
         &'dfdu;help;cache;clear'= {
         }
         &'dfdu;help;man'= {
+        }
+        &'dfdu;help;update'= {
         }
         &'dfdu;help;completions'= {
         }

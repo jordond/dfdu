@@ -15,6 +15,7 @@ dfdu clean ~/dev --yes                      # move them to the Trash
 dfdu diff ~ --since 7d                      # what grew in the last week
 dfdu export ~ --snapshot -o home.snap       # save a scan
 dfdu -f home.snap                           # browse a saved scan or an ncdu export
+dfdu update                                 # install the latest release
 ```
 
 `clean` changes nothing without `--yes`. JSON output is versioned; the schemas are in [`schema/`](https://github.com/jordond/dfdu/tree/main/schema). `dfdu --help` lists every option and exit code.
