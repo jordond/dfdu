@@ -101,6 +101,7 @@ impl<B: Backend> Browser<B> {
         state.home = setup.home;
         state.read_only = setup.read_only;
         state.outside.local = setup.local;
+        state.elevated = setup.elevated;
         let front = Front {
             state,
             view: ViewState::default(),
@@ -123,6 +124,9 @@ impl<B: Backend> Browser<B> {
         for intent in intents {
             let s = self.session.state_mut();
             s.note_input(now);
+            if !intent.keeps_armed() {
+                s.disarm();
+            }
             match intent {
                 Intent::Act(a) => self.act(a, now, ctx),
                 Intent::Select(row) => {
@@ -149,27 +153,17 @@ impl<B: Backend> Browser<B> {
                     let went = s.go_to(&child, &root).is_some();
                     self.view().follow |= went;
                 }
-                Intent::Reopen(path) => {
-                    if s.from_file {
-                        s.status = Some(goto::FROM_FILE.into());
-                    } else {
+                Intent::Reopen(path) => match s.from_file {
+                    Some(says) => s.status = Some(says.into()),
+                    None => {
                         s.status = None;
                         self.view().reopen = Some(path);
                     }
-                }
-                Intent::GoToFolder(text) => match self.session.go_to_path(&text) {
-                    Ok(gone) => {
-                        let view = self.view();
-                        view.goto = None;
-                        view.follow = true;
-                        view.reopen = gone;
-                    }
-                    Err(why) => {
-                        if let Some(g) = &mut self.view().goto {
-                            g.failed(why);
-                        }
-                    }
                 },
+                Intent::GoToFolder(text) => {
+                    let gone = self.session.go_to_path(&text);
+                    goto::gone_to(self.session.front_mut(), gone);
+                }
                 Intent::Filter(text) => self.set_filter(&text, now),
                 Intent::FilterSubmit => {
                     if filter::edit(s, TextOp::Submit) == Edited::Enter {
@@ -311,10 +305,6 @@ impl<B: Backend> Browser<B> {
             return;
         }
         let acted = self.session.act(a, now);
-        let s = self.session.state_mut();
-        if let Some(msg) = s.status.take() {
-            s.status = Some(goto::worded(msg));
-        }
         if acted.reopen.is_some() {
             self.view().reopen.clone_from(&acted.reopen);
         }
@@ -340,8 +330,8 @@ impl<B: Backend> Browser<B> {
     }
 
     /// The actions the session leaves to the window: copying the selected path, the type
-    /// picker, the help, the command palette and the go-to window. The others (columns, quitting...) are not
-    /// offered in this version.
+    /// picker, the help, the command palette and the go-to window. The others (columns,
+    /// quitting...) are not offered in this version.
     fn front_end(&mut self, a: Action, ctx: &egui::Context) {
         match a {
             Action::CopyPath => {
@@ -475,6 +465,11 @@ impl<B: Backend> Browse for Browser<B> {
         }
         if self.bridge.take() {
             self.session.note_change();
+        }
+        // A click, or a window that takes the keys, is not a second `Parent` at the scan root.
+        let Front { state: s, view } = self.session.front_mut();
+        if view.takes_keys(s) || ctx.input(|i| i.pointer.any_pressed()) {
+            s.disarm();
         }
         // The delete dialog takes the keys while it is open, and the native command pane its own.
         let s = self.session.state();

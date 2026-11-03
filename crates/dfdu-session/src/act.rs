@@ -3,7 +3,10 @@
 //! command palette, the debug panel, the list's columns, the type picker and the prompt of mark
 //! by pattern and of go to folder, moving the focus to a pane, the clipboard): [`run`] leaves
 //! those to it ([`Ran::FrontEnd`]). `Parent` at the scan root goes up past it in two presses
-//! ([`goto::up_at_root`]). In a read-only browser an action that deletes only says so.
+//! soon after each other ([`goto::up_at_root`]). In a read-only browser an action that deletes
+//! only says so.
+
+use std::time::Instant;
 
 use dfdu_engine::{Command, Mode, SizeMode};
 
@@ -37,10 +40,10 @@ impl Ran {
     }
 }
 
-/// Carries out `a` on the browser (no overlay open), as its key does.
-pub fn run(s: &mut SessionState, a: Action) -> Ran {
+/// Carries out `a` on the browser (no overlay open) at `now`, as its key does.
+pub fn run(s: &mut SessionState, a: Action, now: Instant) -> Ran {
     // Any action but a second `Parent` at the scan root disarms the first.
-    let armed = std::mem::take(&mut s.up_armed);
+    let armed = s.up_armed.take();
     if s.read_only && a.deletes() {
         s.status = Some(READ_ONLY.into());
         return Ran::nothing();
@@ -77,7 +80,7 @@ pub fn run(s: &mut SessionState, a: Action) -> Ran {
         }
         Action::Parent if tree::act::left(s) => {}
         Action::Parent if s.snap.at_root && !s.snap.root_path.is_empty() => {
-            then.reopen = goto::up_at_root(s, armed);
+            then.reopen = goto::up_at_root(s, armed, now);
         }
         Action::Parent => then.entered = s.up(),
         Action::SortSize => sort_by(s, SortKey::Size),

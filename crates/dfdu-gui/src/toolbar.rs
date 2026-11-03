@@ -657,7 +657,7 @@ fn breadcrumbs(ui: &mut Ui, s: &SessionState, colors: &Colors, out: &mut Vec<Int
         }
         if seg.above {
             let text = kit::mono(&seg.text, 13.0).color(colors.fg(Token::Border));
-            if s.from_file {
+            if s.from_file.is_some() {
                 ui.label(text);
                 continue;
             }

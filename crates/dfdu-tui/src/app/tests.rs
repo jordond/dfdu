@@ -38,6 +38,9 @@ fn the_ui_options_it_owns_are_set_by_the_constructor() {
         home: Some(PathBuf::from("home")),
         local: true,
         read_only: true,
+        from_file: true,
+        elevated: true,
+        notice: Some("the scan cache is not used".into()),
         ..crate::UiOptions::from_env()
     };
     let app = App::with_options(&ui, Instant::now());
@@ -45,4 +48,7 @@ fn the_ui_options_it_owns_are_set_by_the_constructor() {
     assert_eq!(app.background, Some((1, 2, 3)));
     assert_eq!(app.session.home, ui.home);
     assert!(app.session.outside.local && app.session.read_only);
+    assert_eq!(app.session.from_file, Some(dfdu_session::goto::FROM_FILE));
+    assert!(app.session.elevated);
+    assert_eq!(app.session.status, ui.notice);
 }

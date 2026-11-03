@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use dfdu_engine::EngineOptions;
 use dfdu_tree::HostPath;
-use dfdu_tui::{Reopen, Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
+use dfdu_tui::{Reopen, Reopened, Source, StartLocal, Theme, ThemeChoice, ThemeFile, UiSettings};
 
 use crate::launch::Local;
 use crate::transfer::read_export;
@@ -112,7 +112,8 @@ pub fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
 
 /// Opens a scan of another directory on this host as `dfdu PATH` does: the mounts and rules of
 /// the command line (`rules` loaded once, so their errors are not written over the browser),
-/// and the scan cache unless it is off.
+/// and the scan cache unless it is off. The browser holds the terminal, so what cannot be used
+/// (--mft, the cache) is said on its status line.
 fn reopen_local(
     mounts: MountArgs,
     no_cache: bool,
@@ -120,20 +121,35 @@ fn reopen_local(
 ) -> Reopen {
     let source = move |path: &HostPath| {
         let path = path.to_local();
+        let mut notes = Vec::new();
         let local = Local {
-            mft: mounts.use_mft(&path),
+            mft: mounts.mft_for(&path).unwrap_or_else(|why| {
+                notes.push(why);
+                false
+            }),
             threads: None,
             job: mounts.job(),
             rules: rules.clone(),
         };
-        let slot = (!no_cache).then(|| cache_slot(&path, &local)).flatten();
+        let slot = if no_cache {
+            None
+        } else {
+            open_slot(&path, &local).unwrap_or_else(|why| {
+                notes.push(why);
+                None
+            })
+        };
         let start: StartLocal = Box::new(move |path, opts| local.start(path, opts));
-        Ok(match slot {
+        let source = match slot {
             Some(slot) => Source::Cached { path, slot, start },
             None => Source::Local {
                 path: Some(path),
                 start,
             },
+        };
+        Ok(Reopened {
+            source,
+            notice: (!notes.is_empty()).then(|| notes.join("; ")),
         })
     };
     Reopen {
@@ -155,12 +171,16 @@ fn reopen_remote(
     let source = move |path: &HostPath| {
         let typed = PathBuf::from(dfdu_tree::name_os(path.as_bytes()).into_owned());
         let rules = rule_args.remote();
+        // The terminal is ssh's while this runs: what it writes is seen.
         match remote::engine(&host, engine.clone(), mounts.job(), &typed, rules, mode) {
-            Ok((engine, job, root)) => Ok(Source::Remote {
-                engine,
-                path: root,
-                job,
-                local: false,
+            Ok((engine, job, root)) => Ok(Reopened {
+                source: Source::Remote {
+                    engine,
+                    path: root,
+                    job,
+                    local: false,
+                },
+                notice: None,
             }),
             Err(_) => Err(std::io::Error::other(format!(
                 "cannot connect to {host} (the reason is on the terminal after dfdu quits)"
@@ -174,19 +194,24 @@ fn reopen_remote(
 }
 
 /// Where the scan of `path` with the options of `local` is cached; `None` when the cache is
-/// off ([`dfdu_store::cache::OFF_VAR`]), refused (said on standard error before the browser
+/// off ([`dfdu_store::cache::OFF_VAR`]), refused (said on standard error, before the browser
 /// takes the terminal: another user's directory, or one others can write to), or `path` is not
 /// a directory (the scan then says why).
 fn cache_slot(path: &Path, local: &Local) -> Option<dfdu_store::cache::Slot> {
-    let cache = match dfdu_store::cache::Cache::open_default()? {
-        Ok(cache) => cache,
-        Err(e) => {
-            eprintln!("dfdu: {e}; the scan cache is not used");
-            return None;
-        }
+    open_slot(path, local).unwrap_or_else(|why| {
+        eprintln!("dfdu: {why}");
+        None
+    })
+}
+
+/// [`cache_slot`] without writing anything: why the cache is refused is returned.
+fn open_slot(path: &Path, local: &Local) -> Result<Option<dfdu_store::cache::Slot>, String> {
+    let cache = match dfdu_store::cache::Cache::open_default() {
+        None => return Ok(None),
+        Some(Ok(cache)) => cache,
+        Some(Err(e)) => return Err(format!("{e}; the scan cache is not used")),
     };
-    let key = dfdu_store::cache::Key::new(path, &local.job, local.mft).ok()?;
-    Some(cache.slot(key))
+    Ok((dfdu_store::cache::Key::new(path, &local.job, local.mft).ok()).map(|key| cache.slot(key)))
 }
 
 /// The theme `--theme` names: `auto`, a built-in theme, or the theme file `NAME.toml` in
@@ -228,6 +253,28 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    /// The browser holds the terminal when it opens another scan: what cannot be used is for
+    /// its status line, not written over it.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_scan_opened_from_the_browser_says_what_it_left_out() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let mounts = MountArgs {
+            mft: true,
+            ..MountArgs::default()
+        };
+        let mut reopen = reopen_local(mounts, true, None);
+        let r = (reopen.source)(&HostPath::local(tmp.path())).expect("source");
+        assert!(!reopen.suspend);
+        let notice = r.notice.unwrap_or_default();
+        assert!(notice.contains("--mft: only on Windows"), "{notice}");
+        assert!(matches!(r.source, Source::Local { path: Some(_), .. }));
+
+        let mut reopen = reopen_local(MountArgs::default(), true, None);
+        let r = (reopen.source)(&HostPath::local(tmp.path())).expect("source");
+        assert_eq!(r.notice, None);
+    }
 
     #[test]
     fn bad_theme_file_is_reported() {

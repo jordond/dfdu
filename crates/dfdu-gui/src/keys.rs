@@ -6,7 +6,8 @@
 //!
 //! The platform's own shortcuts are read too: `Delete` moves to the Trash as `d` does, the
 //! system's copy shortcut copies the selected path, Cmd-F (Ctrl-F) opens the filter, Cmd-K
-//! (Ctrl-K) the command palette, and Cmd-L or Cmd-Shift-G (Ctrl-L, Ctrl-Shift-G) go to a folder. The keys are shown with their arrows named ([`shown`]).
+//! (Ctrl-K) the command palette, and Cmd-L or Cmd-Shift-G (Ctrl-L, Ctrl-Shift-G) go to a
+//! folder. The keys are shown with their arrows named ([`shown`]).
 //!
 //! While the map is drawn the arrows and `hjkl` move between its tiles ([`toward`]), as in the
 //! terminal.
@@ -20,9 +21,10 @@ use crate::browser::Intent;
 /// The actions the window offers: moving, opening, sorting, what the list shows, rescans, the
 /// filters, marks, the details, the error list, the selected path, deleting with its undo, and
 /// the views (`1` to `5`, `[` and `]`) with the map's depth and colours, Cleanup's levels,
-/// suggestions and native commands, the keep rule and comparison of Duplicates, the help and
-/// the command palette, and going to a folder. Quitting (the window's own), the list's columns, the debug overlay, the
-/// focus of panes, the mounts not scanned and mark by pattern are left out of this version.
+/// suggestions and native commands, the keep rule and comparison of Duplicates, the help, the
+/// command palette, and going to a folder. Quitting (the window's own), the list's columns, the
+/// debug overlay, the focus of panes, the mounts not scanned and mark by pattern are left out
+/// of this version.
 pub const OFFERED: &[Action] = &[
     Action::Up,
     Action::Down,

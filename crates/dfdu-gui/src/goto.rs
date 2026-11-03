@@ -7,13 +7,13 @@
 //! keyboard. `Esc` closes it. How paths resolve is in `dfdu_session::goto`.
 
 use dfdu_session::SessionState;
-use dfdu_session::goto::{self as session, Completion};
+use dfdu_session::goto::{self as session, Completion, Gone};
 use dfdu_session::palette::Token;
 use dfdu_tree::Host;
 use egui::text::{CCursor, CCursorRange};
 use egui::{Align2, Color32, EventFilter, Frame, Id, Key, Margin, Modal, Modifiers, vec2};
 
-use crate::browser::{Intent, ViewState};
+use crate::browser::{Front, Intent, ViewState};
 use crate::kit;
 use crate::theme::Colors;
 use crate::theme::style::SPACE_1;
@@ -25,8 +25,9 @@ const WIDTH: f32 = 560.0;
 /// Directory names listed at most after a `Tab` that found several.
 const SHOWN: usize = 8;
 
-/// What the window says of a scan read from a file, in the place of the terminal's notice
-/// ([`session::FROM_FILE`]).
+/// What the window says of a scan read from a file when something outside it is asked for
+/// ([`SessionState::from_file`]): a scan read from a file is left from the start screen, not
+/// by running dfdu again.
 pub const FROM_FILE: &str = "this scan was read from a file: open a folder from the start screen";
 
 /// The open window.
@@ -73,9 +74,37 @@ impl GoTo {
 
     /// Takes in what `Enter` found wrong with the path; the field keeps the keyboard.
     pub fn failed(&mut self, why: String) {
-        self.error = Some(worded(why));
+        self.error = Some(why);
         self.candidates.clear();
         self.focus = true;
+    }
+}
+
+/// Takes in where `Enter` went ([`dfdu_session::Session::go_to_path`]). The window closes on a
+/// folder of the scan, which the list scrolls to; on a path outside it, which the window
+/// scans; and on a path inside it where the tree has no folder, which the status line
+/// explains. What is wrong with the path keeps it open.
+pub fn gone_to(front: &mut Front, gone: Result<Gone, String>) {
+    let view = &mut front.view;
+    match gone {
+        Ok(Gone::Within(_)) => {
+            view.goto = None;
+            view.follow = true;
+        }
+        Ok(Gone::Outside(path)) => {
+            view.goto = None;
+            view.reopen = Some(path);
+        }
+        Ok(Gone::Stayed(why)) => {
+            view.goto = None;
+            // The window does not scan the mounts the scan left out.
+            front.state.status = Some(why.text(false));
+        }
+        Err(why) => {
+            if let Some(g) = &mut view.goto {
+                g.failed(why);
+            }
+        }
     }
 }
 
@@ -86,16 +115,6 @@ pub fn with_name(text: &str, name: &str, host: Host) -> String {
         .rposition(|b| host.is_sep(b))
         .map_or(0, |i| i + 1);
     format!("{}{name}{}", &text[..cut], char::from(host.sep()))
-}
-
-/// A message of the session as the window says it: a scan read from a file is left from the
-/// start screen, not by running dfdu again.
-pub fn worded(msg: String) -> String {
-    if msg == session::FROM_FILE {
-        FROM_FILE.to_owned()
-    } else {
-        msg
-    }
 }
 
 /// Draws the window while it is open: the path field, then what is wrong with it, the names a
@@ -198,6 +217,9 @@ fn cursor_to_end(ctx: &egui::Context, id: Id, text: &str) {
 
 #[cfg(test)]
 mod tests {
+    use dfdu_session::goto::Kept;
+    use dfdu_tree::HostPath;
+
     use super::*;
 
     #[test]
@@ -232,11 +254,53 @@ mod tests {
         assert!(g.error.is_some());
     }
 
+    /// A browser with the window open on `text`.
+    fn front(text: &str) -> Front {
+        let mut f = Front {
+            state: SessionState::new(std::time::Instant::now()),
+            view: ViewState::default(),
+        };
+        f.view.goto = Some(GoTo {
+            text: text.into(),
+            ..GoTo::default()
+        });
+        f
+    }
+
+    #[test]
+    fn where_enter_went_closes_the_window_or_says_why_in_it() {
+        let mut f = front("/r/lib");
+        gone_to(&mut f, Ok(Gone::Within(None)));
+        assert!(f.view.goto.is_none() && f.view.follow && f.view.reopen.is_none());
+
+        let mut f = front("/elsewhere");
+        let away = HostPath::from("/elsewhere");
+        gone_to(&mut f, Ok(Gone::Outside(away.clone())));
+        assert!(f.view.goto.is_none());
+        assert_eq!(f.view.reopen, Some(away));
+
+        let mut f = front("/r/disk");
+        let kept = Kept::NotEntered(HostPath::from("/r/disk"));
+        gone_to(&mut f, Ok(Gone::Stayed(kept.clone())));
+        assert!(f.view.goto.is_none() && !f.view.follow);
+        assert_eq!(f.state.status, Some(kept.text(false)), "no m in the window");
+
+        let mut f = front("/x");
+        gone_to(&mut f, Err("no such folder: /x".into()));
+        let g = f.view.goto.as_ref().expect("still open");
+        assert_eq!(g.error.as_deref(), Some("no such folder: /x"));
+        assert!(g.focus);
+    }
+
     #[test]
     fn a_scan_read_from_a_file_points_to_the_start_screen() {
-        let mut g = GoTo::default();
-        g.failed(session::FROM_FILE.to_owned());
+        let mut f = front("/elsewhere");
+        f.state.from_file = Some(FROM_FILE);
+        f.state.snap.root_path = HostPath::from("/r");
+        f.state.snap.dir_path = HostPath::from("/r");
+        let gone = session::go(&mut f.state, "/elsewhere", |_| unreachable!("outside"));
+        gone_to(&mut f, gone);
+        let g = f.view.goto.as_ref().expect("still open");
         assert_eq!(g.error.as_deref(), Some(FROM_FILE));
-        assert_eq!(worded("no such folder: /x".into()), "no such folder: /x");
     }
 }

@@ -1,7 +1,7 @@
 //! Carrying out the actions of the registry ([`run`]): the session does what they do to the
 //! browser ([`dfdu_session::act::run`]); the terminal opens its overlays and panels, copies
-//! through the terminal, quits and asks the run loop for a scan outside this one, and follows what the session left with its scroll and the
-//! treemap's view state.
+//! through the terminal, quits and asks the run loop for a scan outside this one, and follows
+//! what the session left with its scroll and the treemap's view state.
 
 use dfdu_session::act::{self as session, Ran};
 
@@ -11,10 +11,12 @@ use crate::app::{App, Effect};
 use crate::features::{debug, details, selected_path, treemap};
 use crate::overlay::{goto, help, mark_pattern, palette, type_filter};
 
-/// Carries out `a` on the list (no overlay open) and returns the effects for the run loop. In a
-/// read-only browser an action that deletes only says so.
+/// Carries out `a` on the list (no overlay open), at the time of the input that asked for it,
+/// and returns the effects for the run loop. In a read-only browser an action that deletes
+/// only says so.
 pub fn run(app: &mut App, a: Action) -> Vec<Effect> {
-    let mut then = match session::run(&mut app.session, a) {
+    let now = app.session.sort_schedule.last_input();
+    let mut then = match session::run(&mut app.session, a, now) {
         Ran::Done(then) => then,
         Ran::FrontEnd => return front_end(app, a),
     };

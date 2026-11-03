@@ -10,7 +10,8 @@
 //! is in `state`, the text input, the mouse and fuzzy matching in `input`, and what is read from
 //! outside the UI (the engine model, the scan history and cache, the mounts outside the scan) in
 //! `model`; only the duplicates comparison and the disk picker read files and disks themselves.
-//! Each of these lists its modules.
+//! Each of these lists its modules. A scan of another path, asked for from the browser, is
+//! opened in `reopen`.
 //!
 //! Redraws: at once on input, at most 10 times a second when the engine reports changes (at
 //! once until a frame with entries has been drawn), every 100 ms while a spinner is visible, at
@@ -26,6 +27,7 @@ mod format;
 mod input;
 mod model;
 mod overlay;
+mod reopen;
 mod run_loop;
 mod setup;
 mod state;
@@ -73,7 +75,15 @@ pub struct RunOptions {
 }
 
 /// Builds the source for a scan of a path, with the options of the first scan.
-pub type SourceFor = Box<dyn FnMut(&HostPath) -> io::Result<Source>>;
+pub type SourceFor = Box<dyn FnMut(&HostPath) -> io::Result<Reopened>>;
+
+/// The source for a scan of another path ([`SourceFor`]), and what the new browser's status
+/// line says of how it is opened (an option that could not be used, the scan cache left out):
+/// the terminal belongs to the browser, so nothing is written to it.
+pub struct Reopened {
+    pub source: Source,
+    pub notice: Option<String>,
+}
 
 /// How the browser opens a scan of another path on the host it scans, with the options of the
 /// first scan.
@@ -118,6 +128,10 @@ pub struct UiOptions {
     pub read_only: bool,
     /// The scan was read from a file: nothing outside it can be opened.
     pub from_file: bool,
+    /// The scan runs as an administrator: a folder gone to is not looked up as the user.
+    pub elevated: bool,
+    /// What the status line says when the browser opens.
+    pub notice: Option<String>,
 }
 
 impl UiOptions {
@@ -139,20 +153,25 @@ impl UiOptions {
             local: false,
             read_only: false,
             from_file: false,
+            elevated: false,
+            notice: None,
         }
     }
 }
 
 /// Opens the browser on `opts.source` (or a disk chosen in the picker) and returns when the user
-/// quits. A scan of a path outside the one shown is opened with `opts.reopen`, before the one
-/// shown is shut down, so a failure leaves the user where they were with the error shown. Before the alternate screen is entered, the colour level is detected and, when the
+/// quits. Before the alternate screen is entered, the colour level is detected and, when the
 /// theme depends on it, the terminal is asked for its background colour (waiting at most
 /// `BACKGROUND_QUERY` for terminals that do not answer).
 ///
+/// A scan of a path outside the one shown is opened with `opts.reopen` before the one shown is
+/// shut down, so a failure leaves the user where they were with the error shown.
+///
 /// # Errors
 ///
-/// When the terminal cannot be set up or drawn to, the disk picker fails, a resumed scan has
-/// no root, or the engine stops with a fatal error.
+/// When the terminal cannot be set up, drawn to or taken back after a new connection asked
+/// for a password, the disk picker fails, a resumed scan has no root, or the engine stops with
+/// a fatal error.
 pub fn run(opts: RunOptions) -> io::Result<()> {
     let ui = opts.ui;
     let colors = setup::resolve_theme(
@@ -183,7 +202,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         },
         source => source,
     };
-    let ui_opts = |setup: Setup, from_file: bool| UiOptions {
+    let ui_opts = |setup: Setup, from_file: bool, notice: Option<String>| UiOptions {
         theme: theme.clone(),
         color_level: colors.level,
         background: colors.background,
@@ -196,26 +215,30 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
         local: setup.local,
         read_only: setup.read_only,
         from_file,
+        elevated: setup.elevated,
+        notice,
     };
     let reader = Reader::spawn()?;
     let (engine_opts, history, mut reopen) = (opts.engine, opts.history, opts.reopen);
-    let mut opened = startup::open(source, &engine_opts, history)?;
+    let mut opened = (startup::open(source, &engine_opts, history)?, None);
     loop {
         let mut open = |terminal: &mut ratatui::DefaultTerminal, path: &HostPath| {
-            let reopen = reopen.as_mut().ok_or_else(|| NO_REOPEN.to_owned())?;
-            open_other(
-                terminal,
-                &reader,
-                mouse,
-                reopen,
-                path,
-                &engine_opts,
-                history,
-            )
+            let Some(reopen) = reopen.as_mut() else {
+                return Ok(Err(NO_REOPEN.to_owned()));
+            };
+            let mut hand = reopen::Hand::new(terminal, &reader, mouse);
+            let build = || {
+                let r = (reopen.source)(path)?;
+                Ok((startup::open(r.source, &engine_opts, history)?, r.notice))
+            };
+            reopen::open_other(&mut hand, reopen.suspend, path, build, |(o, _)| {
+                reopen::shut_down(o);
+            })
         };
-        let next = match opened {
+        let (next, notice) = opened;
+        let next = match next {
             Opened::Native(s) => {
-                let ui = ui_opts(s.setup, false);
+                let ui = ui_opts(s.setup, false, notice);
                 browse(
                     &mut terminal,
                     &reader,
@@ -226,7 +249,7 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
                 )
             }
             Opened::Imported(s) => {
-                let ui = ui_opts(s.setup, true);
+                let ui = ui_opts(s.setup, true, notice);
                 browse(
                     &mut terminal,
                     &reader,
@@ -238,7 +261,11 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
             }
         }?;
         match next {
-            Some(next) => opened = next,
+            Some(next) => {
+                // What was typed while the new scan opened was meant for the old browser.
+                reader.drain();
+                opened = next;
+            }
             None => return Ok(()),
         }
     }
@@ -246,34 +273,6 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
 
 /// What the browser says when it has no way to open another scan.
 const NO_REOPEN: &str = "another folder cannot be scanned from here: quit and run dfdu with it";
-
-/// Opens a scan of `path` with `reopen` and the options of the first scan (`engine`,
-/// `history`). When `reopen` talks to the user, the terminal is given back while it runs, the
-/// input thread paused so no key is taken from it.
-fn open_other(
-    terminal: &mut ratatui::DefaultTerminal,
-    reader: &Reader,
-    mouse: bool,
-    reopen: &mut Reopen,
-    path: &HostPath,
-    engine: &EngineOptions,
-    history: bool,
-) -> Result<Opened, String> {
-    let mut open = || (reopen.source)(path).and_then(|s| startup::open(s, engine, history));
-    let opened = if reopen.suspend {
-        let paused = reader.pause();
-        setup::restore_terminal(mouse);
-        eprintln!("dfdu: scanning {path}…");
-        let opened = open();
-        let back = setup::resume_terminal(terminal, mouse);
-        drop(paused);
-        back.map_err(|e| format!("cannot take the terminal back: {e}"))?;
-        opened
-    } else {
-        open()
-    };
-    opened.map_err(|e| format!("cannot scan {path}: {e}"))
-}
 
 /// Restores the terminal on a panic of the UI thread. `ratatui::try_init` installed a hook that
 /// restores it on any panic; panic hooks also run for panics that are caught, and worker and
@@ -296,15 +295,16 @@ fn restore_on_panic(mouse: bool) {
 }
 
 /// Runs the loop on `engine` until the user quits or `open` opened a scan outside this one,
-/// then stops the engine. When the user quits, the terminal is restored first (`restore`).
-fn browse<B: dfdu_scan::Backend>(
+/// then stops the engine. When the user quits or the loop fails, the terminal is restored first
+/// (`restore`).
+fn browse<B: dfdu_scan::Backend, N>(
     terminal: &mut ratatui::DefaultTerminal,
     reader: &Reader,
     restore: &mut Option<setup::Restore>,
     engine: Engine<B>,
     ui: UiOptions,
-    open: &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> Result<Opened, String>,
-) -> io::Result<Option<Opened>> {
+    open: &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> io::Result<Result<N, String>>,
+) -> io::Result<Option<N>> {
     let debug_stats = ui.debug;
     let result = run_loop::event_loop_opening(terminal, &engine, reader.events(), ui, open);
     if matches!(result, Ok(Some(_))) {

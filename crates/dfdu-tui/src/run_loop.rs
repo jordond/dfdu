@@ -18,6 +18,7 @@ use ratatui::crossterm::event::Event;
 use crate::app::{App, Effect};
 use crate::features::{debug, selected_path};
 use crate::input::mouse;
+use crate::overlay::goto;
 use crate::state::motion;
 use crate::{UiOptions, view};
 
@@ -78,19 +79,20 @@ where
     T: ratatui::backend::Backend<Error = io::Error>,
     B: dfdu_scan::Backend,
 {
-    let opened = event_loop_opening(terminal, engine, &input, ui, |_, path| Ok(path.clone()))?;
+    let opened = event_loop_opening(terminal, engine, &input, ui, |_, path| Ok(Ok(path.clone())))?;
     Ok(opened.map_or(Exit::Quit, Exit::Reopen))
 }
 
 /// [`event_loop_with`], opening the scan of a path outside this one with `open` while this one
-/// still runs: what it opened is returned, or what went wrong is shown on the status line and
-/// the loop goes on.
+/// still runs: what it opened is returned, or what went wrong with the scan is shown on the
+/// status line and the loop goes on. An error of `open`'s own (the terminal could not be taken
+/// back) ends the loop with it.
 pub(crate) fn event_loop_opening<T, B, N>(
     terminal: &mut Terminal<T>,
     engine: &Engine<B>,
     input: &Receiver<Event>,
     ui: UiOptions,
-    mut open: impl FnMut(&mut Terminal<T>, &HostPath) -> Result<N, String>,
+    mut open: impl FnMut(&mut Terminal<T>, &HostPath) -> io::Result<Result<N, String>>,
 ) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
@@ -118,7 +120,7 @@ fn run<T, B, N>(
     session: &mut Session<'_, B, App>,
     input: &Receiver<Event>,
     mouse_on: bool,
-    open: &mut impl FnMut(&mut Terminal<T>, &HostPath) -> Result<N, String>,
+    open: &mut impl FnMut(&mut Terminal<T>, &HostPath) -> io::Result<Result<N, String>>,
 ) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
@@ -145,7 +147,7 @@ where
             return Ok(None);
         }
         if let Some(path) = session.front_mut().reopen.take() {
-            match open(terminal, &path) {
+            match open(terminal, &path)? {
                 Ok(opened) => return Ok(Some(opened)),
                 Err(e) => {
                     session.front_mut().session.status = Some(e);
@@ -166,6 +168,11 @@ where
                     assert!(!inject_panic, "injected UI panic");
                     let fx = session.front_mut().key(k, Instant::now());
                     handle_effects(session, fx);
+                    if let Some(text) = goto::submitted(session.front_mut()) {
+                        let gone = session.go_to_path(&text);
+                        let fx = goto::gone_to(session.front_mut(), gone);
+                        handle_effects(session, fx);
+                    }
                     input_dirty = true;
                 }
                 Ok(Event::Mouse(m)) if mouse_on => {

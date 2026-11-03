@@ -2,7 +2,9 @@
 //! directory shown. `Tab` completes its last component from the directories on this machine
 //! (a scan of another host shows none); `Enter` opens it, in the scan when it is inside it and
 //! as a new scan otherwise; what is wrong with the path is shown below it and keeps the prompt
-//! open. How paths resolve is in `dfdu_session::goto`.
+//! open. A path inside the scan where the tree has no folder closes the prompt and says so on
+//! the status line. The run loop goes to the path submitted with the session's tree
+//! ([`submitted`], [`gone_to`]). How paths resolve is in `dfdu_session::goto`.
 
 use dfdu_session::goto::{self as session, Gone};
 use ratatui::Frame;
@@ -27,6 +29,8 @@ pub struct Prompt {
     candidates: Vec<String>,
     /// What is wrong with the path the last `Enter` tried, or that `Tab` found nothing.
     error: Option<String>,
+    /// `Enter` was pressed: the run loop goes to the path ([`submitted`]).
+    submitted: bool,
 }
 
 /// Opens the prompt with the directory shown.
@@ -62,31 +66,50 @@ pub fn key(app: &mut App, k: KeyEvent) -> Vec<Effect> {
             p.candidates.clear();
             p.error = None;
         }
-        Edit::Submit => {
-            let text = p.input.text().to_owned();
-            match session::go(&mut app.session, &text) {
-                Ok(Gone::Within(moved)) => {
-                    app.overlay = Overlay::None;
-                    let then = dfdu_session::view::Then {
-                        entered: moved,
-                        ..Default::default()
-                    };
-                    return views::carry(app, then);
-                }
-                Ok(Gone::Outside(path)) => {
-                    app.overlay = Overlay::None;
-                    app.reopen = Some(path);
-                }
-                Err(e) => {
-                    if let Overlay::GoTo(p) = &mut app.overlay {
-                        p.error = Some(e);
-                        p.candidates.clear();
-                    }
-                }
-            }
-        }
+        Edit::Submit => p.submitted = true,
         Edit::Cancel => app.overlay = Overlay::None,
         Edit::Moved | Edit::Ignored => {}
+    }
+    Vec::new()
+}
+
+/// The path `Enter` submitted, once, for the run loop to go to
+/// ([`dfdu_session::Session::go_to_path`]).
+pub fn submitted(app: &mut App) -> Option<String> {
+    let Overlay::GoTo(p) = &mut app.overlay else {
+        return None;
+    };
+    std::mem::take(&mut p.submitted).then(|| p.input.text().to_owned())
+}
+
+/// Takes in where the path submitted went. The prompt closes on a folder of the scan, which
+/// the list opens; on a path outside it, which the run loop scans; and on a path inside it
+/// where the tree has no folder, which the status line explains. What is wrong with the path
+/// keeps it open.
+pub fn gone_to(app: &mut App, gone: Result<Gone, String>) -> Vec<Effect> {
+    match gone {
+        Ok(Gone::Within(moved)) => {
+            app.overlay = Overlay::None;
+            let then = dfdu_session::view::Then {
+                entered: moved,
+                ..Default::default()
+            };
+            return views::carry(app, then);
+        }
+        Ok(Gone::Outside(path)) => {
+            app.overlay = Overlay::None;
+            app.reopen = Some(path);
+        }
+        Ok(Gone::Stayed(why)) => {
+            app.overlay = Overlay::None;
+            app.session.status = Some(why.text(true));
+        }
+        Err(e) => {
+            if let Overlay::GoTo(p) = &mut app.overlay {
+                p.error = Some(e);
+                p.candidates.clear();
+            }
+        }
     }
     Vec::new()
 }

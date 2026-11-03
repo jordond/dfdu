@@ -268,7 +268,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         let s = self.front.state_mut();
         s.note_input(now);
         s.status = None;
-        match act::run(s, a) {
+        match act::run(s, a, now) {
             Ran::Done(then) => self.follow(then),
             Ran::FrontEnd => Acted {
                 front_end: true,
@@ -277,19 +277,17 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         }
     }
 
-    /// Goes to the folder `input` names ([`goto::go`]): opens it when it is in the scan and
-    /// returns `None`, or returns the path for the front end to open a new scan of.
+    /// Goes to the folder `input` names ([`goto::go`]), looking a path inside the scan up in
+    /// the engine's tree: opens it when it is a folder there, stays when it is not, or returns
+    /// a path outside the scan for the front end to open a new scan of.
     ///
     /// # Errors
     ///
     /// What is wrong with the path, to show where it was typed.
-    pub fn go_to_path(&mut self, input: &str) -> Result<Option<HostPath>, String> {
+    pub fn go_to_path(&mut self, input: &str) -> Result<Gone, String> {
+        let engine = self.engine.get();
         let s = self.front.state_mut();
-        s.status = None;
-        match goto::go(s, input)? {
-            Gone::Within(_) => Ok(None),
-            Gone::Outside(p) => Ok(Some(p)),
-        }
+        goto::go(s, input, |p| engine.read(|m| goto::reach(&m.tree, p)))
     }
 
     /// Follows what an action or an intent of a view left: shows a path in Files and carries

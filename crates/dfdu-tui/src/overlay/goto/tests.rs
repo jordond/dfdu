@@ -1,7 +1,8 @@
 use std::time::Instant;
 
+use dfdu_session::goto::{Kept, Reach};
 use dfdu_tree::HostPath;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 use super::*;
 use crate::model::snapshot::{EntryData, test_entry};
@@ -33,6 +34,21 @@ fn go_to(app: &mut App, path: &str, t0: Instant) {
     typed(app, path, t0);
 }
 
+/// `Enter`, and the run loop going to the path submitted with a tree that has every path
+/// inside the scan as a folder.
+fn enter(app: &mut App, t0: Instant) {
+    enter_with(app, t0, |p| Reach::Dir(p.clone()));
+}
+
+/// `Enter`, and the run loop going to the path submitted with `reach` for the tree.
+fn enter_with(app: &mut App, t0: Instant, reach: impl FnOnce(&HostPath) -> Reach) {
+    app.key(press(KeyCode::Enter), t0);
+    if let Some(text) = submitted(app) {
+        let gone = session::go(&mut app.session, &text, reach);
+        gone_to(app, gone);
+    }
+}
+
 #[test]
 fn ctrl_g_opens_the_prompt_with_the_directory_shown() {
     let (mut app, t0) = app();
@@ -53,7 +69,7 @@ fn ctrl_g_opens_the_prompt_with_the_directory_shown() {
 fn enter_opens_a_folder_of_the_scan_in_place() {
     let (mut app, t0) = app();
     go_to(&mut app, "lib", t0);
-    app.key(press(KeyCode::Enter), t0);
+    enter(&mut app, t0);
     assert!(matches!(app.overlay, Overlay::None));
     assert_eq!(app.session.target.path, HostPath::from("/r/lib"));
     assert_eq!(app.reopen, None);
@@ -63,7 +79,7 @@ fn enter_opens_a_folder_of_the_scan_in_place() {
 fn enter_on_a_folder_outside_the_scan_asks_for_a_new_scan() {
     let (mut app, t0) = app();
     go_to(&mut app, "../mnt/disk1", t0);
-    app.key(press(KeyCode::Enter), t0);
+    enter(&mut app, t0);
     assert!(matches!(app.overlay, Overlay::None));
     assert_eq!(app.reopen, Some(HostPath::from("/mnt/disk1")));
 }
@@ -71,9 +87,9 @@ fn enter_on_a_folder_outside_the_scan_asks_for_a_new_scan() {
 #[test]
 fn what_is_wrong_with_the_path_keeps_the_prompt_open() {
     let (mut app, t0) = app();
-    app.session.from_file = true;
+    app.session.from_file = Some(session::FROM_FILE);
     go_to(&mut app, "/elsewhere", t0);
-    app.key(press(KeyCode::Enter), t0);
+    enter(&mut app, t0);
     let Overlay::GoTo(p) = &app.overlay else {
         panic!("the prompt closed");
     };
@@ -134,4 +150,53 @@ fn parent_twice_at_the_root_asks_for_a_scan_of_the_parent() {
     assert!(status.contains("press ← again to scan /"), "{status}");
     app.key(press(KeyCode::Backspace), t0);
     assert_eq!(app.reopen, Some(HostPath::from("/")));
+}
+
+#[test]
+fn parent_at_the_root_is_disarmed_by_an_overlay_key_or_a_click() {
+    let (mut prompted, t0) = app();
+    prompted.key(press(KeyCode::Left), t0);
+    prompted.key(ctrl('g'), t0);
+    prompted.key(press(KeyCode::Esc), t0);
+    prompted.key(press(KeyCode::Left), t0);
+    assert_eq!(prompted.reopen, None, "the prompt took a key in between");
+
+    let (mut scrolled, t0) = app();
+    scrolled.key(press(KeyCode::Left), t0);
+    let wheel = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 1,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    };
+    let _ = crate::input::mouse::event(&mut scrolled, wheel, t0);
+    scrolled.key(press(KeyCode::Left), t0);
+    assert_eq!(scrolled.reopen, None, "the wheel moved the list in between");
+
+    let (mut late, t0) = app();
+    late.key(press(KeyCode::Left), t0);
+    late.key(press(KeyCode::Left), t0 + session::ARMED_FOR * 2);
+    assert_eq!(late.reopen, None, "too late");
+}
+
+#[test]
+fn a_folder_the_tree_does_not_have_keeps_the_place_and_says_why() {
+    let (mut app, t0) = app();
+    let before = app.session.target.path.clone();
+    go_to(&mut app, "lib/disk", t0);
+    let kept = Kept::NotEntered(HostPath::from("/r/lib"));
+    enter_with(&mut app, t0, |_| Reach::Kept(kept.clone()));
+    assert!(matches!(app.overlay, Overlay::None));
+    assert_eq!(app.session.target.path, before);
+    assert_eq!(app.session.status, Some(kept.text(true)));
+    assert_eq!(app.reopen, None);
+}
+
+#[test]
+fn a_folder_gone_to_clears_the_status_line() {
+    let (mut app, t0) = app();
+    app.session.status = Some("left from before".into());
+    go_to(&mut app, "lib", t0);
+    enter(&mut app, t0);
+    assert_eq!(app.session.status, None);
 }

@@ -91,7 +91,7 @@ fn a_read_only_browser_only_says_it_deletes_nothing() {
         Action::MarkPattern,
     ] {
         s.status = None;
-        assert!(effects(run(&mut s, a)).is_empty(), "{a:?}");
+        assert!(effects(run(&mut s, a, Instant::now())).is_empty(), "{a:?}");
         assert_eq!(s.status.as_deref(), Some(READ_ONLY));
         assert!(s.confirm.is_none());
     }
@@ -100,7 +100,7 @@ fn a_read_only_browser_only_says_it_deletes_nothing() {
 #[test]
 fn undo_puts_back_the_last_plan_once() {
     let mut s = lib_and_file();
-    assert!(effects(run(&mut s, Action::Undo)).is_empty());
+    assert!(effects(run(&mut s, Action::Undo, Instant::now())).is_empty());
     assert_eq!(s.status.as_deref(), Some("nothing to undo"));
     s.snap.undo = Some(UndoInfo {
         plan: 7,
@@ -108,23 +108,23 @@ fn undo_puts_back_the_last_plan_once() {
         items: 2,
         bytes: 1 << 20,
     });
-    let fx = effects(run(&mut s, Action::Undo));
+    let fx = effects(run(&mut s, Action::Undo, Instant::now()));
     assert!(matches!(fx[..], [Effect::Send(Command::Undo { plan: 7 })]));
     assert_eq!(s.status.as_deref(), Some("putting back 2 items (1.0 MiB)…"));
     // While it runs, not again.
     s.snap.undoing = true;
-    assert!(effects(run(&mut s, Action::Undo)).is_empty());
+    assert!(effects(run(&mut s, Action::Undo, Instant::now())).is_empty());
 }
 
 #[test]
 fn rescan_takes_the_selected_directory_or_the_one_shown() {
     let mut s = lib_and_file();
     let lib = s.snap.entries[0].node;
-    let fx = effects(run(&mut s, Action::Rescan));
+    let fx = effects(run(&mut s, Action::Rescan, Instant::now()));
     assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == lib));
     s.move_to(1);
     let dir = s.snap.dir_node.expect("the directory shown");
-    let fx = effects(run(&mut s, Action::Rescan));
+    let fx = effects(run(&mut s, Action::Rescan, Instant::now()));
     assert!(matches!(fx[..], [Effect::Send(Command::Rescan { node })] if node == dir));
     assert_eq!(s.status.as_deref(), Some("rescan requested"));
 }
@@ -132,11 +132,17 @@ fn rescan_takes_the_selected_directory_or_the_one_shown() {
 #[test]
 fn entering_and_leaving_a_directory_is_left_for_the_scroll() {
     let mut s = lib_and_file();
-    let Ran::Done(then) = run(&mut s, Action::Enter) else {
+    let Ran::Done(then) = run(&mut s, Action::Enter, Instant::now()) else {
         panic!("the session's");
     };
     let moved = then.entered.expect("went into lib");
     assert_eq!(moved.opened, Some(s.snap.dir_path.join(b"lib")));
-    assert!(matches!(run(&mut s, Action::Quit), Ran::FrontEnd));
-    assert!(matches!(run(&mut s, Action::Help), Ran::FrontEnd));
+    assert!(matches!(
+        run(&mut s, Action::Quit, Instant::now()),
+        Ran::FrontEnd
+    ));
+    assert!(matches!(
+        run(&mut s, Action::Help, Instant::now()),
+        Ran::FrontEnd
+    ));
 }

@@ -91,11 +91,17 @@ pub struct SessionState {
     /// Nothing is deleted: the actions that delete are left out and cleanup commands run only
     /// as dry runs.
     pub read_only: bool,
-    /// The scan was read from a file: nothing outside it can be opened ([`crate::goto`]).
-    pub from_file: bool,
-    /// `Parent` was pressed at the scan root and said what a second press does: the next
-    /// action, if it is `Parent`, opens a scan of the root's parent ([`crate::goto::up_at_root`]).
-    pub up_armed: bool,
+    /// The scan was read from a file: nothing outside it can be opened ([`crate::goto`]). The
+    /// text is what the status line says when something outside it is asked for, in the front
+    /// end's words ([`crate::goto::FROM_FILE`] in a terminal).
+    pub from_file: Option<&'static str>,
+    /// The scan runs as an administrator: what this user cannot read can still be in it, so
+    /// a folder is not looked up as this user before it is opened ([`crate::goto::go`]).
+    pub elevated: bool,
+    /// When `Parent` was pressed at the scan root and said what a second press does: the next
+    /// action, if it is `Parent` within [`crate::goto::ARMED_FOR`], opens a scan of the root's
+    /// parent ([`crate::goto::up_at_root`]). Any other input clears it ([`SessionState::disarm`]).
+    pub up_armed: Option<Instant>,
     /// When the rows are sorted again.
     pub sort_schedule: SortSchedule,
     /// The Map view's depth and colouring.
@@ -149,8 +155,9 @@ impl SessionState {
             cached: None,
             outside: Outside::default(),
             read_only: false,
-            from_file: false,
-            up_armed: false,
+            from_file: None,
+            elevated: false,
+            up_armed: None,
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
             cleanup: Cleanup::default(),
@@ -196,6 +203,12 @@ impl SessionState {
     /// Records user input at `now`: automatic re-sorts wait until the user is idle.
     pub fn note_input(&mut self, now: Instant) {
         self.sort_schedule.note_input(now);
+    }
+
+    /// Input other than an action (a click, a key an overlay or the filter took): a first
+    /// `Parent` at the scan root no longer makes a second one open a scan of its parent.
+    pub fn disarm(&mut self) {
+        self.up_armed = None;
     }
 
     /// The file type filter is on: folders cannot be marked, as their sizes count only some
