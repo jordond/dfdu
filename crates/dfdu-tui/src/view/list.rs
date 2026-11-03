@@ -122,8 +122,9 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     }
 }
 
-/// The cells before the name column of `cols`.
-/// What the list says when the scan root finished empty: so, and how to get out of it.
+/// What the list says when the scan root finished empty: so, and, unless the scan was read
+/// from a file or is of the root of the filesystem, the keys that scan its parent or go to
+/// another folder.
 fn empty_root(s: &dfdu_session::SessionState) -> String {
     use dfdu_session::actions::{Action, first_key};
     if s.from_file.is_some() || s.snap.root_path.parent().is_none() {
@@ -136,6 +137,7 @@ fn empty_root(s: &dfdu_session::SessionState) -> String {
     )
 }
 
+/// The cells before the name column of `cols`.
 fn name_offset(cols: &[(Col, u16)]) -> u16 {
     let mut x = 0;
     for (gap, c, w) in gaps(cols) {
