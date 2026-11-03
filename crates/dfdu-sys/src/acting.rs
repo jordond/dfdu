@@ -7,7 +7,7 @@
 //! root; `npm` or `cargo` run as root would leave root-owned files in their home).
 //!
 //! [`adopt`] is called first thing in `main`. When the process runs as root for another user
-//! ([`detect`]: [`ACTING_UID_VAR`], else `PKEXEC_UID`, else `SUDO_UID`), it makes `HOME`,
+//! ([`detect`]: `SUDO_UID`, else `PKEXEC_UID`, else [`ACTING_UID_VAR`]), it makes `HOME`,
 //! `USER` and `LOGNAME` theirs by executing itself again with them set when they differ (Linux
 //! sudo resets `HOME` to root's; macOS keeps it, and the helper daemon has root's), so every
 //! lookup of the user's directories, here and in the `trash` crate, finds theirs without the
@@ -50,7 +50,7 @@ static CURRENT: OnceLock<User> = OnceLock::new();
 
 /// The uid of the user an agent acts for, set by the macOS helper daemon (root) when it starts
 /// the agent for a GUI: the euid of that GUI's process, as XPC reports it. Read only on macOS
-/// and only when neither `PKEXEC_UID` nor `SUDO_UID` is set: those two are set by sudo and
+/// and only when neither `SUDO_UID` nor `PKEXEC_UID` is set: those two are set by sudo and
 /// pkexec themselves, while this one would pass through from the invoking user's environment
 /// under `sudo -E` (or an `env_keep` rule) and must not let them choose whom root acts for. The
 /// daemon's environment has neither.
@@ -70,8 +70,9 @@ pub fn owner_uid() -> u32 {
     current().map_or_else(|| rustix::process::getuid().as_raw(), |u| u.uid)
 }
 
-/// The user a root process runs for: the uid in [`ACTING_UID_VAR`], else `PKEXEC_UID`, else
-/// `SUDO_UID`, when it is not root's and the password database knows it. `None` when not root.
+/// The user a root process runs for: the uid in `SUDO_UID`, else `PKEXEC_UID`, else (macOS)
+/// [`ACTING_UID_VAR`], when it is not root's and the password database knows it. `None` when
+/// not root.
 #[cfg(unix)]
 #[must_use]
 pub fn detect() -> Option<User> {
@@ -103,14 +104,17 @@ pub fn this_uid() -> u32 {
 #[cfg(target_os = "macos")]
 pub const ADMIN_GID: u32 = 80;
 
-/// The uid in `PKEXEC_UID`, else `SUDO_UID`, else (macOS, the helper's agents)
+/// The uid in `SUDO_UID`, else `PKEXEC_UID`, else (macOS, the helper's agents)
 /// [`ACTING_UID_VAR`], as `var` has them. A variable that is set decides, valid or not.
+/// `SUDO_UID` comes first because sudo sets it and does not clear `PKEXEC_UID`, which under
+/// `sudo -E` (or an `env_keep` rule) the invoking user could set to anyone; pkexec clears the
+/// environment, so `PKEXEC_UID` is only trusted when sudo did not start the process.
 #[cfg(unix)]
 fn acting_uid(var: impl Fn(&str) -> Option<String>) -> Option<u32> {
     let names: &[&str] = if cfg!(target_os = "macos") {
-        &["PKEXEC_UID", "SUDO_UID", ACTING_UID_VAR]
+        &["SUDO_UID", "PKEXEC_UID", ACTING_UID_VAR]
     } else {
-        &["PKEXEC_UID", "SUDO_UID"]
+        &["SUDO_UID", "PKEXEC_UID"]
     };
     let value = names.iter().find_map(|v| var(v))?;
     value.trim().parse::<u32>().ok()
@@ -446,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn sudo_and_pkexec_decide_before_the_helpers_variable() {
+    fn sudo_then_pkexec_decide_before_the_helpers_variable() {
         let env = |vars: &'static [(&'static str, &'static str)]| {
             move |k: &str| vars.iter().find(|v| v.0 == k).map(|v| v.1.to_owned())
         };
@@ -455,8 +459,13 @@ mod tests {
             acting_uid(env(&[("SUDO_UID", "502"), (ACTING_UID_VAR, "501")])),
             Some(502)
         );
+        // A `PKEXEC_UID` passed through `sudo -E` does not override sudo's own.
         assert_eq!(
             acting_uid(env(&[("SUDO_UID", "502"), ("PKEXEC_UID", "503")])),
+            Some(502)
+        );
+        assert_eq!(
+            acting_uid(env(&[("PKEXEC_UID", "503"), (ACTING_UID_VAR, "501")])),
             Some(503)
         );
         // A set variable that is not a uid acts for no one rather than falling through.
