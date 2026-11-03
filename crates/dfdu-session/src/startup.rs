@@ -205,13 +205,22 @@ pub fn open_reusing(
             let sent = scanned
                 .filter(|_| !slot.cached(dfdu_store::cache::now()))
                 .map(|s| {
-                    // Taken before the scan, as the cache's own scan takes it.
-                    let journal = dfdu_engine::journal_position(&root);
-                    let full_scan = s.full_scan;
-                    let kept = engine.scan_above(&path.as_path().into(), Some(s), job.clone());
-                    Sent {
-                        journal,
-                        full_scan: kept.then_some(full_scan),
+                    // Taken before the scan, as the cache's own scan takes it. What it keeps
+                    // was read earlier: the journal is asked from before that next time.
+                    let now = dfdu_engine::journal_position(&root);
+                    let (full_scan, before, kept_ms) = (s.full_scan, s.journal, s.scan_ms);
+                    if engine.scan_above(&path.as_path().into(), Some(s), job.clone()) {
+                        Sent {
+                            journal: before,
+                            full_scan: Some(full_scan),
+                            kept_ms,
+                        }
+                    } else {
+                        Sent {
+                            journal: now,
+                            full_scan: None,
+                            kept_ms: 0,
+                        }
                     }
                 });
             let cache = CacheLink {

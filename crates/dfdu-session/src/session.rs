@@ -182,12 +182,15 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
 
     /// What this scan read below its root, for a scan of `above`, a folder above it, to keep
     /// ([`crate::startup::open_reusing`]); `None` when it cannot ([`Engine::scanned`]). Copies
-    /// the tree under the read lock.
+    /// the tree under the read lock. It carries where the change journal stood before this
+    /// scan read the tree and how long that took, when its cache link knows.
     pub fn scanned(&self, above: &HostPath) -> Option<dfdu_engine::Scanned> {
         let mut s = self.engine.get().scanned(above)?;
         if let Some(t) = self.cacher.full_scan() {
             s.read_in_full_at(t);
         }
+        s.journal = self.cacher.journal();
+        s.scan_ms = self.cacher.took_ms();
         Some(s)
     }
 

@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use dfdu_scan::journal::JournalPosition;
 use dfdu_tree::{DirState, HostPath, Ix, Kind, Meta, NodeFlags, Tree};
 
 use crate::applier::Model;
@@ -29,6 +30,13 @@ pub struct Scanned {
     /// Seconds since the Unix epoch when what it holds was last read in full: `since`, or
     /// earlier when the scan kept a cached scan's directories.
     pub full_scan: u64,
+    /// Where the change journal stood before the scan read any of it, when its caller took
+    /// the position (the session's cache link); `None` otherwise. A scan that keeps the copy
+    /// is saved with it, so that what changed since the copy was read is asked about again.
+    pub journal: Option<JournalPosition>,
+    /// How long the scan that read it took, in milliseconds, when its caller knows; 0
+    /// otherwise.
+    pub scan_ms: u64,
 }
 
 impl Scanned {
@@ -89,6 +97,8 @@ pub fn scanned(m: &Model, above: &HostPath, since: u64) -> Option<Scanned> {
         tree: loaded_copy(&m.tree, root),
         since,
         full_scan: since,
+        journal: None,
+        scan_ms: 0,
     })
 }
 
