@@ -15,8 +15,7 @@ use crate::journal::Journal;
 use crate::recover;
 use crate::stage::Stager;
 use crate::{
-    DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal,
-    rename_noreplace, verify,
+    DeleteResult, DeleterMsg, DeleterReq, Identity, Mode, Plan, PlanItem, Refusal, verify,
 };
 
 pub struct DeleterHandle {
@@ -421,7 +420,7 @@ fn run_item(
         &item.path.to_local(),
         &item.identity,
         plan.mode,
-        stage.as_deref(),
+        stage.as_deref().map(|to| (&*stager, to)),
     );
     record(journal, &result);
     (result, stage)
@@ -435,16 +434,22 @@ fn journal_note(j: &Journal, e: &std::io::Error) -> String {
     )
 }
 
-/// Trashes `path`, stages it (renames it to `stage`) or deletes it, per `mode`, once the item
-/// was verified. A permanent delete checks again, on the item as opened, that it is still `id`.
-fn remove_path(path: &Path, id: &Identity, mode: Mode, stage: Option<&Path>) -> DeleteResult {
+/// Trashes `path`, stages it (renames it to `stage`, a target of the stager) or deletes it, per
+/// `mode`, once the item was verified. A permanent delete, and on Unix a staging move, checks
+/// again, on the item as opened, that it is still `id`.
+fn remove_path(
+    path: &Path,
+    id: &Identity,
+    mode: Mode,
+    stage: Option<(&Stager, &Path)>,
+) -> DeleteResult {
     let kind = id.kind;
     let r = match (mode, stage) {
         (Mode::Trash, _) => trash::delete(path).map_err(|e| (ErrKind::Other, e.to_string())),
         // A rename: all or nothing.
-        (Mode::Stage, Some(to)) => {
-            rename_noreplace(path, to).map_err(|e| (ErrKind::from(&e), e.to_string()))
-        }
+        (Mode::Stage, Some((stager, to))) => stager
+            .stage(path, id, to)
+            .map_err(|e| (ErrKind::from(&e), e.to_string())),
         (Mode::Stage, None) => Err((ErrKind::Other, "no staging path".into())),
         // Never crosses into another mount; destroys btrfs subvolumes where allowed.
         (Mode::Permanent, _) => crate::remove_verified(path, kind, id.dev, id.ino)

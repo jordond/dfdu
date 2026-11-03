@@ -27,6 +27,10 @@ pub fn remove_verified(path: &Path, kind: Kind, dev: u64, ino: u64) -> io::Resul
     imp::remove(path, kind, Some((dev, ino)))
 }
 
+/// The pieces of the walk that staging uses too (`crate::stage`).
+#[cfg(unix)]
+pub(crate) use imp::{dev_of, errno, open_dir};
+
 #[cfg(unix)]
 mod imp {
     use std::ffi::{OsStr, OsString};
@@ -38,11 +42,12 @@ mod imp {
     use dfdu_tree::Kind;
     use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
 
-    fn errno(e: rustix::io::Errno) -> io::Error {
+    pub(crate) fn errno(e: rustix::io::Errno) -> io::Error {
         io::Error::from_raw_os_error(e.raw_os_error())
     }
 
-    pub(super) fn open_dir(dir: impl AsFd, name: &OsStr) -> io::Result<OwnedFd> {
+    /// Opens the directory `name` in `dir`, refusing a symlink there.
+    pub(crate) fn open_dir(dir: impl AsFd, name: &OsStr) -> io::Result<OwnedFd> {
         rustix::fs::openat(
             dir,
             name,
@@ -88,12 +93,12 @@ mod imp {
     /// The device in `st`, widened as std's `MetadataExt::dev` widens it: `dev_t` is signed on
     /// macOS, and sign-extended.
     #[cfg(target_os = "macos")]
-    fn dev_of(st: &rustix::fs::Stat) -> u64 {
+    pub(crate) fn dev_of(st: &rustix::fs::Stat) -> u64 {
         i64::from(st.st_dev).cast_unsigned()
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn dev_of(st: &rustix::fs::Stat) -> u64 {
+    pub(crate) fn dev_of(st: &rustix::fs::Stat) -> u64 {
         st.st_dev
     }
 
