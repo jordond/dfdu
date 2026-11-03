@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
-use dfdu_engine::{Command, Engine, EngineOptions};
+use dfdu_engine::{Command, Engine, EngineOptions, Scanned};
 use dfdu_scan::{JobOptions, PortableBackend};
 use dfdu_tree::HostPath;
 use ratatui::backend::CrosstermBackend;
@@ -17,6 +17,19 @@ use crate::{Exit, UiOptions};
 /// Runs the loop on a finished scan of a temporary directory with `keys` and then `q`, and
 /// returns how it ended and the directory scanned.
 fn run_with(keys: &[KeyEvent]) -> (Exit, HostPath) {
+    let (opened, root) = run_opening(keys, |_, path, _| Ok(Ok(path.clone())));
+    (opened.map_or(Exit::Quit, Exit::Reopen), root)
+}
+
+/// [`run_with`], a scan outside the one shown opened with `open`: what it opened, if anything.
+fn run_opening<N>(
+    keys: &[KeyEvent],
+    open: impl FnMut(
+        &mut Terminal<CrosstermBackend<std::io::Sink>>,
+        &HostPath,
+        Option<Scanned>,
+    ) -> std::io::Result<Result<N, String>>,
+) -> (Option<N>, HostPath) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = dunce::canonicalize(tmp.path())
         .expect("canonical")
@@ -45,10 +58,16 @@ fn run_with(keys: &[KeyEvent]) -> (Exit, HostPath) {
     let backend = CrosstermBackend::new(std::io::sink());
     let mut terminal =
         Terminal::with_options(backend, TerminalOptions { viewport }).expect("terminal");
-    let exit = crate::event_loop_with(&mut terminal, &engine, input, UiOptions::from_env())
-        .expect("browse");
+    let opened = crate::run_loop::event_loop_opening(
+        &mut terminal,
+        &engine,
+        &input,
+        UiOptions::from_env(),
+        open,
+    )
+    .expect("browse");
     engine.shutdown(Duration::from_millis(200));
-    (exit, HostPath::local(&root))
+    (opened, HostPath::local(&root))
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -78,4 +97,16 @@ fn a_folder_outside_the_scan_ends_the_loop_with_it() {
     let (exit, root) = run_with(&keys);
     let parent = root.parent().expect("parent");
     assert_eq!(exit, Exit::Reopen(parent.join(b"elsewhere")));
+}
+
+/// Up past the root, the scan of the parent is opened with what this scan read.
+#[test]
+fn the_parent_is_opened_with_what_the_scan_read() {
+    let up = [key(KeyCode::Left), key(KeyCode::Left)];
+    let (opened, root) = run_opening(&up, |_, path, scanned| {
+        Ok(Ok((path.clone(), scanned.map(|s| s.root()))))
+    });
+    let (path, kept) = opened.expect("opened");
+    assert_eq!(path, root.parent().expect("parent"));
+    assert_eq!(kept, Some(root));
 }

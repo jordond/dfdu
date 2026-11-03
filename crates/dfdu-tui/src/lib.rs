@@ -222,14 +222,17 @@ pub fn run(opts: RunOptions) -> io::Result<()> {
     let (engine_opts, history, mut reopen) = (opts.engine, opts.history, opts.reopen);
     let mut opened = (startup::open(source, &engine_opts, history)?, None);
     loop {
-        let mut open = |terminal: &mut ratatui::DefaultTerminal, path: &HostPath| {
+        let mut open = |terminal: &mut ratatui::DefaultTerminal,
+                        path: &HostPath,
+                        scanned: Option<dfdu_engine::Scanned>| {
             let Some(reopen) = reopen.as_mut() else {
                 return Ok(Err(NO_REOPEN.to_owned()));
             };
             let mut hand = reopen::Hand::new(terminal, &reader, mouse);
             let build = || {
                 let r = (reopen.source)(path)?;
-                Ok((startup::open(r.source, &engine_opts, history)?, r.notice))
+                let o = startup::open_reusing(r.source, &engine_opts, history, scanned)?;
+                Ok((o, r.notice))
             };
             reopen::open_other(&mut hand, reopen.suspend, path, build, |(o, _)| {
                 reopen::shut_down(o);
@@ -303,7 +306,11 @@ fn browse<B: dfdu_scan::Backend, N>(
     restore: &mut Option<setup::Restore>,
     engine: Engine<B>,
     ui: UiOptions,
-    open: &mut impl FnMut(&mut ratatui::DefaultTerminal, &HostPath) -> io::Result<Result<N, String>>,
+    open: &mut impl FnMut(
+        &mut ratatui::DefaultTerminal,
+        &HostPath,
+        Option<dfdu_engine::Scanned>,
+    ) -> io::Result<Result<N, String>>,
 ) -> io::Result<Option<N>> {
     let debug_stats = ui.debug;
     let result = run_loop::event_loop_opening(terminal, &engine, reader.events(), ui, open);
