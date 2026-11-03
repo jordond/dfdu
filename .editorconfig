@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json,jsonc,toml,js,mjs,ts,astro,css,html,nix}]
+indent_size = 2
+
+[*.sh]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+
+# Generated or compared byte for byte.
+[{assets/man/**,assets/completions/**,**/snapshots/*.snap,Cargo.lock,website/bun.lock}]
+trim_trailing_whitespace = unset
+insert_final_newline = unset
+indent_size = unset
