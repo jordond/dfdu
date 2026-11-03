@@ -180,6 +180,25 @@ fn parent_at_the_root_is_disarmed_by_an_overlay_key_or_a_click() {
 }
 
 #[test]
+fn the_notice_of_a_first_parent_goes_with_a_key_a_pane_takes_unless_replaced() {
+    // The marks pane takes `↓` but leaves `←` to the list.
+    let (mut taken, t0) = app();
+    taken.session.marks_pane.open = true;
+    taken.key(press(KeyCode::Left), t0);
+    assert!(taken.session.up_armed.is_some() && taken.session.status.is_some());
+    taken.key(press(KeyCode::Down), t0);
+    assert_eq!(taken.session.up_armed, None);
+    assert_eq!(taken.session.status, None);
+
+    let (mut replaced, t0) = app();
+    replaced.session.marks_pane.open = true;
+    replaced.key(press(KeyCode::Left), t0);
+    replaced.session.status = Some("copied".into());
+    replaced.key(press(KeyCode::Down), t0);
+    assert_eq!(replaced.session.status.as_deref(), Some("copied"));
+}
+
+#[test]
 fn a_folder_the_tree_does_not_have_keeps_the_place_and_says_why() {
     let (mut app, t0) = app();
     let before = app.session.target.path.clone();

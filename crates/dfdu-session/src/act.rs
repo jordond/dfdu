@@ -43,7 +43,7 @@ impl Ran {
 /// Carries out `a` on the browser (no overlay open) at `now`, as its key does.
 pub fn run(s: &mut SessionState, a: Action, now: Instant) -> Ran {
     // Any action but a second `Parent` at the scan root disarms the first.
-    let armed = s.up_armed.take();
+    let armed = s.take_arm();
     if s.read_only && a.deletes() {
         s.status = Some(READ_ONLY.into());
         return Ran::nothing();

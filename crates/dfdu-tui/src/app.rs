@@ -164,8 +164,26 @@ impl App {
         }
         self.session.note_input(now);
         // Only an action bound to the key can be the second `Parent` at the scan root: a key
-        // an overlay, the filter, a pane or a view takes disarms the first.
+        // an overlay, the filter, a pane or a view takes disarms the first, and its notice goes.
         let armed = self.session.up_armed.take();
+        let notice = armed.clone();
+        let fx = self.key_armed(k, now, armed);
+        if self.session.up_armed.is_none()
+            && let Some(a) = &notice
+        {
+            self.session.drop_notice(a);
+        }
+        fx
+    }
+
+    /// [`App::key`] with the first `Parent` at the scan root taken out: `armed` is put back
+    /// only for the action bound to the key.
+    fn key_armed(
+        &mut self,
+        k: KeyEvent,
+        now: Instant,
+        armed: Option<dfdu_session::goto::Armed>,
+    ) -> Vec<Effect> {
         if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
             self.quit = true;
             return Vec::new();

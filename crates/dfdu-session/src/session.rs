@@ -220,6 +220,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             self.note_change();
         }
         let polled = self.poll();
+        let expired = self.front.state_mut().expire_arm(now);
         let s = self.front.state();
         let read = self.pacing.read_due(s, self.front.breakdown(), now);
         let sort_due = s.next_sort_at().is_some_and(|t| now >= t);
@@ -229,7 +230,7 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
             Read::Extras => self.read_extras(now),
             Read::Nothing => self.front.reorder(now),
         }
-        let changed = polled || read != Read::Nothing || sort_due || spinner_due;
+        let changed = polled || expired || read != Read::Nothing || sort_due || spinner_due;
         let wake_at = self
             .pacing
             .wake_at(self.front.state(), changed, self.polling(), now);

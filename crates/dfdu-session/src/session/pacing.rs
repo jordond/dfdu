@@ -105,6 +105,10 @@ impl Pacing {
         if let Some(t) = s.next_sort_at() {
             within(t.saturating_duration_since(now));
         }
+        if let Some(a) = &s.up_armed {
+            // Its notice leaves the status line when it expires.
+            within(a.expires_at().saturating_duration_since(now));
+        }
         if polling || s.outside.pending() {
             within(DATA_FRAME);
         }

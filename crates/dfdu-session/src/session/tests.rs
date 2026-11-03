@@ -135,6 +135,36 @@ fn the_automatic_re_sort_waits_for_its_deadline() {
 }
 
 #[test]
+fn a_tick_after_a_first_parent_at_the_root_expired_clears_its_notice() {
+    use crate::actions::Action;
+    use crate::goto::ARMED_FOR;
+
+    let engine = Engine::portable(1);
+    let (mut session, t0) = settled(&engine, Instant::now());
+    let s = session.state_mut();
+    s.snap.root_path = dfdu_tree::HostPath::from("/r");
+    s.snap.dir_path = s.snap.root_path.clone();
+    s.snap.at_root = true;
+    s.target.path = s.snap.dir_path.clone();
+    let _ = session.act(Action::Parent, t0);
+    assert!(session.state().status.is_some(), "the notice");
+    let tick = session.tick(t0).expect("tick");
+    session.shown(t0);
+    assert_eq!(
+        tick.wake_at,
+        Some(t0 + ARMED_FOR),
+        "an idle front end wakes for it"
+    );
+    let tick = session.tick(t0 + ARMED_FOR).expect("tick");
+    assert!(tick.changed, "the status line changed");
+    assert_eq!(tick.wake_at, None);
+    assert_eq!(session.state().status, None);
+    assert_eq!(session.state().up_armed, None);
+    session.shutdown(Duration::ZERO);
+    engine.shutdown(Duration::from_millis(200));
+}
+
+#[test]
 fn a_scan_is_read_until_it_settles() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(tmp.path().join("d")).expect("mkdir");

@@ -24,6 +24,22 @@ use crate::state::{Moved, SessionState};
 /// How long a first `Parent` at the scan root waits for the second one.
 pub const ARMED_FOR: Duration = Duration::from_millis(1500);
 
+/// A first `Parent` at the scan root ([`up_at_root`]): when it was pressed, and the notice it
+/// put on the status line, which goes when the arm does unless something else replaced it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Armed {
+    pub at: Instant,
+    pub notice: String,
+}
+
+impl Armed {
+    /// When a second `Parent` no longer opens the parent.
+    #[must_use]
+    pub fn expires_at(&self) -> Instant {
+        self.at + ARMED_FOR
+    }
+}
+
 /// Where a typed path goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Dest {
@@ -441,14 +457,15 @@ pub fn up_at_root(s: &mut SessionState, armed: Option<Instant>, now: Instant) ->
         s.status = Some("already at the top of the filesystem".into());
         return None;
     };
-    if armed.is_some_and(|at| now.saturating_duration_since(at) <= ARMED_FOR) {
+    if armed.is_some_and(|at| now.saturating_duration_since(at) < ARMED_FOR) {
         return Some(parent);
     }
-    s.up_armed = Some(now);
-    s.status = Some(format!(
+    let notice = format!(
         "top of the scan: press {} again to scan {parent}",
         first_key(Action::Parent)
-    ));
+    );
+    s.status = Some(notice.clone());
+    s.up_armed = Some(Armed { at: now, notice });
     None
 }
 

@@ -50,7 +50,7 @@ fn parent_at_the_root_asks_first_and_scans_the_parent_on_a_second_press() {
     let _ = reopen(act::run(&mut s, Action::Parent, t));
     let _ = reopen(act::run(&mut s, Action::Down, t));
     assert_eq!(reopen(act::run(&mut s, Action::Parent, t)), None);
-    assert_eq!(s.up_armed, Some(t), "asked again");
+    assert_eq!(s.up_armed.map(|a| a.at), Some(t), "asked again");
 }
 
 #[test]
@@ -60,17 +60,69 @@ fn a_first_parent_at_the_root_expires_or_is_cleared_by_other_input() {
     let _ = reopen(act::run(&mut s, Action::Parent, t));
     let late = t + ARMED_FOR + Duration::from_millis(1);
     assert_eq!(reopen(act::run(&mut s, Action::Parent, late)), None);
-    assert_eq!(s.up_armed, Some(late), "the late press asks again");
+    assert_eq!(
+        s.up_armed.map(|a| a.at),
+        Some(late),
+        "the late press asks again"
+    );
 
     // A click, or a key an overlay or the filter took.
     let mut s = at_root();
     let _ = reopen(act::run(&mut s, Action::Parent, t));
     s.disarm();
     assert_eq!(s.up_armed, None);
+    assert_eq!(s.status, None, "its notice went with it");
     assert_eq!(reopen(act::run(&mut s, Action::Parent, t)), None);
 
     // A new browser, as after a reopen, starts disarmed.
     assert_eq!(SessionState::new(t).up_armed, None);
+}
+
+#[test]
+fn the_notice_of_a_first_parent_goes_when_it_expires_or_is_disarmed() {
+    let t = Instant::now();
+    let mut s = at_root();
+    let _ = reopen(act::run(&mut s, Action::Parent, t));
+    let notice = s.status.clone();
+    assert!(notice.is_some());
+    let expiry = s.up_armed.as_ref().map(Armed::expires_at);
+    assert_eq!(expiry, Some(t + ARMED_FOR));
+    assert!(!s.expire_arm(t + ARMED_FOR - Duration::from_millis(1)));
+    assert_eq!(s.status, notice, "still armed");
+    assert!(s.expire_arm(t + ARMED_FOR), "the status line changed");
+    assert_eq!((s.up_armed.is_none(), s.status.as_deref()), (true, None));
+    assert!(!s.expire_arm(t + ARMED_FOR * 2), "nothing left to expire");
+
+    // A second press at the expiry asks again, as after a tick at that time.
+    let mut s = at_root();
+    let _ = reopen(act::run(&mut s, Action::Parent, t));
+    assert_eq!(
+        reopen(act::run(&mut s, Action::Parent, t + ARMED_FOR)),
+        None
+    );
+
+    // Another action takes the notice with the arm.
+    let mut s = at_root();
+    let _ = reopen(act::run(&mut s, Action::Parent, t));
+    let _ = reopen(act::run(&mut s, Action::Down, t));
+    assert_eq!(s.status, None);
+}
+
+#[test]
+fn a_status_that_replaced_the_notice_of_a_first_parent_stays() {
+    let t = Instant::now();
+    let mut s = at_root();
+    let _ = reopen(act::run(&mut s, Action::Parent, t));
+    s.status = Some("copied".into());
+    assert!(!s.expire_arm(t + ARMED_FOR), "nothing new to show");
+    assert_eq!(s.up_armed, None);
+    assert_eq!(s.status.as_deref(), Some("copied"));
+
+    let mut s = at_root();
+    let _ = reopen(act::run(&mut s, Action::Parent, t));
+    s.status = Some("copied".into());
+    s.disarm();
+    assert_eq!(s.status.as_deref(), Some("copied"));
 }
 
 #[test]
