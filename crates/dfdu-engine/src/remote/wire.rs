@@ -18,6 +18,7 @@
 mod codec;
 mod delete;
 mod jobs;
+pub mod listing;
 mod message;
 mod scan;
 #[cfg(test)]
@@ -35,10 +36,11 @@ use dfdu_tree::RuleIx;
 use dfdu_scan::{DirId, JobId, ScanMsg};
 
 pub use codec::{Dec, Enc};
+pub use listing::{HostMount, ListEntry};
 
 /// The protocol version this build speaks. Both sides speak exactly one, so any change to a
 /// message's encoding takes a new number.
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 
 /// The oldest protocol version this build speaks: [`VERSION`], since it speaks only one.
 pub const MIN_VERSION: u32 = VERSION;
@@ -190,6 +192,18 @@ pub enum FromAgent {
     },
     /// The answers to one [`ToAgent::Measure`] request.
     Measured(Vec<MeasureMsg>),
+    /// The answer to [`ToAgent::List`] `id`: the directory's entries, at most
+    /// [`listing::MAX_ENTRIES`] (directories first), or why it could not be read in time.
+    Listed {
+        id: u64,
+        result: Result<Vec<ListEntry>, String>,
+    },
+    /// The answer to [`ToAgent::Mounts`] `id`: the host's mounted filesystems, or why they
+    /// could not be read.
+    Mounts {
+        id: u64,
+        result: Result<Vec<HostMount>, String>,
+    },
 }
 
 /// A message to the agent.
@@ -245,6 +259,17 @@ pub enum ToAgent {
     Check(Vec<CheckReq>),
     /// Files to measure on the agent's host, one directory per request.
     Measure(Vec<MeasureReq>),
+    /// List the directory at `path` on the agent's host (at most [`listing::MAX_PATH`]
+    /// bytes), answered by [`FromAgent::Listed`] with the same `id`.
+    List {
+        id: u64,
+        path: Vec<u8>,
+    },
+    /// List the host's mounted filesystems, answered by [`FromAgent::Mounts`] with the same
+    /// `id`.
+    Mounts {
+        id: u64,
+    },
 }
 
 /// What a job classifies against: [`dfdu_scan::classify::ClassOpts`] without the rules.

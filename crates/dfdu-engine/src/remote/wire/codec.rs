@@ -224,6 +224,29 @@ impl<'a> Dec<'a> {
         }
         Ok(out)
     }
+    /// A byte string of at most `max` bytes; a longer one is a malformed `what`.
+    pub(super) fn capped(&mut self, max: usize, what: &'static str) -> R<&'a [u8]> {
+        let b = self.bytes()?;
+        if b.len() > max {
+            return bad(what);
+        }
+        Ok(b)
+    }
+    /// A list of at most `max` items, as [`Dec::list`] reads it; a longer one is refused
+    /// before anything is read of it.
+    pub(super) fn list_upto<T>(
+        &mut self,
+        max: usize,
+        min: usize,
+        f: impl FnMut(&mut Self) -> R<T>,
+    ) -> R<Vec<T>> {
+        let at = self.pos;
+        if self.var()? > max as u64 {
+            return bad("too many items");
+        }
+        self.pos = at;
+        self.list(min, f)
+    }
     pub(super) fn end(&self) -> R<()> {
         if self.pos == self.buf.len() {
             Ok(())

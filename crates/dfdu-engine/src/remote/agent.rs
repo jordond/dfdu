@@ -6,10 +6,13 @@
 //! the local side's applier builds the tree. Deletion runs here too: plans go to a deleter of
 //! the agent's own, which verifies each item against this host's disk and journals it in this
 //! host's journal directory, and its results go back as [`FromAgent::Deleter`]; guard checks
-//! and extent measurement run here as well. Writes block when the local side stops reading,
+//! and extent measurement run here as well, and so do the listings of a folder or of the
+//! mounts that a prompt going to a folder asks for (`lister`). Writes block when the local side stops reading,
 //! which stops the workers: the pipe is the byte budget. A heartbeat goes out after a second
 //! with nothing sent. The agent exits when its stdin ends or its stdout fails (the local side
 //! is gone; its stdin may stay open, as under a shell).
+
+mod lister;
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -170,6 +173,8 @@ pub fn run<B: dfdu_scan::Backend>(
                     let _ = m.send(r);
                 }
             }
+            ToAgent::List { id, path } => lister::list(&out, id, path),
+            ToAgent::Mounts { id } => lister::mounts(&out, id),
             ToAgent::AbortDelete => {
                 if let Some(d) = &deleter {
                     d.abort.store(true, SeqCst);

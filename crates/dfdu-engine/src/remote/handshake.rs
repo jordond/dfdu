@@ -76,6 +76,8 @@ pub(crate) fn connect(
         plans: Mutex::new(HashMap::default()),
         natives: Mutex::new(HashSet::default()),
         measuring: Mutex::new(HashMap::default()),
+        ask_id: AtomicU64::new(0),
+        asked: Mutex::new(HashMap::default()),
     };
     link.send(&ToAgent::Hello {
         version: wire::VERSION,

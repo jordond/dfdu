@@ -2,6 +2,7 @@
 
 mod applier_loop;
 mod inbox;
+mod lister;
 mod resume;
 pub use resume::Query as JournalQuery;
 mod options;
