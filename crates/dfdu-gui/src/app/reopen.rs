@@ -148,9 +148,12 @@ impl Gui {
             return;
         };
         self.screen = match plan(&origin, path) {
-            Plan::Local(path) => {
-                let source = launch::reopened(path, &self.settings);
-                self.open(source, Origin::Local, Some((b, origin)), ctx)
+            Plan::Local(local) => {
+                // Taken before the old browser is stopped: what it read below the folder.
+                let scanned = b.scanned(path);
+                let source = launch::reopened(local, &self.settings);
+                let opened = self.start_browser(source, scanned, ctx);
+                replaced(opened, Origin::Local, Some((b, origin)))
             }
             Plan::Admin(path) => self.elevate(path, Some(Back::Browse(b, origin)), ctx),
             Plan::Connect(target) => {

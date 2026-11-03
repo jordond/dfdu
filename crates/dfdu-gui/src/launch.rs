@@ -229,7 +229,8 @@ pub fn agent() -> std::process::ExitCode {
     }
 }
 
-/// Starts the engine of `source` and the session that browses it, which asks `ctx` for a frame
+/// Starts the engine of `source`, keeping what `scanned` read below it
+/// ([`startup::open_reusing`]), and the session that browses it, which asks `ctx` for a frame
 /// when the engine's model changes.
 ///
 /// # Errors
@@ -237,11 +238,12 @@ pub fn agent() -> std::process::ExitCode {
 /// As [`startup::open`].
 pub fn open(
     source: Source,
+    scanned: Option<dfdu_engine::Scanned>,
     settings: &Settings,
     ctx: &egui::Context,
 ) -> io::Result<Box<dyn Browse>> {
     Ok(
-        match startup::open(source, &settings.engine, settings.record)? {
+        match startup::open_reusing(source, &settings.engine, settings.record, scanned)? {
             Opened::Native(s) => Box::new(Browser::new(s, ctx)),
             Opened::Imported(s) => {
                 let mut b = Browser::new(s, ctx);
@@ -437,7 +439,7 @@ mod tests {
             record: false,
             rules: false,
         };
-        open(e.source(), &settings, &egui::Context::default()).expect("opened")
+        open(e.source(), None, &settings, &egui::Context::default()).expect("opened")
     }
 
     #[test]
@@ -447,6 +449,46 @@ mod tests {
         let b = elevated_browser(false);
         let s = b.state();
         assert!(s.outside.local && !s.elevated, "the agent runs as the user");
+    }
+
+    /// A browser of this machine's scan offers what it read to a scan of a folder above its
+    /// root once it ended; an administrator's, read by an agent, does not. On Unix, where the
+    /// canonical path the scan names its root by is what `canonicalize` gives.
+    #[cfg(unix)]
+    #[test]
+    fn a_local_browser_offers_what_it_read_to_a_folder_above() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let top = std::fs::canonicalize(tmp.path()).expect("canonical");
+        let dir = top.join("c");
+        std::fs::create_dir_all(dir.join("d")).expect("mkdir");
+        let settings = Settings {
+            engine: EngineOptions::default(),
+            record: false,
+            rules: false,
+        };
+        let source = picked(dir.clone(), local(None));
+        let b = open(source, None, &settings, &egui::Context::default()).expect("opened");
+        let above = dfdu_tree::HostPath::local(&top);
+        let t0 = std::time::Instant::now();
+        let scanned = loop {
+            if let Some(s) = b.scanned(&above) {
+                break s;
+            }
+            assert!(
+                t0.elapsed() < std::time::Duration::from_secs(10),
+                "timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(scanned.root(), dfdu_tree::HostPath::local(&dir));
+        assert!(
+            b.scanned(&dfdu_tree::HostPath::local(&dir)).is_none(),
+            "not above its root"
+        );
+        b.shutdown();
+        let b = elevated_browser(false);
+        assert!(b.scanned(&above).is_none());
+        b.shutdown();
     }
 
     #[test]

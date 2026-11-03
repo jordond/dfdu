@@ -63,6 +63,12 @@ pub trait Browse {
 
     /// Stops the session and its engine ([`Session::shutdown`]).
     fn shutdown(self: Box<Self>);
+
+    /// What its scan read, for a scan of `above`, a folder above its root, to keep
+    /// ([`Session::scanned`]); `None` when it cannot.
+    fn scanned(&self, _above: &dfdu_tree::HostPath) -> Option<dfdu_engine::Scanned> {
+        None
+    }
 }
 
 /// The session's state and the window's beside it.
@@ -454,6 +460,10 @@ fn central(
 }
 
 impl<B: Backend> Browse for Browser<B> {
+    fn scanned(&self, above: &dfdu_tree::HostPath) -> Option<dfdu_engine::Scanned> {
+        self.session.scanned(above)
+    }
+
     fn show(&mut self, ui: &mut egui::Ui, colors: &Colors) {
         let ctx = ui.ctx().clone();
         let now = Instant::now();
