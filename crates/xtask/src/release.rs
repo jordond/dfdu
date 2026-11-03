@@ -56,6 +56,17 @@ pub(crate) fn release(r: Release) -> anyhow::Result<()> {
             ),
             ("advisories", Box::new(|| deny(true))),
             ("dist plan", Box::new(|| release(Release::Plan))),
+            (
+                "crates.io",
+                Box::new(|| {
+                    run(&mut cargo([
+                        "publish",
+                        "--workspace",
+                        "--locked",
+                        "--dry-run",
+                    ]))
+                }),
+            ),
         ]),
         Release::Bump { version, commit } => {
             need("git-cliff")?;
@@ -129,6 +140,15 @@ fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
     }
     let manifest = fs::read_to_string("Cargo.toml")?;
     let old = toml_value(&manifest, "version").context("no version in Cargo.toml")?;
+    if old == version {
+        bail!(
+            "the version is already {version} (git-cliff finds nothing to bump without a feat, fix or perf commit since the last tag)"
+        );
+    }
+    let changes = fs::read_to_string("CHANGELOG.md").context("reading CHANGELOG.md")?;
+    if has_section(&changes, version) {
+        bail!("CHANGELOG.md already has a section for {version}");
+    }
     fs::write("Cargo.toml", set_version(&manifest, &old, version))?;
     eprintln!("version {old} -> {version}");
     run(&mut cargo(["update", "--workspace"]))?;
@@ -144,10 +164,12 @@ fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
     changelog(version)?;
     if commit {
         let tag = format!("v{version}");
-        run(Command::new("git").args(["commit", "-am", &format!("Release {tag}")]))?;
+        run(Command::new("git").args(["commit", "-am", &format!("chore(release): {tag}")]))?;
         run(Command::new("git").args(["tag", "-a", &tag, "-m", &tag]))?;
         eprintln!("\npush to publish: git push origin HEAD {tag}");
         eprintln!("the release workflow publishes to crates.io (publish-crates.yml)");
+    } else {
+        eprintln!("\nedit CHANGELOG.md's new section, then commit and tag v{version}");
     }
     Ok(())
 }
@@ -165,8 +187,14 @@ fn changelog(version: &str) -> anyhow::Result<()> {
     ]))?;
     let file = fs::read_to_string("CHANGELOG.md").context("reading CHANGELOG.md")?;
     fs::write("CHANGELOG.md", insert_section(&file, &section))?;
-    eprintln!("CHANGELOG.md: added {tag}'s section; edit it before tagging");
+    eprintln!("CHANGELOG.md: added {tag}'s section");
     Ok(())
+}
+
+/// Whether `changelog` has a `## [version]` heading.
+fn has_section(changelog: &str, version: &str) -> bool {
+    let heading = format!("## [{version}]");
+    changelog.lines().any(|l| l.starts_with(&heading))
 }
 
 /// `changelog` with `section` before its first `## ` heading, or at the end if it has none.
@@ -186,6 +214,14 @@ fn insert_section(changelog: &str, section: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_version_has_a_section_only_under_its_own_heading() {
+        let file = "# Changelog\n\n## [0.3.0] - 2026-11-03\n\n- Mentions [0.2.0]\n";
+        assert!(has_section(file, "0.3.0"));
+        assert!(!has_section(file, "0.2.0"));
+        assert!(!has_section(file, "0.3"));
+    }
 
     #[test]
     fn a_section_goes_above_the_newest_release() {
