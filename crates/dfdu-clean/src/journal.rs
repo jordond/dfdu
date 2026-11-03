@@ -2,7 +2,7 @@
 //! and synced before the item is touched. The file is held under an exclusive lock for the
 //! session, so another instance never treats it as abandoned.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -174,6 +174,35 @@ mod kind_name {
     }
 }
 
+/// Creates the new journal file `name` in `dir`, for reading and appending. On Unix
+/// `dir` is opened without following a symlink and the file made in it, so a root dfdu does not
+/// create its journal wherever a symlink the user put at `dir` points. (`O_EXCL` never follows
+/// a symlink at the file itself.)
+#[cfg(unix)]
+fn create_new(dir: &Path, name: &str) -> io::Result<File> {
+    use rustix::fs::{Mode, OFlags};
+    let dfd = crate::remove::open_dir(rustix::fs::CWD, dir.as_os_str())?;
+    let fd = rustix::fs::openat(
+        &dfd,
+        name,
+        OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::APPEND | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::WGRP | Mode::ROTH | Mode::WOTH,
+    )
+    .map_err(crate::remove::errno)?;
+    Ok(File::from(fd))
+}
+
+/// Read access as well as append: Windows requires read or write access on the handle to lock
+/// it, and append-only grants neither.
+#[cfg(not(unix))]
+fn create_new(dir: &Path, name: &str) -> io::Result<File> {
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .append(true)
+        .open(dir.join(name))
+}
+
 impl Journal {
     /// Creates this session's journal in `dir`.
     ///
@@ -191,14 +220,8 @@ impl Journal {
             now.subsec_nanos(),
             std::process::id()
         );
-        let path = dir.join(name);
-        // Read access as well as append: Windows requires read or write access on the handle to
-        // lock it, and append-only grants neither.
-        let file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .append(true)
-            .open(&path)?;
+        let path = dir.join(&name);
+        let file = create_new(dir, &name)?;
         file.lock()?;
         let mut j = Journal {
             file,

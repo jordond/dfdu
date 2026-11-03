@@ -105,3 +105,19 @@ fn intent_mode_and_kind_keep_their_journal_names() {
     let rec = r#"{"t":"intent","plan":3,"path":"/x/a","path_hex":"2f782f61","dev":1,"ino":2,"kind":"file","size":5,"mtime":6,"mode":"shred"}"#;
     assert!(parse_line(&line_of(rec)).is_none());
 }
+
+/// A journal directory that is a symlink is not followed: the journal is not made where it
+/// points.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_journal_directory_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let elsewhere = tmp.path().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    let ops = tmp.path().join("ops");
+    std::os::unix::fs::symlink(&elsewhere, &ops).unwrap();
+    assert!(Journal::create(&ops).is_err());
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    let j = Journal::create(&tmp.path().join("real")).unwrap();
+    assert!(j.path().starts_with(tmp.path().join("real")));
+}
