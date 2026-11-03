@@ -44,7 +44,7 @@ How a scan flows through the crates, and how each part is tested, is described i
 | `dfdu` | The binary: command line, subcommands, JSON output |
 | `dfdu-tui` | The terminal browser |
 | `dfdu-gui` | The desktop app |
-| `dfdu-session` | What a front end shows besides drawing and input: views, marks, filters, the treemap, the cleanup view, actions, key effects |
+| `dfdu-session` | What a front end shows besides drawing and input: views, marks, filters, the treemap, the cleanup view, actions, key effects, scanning another host over ssh |
 | `dfdu-engine` | The applier (the tree's single writer), jobs, classifier and measurer pools, resume from the change journal, the remote agent and its protocol |
 | `dfdu-scan` | The scanner: workers, backends, byte budget, watchdog, change journals (FSEvents, USN, btrfs) |
 | `dfdu-tree` | The tree of scanned nodes: slots, generational references, size aggregation |

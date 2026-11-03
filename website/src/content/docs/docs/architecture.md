@@ -105,7 +105,7 @@ Files are written with `write_atomic`, so a crash leaves the previous file intac
 
 `dfdu-session` is what a front end shows besides drawing and input. It has no terminal or window types. The `Session` holds the engine, the browser's `SessionState` and the jobs beside them: the scan history, the scan cache and lookups outside the scan. A front end's loop waits on input, on `Session::changes` and until `Tick::wake_at`, then calls `Session::tick`. The tick reads the model when due. It copies a directory snapshot (`snapshot`) and what the features need (`extras`) under the read lock, then releases it. Reads are paced so the read lock is held at most a tenth of the time. Time is passed in, so the pacing follows the caller's clock. A front end implements `FrontEnd` for what it keeps around the state.
 
-The session also holds the logic of the views (`treemap`, `cleanup`, `dupes`, `largest`), the marks, filters, actions and their keys (`actions`), and the theme's tokens (`palette`). Both front ends share them.
+The session also holds the logic of the views (`treemap`, `cleanup`, `dupes`, `largest`), the marks, filters, actions and their keys (`actions`), the theme's tokens (`palette`), and scanning another host over ssh (`remote`: a bootstrap script finds or receives the agent there, then the engine talks to it over ssh's standard streams). Both front ends share them.
 
 `dfdu-tui` is the terminal browser. Its run loop (`run_loop`) ticks the session and draws from the copy. It redraws at once on input, at most 10 times a second while the engine reports changes, and never when idle. State and keys are in `app`, drawing in `view`, and each feature has its own module under `features` or `overlay`.
 
