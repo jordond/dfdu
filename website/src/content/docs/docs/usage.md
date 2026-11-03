@@ -38,9 +38,13 @@ The cleanup view (`3`) lists what the [cleanup rules](/docs/rules/) found, with 
 
 The scan starts at the folder you named, but you can leave it. At the top of the scan, `←` says so; press it again within a second or so to scan the folder above. `Ctrl-G` opens a prompt with the current folder: type a path (absolute, or relative to the current folder) and press Enter. On a scan of this computer, a path can also start with `~` for your home folder. A folder inside the scan opens at once; one outside it is scanned, with the same options. A folder inside the scan that the scan has not reached, or a mount it did not enter, keeps you where you are, and the status line says why. `Tab` completes a folder name, and Esc closes the prompt.
 
+Clear the prompt, or leave only `/` (or a drive such as `C:` on Windows), and it lists the host's mounts with their filesystem type and how much of each is used. `↑` and `↓` pick one, and `Tab` or Enter puts it in the prompt.
+
+After going up, the folder you came from is selected in the new scan once it appears. When the scan's folder is empty, the list says so and how to go up (`←` twice) or elsewhere (`Ctrl-G`).
+
 The new scan starts before the old one stops, so if it cannot start you stay where you were and the status line says why. Going up from `/mnt/cache` scans `/mnt` on its own filesystem only, so the other disks mounted there are listed but not entered; press `m` on one to scan it.
 
-On a scan of another host (`--remote`), going up or to a folder outside the scan connects again with the new folder. dfdu gives the terminal back while it connects, so ssh can ask for a password. `Tab` completes nothing there yet. A scan read from a file (`dfdu --import`) cannot leave the file: run `dfdu` with a folder instead.
+On a scan of another host (`--remote`), going up or to a folder outside the scan connects again with the new folder. dfdu gives the terminal back while it connects, so ssh can ask for a password. `Tab` asks the host for its folders and shows them when they arrive, and the mount list is the host's. The prompt does not wait for the answer: you can keep typing. A scan read from a file (`dfdu --import`) cannot leave the file: run `dfdu` with a folder instead.
 
 ## Mounts
 
