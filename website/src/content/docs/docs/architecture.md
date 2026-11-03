@@ -113,7 +113,7 @@ The session also holds the logic of the views (`treemap`, `cleanup`, `dupes`, `l
 
 ## The CLI: crates/dfdu
 
-`crates/dfdu` is the `dfdu` binary. With no subcommand it opens the terminal browser. The subcommands are headless and use the engine directly: `scan`, `disks`, `report`, `clean`, `diff`, `history`, `dupes`, `export`, `import`, `recover`, `cache`, `man` and `completions`. `agent` is the other end of `--remote`: it scans on the remote host and writes results to stdout in dfdu's wire format (`dfdu_engine::wire`). See [Command line](/docs/cli/) for usage.
+`crates/dfdu` is the `dfdu` binary. With no subcommand it opens the terminal browser. The subcommands are headless and use the engine directly: `scan`, `disks`, `report`, `clean`, `diff`, `history`, `dupes`, `export`, `import`, `recover`, `cache`, `update`, `man` and `completions`. `update` replaces the binary with the latest release through `dfdu-update`, which the desktop app also uses to check for updates and install the CLI. `agent` is the other end of `--remote`: it scans on the remote host and writes results to stdout in dfdu's wire format (`dfdu_engine::wire`). See [Command line](/docs/cli/) for usage.
 
 ## Where a change goes
 

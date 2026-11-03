@@ -52,6 +52,7 @@ How a scan flows through the crates, and how each part is tested, is described i
 | `dfdu-clean` | Deleting: plans, verification against the scan, trash and permanent delete, journal |
 | `dfdu-dupes` | The duplicate finder: size, then partial hash, then full hash |
 | `dfdu-store` | Persistence: ncdu import and export, snapshots, the scan cache and history |
+| `dfdu-update` | Updates: the latest release, checked downloads, replacing a running binary, and how this copy was installed |
 | `dfdu-sys` | Unsafe OS calls behind safe wrappers, the disk list, dfdu's directories, the macOS privileged helper |
 | `dfdu-sim` | Seeded simulation of the scanner and applier with fault injection (tests only) |
 | `dfdu-hangfs` | A FUSE filesystem that never answers, for watchdog tests (Linux, tests only) |

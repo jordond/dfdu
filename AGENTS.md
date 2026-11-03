@@ -29,7 +29,7 @@ BREAKING CHANGE: <what breaks and what to do instead>
 | `style` | Formatting only | left out | none |
 
 - **Breaking changes**: put `!` after the type or scope (`feat(cli)!: ...`) and add a `BREAKING CHANGE:` footer. Before 1.0 this bumps the minor version; after 1.0, the major. A change to the command line, the JSON or NDJSON output, the rule file schema, the theme format, or the snapshot and cache formats a newer dfdu can't read back is breaking.
-- **Scope**: the crate without its `dfdu-` prefix (`tree`, `scan`, `engine`, `clean`, `rules`, `dupes`, `store`, `session`, `sys`, `tui`, `gui`, `sim`), or `cli` for `crates/dfdu`, `xtask`, `website`, `release`, `deps`. Leave it out when a change spans several.
+- **Scope**: the crate without its `dfdu-` prefix (`tree`, `scan`, `engine`, `clean`, `rules`, `dupes`, `store`, `session`, `sys`, `update`, `tui`, `gui`, `sim`), or `cli` for `crates/dfdu`, `xtask`, `website`, `release`, `deps`. Leave it out when a change spans several.
 - **Summary**: imperative, lower case after the colon, no trailing period, at most about 72 characters. Say what changes for the user: `fix(clean): keep a staged item when its parent is renamed`, not `fix: bug in staging`.
 - One logical change per commit. Don't mix a `feat` with an unrelated `refactor`.
 
