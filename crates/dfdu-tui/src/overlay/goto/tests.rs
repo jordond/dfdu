@@ -23,6 +23,12 @@ fn app() -> (App, Instant) {
     (app, t0)
 }
 
+/// `p` with `/` for each separator: a Windows host joins with `\`, so tests compare paths in
+/// one form on every platform.
+fn slashed(p: &HostPath) -> String {
+    String::from_utf8_lossy(p.as_bytes()).replace('\\', "/")
+}
+
 fn ctrl(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
@@ -56,7 +62,7 @@ fn ctrl_g_opens_the_prompt_with_the_directory_shown() {
     let Overlay::GoTo(p) = &app.overlay else {
         panic!("no prompt");
     };
-    assert_eq!(p.input.text(), "/r/");
+    assert_eq!(p.input.text().replace('\\', "/"), "/r/");
     let frame = render(&mut app, t0, 90, 12);
     assert!(frame.contains("Go to folder"), "{frame}");
     assert!(frame.contains("/r/"), "{frame}");
@@ -71,7 +77,7 @@ fn enter_opens_a_folder_of_the_scan_in_place() {
     go_to(&mut app, "lib", t0);
     enter(&mut app, t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.session.target.path, HostPath::from("/r/lib"));
+    assert_eq!(slashed(&app.session.target.path), "/r/lib");
     assert_eq!(app.reopen, None);
 }
 
@@ -81,7 +87,10 @@ fn enter_on_a_folder_outside_the_scan_asks_for_a_new_scan() {
     go_to(&mut app, "../mnt/disk1", t0);
     enter(&mut app, t0);
     assert!(matches!(app.overlay, Overlay::None));
-    assert_eq!(app.reopen, Some(HostPath::from("/mnt/disk1")));
+    assert_eq!(
+        app.reopen.as_ref().map(slashed).as_deref(),
+        Some("/mnt/disk1")
+    );
 }
 
 #[test]
