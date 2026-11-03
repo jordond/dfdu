@@ -344,8 +344,8 @@
   .toolbar { padding: 8px 16px; }
   .scan { display: none; }
   .field { display: none; }
-  .work { flex-direction: column; }
-  .col,
+  .work { flex: none; flex-direction: column; }
+  .col { flex: none; overflow: visible; }
   .gscroll { overflow: visible; }
   .glist { flex: none; }
   .gdet { flex-basis: auto; overflow: visible; }
@@ -361,7 +361,8 @@
 @media (max-height: 520px) {
   :root[data-face='gui'] .site { height: auto; min-height: 100dvh; overflow: visible; }
   .gui { flex: none; }
-  .work { flex-direction: column; }
+  .work { flex: none; flex-direction: column; }
+  .col { flex: none; }
   .col,
   .gscroll,
   .gdet { overflow: visible; }
