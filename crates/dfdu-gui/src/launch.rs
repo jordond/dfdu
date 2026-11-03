@@ -97,24 +97,49 @@ const DEB_AGENT: &str = "/usr/libexec/dfdu/dfdu-agent";
 /// agent script.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn agent_command() -> io::Result<Vec<OsString>> {
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+    // Only an AppImage that is a file: pkexec runs it as root.
+    let appimage = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && std::fs::metadata(p).is_ok_and(|m| m.is_file()));
+    // The AppDir as it is on disk, as the running program's path is; only one with the AppRun
+    // an AppImage starts from, so not `/` or `/usr` around an installed program.
+    let appdir = std::env::var_os("APPDIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .filter(|p| p.join("AppRun").is_file());
     Ok(agent_argv(
         appimage,
+        appdir,
         std::env::current_exe()?,
         Path::new(DEB_AGENT).is_file(),
     ))
 }
 
-/// The agent's command, from `$APPIMAGE` (`appimage`), the running program (`exe`) and whether
-/// the .deb's agent script is installed (`deb_agent`): the script only for the program the .deb
-/// installed, since it runs that one, not some other build started beside it.
+/// The agent's command, from `$APPIMAGE` (`appimage`), `$APPDIR` (`appdir`), the running program
+/// (`exe`) and whether the .deb's agent script is installed (`deb_agent`): the script only for
+/// the program the .deb installed, since it runs that one, not some other build started beside
+/// it.
+///
+/// The environment is the user's, so anything running as the user can set `APPIMAGE`, and
+/// pkexec would run what it names as root once the password is given. It is taken only when this
+/// program really runs from that AppImage: from inside `$APPDIR` (the AppImage's mount, set by its
+/// runtime), and never over the .deb's script.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-fn agent_argv(appimage: Option<PathBuf>, exe: PathBuf, deb_agent: bool) -> Vec<OsString> {
-    if let Some(appimage) = appimage.filter(|p| p.is_absolute()) {
-        return vec![appimage.into_os_string(), "--agent".into()];
-    }
+fn agent_argv(
+    appimage: Option<PathBuf>,
+    appdir: Option<PathBuf>,
+    exe: PathBuf,
+    deb_agent: bool,
+) -> Vec<OsString> {
     if deb_agent && exe == Path::new(DEB_EXE) {
         return vec![DEB_AGENT.into()];
+    }
+    let inside = |dir: &Path| dir.is_absolute() && exe.starts_with(dir) && exe != dir;
+    if let Some(appimage) = appimage.filter(|p| p.is_absolute())
+        && appdir.as_deref().is_some_and(inside)
+    {
+        return vec![appimage.into_os_string(), "--agent".into()];
     }
     vec![exe.into_os_string(), "--agent".into()]
 }
@@ -299,8 +324,29 @@ pub fn import(file: &Path) -> io::Result<dfdu_tree::Tree> {
 mod tests {
     use super::*;
 
+    /// Where an AppImage's runtime mounts it, and the program inside.
+    const APPDIR: &str = "/tmp/.mount_dfdu";
+    const MOUNTED: &str = "/tmp/.mount_dfdu/usr/bin/dfdu-gui";
+
+    /// With `$APPDIR` set to [`APPDIR`] whenever `$APPIMAGE` is.
     fn argv(appimage: Option<&str>, exe: &str, deb_agent: bool) -> Vec<OsString> {
-        agent_argv(appimage.map(PathBuf::from), PathBuf::from(exe), deb_agent)
+        let appdir = appimage.map(|_| PathBuf::from(APPDIR));
+        agent_argv(
+            appimage.map(PathBuf::from),
+            appdir,
+            PathBuf::from(exe),
+            deb_agent,
+        )
+    }
+
+    /// Given `$APPIMAGE` of something running as the user.
+    fn planted(appdir: Option<&str>, exe: &str, deb_agent: bool) -> Vec<OsString> {
+        agent_argv(
+            Some("/home/u/evil".into()),
+            appdir.map(PathBuf::from),
+            exe.into(),
+            deb_agent,
+        )
     }
 
     #[test]
@@ -314,17 +360,48 @@ mod tests {
     #[test]
     fn agent_is_the_appimage_inside_one() {
         let want = ["/home/u/dfdu.AppImage", "--agent"];
-        let mounted = "/tmp/.mount_dfdu/usr/bin/dfdu-gui";
-        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), mounted, false), want);
+        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), MOUNTED, false), want);
         // The .deb installed as well changes nothing: its script runs its own program.
-        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), mounted, true), want);
+        assert_eq!(argv(Some("/home/u/dfdu.AppImage"), MOUNTED, true), want);
     }
 
     #[test]
     fn relative_appimage_is_ignored() {
         assert_eq!(
-            argv(Some("dfdu.AppImage"), "/home/u/dfdu-gui", false),
-            ["/home/u/dfdu-gui", "--agent"]
+            argv(Some("dfdu.AppImage"), MOUNTED, false),
+            [MOUNTED, "--agent"]
+        );
+    }
+
+    #[test]
+    fn deb_script_wins_over_an_appimage() {
+        assert_eq!(planted(None, DEB_EXE, true), [DEB_AGENT]);
+        assert_eq!(planted(Some("/usr"), DEB_EXE, true), [DEB_AGENT]);
+    }
+
+    #[test]
+    fn appimage_is_refused_unless_this_program_runs_inside_its_appdir() {
+        // No APPDIR: not started by an AppImage's runtime.
+        assert_eq!(planted(None, MOUNTED, false), [MOUNTED, "--agent"]);
+        // This program is outside the APPDIR given.
+        let built = "/home/u/target/release/dfdu-gui";
+        assert_eq!(planted(Some(APPDIR), built, false), [built, "--agent"]);
+        let near = "/tmp/.mount_dfd";
+        assert_eq!(planted(Some(near), MOUNTED, false), [MOUNTED, "--agent"]);
+        // A relative APPDIR, or the program itself given as the APPDIR.
+        let relative = "tmp/.mount_dfdu";
+        assert_eq!(
+            planted(Some(relative), MOUNTED, false),
+            [MOUNTED, "--agent"]
+        );
+        assert_eq!(planted(Some(MOUNTED), MOUNTED, false), [MOUNTED, "--agent"]);
+    }
+
+    #[test]
+    fn appimage_is_taken_when_this_program_runs_inside_its_appdir() {
+        assert_eq!(
+            planted(Some(APPDIR), MOUNTED, false),
+            ["/home/u/evil", "--agent"]
         );
     }
 
