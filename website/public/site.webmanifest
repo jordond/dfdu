@@ -1,7 +1,7 @@
 {
   "name": "dfdu",
   "short_name": "dfdu",
-  "description": "A disk usage browser for the terminal.",
+  "description": "A disk usage browser for the terminal and the desktop.",
   "start_url": "/",
   "display": "browser",
   "background_color": "#1f232b",

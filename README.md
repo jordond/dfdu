@@ -3,9 +3,12 @@
   <img width="320" src="assets/logo/dfdu-logo.svg" alt="dfdu">
 </picture>
 
-A disk usage browser for the terminal. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
+A disk usage browser for the terminal and the desktop. Browse, sort and delete, see what your space is made of (caches, build output, emulators, containers), and get a list of what is safe to remove.
 
-![Browsing a home directory, the treemap and the cleanup view](assets/demos/browse.gif)
+<p>
+  <img width="49%" src="assets/demos/browse.gif" alt="Browsing a home directory in the terminal, the treemap and the cleanup view">
+  <img width="49%" src="assets/gui/map.png" alt="The treemap of a home directory in the desktop app">
+</p>
 
 ## Features
 
@@ -15,6 +18,7 @@ A disk usage browser for the terminal. Browse, sort and delete, see what your sp
 - **Opens last time's scan at once.** A repeat `dfdu PATH` shows the cached scan and refreshes only what changed.
 - **History.** Every scan is recorded, so you can ask what grew since last week.
 - **Remote.** Browse and delete on another machine over ssh.
+- **Desktop app.** The same browser in a window for macOS, Linux and Windows, with the same keys as the terminal browser and a command palette.
 - **Scriptable.** JSON and NDJSON output, a CI mode that fails above a size limit, and ncdu export import.
 - **Safe by default.** Deletes go to the Trash; permanent deletes ask you to type `delete`. `--read-only` removes the delete keys.
 
@@ -36,6 +40,17 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/jordond/dfdu/relea
 ```
 
 Binaries for macOS, Linux (static) and Windows are on the [releases page](https://github.com/jordond/dfdu/releases), with man pages and shell completions. To build from source (Rust 1.95+): `cargo install --locked --git https://github.com/jordond/dfdu dfdu`.
+
+### Desktop app
+
+```sh
+brew install --cask jordond/tap/dfdu-gui                    # macOS
+curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui     # macOS, Linux x86_64, with the CLI
+```
+
+The [latest release](https://github.com/jordond/dfdu/releases/latest) has a disk image for macOS, a `.deb` and an AppImage for Linux, and an installer and a portable zip for Windows. [The desktop app docs](https://dfdu.app/docs/desktop/) cover the views, deleting and scanning as an administrator.
+
+![The cleanup view in the desktop app](assets/gui/cleanup.png)
 
 ## Usage
 
@@ -85,6 +100,7 @@ dfdu -f home.snap                           # browse a saved scan or an ncdu exp
 
 ## Docs
 
+- [Desktop app](https://dfdu.app/docs/desktop/): installing and using the desktop app
 - [Cleanup rules](https://dfdu.app/docs/rules/): the built-in rules and how to write your own
 - [Themes](https://dfdu.app/docs/themes/): five built-in themes and custom TOML themes
 - [Benchmarks](https://dfdu.app/docs/benchmarks/): scan time and memory against other tools

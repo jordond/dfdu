@@ -7,7 +7,7 @@ const repo = 'https://github.com/jordond/dfdu'
 export const llms = {
   projectName: 'dfdu',
   description:
-    'dfdu is a disk usage browser for the terminal, written in Rust, for macOS, Linux and Windows. It scans a directory in parallel, lets you browse, sort and delete before the scan finishes, shows a treemap, duplicates and the largest files, and recognises caches, build output and other files that are safe to remove. It also has non-interactive commands with JSON output for scripts and CI.',
+    'dfdu is a disk usage browser for the terminal, written in Rust, for macOS, Linux and Windows. It scans a directory in parallel, lets you browse, sort and delete before the scan finishes, shows a treemap, duplicates and the largest files, and recognises caches, build output and other files that are safe to remove. It also has non-interactive commands with JSON output for scripts and CI, and a desktop app (dfdu-gui) with the same views.',
   details: `Install (any one; all put a \`dfdu\` binary on PATH):
 
 \`\`\`sh
@@ -22,6 +22,8 @@ nix run github:jordond/dfdu
 # from source, Rust 1.95+
 cargo install --locked --git ${repo} dfdu
 \`\`\`
+
+Desktop app: \`brew install --cask jordond/tap/dfdu-gui\` on macOS, \`curl -fsSL ${site}/install.sh | sh -s -- --gui\` on macOS and Linux x86_64, or the installers at ${repo}/releases/latest.
 
 Windows (PowerShell): \`powershell -ExecutionPolicy Bypass -c "irm ${repo}/releases/latest/download/dfdu-installer.ps1 | iex"\`. Release binaries for every platform are at ${repo}/releases.
 
@@ -49,6 +51,7 @@ Guides:
 - [Install](${site}/docs/install/): every install method
 - [Browsing](${site}/docs/usage/): keys, views, mounts and the scan cache
 - [Command line](${site}/docs/cli/): the commands for scripts and CI
+- [Desktop app](${site}/docs/desktop/): installing and using dfdu-gui, and scanning as an administrator
 - [Cleanup rules](${site}/docs/rules/): the built-in rules, safety levels and how to write your own
 - [Themes](${site}/docs/themes/): built-in themes and custom TOML themes
 - [Benchmarks](${site}/docs/benchmarks/): scan time and memory against other tools`,
