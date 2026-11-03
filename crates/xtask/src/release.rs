@@ -33,7 +33,9 @@ pub(crate) enum Release {
         out: Option<PathBuf>,
     },
     /// Publish dfdu and the crates it needs to crates.io, in dependency order (`cargo publish
-    /// --workspace`); the crates with `publish = false` stay out.
+    /// --workspace`); the crates with `publish = false` stay out. Releases publish from CI
+    /// (publish-crates.yml); this is for a new crate's first version, which trusted publishing
+    /// can't create.
     Publish {
         /// Package and verify every crate without uploading.
         #[arg(long)]
@@ -145,7 +147,7 @@ fn bump(version: &str, commit: bool) -> anyhow::Result<()> {
         run(Command::new("git").args(["commit", "-am", &format!("Release {tag}")]))?;
         run(Command::new("git").args(["tag", "-a", &tag, "-m", &tag]))?;
         eprintln!("\npush to publish: git push origin HEAD {tag}");
-        eprintln!("then to crates.io: cargo xtask release publish");
+        eprintln!("the release workflow publishes to crates.io (publish-crates.yml)");
     }
     Ok(())
 }
