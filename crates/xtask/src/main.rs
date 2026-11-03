@@ -254,7 +254,7 @@ fn fuzz_build() -> anyhow::Result<()> {
 /// The script `--remote` runs on hosts without dfdu.
 fn shellcheck() -> anyhow::Result<()> {
     need("shellcheck")?;
-    run(Command::new("shellcheck").args(["--shell=sh", "crates/dfdu/src/remote/boot.sh"]))
+    run(Command::new("shellcheck").args(["--shell=sh", "crates/dfdu-session/src/remote/boot.sh"]))
 }
 
 fn deny(advisories: bool) -> anyhow::Result<()> {
