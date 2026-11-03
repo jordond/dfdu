@@ -23,10 +23,22 @@ fn put_back_goes_next_to_what_is_there_now() {
     fs::write(staged.join("f"), b"old").unwrap();
     fs::create_dir(&orig).unwrap();
     fs::write(orig.join("f"), b"new").unwrap();
-    let to = put_back(&staged, &orig).unwrap();
+    let to = put_back(&staged, &id_of(&staged), &orig).unwrap();
     assert_eq!(to, tmp.path().join("x.restored-1"));
     assert_eq!(fs::read(orig.join("f")).unwrap(), b"new");
     assert_eq!(fs::read(to.join("f")).unwrap(), b"old");
+}
+
+/// The identity of what is at `path` now.
+fn id_of(path: &Path) -> Identity {
+    let m = meta(path).unwrap();
+    Identity {
+        dev: m.dev,
+        ino: m.ino,
+        kind: m.kind,
+        apparent: m.apparent,
+        mtime: m.mtime,
+    }
 }
 
 /// A plan item for the file or directory at `path`, with its identity as it is now.
@@ -38,16 +50,75 @@ fn item_at(path: &Path) -> PlanItem {
     PlanItem {
         node: tree.node_ref(root),
         path: path.into(),
-        identity: Identity {
-            dev: m.dev,
-            ino: m.ino,
-            kind: m.kind,
-            apparent: m.apparent,
-            mtime: m.mtime,
-        },
+        identity: id_of(path),
         bytes: 1,
         inside: std::sync::Arc::default(),
     }
+}
+
+/// An undo puts the staged item back where it was.
+#[cfg(unix)]
+#[test]
+fn a_staged_item_is_put_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("f");
+    fs::write(&f, b"x").unwrap();
+    let item = item_at(&f);
+    let mut s = Stager::new("s".into(), None);
+    let to = s.target(&item, tmp.path()).unwrap();
+    s.stage(&f, &item.identity, &to).unwrap();
+    assert_eq!(put_back(&to, &item.identity, &f).unwrap(), f);
+    assert_eq!(fs::read(&f).unwrap(), b"x");
+    assert!(!to.exists());
+}
+
+/// Something else put at the staged item's path, or the session directory replaced by another
+/// holding a file of the same name: the undo is refused and nothing moves.
+#[cfg(unix)]
+#[test]
+fn a_swapped_staged_item_is_not_put_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("f");
+    fs::write(&f, b"x").unwrap();
+    let item = item_at(&f);
+    let mut s = Stager::new("s".into(), None);
+    let to = s.target(&item, tmp.path()).unwrap();
+    s.stage(&f, &item.identity, &to).unwrap();
+
+    let aside = tmp.path().join("aside");
+    fs::rename(&to, &aside).unwrap();
+    fs::write(&to, b"planted").unwrap();
+    let e = put_back(&to, &item.identity, &f).unwrap_err();
+    assert!(e.to_string().contains("no longer"), "{e}");
+    assert!(!f.exists());
+    assert_eq!(fs::read(&to).unwrap(), b"planted");
+    fs::remove_file(&to).unwrap();
+    fs::rename(&aside, &to).unwrap();
+
+    let session = to.parent().unwrap();
+    let moved = tmp.path().join("moved");
+    fs::rename(session, &moved).unwrap();
+    fs::create_dir(session).unwrap();
+    fs::write(&to, b"planted").unwrap();
+    assert!(put_back(&to, &item.identity, &f).is_err());
+    assert!(!f.exists());
+    assert_eq!(fs::read(moved.join("1-f")).unwrap(), b"x");
+    // A symlink to where the session went is not followed either.
+    fs::remove_dir_all(session).unwrap();
+    std::os::unix::fs::symlink(&moved, session).unwrap();
+    assert!(put_back(&to, &item.identity, &f).is_err());
+    assert!(!f.exists());
+}
+
+/// A root dfdu puts back only from a staging directory of root's; any other process from any
+/// it can move out of.
+#[cfg(unix)]
+#[test]
+fn root_trusts_only_its_own_staging_directories() {
+    assert!(at::trusted(0, 0));
+    assert!(!at::trusted(0, 501));
+    assert!(at::trusted(501, 501));
+    assert!(at::trusted(501, 0));
 }
 
 #[cfg(unix)]

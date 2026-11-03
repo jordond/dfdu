@@ -316,7 +316,7 @@ impl State {
         for k in mine {
             let path = k.item.path.to_local();
             let result = match &k.staged {
-                Some(s) => crate::stage::put_back(s, &path),
+                Some(s) => crate::stage::put_back(s, &k.item.identity, &path),
                 None => crate::stage::restore_from_trash(&path, &k.item.identity, k.at),
             }
             .map_err(|e| e.to_string());

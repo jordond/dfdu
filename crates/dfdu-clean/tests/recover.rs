@@ -140,6 +140,40 @@ fn finish_leaves_a_swapped_stage_path_alone() {
     assert!(recover::scan(&state.join("ops")).unwrap().items.is_empty());
 }
 
+/// Restoring a staged item whose stage path now names something else is refused, moves
+/// nothing, and leaves the item restorable once it is back.
+#[test]
+fn restore_leaves_a_swapped_stage_path_alone() {
+    let tmp = canonical_tempdir();
+    let (root, state) = (tmp.path().join("tree"), tmp.path().join("state"));
+    let (tx, rx) = unbounded();
+    let d = spawn_deleter(Some(state.join("ops")), Duration::from_secs(3600), tx);
+    d.reqs.send(DeleterReq::Plan(plan(&root, 3))).unwrap();
+    until_done(&rx);
+    drop(d.reqs);
+    d.thread.join().unwrap();
+    let staged = staged_dir(&state);
+    assert_eq!(staged.len(), 1);
+    let aside = tmp.path().join("aside");
+    fs::rename(&staged[0], &aside).unwrap();
+    fs::create_dir(&staged[0]).unwrap();
+    fs::write(staged[0].join("planted"), b"p").unwrap();
+
+    let mut r = recover::scan(&state.join("ops")).unwrap();
+    assert_eq!(r.items.len(), 1);
+    let e = r.restore(0).unwrap_err();
+    assert!(e.to_string().contains("no longer"), "{e}");
+    assert!(!root.join("junk").exists());
+    assert!(staged[0].join("planted").exists());
+    drop(r);
+
+    fs::remove_dir_all(&staged[0]).unwrap();
+    fs::rename(&aside, &staged[0]).unwrap();
+    let mut r = recover::scan(&state.join("ops")).unwrap();
+    assert_eq!(r.restore(0).unwrap(), root.join("junk"));
+    assert!(root.join("junk/f2").exists());
+}
+
 /// Killed during a staged delete, the item is reported as partly deleted; it can
 /// be finished, never restored as if whole.
 #[test]

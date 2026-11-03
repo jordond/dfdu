@@ -365,7 +365,7 @@ impl Recovery {
                 _ => "not staged; nothing to restore",
             }));
         };
-        let to = crate::stage::put_back(stage, &u.path)?;
+        let to = crate::stage::put_back(stage, &identity(&u.rec), &u.path)?;
         record(
             &mut self.sessions[u.session].journal,
             &Record::Restored {
