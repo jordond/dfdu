@@ -1,0 +1,154 @@
+---
+// The GUI face: the landing page dressed as dfdu-gui, the desktop app. Hidden unless data-face="gui"
+// is on <html>; src/scripts/gui.ts drives the tabs, rows, filter and screenshot carousel.
+import { CASK, GUI_TABS, HERO, LATEST } from '../data/gui'
+import GuiDetails from './GuiDetails.astro'
+import Shot from './Shot.astro'
+
+const first = GUI_TABS[0]!
+const firstItem = first.sections[0]!.items[0]!
+---
+
+<div class="gui" id="gui" tabindex="-1" data-gtab={first.id}>
+  <svg class="gridbg" aria-hidden="true">
+    <defs>
+      <pattern id="dfgrid" width="32" height="32" patternUnits="userSpaceOnUse">
+        <path d="M32 0H0V32" fill="none" stroke="currentColor" stroke-width="1"></path>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#dfgrid)"></rect>
+  </svg>
+
+  <div class="toolbar">
+    <div class="crumbs"><span>dfdu.app</span><span aria-hidden="true">›</span><b id="gcrumb">{first.name}</b></div>
+    <div class="spacer"></div>
+    <div class="scan"><span class="dot" aria-hidden="true"></span><span>Scan done in 4.1 s · 412,388 items</span></div>
+    <div class="seg" role="group" aria-label="Size mode">
+      <button type="button" data-size-mode aria-pressed="true">Disk</button>
+      <button type="button" data-size-mode aria-pressed="false">Apparent</button>
+    </div>
+    <label class="field">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>
+      <span class="sr-only">Filter the list</span>
+      <input type="search" id="gfilter" placeholder="Filter  /" autocomplete="off" spellcheck="false" />
+    </label>
+  </div>
+
+  <nav class="gtabs" aria-label="Views">
+    {
+      GUI_TABS.map((t, i) => (
+        <button type="button" class="gtab" data-gtab-button={t.id} aria-controls={`gpane-${t.id}`} aria-pressed={i === 0 ? 'true' : 'false'}>
+          <span class="n">{i + 1}</span>
+          {t.name}
+        </button>
+      ))
+    }
+  </nav>
+
+  <div class="work">
+    <div class="col">
+      <section class="sheet ghero" aria-label="dfdu-gui" data-gtab-only="overview">
+        <div>
+          <h1>A disk usage browser for your desktop.</h1>
+          <p>
+            The same engine and cleanup rules as the terminal app, in a native window: watch the treemap fill in while
+            it scans, click into what is big, and move the rest to the Trash.
+          </p>
+          <div class="gact">
+            <a class="gbtn gbtn-p" href={LATEST}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"></path><path d="M7 10l5 5 5-5"></path><path d="M5 20h14"></path></svg>
+              Download for macOS
+            </a>
+            <button type="button" class="gbtn gbtn-s" data-copy={CASK}>{CASK}</button>
+          </div>
+          <div class="plat">
+            <span>Also for</span>
+            <button type="button" class="glink" data-gtab-link="download">Windows</button>
+            <button type="button" class="glink" data-gtab-link="download">Linux</button>
+            <span class="copied" role="status" hidden>Copied</span>
+          </div>
+        </div>
+        <div>
+          <div class="shotwin">
+            {
+              HERO.map((h, i) => (
+                <div class:list={['slide', { on: i === 0 }]} data-slide={i} aria-hidden={i === 0 ? undefined : 'true'}>
+                  <Shot shot={h.shot} />
+                </div>
+              ))
+            }
+          </div>
+          <div class="pills" role="group" aria-label="Screenshot">
+            {
+              HERO.map((h, i) => (
+                <button type="button" class="pill" data-pill={i} aria-pressed={i === 0 ? 'true' : 'false'}>
+                  {h.label}
+                </button>
+              ))
+            }
+            <span class="live">dfdu-gui 0.3.0 · demo home</span>
+          </div>
+        </div>
+      </section>
+
+      {
+        GUI_TABS.map((t, ti) => (
+          <section class="sheet glist" id={`gpane-${t.id}`} data-gpane={t.id} aria-label={t.name} hidden={ti !== 0}>
+            <div class="ghead" aria-hidden="true">
+              <span>{t.head[0]}</span>
+              <span>{t.head[1]}</span>
+            </div>
+            <div class="gscroll">
+              {t.sections.map((s, si) => (
+                <section class="ggroup" aria-label={s.label}>
+                  <div class="gsec" aria-hidden="true">
+                    <b>{s.label}</b>
+                    <span>{s.note}</span>
+                  </div>
+                  <ul>
+                    {s.items.map((it, ii) => {
+                      const id = `${si}-${ii}`
+                      return (
+                        <li>
+                          <button type="button" class="grow" data-grow={id} aria-current={si === 0 && ii === 0 ? 'true' : 'false'} aria-controls="gdetail">
+                            <span class="gname">
+                              <i class={`sw8 t-${it.tone}`} aria-hidden="true" />
+                              <span>{it.label}</span>
+                            </span>
+                            <span class="gcol">{it.col}</span>
+                          </button>
+                          <template id={`gdetail-${t.id}-${id}`}>
+                            <GuiDetails detail={it.detail} />
+                          </template>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              ))}
+              <p class="gempty" hidden>Nothing matches the filter.</p>
+            </div>
+          </section>
+        ))
+      }
+    </div>
+
+    <aside class="sheet gdet" aria-label="Details">
+      <span class="cap">Details</span>
+      <div id="gdetail" class="gdet-body">
+        <GuiDetails detail={firstItem.detail} />
+      </div>
+    </aside>
+  </div>
+
+  <footer class="status">
+    <span class="mono">Marked 0 B · nothing staged</span>
+    <div class="ghints">
+      <span><kbd class="kbd">↑↓</kbd>move</span>
+      <span><kbd class="kbd">1-3</kbd>views</span>
+      <span><kbd class="kbd">c</kbd>copy command</span>
+      <span><kbd class="kbd">t</kbd>theme</span>
+      <span><kbd class="kbd">m</kbd>switch to TUI</span>
+    </div>
+  </footer>
+</div>

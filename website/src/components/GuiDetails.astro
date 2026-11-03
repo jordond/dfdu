@@ -1,0 +1,33 @@
+---
+// The GUI face's Details sheet for one row; rendered into a <template> per row like Details.astro.
+import { type GuiDetail, LATEST } from '../data/gui'
+import Shot from './Shot.astro'
+
+interface Props {
+  detail: GuiDetail
+}
+
+const { detail: d } = Astro.props
+---
+
+<h2>{d.title}</h2>
+<span class="sub">{d.sub}</span>
+<hr />
+{d.lines.map((l) => <p class:list={[`t-${l.tone}`, { b: l.bold }]}>{l.t}</p>)}
+{
+  d.cmd && (
+    <button type="button" class="gcmd" data-copy={d.cmd}>
+      <span>{d.cmd}</span>
+      <i data-note aria-live="polite">Copy</i>
+    </button>
+  )
+}
+{
+  d.file && (
+    <a class="gcmd" href={LATEST}>
+      <span>{d.file}</span>
+      <i>Releases ↗</i>
+    </a>
+  )
+}
+{d.shot ? <Shot shot={d.shot} class="gshot" /> : <div class="ph">{d.placeholder}</div>}

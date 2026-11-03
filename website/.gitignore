@@ -4,6 +4,7 @@ dist/
 .wrangler/
 # Copied from ../assets by scripts/sync-assets.mjs.
 public/demos/
+public/gui/
 public/favicon.ico
 public/favicon.svg
 public/apple-touch-icon.png

@@ -1,12 +1,13 @@
-// Tabs, selection, copying, pausing and keys for the server-rendered landing page.
+// The TUI face: tabs, selection, copying, pausing and keys for the server-rendered landing page.
 
 import { BREW, REPO } from '../site'
+import { toggleFace } from './face'
 
 const THEMES = ['dark', 'black', 'light'] as const
-const COPIED_MS = 1600
+export const COPIED_MS = 1600
 
 /** Copies `text`, through a hidden textarea where the Clipboard API is missing or refused. */
-async function writeClipboard(text: string): Promise<boolean> {
+export async function writeClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
     return true
@@ -25,6 +26,16 @@ async function writeClipboard(text: string): Promise<boolean> {
     area.remove()
     return ok
   }
+}
+
+/** Dark, black, light, and round again; both faces follow it. */
+export function cycleTheme() {
+  const now = document.documentElement.dataset.theme as (typeof THEMES)[number]
+  const next = THEMES[(THEMES.indexOf(now) + 1) % THEMES.length]!
+  document.documentElement.dataset.theme = next
+  try {
+    localStorage.setItem('dfdu-theme', next)
+  } catch {}
 }
 
 export function start() {
@@ -107,15 +118,6 @@ export function start() {
     copiedTimer = window.setTimeout(() => (note.hidden = true), COPIED_MS)
   }
 
-  function cycleTheme() {
-    const now = document.documentElement.dataset.theme as (typeof THEMES)[number]
-    const next = THEMES[(THEMES.indexOf(now) + 1) % THEMES.length]!
-    document.documentElement.dataset.theme = next
-    try {
-      localStorage.setItem('dfdu-theme', next)
-    } catch {}
-  }
-
   function togglePause() {
     paused = !paused
     applyMotion()
@@ -151,6 +153,7 @@ export function start() {
     } else if (k === 'p') togglePause()
     else if (k === 'g') window.open(REPO, '_blank', 'noopener')
     else if (k === 't') cycleTheme()
+    else if (k === 'm') toggleFace()
     else return
     e.preventDefault()
   })

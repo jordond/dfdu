@@ -55,6 +55,7 @@ const ogImageAlt = 'The dfdu logo above the words "a disk usage browser for the 
       twitter={{ card: 'summary_large_image', title, description, image: ogImage, imageAlt: ogImageAlt }}
     />
     {jsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+    <slot name="head" />
   </head>
   <body>
     <slot />

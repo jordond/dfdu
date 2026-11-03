@@ -1,0 +1,27 @@
+---
+// A desktop app screenshot. Where there is a light theme version, both are rendered and CSS shows
+// the one for data-theme; lazy loading means the hidden one is never fetched.
+import { SHOT_HEIGHT, SHOT_WIDTH, type Shot } from '../data/gui'
+
+interface Props {
+  shot: Shot
+  class?: string
+}
+
+const { shot, class: cls } = Astro.props
+---
+
+<img
+  class:list={[cls, { 'lt-dark': !!shot.light }]}
+  src={shot.src}
+  alt={shot.alt}
+  width={SHOT_WIDTH}
+  height={SHOT_HEIGHT}
+  loading="lazy"
+  decoding="async"
+/>
+{
+  shot.light && (
+    <img class:list={[cls, 'lt-light']} src={shot.light} alt={shot.alt} width={SHOT_WIDTH} height={SHOT_HEIGHT} loading="lazy" decoding="async" />
+  )
+}

@@ -29,11 +29,25 @@
   --download: #f08040;
   --container: #f0e442;
   --other: #a8a8a8;
+  /* The desktop app's surfaces, for the GUI face (src/styles/gui.css). */
+  --surface: #262b35;
+  --raised: #2e3440;
+  --hover: #2b313c;
+  --divider: #363d4a;
+  --row-rule: #2e3440;
+  --focus: #88c0d0;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 :root[data-theme='black'] {
   --bg: #000000;
   --rule: #3b4252;
+  --surface: #0e1014;
+  --raised: #181b21;
+  --hover: #15181d;
+  --divider: #2b303a;
+  --row-rule: #1b1e24;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
 }
 
 :root[data-theme='light'] {
@@ -64,6 +78,13 @@
   --download: #b24700;
   --container: #766a00;
   --other: #666666;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --hover: #f3f5f8;
+  --divider: #dde1e8;
+  --row-rule: #eef0f3;
+  --focus: #2a6f97;
+  --shadow: 0 16px 40px rgba(20, 24, 32, 0.16);
 }
 
 .t-fg { color: var(--fg); }

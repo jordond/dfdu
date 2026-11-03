@@ -185,8 +185,8 @@ const SPECS: TabSpec[] = [
   {
     id: 'install', name: 'Install', band: 'Install · pick one', bandRight: '7 ways', count: '7',
     grid: 'minmax(0,1fr) 18ch', head: [{ t: '  method', align: 'left' }, { t: 'platform', align: 'right' }],
-    sumTitle: 'Release binaries', sumNote: 'every platform',
-    sum: 'Binaries for macOS, Linux (static) and Windows are on the releases page, with man pages and shell completions.',
+    sumTitle: 'Want the desktop app too?', sumNote: 'from 0.3.0',
+    sum: 'Add --gui to the install script, or brew install --cask jordond/tap/dfdu-gui. Press m to see the GUI.',
     specs: INSTALL,
   },
   {

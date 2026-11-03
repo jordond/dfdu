@@ -6,6 +6,6 @@ export const INSTALL_SH = 'curl -fsSL https://dfdu.app/install.sh | sh'
 /** A function, not a constant, so the client script can import this module. */
 export const isPreview = () => process.env.DFDU_SITE_ENV === 'preview'
 
-export const DEFAULT_TITLE = 'dfdu: a disk usage browser for the terminal'
+export const DEFAULT_TITLE = 'dfdu: a disk usage browser for the terminal and the desktop'
 export const DEFAULT_DESCRIPTION =
-  'dfdu is a fast disk usage browser for the terminal. Browse, sort and delete, see what your space is made of, and get a list of what is safe to remove. macOS, Linux and Windows.'
+  'dfdu is a fast disk usage browser for the terminal, with a desktop app. Browse, sort and delete, see what your space is made of, and get a list of what is safe to remove. macOS, Linux and Windows.'
