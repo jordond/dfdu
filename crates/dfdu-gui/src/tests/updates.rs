@@ -5,7 +5,7 @@
 use dfdu_session::startup::Source;
 use egui_kittest::kittest::Queryable;
 
-use super::{files, harness_with, local, shown, shown_part, until};
+use super::{files, harness_with, local, settle, shown, shown_part, until};
 use crate::launch::{self, Launch};
 use crate::settings::Prefs;
 
@@ -71,6 +71,12 @@ fn the_updates_window_opens_from_the_view_menu() {
         shown(h, "Could not check for updates")
     });
     assert!(shown(&h, "Try again"));
+    // The modal centres itself a frame after it grows (with the failed check, then with the
+    // command-line tool found): a click in that frame lands where the switch was.
+    until(&mut h, "the command-line tool looked for", |h| {
+        shown(h, "Not installed.") || shown_part(h, " is at ")
+    });
+    settle(&mut h);
 
     h.get_by_label("Check automatically").click();
     until(&mut h, "the switch", |h| {
