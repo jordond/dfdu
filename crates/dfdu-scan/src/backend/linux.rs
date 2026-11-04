@@ -123,6 +123,11 @@ fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta>
         }
         Err(rustix::io::Errno::NOSYS) => {
             let st = rustix::fs::statat(dir, name, flags)?;
+            #[allow(
+                clippy::useless_conversion,
+                reason = "st_nlink is u64 on x86_64 but u32 on aarch64"
+            )]
+            let nlink = u32::try_from(st.st_nlink).unwrap_or(u32::MAX);
             Ok(Meta {
                 kind: kind(FileType::from_raw_mode(st.st_mode)),
                 apparent: st.st_size.cast_unsigned(),
@@ -130,7 +135,7 @@ fn stat_at(dir: BorrowedFd<'_>, name: &CStr, flags: AtFlags) -> io::Result<Meta>
                 mtime: (st.st_mtime as i64).max(0),
                 dev: st.st_dev,
                 ino: st.st_ino,
-                nlink: u32::try_from(st.st_nlink).unwrap_or(u32::MAX),
+                nlink,
                 mount: 0,
             })
         }
