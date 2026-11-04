@@ -26,14 +26,18 @@
 //! the running jobs stop where they are, the scan is incomplete and
 //! [`Status::disconnected`](crate::Status) says why; nothing more is scanned.
 //!
+//! Listing on the agent's host, for a prompt that goes to a folder, is [`Lister`]'s.
+//!
 //! The other end is [`agent`]; the frames between them are [`wire`]'s.
 
 pub mod agent;
 pub mod wire;
 
 mod handshake;
+mod lister;
 mod process;
 
+pub use lister::{ListAnswer, Lister, MountsAnswer};
 pub use process::Process;
 
 pub(crate) use handshake::connect;
@@ -121,6 +125,10 @@ pub(crate) struct Link {
     /// Files sent to be measured and not answered yet, by round, node and inode, with how
     /// many times each was asked for.
     measuring: Mutex<HashMap<(u64, NodeRef, Inode), u32>>,
+    /// The id of the next listing asked for ([`Lister`]).
+    ask_id: AtomicU64,
+    /// Listings asked for and not answered yet, by id.
+    asked: Mutex<HashMap<u64, lister::Waiting>>,
 }
 
 impl Link {
@@ -440,6 +448,8 @@ pub(crate) fn spawn_reader<S: Sink + Send + Sync + 'static>(
         link.dead.store(true, SeqCst);
         link.end_plans(&answers.deleted);
         link.end_measures(&answers.measured);
+        // Their channels disconnect: no answer is coming.
+        link.asked.lock().clear();
         if !stop.load(SeqCst) {
             *link.lost.lock() = Some(why);
             on_end();
@@ -494,6 +504,8 @@ fn pump(link: &Link, r: &mut impl Read, sink: &impl Sink, answers: &Answers) -> 
                     let _ = answers.measured.send(msgs);
                 }
             }
+            Ok(FromAgent::Listed { id, result }) => link.answer_listed(id, result),
+            Ok(FromAgent::Mounts { id, result }) => link.answer_mounts(id, result),
             Ok(FromAgent::Fatal(s)) => return format!("the agent stopped: {s}"),
             Err(e) => return e.to_string(),
         }

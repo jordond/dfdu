@@ -10,6 +10,7 @@ use super::jobs::{
     dec_check_msg, dec_check_req, dec_measure_msg, dec_measure_req, enc_check_msg, enc_check_req,
     enc_measure_msg, enc_measure_req,
 };
+use super::listing::{dec_entries, dec_mounts, dec_result, enc_entries, enc_mounts, enc_result};
 use super::scan::{dec_msg, dec_wclass, enc_msg, enc_wclass};
 use super::{FromAgent, ToAgent};
 
@@ -26,6 +27,8 @@ mod up {
     pub const CHECKED: u8 = 8;
     pub const HOST: u8 = 9;
     pub const MEASURED: u8 = 10;
+    pub const LISTED: u8 = 11;
+    pub const MOUNTS: u8 = 12;
 }
 
 /// The first byte of each [`ToAgent`] message.
@@ -40,6 +43,8 @@ mod down {
     pub const ABORT_DELETE: u8 = 7;
     pub const CHECK: u8 = 8;
     pub const MEASURE: u8 = 9;
+    pub const LIST: u8 = 10;
+    pub const MOUNTS: u8 = 11;
 }
 
 impl FromAgent {
@@ -115,6 +120,16 @@ impl FromAgent {
                 e.u8(up::MEASURED);
                 e.list(msgs, enc_measure_msg);
             }
+            FromAgent::Listed { id, result } => {
+                e.u8(up::LISTED);
+                e.var(*id);
+                enc_result(&mut e, result, |e, v| enc_entries(e, v));
+            }
+            FromAgent::Mounts { id, result } => {
+                e.u8(up::MOUNTS);
+                e.var(*id);
+                enc_result(&mut e, result, |e, v| enc_mounts(e, v));
+            }
         }
         e.0
     }
@@ -159,6 +174,14 @@ impl FromAgent {
                 root: d.bytes()?.to_vec(),
             },
             up::MEASURED => FromAgent::Measured(d.list(4, dec_measure_msg)?),
+            up::LISTED => FromAgent::Listed {
+                id: d.var()?,
+                result: dec_result(&mut d, dec_entries)?,
+            },
+            up::MOUNTS => FromAgent::Mounts {
+                id: d.var()?,
+                result: dec_result(&mut d, dec_mounts)?,
+            },
             up::RULES => {
                 let platform = d.text()?;
                 let mut pairs = || d.list(2, |d| Ok((d.text()?, d.text()?)));
@@ -242,6 +265,15 @@ impl ToAgent {
                 e.u8(down::MEASURE);
                 e.list(reqs, enc_measure_req);
             }
+            ToAgent::List { id, path } => {
+                e.u8(down::LIST);
+                e.var(*id);
+                e.bytes(path);
+            }
+            ToAgent::Mounts { id } => {
+                e.u8(down::MOUNTS);
+                e.var(*id);
+            }
         }
         e.0
     }
@@ -286,6 +318,13 @@ impl ToAgent {
             down::ABORT_DELETE => ToAgent::AbortDelete,
             down::CHECK => ToAgent::Check(d.list(2, |d| dec_check_req(d, rules))?),
             down::MEASURE => ToAgent::Measure(d.list(3, dec_measure_req)?),
+            // The agent answers a path it cannot list with why, so the path is not checked
+            // here: refusing it would end the link.
+            down::LIST => ToAgent::List {
+                id: d.var()?,
+                path: d.bytes()?.to_vec(),
+            },
+            down::MOUNTS => ToAgent::Mounts { id: d.var()? },
             down::RULES => ToAgent::Rules {
                 files: d.list(2, |d| Ok((d.opt("rule file name", Dec::text)?, d.text()?)))?,
                 root: d.bytes()?.to_vec(),

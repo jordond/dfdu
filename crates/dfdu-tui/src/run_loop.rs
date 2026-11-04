@@ -8,7 +8,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, select};
-use dfdu_engine::Engine;
+use dfdu_engine::{Engine, Scanned};
 use dfdu_session::effect::Output;
 use dfdu_session::{Session, SessionOptions};
 use dfdu_tree::HostPath;
@@ -79,12 +79,15 @@ where
     T: ratatui::backend::Backend<Error = io::Error>,
     B: dfdu_scan::Backend,
 {
-    let opened = event_loop_opening(terminal, engine, &input, ui, |_, path| Ok(Ok(path.clone())))?;
+    let opened = event_loop_opening(terminal, engine, &input, ui, |_, path, _| {
+        Ok(Ok(path.clone()))
+    })?;
     Ok(opened.map_or(Exit::Quit, Exit::Reopen))
 }
 
 /// [`event_loop_with`], opening the scan of a path outside this one with `open` while this one
-/// still runs: what it opened is returned, or what went wrong with the scan is shown on the
+/// still runs, given what this scan read when the path is above its root
+/// ([`Session::scanned`]): what it opened is returned, or what went wrong with the scan is shown on the
 /// status line and the loop goes on. An error of `open`'s own (the terminal could not be taken
 /// back) ends the loop with it.
 pub(crate) fn event_loop_opening<T, B, N>(
@@ -92,7 +95,7 @@ pub(crate) fn event_loop_opening<T, B, N>(
     engine: &Engine<B>,
     input: &Receiver<Event>,
     ui: UiOptions,
-    mut open: impl FnMut(&mut Terminal<T>, &HostPath) -> io::Result<Result<N, String>>,
+    mut open: impl FnMut(&mut Terminal<T>, &HostPath, Option<Scanned>) -> io::Result<Result<N, String>>,
 ) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
@@ -120,7 +123,7 @@ fn run<T, B, N>(
     session: &mut Session<'_, B, App>,
     input: &Receiver<Event>,
     mouse_on: bool,
-    open: &mut impl FnMut(&mut Terminal<T>, &HostPath) -> io::Result<Result<N, String>>,
+    open: &mut impl FnMut(&mut Terminal<T>, &HostPath, Option<Scanned>) -> io::Result<Result<N, String>>,
 ) -> io::Result<Option<N>>
 where
     T: ratatui::backend::Backend<Error = io::Error>,
@@ -133,8 +136,10 @@ where
     loop {
         let now = Instant::now();
         let tick = session.tick(now)?;
+        // What the scanned host answered the go-to prompt, which the tick took in.
+        let answered = goto::poll(session.front_mut());
         let motion_due = (session.front().motion.next_frame_at()).is_some_and(|t| now >= t);
-        if tick.changed || input_dirty || motion_due {
+        if tick.changed || answered || input_dirty || motion_due {
             let drawing = Instant::now();
             let app = session.front_mut();
             terminal.draw(|f| view::draw(f, app, now))?;
@@ -147,7 +152,8 @@ where
             return Ok(None);
         }
         if let Some(path) = session.front_mut().reopen.take() {
-            match open(terminal, &path)? {
+            let scanned = session.scanned(&path);
+            match open(terminal, &path, scanned)? {
                 Ok(opened) => return Ok(Some(opened)),
                 Err(e) => {
                     session.front_mut().session.status = Some(e);

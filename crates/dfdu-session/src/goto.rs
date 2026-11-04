@@ -1,14 +1,21 @@
 //! Go to a folder: a path typed in a prompt, resolved against the directory shown
 //! ([`resolve`]), and the completion of its last component from the directories on the scanned
-//! host ([`complete`]). A path inside the scan is opened there once the tree has a folder at
-//! it ([`reach`]); one outside it is a new scan, which the front end opens ([`go`]). Going up
-//! from the scan root is one too: the first `Parent` there only says so, a second soon after
-//! opens the parent ([`up_at_root`]).
+//! host ([`complete`]; asked of the agent on another host's scan, [`tab`]), and the host's
+//! mounts while nothing or only the root is typed ([`wants_mounts`]). A path inside the scan
+//! is opened there once the tree has a folder at it ([`reach`]); one outside it is a new
+//! scan, which the front end opens ([`go`]). Going up from the scan root is one too: the
+//! first `Parent` there only says so, a second soon after opens the parent ([`up_at_root`]).
 //!
 //! Paths are resolved lexically: `.` and `..` are dropped and taken off, links are not
 //! followed. `~` is the home directory on a scan of this machine. On a Windows host a path
 //! that starts with one separator is on the drive of the directory shown, and names compare
 //! without regard to ASCII case, as the file system does.
+
+mod ask;
+mod query;
+
+pub use ask::{Asking, Mount, Offer, edited, tab, take_answer, wants_mounts};
+pub use query::{Query, complete};
 
 use std::collections::HashSet;
 use std::io;
@@ -251,63 +258,6 @@ fn normal(p: &HostPath) -> HostPath {
     out
 }
 
-/// Completes the last component of `input` (seen from `current`, as [`resolve`] reads it)
-/// from the directories `list` finds in the directory before it. Names starting with `.` are
-/// offered only when what was typed of the last component starts with `.`.
-pub fn complete(
-    input: &str,
-    current: &HostPath,
-    home: Option<&Path>,
-    local: bool,
-    list: impl Fn(&HostPath) -> io::Result<Vec<String>>,
-) -> Completion {
-    let host = current.host();
-    let cut = input
-        .bytes()
-        .rposition(|b| host.is_sep(b))
-        .map_or(0, |i| i + 1);
-    let (dir_text, typed) = input.split_at(cut);
-    let dir = if dir_text.is_empty() {
-        Ok(current.clone())
-    } else {
-        absolute(dir_text, current, home, local)
-    };
-    let Ok(names) = dir.and_then(|d| list(&d).map_err(|e| e.to_string())) else {
-        return Completion::default();
-    };
-    let mut found: Vec<String> = (names.into_iter())
-        .filter(|n| n.starts_with(typed) && (typed.starts_with('.') || !n.starts_with('.')))
-        .collect();
-    found.sort();
-    let sep = char::from(host.sep());
-    match found.as_slice() {
-        [] => Completion::default(),
-        [one] => Completion {
-            text: Some(format!("{dir_text}{one}{sep}")),
-            candidates: Vec::new(),
-        },
-        [first, rest @ ..] => {
-            let mut common = first.len();
-            for n in rest {
-                common = common.min(shared(first, n));
-            }
-            let common = &first[..common];
-            Completion {
-                text: (common.len() > typed.len()).then(|| format!("{dir_text}{common}")),
-                candidates: found,
-            }
-        }
-    }
-}
-
-/// The length in bytes of the prefix `a` and `b` share, on a character boundary.
-fn shared(a: &str, b: &str) -> usize {
-    (a.char_indices())
-        .zip(b.chars())
-        .find(|((_, x), y)| x != y)
-        .map_or(a.len().min(b.len()), |((i, _), _)| i)
-}
-
 /// The directories in `dir` on this machine, by name; names that are not UTF-8 cannot be typed
 /// and are left out. Links to directories count as directories.
 ///
@@ -339,15 +289,6 @@ pub fn prefill(s: &SessionState) -> String {
         text.push(char::from(dir.host().sep()));
     }
     text
-}
-
-/// [`complete`] for the browser `s`: from this machine's directories on a scan of this machine,
-/// and nothing on another host's scan, whose directories cannot be listed from here.
-pub fn complete_in(s: &SessionState, input: &str) -> Completion {
-    if !s.outside.local {
-        return Completion::default();
-    }
-    complete(input, &s.snap.dir_path, s.home.as_deref(), true, list_local)
 }
 
 /// What `tree` has at `path`, inside its scan: the folder as the tree spells it, a file, a
@@ -467,6 +408,33 @@ pub fn up_at_root(s: &mut SessionState, armed: Option<Instant>, now: Instant) ->
     s.status = Some(notice.clone());
     s.up_armed = Some(Armed { at: now, notice });
     None
+}
+
+/// The scan root is shown, its scan is over and it holds nothing: the list says so, and how
+/// to go up or elsewhere.
+#[must_use]
+pub fn empty_root(s: &SessionState) -> bool {
+    let snap = &s.snap;
+    snap.dir_node.is_some()
+        && snap.dir_path == snap.root_path
+        && snap.entries.is_empty()
+        && !snap.busy
+        && !matches!(
+            snap.dir_mark,
+            Some(
+                Mark::Scanning | Mark::Rescanning | Mark::Stalled | Mark::Error | Mark::Incomplete
+            )
+        )
+}
+
+/// The name in the scan root of the entry on the way to `from`, the root of the scan this one
+/// was opened from going up ([`SessionState::came_from`]): `None` when `from` is not below
+/// `root`.
+#[must_use]
+pub fn came_from_name(from: &HostPath, root: &HostPath) -> Option<Vec<u8>> {
+    let inside = below(from, root)?;
+    let rel = inside.rel(root)?;
+    rel.into_iter().next().map(<[u8]>::to_vec)
 }
 
 #[cfg(test)]

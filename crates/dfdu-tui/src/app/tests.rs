@@ -41,6 +41,7 @@ fn the_ui_options_it_owns_are_set_by_the_constructor() {
         from_file: true,
         elevated: true,
         notice: Some("the scan cache is not used".into()),
+        came_from: Some(dfdu_tree::HostPath::from("/mnt/cache")),
         ..crate::UiOptions::from_env()
     };
     let app = App::with_options(&ui, Instant::now());
@@ -51,4 +52,5 @@ fn the_ui_options_it_owns_are_set_by_the_constructor() {
     assert_eq!(app.session.from_file, Some(dfdu_session::goto::FROM_FILE));
     assert!(app.session.elevated);
     assert_eq!(app.session.status, ui.notice);
+    assert_eq!(app.session.came_from, ui.came_from);
 }

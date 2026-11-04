@@ -133,6 +133,7 @@ impl App {
         s.elevated = ui.elevated;
         s.status.clone_from(&ui.notice);
         s.outside.local = ui.local;
+        s.came_from.clone_from(&ui.came_from);
         app
     }
 

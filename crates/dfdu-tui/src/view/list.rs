@@ -69,10 +69,11 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
     let mut lines = Vec::with_capacity(height);
     if rows == 0 && app.session.list.new_count == 0 {
         let msg = match app.session.snap.dir_mark {
-            Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "  (scanning…)",
-            Some(Mark::Error) => "  (could not be read)",
-            Some(Mark::Incomplete) => "  (incomplete: press r to rescan)",
-            _ => "  (empty)",
+            Some(Mark::Scanning | Mark::Rescanning | Mark::Stalled) => "  (scanning…)".into(),
+            Some(Mark::Error) => "  (could not be read)".into(),
+            Some(Mark::Incomplete) => "  (incomplete: press r to rescan)".into(),
+            _ if dfdu_session::goto::empty_root(&app.session) => empty_root(&app.session),
+            _ => "  (empty)".into(),
         };
         lines.push(Line::styled(msg, t.fg_dim));
     }
@@ -119,6 +120,21 @@ pub fn draw(f: &mut Frame, app: &mut App, head: Rect, area: Rect, now: Instant, 
             .thumb_style(t.fg_dim);
         f.render_stateful_widget(bar, area, &mut state);
     }
+}
+
+/// What the list says when the scan root finished empty: so, and, unless the scan was read
+/// from a file or is of the root of the filesystem, the keys that scan its parent or go to
+/// another folder.
+fn empty_root(s: &dfdu_session::SessionState) -> String {
+    use dfdu_session::actions::{Action, first_key};
+    if s.from_file.is_some() || s.snap.root_path.parent().is_none() {
+        return "  This folder is empty".into();
+    }
+    format!(
+        "  This folder is empty: press {} twice to scan its parent, or {} to go to a folder",
+        first_key(Action::Parent),
+        first_key(Action::GoTo)
+    )
 }
 
 /// The cells before the name column of `cols`.

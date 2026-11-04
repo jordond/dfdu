@@ -231,6 +231,44 @@ fn sample() -> Vec<FromAgent> {
             fingerprint: u64::MAX - 3,
             root: class(rule),
         },
+        FromAgent::Listed {
+            id: u64::MAX,
+            result: Ok(vec![
+                ListEntry {
+                    name: b"sub\xff".to_vec(),
+                    dir: true,
+                },
+                ListEntry {
+                    name: b"file".to_vec(),
+                    dir: false,
+                },
+            ]),
+        },
+        FromAgent::Listed {
+            id: 0,
+            result: Err("permission denied".into()),
+        },
+        FromAgent::Mounts {
+            id: 3,
+            result: Ok(vec![
+                HostMount {
+                    point: b"/mnt/disk1".to_vec(),
+                    fstype: "xfs".into(),
+                    used: Some(7 << 30),
+                    total: Some(1 << 40),
+                },
+                HostMount {
+                    point: b"/mnt/remote".to_vec(),
+                    fstype: "nfs4".into(),
+                    used: None,
+                    total: None,
+                },
+            ]),
+        },
+        FromAgent::Mounts {
+            id: 4,
+            result: Err("no mount table".into()),
+        },
         FromAgent::Host {
             measure_min: 1 << 20,
             privileged: true,
@@ -393,6 +431,11 @@ fn messages_round_trip() {
             job: JobId(1),
             dir: DirId(3),
         },
+        ToAgent::List {
+            id: 9,
+            path: b"/mnt/\xffdisk".to_vec(),
+        },
+        ToAgent::Mounts { id: u64::MAX },
     ];
     for d in downs {
         let bytes = d.encode();

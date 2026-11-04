@@ -22,6 +22,7 @@ pub(super) fn link(tmp: &Path) -> CacheLink {
         path: dir,
         job: JobOptions::default(),
         save: true,
+        sent: None,
     }
 }
 
@@ -300,4 +301,90 @@ fn measure_opening_a_million() {
     );
     drop(c);
     e.shutdown(Duration::from_millis(500));
+}
+
+/// Where the old scan's journal stood in the tests of a kept scan below.
+const BEFORE: JournalPosition = JournalPosition {
+    volume: [2; 16],
+    event_id: 3,
+    time: 4,
+};
+
+/// Runs a scan sent with another scan's tree as `sent` says, with the real threshold for
+/// saving, to its end: whether it was saved, and the cached header when it was.
+fn kept_run(sent: Sent) -> (Cacher, Option<Header>) {
+    let tmp = tempfile::tempdir().unwrap();
+    let link = CacheLink {
+        sent: Some(sent),
+        ..link(tmp.path())
+    };
+    let e = Engine::portable(2);
+    e.send(Command::Scan {
+        path: link.path.as_path().into(),
+        opts: link.job.clone(),
+    });
+    let mut s = SessionState::new(Instant::now());
+    let mut c = cacher(&link);
+    c.min_scan_ms = MIN_SCAN_MS;
+    poll_until(&mut c, &mut s, &e, |c, _| {
+        c.writer.is_none()
+            && c.run
+                .as_ref()
+                .is_some_and(|r| r.saved_as != SavedAs::Pending)
+    });
+    assert_eq!(
+        e.read(|m| m.status.jobs.len()),
+        1,
+        "the cacher sent no scan of its own"
+    );
+    let hit = link.slot.load(cache::now()).unwrap();
+    e.shutdown(Duration::from_millis(200));
+    (c, hit.map(|h| h.loaded.header))
+}
+
+/// A scan sent when the session started, keeping another scan's tree, is not sent again, and
+/// is saved as read in full when that tree was, with the journal position from before it
+/// was read and the time both scans took: its next opening scans it all again.
+#[test]
+fn a_scan_sent_with_another_scans_tree_is_saved_as_read_when_that_was() {
+    let (c, header) = kept_run(Sent {
+        journal: Some(BEFORE),
+        full_scan: Some(5),
+        kept_ms: MIN_SCAN_MS,
+    });
+    assert_eq!(c.full_scan(), Some(5));
+    let h = header.expect("saved");
+    assert_eq!(h.last_full_scan, 5);
+    assert_eq!(h.journal, Some(BEFORE), "the old scan's position");
+    assert!(h.scan_ms >= MIN_SCAN_MS, "{}", h.scan_ms);
+    assert_eq!(
+        c.journal(),
+        Some(BEFORE),
+        "passed on to a scan that keeps this one"
+    );
+    assert!(c.took_ms() >= MIN_SCAN_MS);
+}
+
+/// A kept tree with no journal position from before it was read is not saved: a file changed
+/// in place since would keep its old size in the cache.
+#[test]
+fn a_scan_keeping_a_tree_with_no_journal_position_is_not_saved() {
+    let (c, header) = kept_run(Sent {
+        journal: None,
+        full_scan: Some(5),
+        kept_ms: MIN_SCAN_MS,
+    });
+    assert!(header.is_none(), "{header:?}");
+    assert_eq!(c.run.as_ref().map(|r| r.saved_as), Some(SavedAs::Skip));
+}
+
+/// A kept tree read quickly, brought up to date quickly, is as quick to scan again.
+#[test]
+fn a_quick_scan_keeping_a_quick_scans_tree_is_not_saved() {
+    let (_, header) = kept_run(Sent {
+        journal: Some(BEFORE),
+        full_scan: Some(5),
+        kept_ms: 0,
+    });
+    assert!(header.is_none(), "{header:?}");
 }

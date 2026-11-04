@@ -103,6 +103,13 @@ pub struct SessionState {
     /// parent ([`crate::goto::up_at_root`]). Any other input clears it ([`SessionState::disarm`]),
     /// and so does a tick after it expired ([`SessionState::expire_arm`]).
     pub up_armed: Option<crate::goto::Armed>,
+    /// What the go-to prompt asked the scanned host for, and its answer ([`crate::goto::tab`]).
+    pub goto: crate::goto::Asking,
+    /// The root of the scan this one was opened from, going up or to a folder above it: the
+    /// entry of the scan root on the way to it is selected once the root lists it
+    /// ([`crate::goto::came_from_name`]). Cleared then, or once another directory is shown
+    /// or the user moves.
+    pub came_from: Option<dfdu_tree::HostPath>,
     /// When the rows are sorted again.
     pub sort_schedule: SortSchedule,
     /// The Map view's depth and colouring.
@@ -159,6 +166,8 @@ impl SessionState {
             from_file: None,
             elevated: false,
             up_armed: None,
+            goto: crate::goto::Asking::default(),
+            came_from: None,
             sort_schedule: SortSchedule::new(now),
             map: MapState::default(),
             cleanup: Cleanup::default(),
@@ -204,6 +213,7 @@ impl SessionState {
     /// Records user input at `now`: automatic re-sorts wait until the user is idle.
     pub fn note_input(&mut self, now: Instant) {
         self.sort_schedule.note_input(now);
+        self.came_from = None;
     }
 
     /// Input other than an action (a click, a key an overlay or the filter took): a first
@@ -211,6 +221,7 @@ impl SessionState {
     /// Its notice leaves the status line unless something else replaced it.
     pub fn disarm(&mut self) {
         let _ = self.take_arm();
+        self.came_from = None;
     }
 
     /// Disarms a first `Parent` at the scan root, as [`SessionState::disarm`], and returns when

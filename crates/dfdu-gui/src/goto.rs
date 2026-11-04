@@ -1,13 +1,15 @@
 //! Go to folder (Cmd-L or Cmd-Shift-G, Ctrl-L or Ctrl-Shift-G elsewhere, the registry's
 //! `Ctrl-G` and the command palette): a path typed in a field that starts with the directory
-//! shown. `Tab` completes its last component from the directories on this machine (a scan of
-//! another computer shows none), and when several match they are listed below the field, each
-//! one a link that completes to it. `Enter` goes there, in the scan when it is inside it and as
+//! shown. `Tab` completes its last component from the directories on the scanned computer
+//! (another computer's are asked of its agent and listed when they arrive, [`poll`]), and when
+//! several match they are listed below the field, each one a link that completes to it. With
+//! nothing or only the root typed, the computer's mounts are listed instead, each a link that
+//! puts it in the field. `Enter` goes there, in the scan when it is inside it and as
 //! a new scan otherwise; what is wrong with the path is shown below the field, which keeps the
 //! keyboard. `Esc` closes it. How paths resolve is in `dfdu_session::goto`.
 
 use dfdu_session::SessionState;
-use dfdu_session::goto::{self as session, Completion, Gone};
+use dfdu_session::goto::{self as session, Completion, Gone, Mount, Offer};
 use dfdu_session::palette::Token;
 use dfdu_tree::Host;
 use egui::text::{CCursor, CCursorRange};
@@ -24,6 +26,8 @@ const FIELD: &str = "dfdu-goto";
 const WIDTH: f32 = 560.0;
 /// Directory names listed at most after a `Tab` that found several.
 const SHOWN: usize = 8;
+/// Mounts listed at most.
+const MOUNTS_SHOWN: usize = 12;
 
 /// What the window says of a scan read from a file when something outside it is asked for
 /// ([`SessionState::from_file`]): a scan read from a file is left from the start screen, not
@@ -36,6 +40,10 @@ pub struct GoTo {
     pub text: String,
     /// The names the last `Tab` found, when it found several.
     pub candidates: Vec<String>,
+    /// The computer's mounts, while nothing or only the root is typed.
+    pub mounts: Vec<Mount>,
+    /// The computer was asked and has not answered yet.
+    pub asking: bool,
     /// What is wrong with the path the last `Enter` tried, or that `Tab` found nothing.
     pub error: Option<String>,
     /// The field gets the keyboard, with the cursor at the end, in the next frame.
@@ -49,6 +57,22 @@ impl GoTo {
             text: session::prefill(s),
             focus: true,
             ..GoTo::default()
+        }
+    }
+
+    /// Takes in what the computer offers for the text: what a `Tab` completed, its mounts,
+    /// or why it could not say.
+    pub fn offered(&mut self, offer: Offer) {
+        self.asking = false;
+        self.mounts.clear();
+        match offer {
+            Offer::Completed(c) => self.completed(c),
+            Offer::Mounts(m) => {
+                self.candidates.clear();
+                self.error = None;
+                self.mounts = m;
+            }
+            Offer::Failed(why) => self.failed(why),
         }
     }
 
@@ -67,9 +91,23 @@ impl GoTo {
     /// Completes the text to `name`, one of the candidates: the folder below the one typed.
     pub fn choose(&mut self, name: &str, host: Host) {
         self.text = with_name(&self.text, name, host);
-        self.candidates.clear();
-        self.error = None;
+        self.edited();
         self.focus = true;
+    }
+
+    /// Puts the mount `m`, one of those listed, in the field.
+    pub fn choose_mount(&mut self, m: &Mount, host: Host) {
+        self.text = m.text(host);
+        self.edited();
+        self.focus = true;
+    }
+
+    /// Clears what was shown for the text before it changed.
+    fn edited(&mut self) {
+        self.candidates.clear();
+        self.mounts.clear();
+        self.asking = false;
+        self.error = None;
     }
 
     /// Takes in what `Enter` found wrong with the path; the field keeps the keyboard.
@@ -105,6 +143,47 @@ pub fn gone_to(front: &mut Front, gone: Result<Gone, String>) {
                 g.failed(why);
             }
         }
+    }
+}
+
+/// `Tab` in the window with `text`: the completion or mounts at once, or asked for
+/// ([`poll`]).
+pub fn tab(front: &mut Front, text: &str) {
+    let offer = session::tab(&mut front.state, text);
+    let pending = front.state.goto.pending();
+    if let Some(g) = &mut front.view.goto {
+        match offer {
+            Some(offer) => g.offered(offer),
+            None => {
+                g.edited();
+                g.asking = pending;
+            }
+        }
+        g.focus = true;
+    }
+}
+
+/// The window's text changed to `text`, or it opened with it: the mounts are asked for when
+/// nothing or only the root is typed.
+pub fn edited(front: &mut Front, text: &str) {
+    session::edited(&mut front.state, text);
+    if let Some(g) = &mut front.view.goto {
+        g.asking = front.state.goto.pending();
+    }
+}
+
+/// Takes in what the computer answered for the window's text, once the session has it.
+pub fn poll(front: &mut Front) {
+    let Some(g) = &mut front.view.goto else {
+        if front.state.goto.pending() {
+            front.state.goto.clear();
+        }
+        return;
+    };
+    match session::take_answer(&mut front.state, &g.text) {
+        Some(offer) => g.offered(offer),
+        None if g.asking && !front.state.goto.pending() => g.asking = false,
+        None => {}
     }
 }
 
@@ -146,7 +225,7 @@ pub fn show(
             // Tab completes; it does not move the keyboard to another widget.
             let focused = ui.memory(|m| m.has_focus(field_id));
             if focused && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
-                g.completed(session::complete_in(s, &g.text));
+                out.push(Intent::GoToTab(g.text.clone()));
             }
             let width = ui.available_width();
             let hint = "Type the path of a folder";
@@ -165,8 +244,8 @@ pub fn show(
                 cursor_to_end(ui.ctx(), field_id, &g.text);
             }
             if r.changed() {
-                g.candidates.clear();
-                g.error = None;
+                g.edited();
+                out.push(Intent::GoToEdited(g.text.clone()));
             }
             if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 out.push(Intent::GoToFolder(g.text.clone()));
@@ -178,11 +257,32 @@ pub fn show(
             let dim = colors.fg(Token::FgDim);
             if let Some(e) = &g.error {
                 ui.label(kit::sans(e.as_str(), 12.0).color(colors.fg(Token::StatusWarn)));
+            } else if !g.mounts.is_empty() {
+                let mut chosen = None;
+                for m in g.mounts.iter().take(MOUNTS_SHOWN) {
+                    ui.horizontal(|ui| {
+                        let link = egui::Link::new(kit::mono(m.point.as_str(), 12.0).color(dim));
+                        if ui.add(link).clicked() {
+                            chosen = Some(m.clone());
+                        }
+                        ui.label(kit::sans(m.note(), 12.0).color(dim));
+                    });
+                }
+                if g.mounts.len() > MOUNTS_SHOWN {
+                    let more = g.mounts.len() - MOUNTS_SHOWN;
+                    ui.label(kit::sans(format!("and {more} more"), 12.0).color(dim));
+                }
+                if let Some(m) = chosen {
+                    g.choose_mount(&m, host);
+                    out.push(Intent::GoToEdited(g.text.clone()));
+                }
+            } else if g.asking {
+                ui.label(kit::sans("Asking the computer…", 12.0).color(dim));
             } else if g.candidates.is_empty() {
-                let note = if s.outside.local {
+                let note = if s.from_file.is_none() {
                     "Tab completes · Enter goes there · a folder outside the scan is scanned"
                 } else {
-                    "Enter goes there · a folder outside the scan is scanned"
+                    "Enter goes there"
                 };
                 ui.label(kit::sans(note, 12.0).color(dim));
             } else {
@@ -199,6 +299,7 @@ pub fn show(
                 }
                 if let Some(name) = chosen {
                     g.choose(&name, host);
+                    out.push(Intent::GoToEdited(g.text.clone()));
                 }
             }
         });
@@ -290,6 +391,63 @@ mod tests {
         let g = f.view.goto.as_ref().expect("still open");
         assert_eq!(g.error.as_deref(), Some("no such folder: /x"));
         assert!(g.focus);
+    }
+
+    #[test]
+    fn what_the_computer_offers_replaces_what_was_shown() {
+        let mut g = GoTo::default();
+        let disk = Mount {
+            point: "/mnt/disk1".into(),
+            fstype: "xfs".into(),
+            used: None,
+            total: None,
+        };
+        g.offered(Offer::Mounts(vec![disk.clone()]));
+        assert_eq!(g.mounts, std::slice::from_ref(&disk));
+        g.choose_mount(&disk, Host::Unix);
+        assert_eq!(g.text, "/mnt/disk1/");
+        assert!(g.mounts.is_empty() && g.focus);
+        g.asking = true;
+        g.offered(Offer::Failed("permission denied".into()));
+        assert!(!g.asking);
+        assert_eq!(g.error.as_deref(), Some("permission denied"));
+    }
+
+    /// An empty field on a scan of this machine lists its mounts once they are read, off the
+    /// frame; the answer goes into the window when the session has it.
+    #[test]
+    fn an_empty_field_lists_the_mounts_when_they_arrive() {
+        let mut f = front("");
+        f.state.outside.local = true;
+        edited(&mut f, "");
+        assert!(f.view.goto.as_ref().is_some_and(|g| g.asking));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !f.state.goto.poll() {
+            assert!(
+                std::time::Instant::now() < until,
+                "the mounts were not read"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        poll(&mut f);
+        let g = f.view.goto.as_ref().expect("open");
+        assert!(!g.asking);
+        assert!(g.error.is_none() || g.mounts.is_empty());
+
+        // A window closed meanwhile drops the ask.
+        edited(&mut f, "/");
+        f.view.goto = None;
+        poll(&mut f);
+        assert!(!f.state.goto.pending());
+    }
+
+    #[test]
+    fn a_tab_on_a_scan_read_from_a_file_finds_nothing() {
+        let mut f = front("/r/a");
+        f.state.snap.dir_path = HostPath::from("/r");
+        tab(&mut f, "/r/a");
+        let g = f.view.goto.as_ref().expect("open");
+        assert!(!g.asking && g.error.is_some());
     }
 
     #[test]

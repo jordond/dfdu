@@ -189,7 +189,9 @@ impl SessionState {
             finished,
             changed,
         };
-        self.update_order(Some(folded), old_index, now, hold)
+        let reordered = self.update_order(Some(folded), old_index, now, hold);
+        self.select_came_from();
+        reordered
     }
 
     /// Applies sort requests and the automatic sort to the snapshot already held, for a frame
@@ -348,6 +350,28 @@ impl SessionState {
             }
         }
         swapped
+    }
+
+    /// Selects the entry of the scan root on the way to the scan this one was opened from
+    /// ([`SessionState::came_from`]) once the root has a row for it; another directory shown
+    /// forgets it.
+    fn select_came_from(&mut self) {
+        let Some(from) = &self.came_from else { return };
+        if self.snap.dir_node.is_some() && self.snap.dir_path != self.snap.root_path {
+            self.came_from = None;
+            return;
+        }
+        let Some(name) = crate::goto::came_from_name(from, &self.snap.root_path) else {
+            if self.snap.dir_node.is_some() {
+                self.came_from = None;
+            }
+            return;
+        };
+        let entries = &self.snap.entries;
+        if let Some(&i) = (self.list.rows.iter()).find(|&&i| entries[i].name[..] == name[..]) {
+            self.selected = Some(Selection::of(&entries[i]));
+            self.came_from = None;
+        }
     }
 
     /// Re-finds the selection after a refresh: by reference, then by name and identity (rescan

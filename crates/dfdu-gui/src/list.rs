@@ -269,8 +269,25 @@ fn empty_note(s: &SessionState) -> String {
         Some(Mark::Error) => "This directory could not be read.".into(),
         Some(Mark::Incomplete) => format!("Incomplete: rescan with {}.", first_key(Action::Rescan)),
         _ if s.filter.active() => "Nothing matches the filter.".into(),
+        _ if dfdu_session::goto::empty_root(s) => empty_root(s),
         _ => "Empty.".into(),
     }
+}
+
+/// What the list says when the scan root finished empty: so, and how to get out of it.
+fn empty_root(s: &SessionState) -> String {
+    if s.from_file.is_some() || s.snap.root_path.parent().is_none() {
+        return "This folder is empty.".into();
+    }
+    let goto = if cfg!(target_os = "macos") {
+        "Cmd-L"
+    } else {
+        "Ctrl-L"
+    };
+    format!(
+        "This folder is empty. Press {} twice to scan its parent, or {goto} to go to a folder.",
+        first_key(Action::Parent),
+    )
 }
 
 /// A column's header, in the label style: a click sorts by it, again reverses; the sorted

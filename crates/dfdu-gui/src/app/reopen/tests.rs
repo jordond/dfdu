@@ -77,10 +77,18 @@ fn a_scan_is_opened_the_way_the_browser_s_own_was() {
 
 #[test]
 fn the_new_browser_replaces_the_old_one_only_once_it_opened() {
-    let (old, old_stopped) = fake();
+    let (mut old, old_stopped) = fake();
+    old.state_mut().snap.root_path = HostPath::from("/mnt/cache");
     let (new, new_stopped) = fake();
     let screen = replaced(Ok(new), Origin::Local, Some((old, Origin::Admin)));
-    assert!(matches!(screen, Screen::Browse(_, Origin::Local)));
+    let Screen::Browse(b, Origin::Local) = &screen else {
+        panic!("not the new browser");
+    };
+    assert_eq!(
+        b.state().came_from,
+        Some(HostPath::from("/mnt/cache")),
+        "the new browser selects the folder come from"
+    );
     assert!(old_stopped.load(Ordering::SeqCst) && !new_stopped.load(Ordering::SeqCst));
 
     let (old, old_stopped) = fake();

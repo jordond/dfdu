@@ -63,6 +63,12 @@ pub trait Browse {
 
     /// Stops the session and its engine ([`Session::shutdown`]).
     fn shutdown(self: Box<Self>);
+
+    /// What its scan read, for a scan of `above`, a folder above its root, to keep
+    /// ([`Session::scanned`]); `None` when it cannot.
+    fn scanned(&self, _above: &dfdu_tree::HostPath) -> Option<dfdu_engine::Scanned> {
+        None
+    }
 }
 
 /// The session's state and the window's beside it.
@@ -78,6 +84,23 @@ impl FrontEnd for Front {
 
     fn state_mut(&mut self) -> &mut SessionState {
         &mut self.state
+    }
+
+    /// The list scrolls to the folder come from once it is selected
+    /// ([`SessionState::came_from`]).
+    fn refresh(&mut self, snap: dfdu_session::snapshot::Snapshot, now: Instant) {
+        let from = (self.state.came_from.as_ref())
+            .and_then(|f| dfdu_session::goto::came_from_name(f, &snap.root_path));
+        let _ = self.state.refresh(snap, now, false);
+        if let Some(name) = from
+            && self.state.came_from.is_none()
+            && self
+                .state
+                .selected_entry()
+                .is_some_and(|e| e.name[..] == name[..])
+        {
+            self.view.follow = true;
+        }
     }
 
     /// The type picker lists the directory's files by type.
@@ -164,6 +187,8 @@ impl<B: Backend> Browser<B> {
                     let gone = self.session.go_to_path(&text);
                     goto::gone_to(self.session.front_mut(), gone);
                 }
+                Intent::GoToTab(text) => goto::tab(self.session.front_mut(), &text),
+                Intent::GoToEdited(text) => goto::edited(self.session.front_mut(), &text),
                 Intent::Filter(text) => self.set_filter(&text, now),
                 Intent::FilterSubmit => {
                     if filter::edit(s, TextOp::Submit) == Edited::Enter {
@@ -361,7 +386,9 @@ impl<B: Backend> Browser<B> {
             Action::Palette => self.view().palette = Some(Palette::new()),
             Action::GoTo => {
                 let g = GoTo::new(self.session.state());
+                let text = g.text.clone();
                 self.view().goto = Some(g);
+                goto::edited(self.session.front_mut(), &text);
             }
             _ => {}
         }
@@ -454,6 +481,10 @@ fn central(
 }
 
 impl<B: Backend> Browse for Browser<B> {
+    fn scanned(&self, above: &dfdu_tree::HostPath) -> Option<dfdu_engine::Scanned> {
+        self.session.scanned(above)
+    }
+
     fn show(&mut self, ui: &mut egui::Ui, colors: &Colors) {
         let ctx = ui.ctx().clone();
         let now = Instant::now();
@@ -486,6 +517,8 @@ impl<B: Backend> Browse for Browser<B> {
             ctx.request_repaint();
             return;
         }
+        // What the scanned host answered the go-to window, which the tick took in.
+        goto::poll(self.session.front_mut());
         self.note_undo(now, &ctx);
         self.check_access();
         let mut intents = Vec::new();

@@ -5,7 +5,7 @@
 use std::sync::LazyLock;
 
 use dfdu_rules::{Env, Platform, RuleSet};
-use dfdu_engine::wire::{ToAgent, FromAgent, read_frame};
+use dfdu_engine::wire::{self, ToAgent, FromAgent, read_frame};
 use libfuzzer_sys::fuzz_target;
 
 static RULES: LazyLock<RuleSet> = LazyLock::new(|| {
@@ -16,6 +16,22 @@ fuzz_target!(|data: &[u8]| {
     let rules = Some(&*RULES);
     let _ = FromAgent::decode(data, rules, dfdu_tree::Host::LOCAL);
     let _ = FromAgent::decode(data, None, dfdu_tree::Host::LOCAL);
+    // Listings and mount lists are bounded, and a name never holds a separator of its host.
+    for host in [dfdu_tree::Host::Unix, dfdu_tree::Host::Windows] {
+        match FromAgent::decode(data, None, host) {
+            Ok(FromAgent::Listed { result: Ok(entries), .. }) => {
+                assert!(entries.len() <= wire::listing::MAX_ENTRIES);
+                for e in &entries {
+                    assert!(e.name.len() <= wire::listing::MAX_NAME);
+                    assert!(!e.name.is_empty() && !e.name.iter().any(|&b| host.is_sep(b)));
+                }
+            }
+            Ok(FromAgent::Mounts { result: Ok(mounts), .. }) => {
+                assert!(mounts.len() <= wire::listing::MAX_MOUNTS);
+            }
+            _ => {}
+        }
+    }
     let _ = ToAgent::decode(data, rules);
     let _ = ToAgent::decode(data, None);
     let mut r = data;
