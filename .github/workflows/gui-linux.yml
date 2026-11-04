@@ -1,7 +1,8 @@
 name: gui-linux
 
 # Builds the GUI's Linux release files with scripts/linux-package.sh: a .deb (with the agent
-# script and its polkit action) and an AppImage, for x86_64 glibc. Checks what the .deb holds,
+# script and its polkit action) and an AppImage, for x86_64 and aarch64 glibc, each on a runner
+# of that architecture. Checks what the .deb holds,
 # installs it and runs it, and runs the program in the AppImage. Built on Ubuntu 24.04, not the
 # newest runner, so the glibc it needs is older. Runs when the packaging changes on main,
 # by hand, and from the release workflow (gui-release.yml), which uploads the files to the
@@ -26,8 +27,18 @@ env:
 
 jobs:
   packages:
-    name: .deb and AppImage (x86_64-unknown-linux-gnu)
-    runs-on: ubuntu-24.04
+    name: .deb and AppImage (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
     timeout-minutes: 60
     steps:
       - name: Check out repository
@@ -43,7 +54,7 @@ jobs:
         run: scripts/linux-package.sh dist
       - name: Check the .deb
         run: |
-          deb=dist/dfdu-gui-x86_64-unknown-linux-gnu.deb
+          deb="dist/dfdu-gui-$TARGET.deb"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb" | tee "$RUNNER_TEMP/contents"
           for path in ./usr/bin/dfdu-gui ./usr/libexec/dfdu/dfdu-agent \
@@ -62,7 +73,7 @@ jobs:
       - name: Install the .deb and run it
         run: |
           # dpkg stops at a dependency the runner lacks; apt then installs it and finishes.
-          sudo dpkg -i dist/dfdu-gui-x86_64-unknown-linux-gnu.deb || sudo apt-get install -y -f --no-install-recommends
+          sudo dpkg -i "dist/dfdu-gui-$TARGET.deb" || sudo apt-get install -y -f --no-install-recommends
           test "$(dpkg-query -W -f '${Status}' dfdu-gui)" = "install ok installed"
           test "$(command -v dfdu-gui)" = /usr/bin/dfdu-gui
           dfdu-gui --help
@@ -71,7 +82,7 @@ jobs:
       - name: Run the program in the AppImage
         working-directory: ${{ runner.temp }}
         env:
-          APPIMAGE_FILE: ${{ github.workspace }}/dist/dfdu-gui-x86_64-unknown-linux-gnu.AppImage
+          APPIMAGE_FILE: ${{ github.workspace }}/dist/dfdu-gui-${{ matrix.target }}.AppImage
         run: |
           test -x "$APPIMAGE_FILE"
           "$APPIMAGE_FILE" --appimage-extract >/dev/null
@@ -82,6 +93,6 @@ jobs:
       - name: Upload the packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: gui-linux-x86_64-unknown-linux-gnu
+          name: gui-linux-${{ matrix.target }}
           path: dist/
           if-no-files-found: error

@@ -79,16 +79,27 @@ fn detect(exe: &Path) -> How {
     let var = |name| std::env::var_os(name).map(PathBuf::from);
     if let (Some(image), Some(dir)) = (var("APPIMAGE"), var("APPDIR"))
         && appimage(exe, &image, &dir)
-        && std::env::consts::ARCH == "x86_64"
+        && appimage_asset(std::env::consts::ARCH).is_some()
     {
         return How::AppImage(image);
     }
     if exe.starts_with("/usr/bin") {
-        return How::Command(
-            "download the .deb from the release page, then: sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb",
-        );
+        return How::Command(if cfg!(target_arch = "aarch64") {
+            "download the .deb from the release page, then: sudo apt install ./dfdu-gui-aarch64-unknown-linux-gnu.deb"
+        } else {
+            "download the .deb from the release page, then: sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb"
+        });
     }
     How::Manual
+}
+
+/// The release's AppImage for a Linux machine of architecture `arch`, if there is one.
+fn appimage_asset(arch: &str) -> Option<&'static str> {
+    match arch {
+        "x86_64" => Some("dfdu-gui-x86_64-unknown-linux-gnu.AppImage"),
+        "aarch64" => Some("dfdu-gui-aarch64-unknown-linux-gnu.AppImage"),
+        _ => None,
+    }
 }
 
 /// Whether `exe` runs from the AppImage `image`, mounted at `dir`. Both variables are passed
@@ -146,7 +157,8 @@ pub fn gui(how: &How, releases: &Releases, v: &Version) -> Result<Installed, Str
             Ok(Installed::Restart(app.clone()))
         }
         How::AppImage(image) => {
-            let name = "dfdu-gui-x86_64-unknown-linux-gnu.AppImage";
+            let name = appimage_asset(std::env::consts::ARCH)
+                .ok_or("there is no dfdu AppImage for this machine")?;
             let bytes = releases.fetch(v, name, MAX_GUI).map_err(text)?;
             cli::install_bin(image, &bytes)
                 .map_err(|e| format!("replacing {}: {e}", image.display()))?;
@@ -425,11 +437,24 @@ mod tests {
     }
 
     #[test]
+    fn each_linux_architecture_has_its_own_appimage() {
+        assert_eq!(
+            appimage_asset("x86_64"),
+            Some("dfdu-gui-x86_64-unknown-linux-gnu.AppImage")
+        );
+        assert_eq!(
+            appimage_asset("aarch64"),
+            Some("dfdu-gui-aarch64-unknown-linux-gnu.AppImage")
+        );
+        assert_eq!(appimage_asset("riscv64"), None);
+    }
+
+    #[test]
     fn an_appimage_is_replaced_by_the_release_one() {
         let dir = tempfile::tempdir().unwrap();
         let image = dir.path().join("dfdu-gui");
         std::fs::write(&image, "old").unwrap();
-        let name = "dfdu-gui-x86_64-unknown-linux-gnu.AppImage";
+        let name = appimage_asset(std::env::consts::ARCH).unwrap();
         let base = serve(asset("9.9.9", name, b"new image".to_vec()));
         let v = Version::parse("9.9.9").unwrap();
         let how = How::AppImage(image.clone());

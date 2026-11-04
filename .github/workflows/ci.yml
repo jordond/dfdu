@@ -118,7 +118,7 @@ jobs:
             echo "::error::install.sh --gui succeeded on 0.2.0, which has no GUI build"; exit 1
           fi
           cat "$RUNNER_TEMP/gui-err"
-          grep -qF "dfdu 0.2.0 has no GUI build; the GUI ships from 0.3.0" "$RUNNER_TEMP/gui-err" ||
+          grep -qF "dfdu 0.2.0 has no GUI build for this machine; it ships from 0.3.0" "$RUNNER_TEMP/gui-err" ||
             { echo "::error::install.sh --gui did not name the release without a GUI"; exit 1; }
           "$HOME/.local/bin/dfdu" --version
       - name: Find unused dependencies

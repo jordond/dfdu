@@ -28,7 +28,8 @@ checksum() { # dir name
     fi
 }
 
-# A release dir with the CLI archive for each target, and the GUI assets when gui=1.
+# A release dir with the CLI archive for each target, and the GUI assets when gui is 1, or
+# when it is x86 those of a release before the aarch64 AppImage.
 release() { # version gui
     dir="$work/srv/download/v$1"
     mkdir -p "$dir"
@@ -42,7 +43,7 @@ release() { # version gui
         tar -cJf "$dir/dfdu-$target.tar.xz" -C "$work/stage/$1" "dfdu-$target"
         checksum "$dir" "dfdu-$target.tar.xz"
     done
-    [ "$2" = 1 ] || return 0
+    [ "$2" = 0 ] && return 0
     for target in aarch64-apple-darwin x86_64-apple-darwin; do
         app="$work/stage/$1/app-$target"
         mkdir -p "$app/dfdu.app/Contents/MacOS"
@@ -51,8 +52,11 @@ release() { # version gui
         tar -czf "$dir/dfdu-gui-$target.app.tar.gz" -C "$app" dfdu.app
         checksum "$dir" "dfdu-gui-$target.app.tar.gz"
     done
-    printf '#!/bin/sh\necho "dfdu gui %s"\n' "$1" >"$dir/dfdu-gui-x86_64-unknown-linux-gnu.AppImage"
-    checksum "$dir" "dfdu-gui-x86_64-unknown-linux-gnu.AppImage"
+    for arch in x86_64 aarch64; do
+        [ "$2" = x86 ] && [ "$arch" = aarch64 ] && continue
+        printf '#!/bin/sh\necho "dfdu gui %s %s"\n' "$1" "$arch" >"$dir/dfdu-gui-$arch-unknown-linux-gnu.AppImage"
+        checksum "$dir" "dfdu-gui-$arch-unknown-linux-gnu.AppImage"
+    done
     printf 'PNG' >"$dir/dfdu-gui-icon-512.png"
     checksum "$dir" "dfdu-gui-icon-512.png"
 }
@@ -60,6 +64,7 @@ release() { # version gui
 release 1.0.0 1
 release 1.1.0 1
 release 0.9.0 0
+release 0.9.5 x86
 release 1.0.1 1
 # A GUI asset that does not match its checksum.
 echo tampered >>"$work/srv/download/v1.0.1/dfdu-gui-x86_64-unknown-linux-gnu.AppImage"
@@ -142,18 +147,23 @@ pass "Linux: --no-extras skips the desktop entry"
 run old "$work/linux-x86_64" -- --gui --version 0.9.0
 [ "$rc" != 0 ] || fail "--gui on 0.9.0 succeeded"
 [ -x "$home/.local/bin/dfdu" ] || fail "--gui on 0.9.0: the CLI is not installed"
-expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 0.3.0"
+expect_err "dfdu 0.9.0 has no GUI build for this machine; it ships from 0.3.0"
 pass "a release with no GUI fails after the CLI is installed"
 
 run latest "$work/linux-x86_64" -- --gui
 [ "$rc" != 0 ] || fail "--gui on the latest (0.9.0) succeeded"
-expect_err "dfdu 0.9.0 has no GUI build; the GUI ships from 0.3.0"
+expect_err "dfdu 0.9.0 has no GUI build for this machine; it ships from 0.3.0"
 pass "the latest release names its version"
 
-run arm "$work/linux-aarch64" -- --gui --version 1.0.0
-[ "$rc" != 0 ] && [ -x "$home/.local/bin/dfdu" ] || fail "aarch64 Linux: wrong outcome"
-expect_err "no build for aarch64 Linux"
-pass "aarch64 Linux: CLI installed, GUI refused"
+run arm "$work/linux-aarch64" -- --gui --no-extras --version 1.0.0
+[ "$rc" = 0 ] || { cat "$work/err" >&2; fail "aarch64 Linux --gui exited $rc"; }
+grep -q "dfdu gui 1.0.0 aarch64" "$home/.local/bin/dfdu-gui" || fail "aarch64 Linux: not the aarch64 AppImage"
+pass "aarch64 Linux: the aarch64 AppImage"
+
+run arm-old "$work/linux-aarch64" -- --gui --version 0.9.5
+[ "$rc" != 0 ] && [ -x "$home/.local/bin/dfdu" ] || fail "aarch64 Linux before its GUI: wrong outcome"
+expect_err "dfdu 0.9.5 has no GUI build for this machine; it ships from 0.5.1"
+pass "aarch64 Linux: a release without its AppImage fails after the CLI is installed"
 
 run tampered "$work/linux-x86_64" -- --gui --version 1.0.1
 [ "$rc" != 0 ] && [ ! -e "$home/.local/bin/dfdu-gui" ] || fail "a tampered AppImage was installed"

@@ -11,8 +11,9 @@
 # Nothing outside those directories is changed: no shell profile is edited.
 #
 # With --gui it then installs the desktop app from the same release, also checked against its
-# SHA-256: dfdu.app in ~/Applications on macOS, or on x86_64 Linux the AppImage as dfdu-gui
-# beside dfdu, with a desktop entry and icon in ~/.local/share. The GUI ships from 0.3.0.
+# SHA-256: dfdu.app in ~/Applications on macOS, or on Linux the AppImage as dfdu-gui beside
+# dfdu, with a desktop entry and icon in ~/.local/share. The GUI ships from 0.3.0, and for
+# aarch64 Linux from 0.5.1.
 #
 # Windows: use the PowerShell installer instead (https://dfdu.app/docs/install/).
 
@@ -43,9 +44,9 @@ Options:
   -h, --help          Show this help
 
 If DIR is not writable, the binary is installed with sudo and the extras are skipped.
---gui installs dfdu.app on macOS, and dfdu-gui (an AppImage) in DIR on x86_64 Linux.
-The CLI is installed first; a release with no GUI build (before 0.3.0), or a machine
-with none, then exits with an error.
+--gui installs dfdu.app on macOS, and dfdu-gui (an AppImage) in DIR on Linux.
+The CLI is installed first; a release with no GUI build (before 0.3.0, or 0.5.1 on
+aarch64 Linux), or a machine with none, then exits with an error.
 DFDU_NO_VERIFY=1 installs without a SHA-256 tool (sha256sum, shasum or openssl).
 EOF
 }
@@ -230,13 +231,14 @@ path_hint() { # bin dir
 # Runs a command, with sudo when the CLI's install needed it ($use_sudo) or the app's directory does.
 as_needed() { if [ "$use_sudo" = 1 ]; then sudo "$@"; else "$@"; fi; }
 
-# Downloads a GUI asset of the release into $tmp and verifies it. Releases before 0.3.0 have none.
-gui_download() { # name
+# Downloads a GUI asset of the release into $tmp and verifies it. Releases before the version
+# the asset first shipped in have none.
+gui_download() { # name first-version
 	info "downloading ${BOLD}$1${RESET} ${DIM}(${version:-latest})${RESET}"
 	rc=0
 	download "$base/$1" "$tmp/$1" || rc=$?
 	if [ "$rc" -eq 4 ]; then
-		die "$release has no GUI build; the GUI ships from 0.3.0"
+		die "$release has no GUI build for this machine; it ships from $2"
 	elif [ "$rc" -ne 0 ]; then
 		die "could not download $base/$1"
 	fi
@@ -246,7 +248,7 @@ gui_download() { # name
 # macOS: dfdu.app into the app directory. The app is notarised, and curl sets no quarantine flag.
 install_app() {
 	asset="dfdu-gui-$target.app.tar.gz"
-	gui_download "$asset"
+	gui_download "$asset" 0.3.0
 	mkdir "$tmp/gui"
 	tar -xzf "$tmp/$asset" -C "$tmp/gui" 2>/dev/null || die "could not unpack $asset"
 	[ -d "$tmp/gui/dfdu.app" ] || die "no dfdu.app in $asset"
@@ -281,7 +283,8 @@ has_fuse2() {
 			break
 		fi
 	done
-	for dir in /lib /lib64 /usr/lib /usr/lib64 /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/local/lib; do
+	for dir in /lib /lib64 /usr/lib /usr/lib64 /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu \
+		/lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/local/lib; do
 		[ -e "$dir/libfuse.so.2" ] && return 0
 	done
 	return 1
@@ -330,11 +333,14 @@ EOF
 # Linux: the AppImage as dfdu-gui beside dfdu, with a desktop entry unless --no-extras.
 install_appimage() {
 	case "$target" in
-	x86_64-*) ;;
-	*) die "the dfdu GUI has no build for ${target%%-*} Linux, only x86_64; the CLI is installed" ;;
+	x86_64-* | aarch64-*) ;;
+	*) die "the dfdu GUI has no build for ${target%%-*} Linux; the CLI is installed" ;;
 	esac
-	asset="dfdu-gui-x86_64-unknown-linux-gnu.AppImage"
-	gui_download "$asset"
+	asset="dfdu-gui-${target%%-*}-unknown-linux-gnu.AppImage"
+	case "$target" in
+	aarch64-*) gui_download "$asset" 0.5.1 ;;
+	*) gui_download "$asset" 0.3.0 ;;
+	esac
 
 	as_needed cp "$tmp/$asset" "$bin_dir/.dfdu-gui.new"
 	as_needed chmod 755 "$bin_dir/.dfdu-gui.new"

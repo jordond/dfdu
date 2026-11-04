@@ -68,6 +68,7 @@ jobs:
           for f in dfdu-gui-aarch64-apple-darwin.dmg dfdu-gui-x86_64-apple-darwin.dmg \
             dfdu-gui-aarch64-apple-darwin.app.tar.gz dfdu-gui-x86_64-apple-darwin.app.tar.gz \
             dfdu-gui-x86_64-unknown-linux-gnu.AppImage dfdu-gui-x86_64-unknown-linux-gnu.deb \
+            dfdu-gui-aarch64-unknown-linux-gnu.AppImage dfdu-gui-aarch64-unknown-linux-gnu.deb \
             dfdu-gui-x86_64-pc-windows-msvc-setup.exe dfdu-gui-x86_64-pc-windows-msvc.zip \
             dfdu-gui-icon-512.png; do
             test -f "$f" || { echo "::error::no $f among the GUI builds"; exit 1; }

@@ -46,7 +46,7 @@ section() {
   echo '```'
   echo
   echo "Or download a file below: on macOS open the .dmg and drag dfdu to Applications; on Linux" \
-    "install the .deb (\`sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb\`) or run the" \
+    "install the .deb (\`sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb\`, or the aarch64 one) or run the" \
     "AppImage; on Windows run the installer (per user, no administrator) or unzip the portable zip."
   echo
   echo "### Download the desktop app"
@@ -59,6 +59,8 @@ section() {
   row "dfdu-gui-x86_64-apple-darwin.app.tar.gz" "Intel macOS (app only)"
   row "dfdu-gui-x86_64-unknown-linux-gnu.deb" "x64 Linux (Debian, Ubuntu)"
   row "dfdu-gui-x86_64-unknown-linux-gnu.AppImage" "x64 Linux"
+  row "dfdu-gui-aarch64-unknown-linux-gnu.deb" "ARM64 Linux (Debian, Ubuntu)"
+  row "dfdu-gui-aarch64-unknown-linux-gnu.AppImage" "ARM64 Linux"
   row "dfdu-gui-x86_64-pc-windows-msvc-setup.exe" "x64 Windows (installer)"
   row "dfdu-gui-x86_64-pc-windows-msvc.zip" "x64 Windows (portable)"
   echo

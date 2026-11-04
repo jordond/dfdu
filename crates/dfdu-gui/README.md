@@ -78,7 +78,7 @@ notarised and stapled. `NOTARY_PROFILE` names credentials saved once with
 ## Linux packages
 
 ```sh
-scripts/linux-package.sh out    # out/dfdu-gui-x86_64-unknown-linux-gnu.{deb,AppImage}
+scripts/linux-package.sh out    # out/dfdu-gui-<arch>-unknown-linux-gnu.{deb,AppImage}, for this machine's arch
 ```
 
 It needs `dpkg-deb`, `objdump`, `curl`, `sha256sum` and `desktop-file-validate`

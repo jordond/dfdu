@@ -27,7 +27,7 @@ Or download the disk image from the [latest release](https://github.com/jordond/
 
 ### Linux
 
-x86_64 only. The install script installs the CLI and the AppImage as `dfdu-gui` next to `dfdu`, with a desktop entry so it shows up in your app launcher:
+x86_64 and aarch64 (aarch64 from 0.5.1). The install script installs the CLI and the AppImage as `dfdu-gui` next to `dfdu`, with a desktop entry so it shows up in your app launcher:
 
 ```sh
 curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui
@@ -36,7 +36,8 @@ curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui
 The [latest release](https://github.com/jordond/dfdu/releases/latest) also has a `.deb` for Debian and Ubuntu, which installs `/usr/bin/dfdu-gui`:
 
 ```sh
-sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb
+sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb     # x86_64
+sudo apt install ./dfdu-gui-aarch64-unknown-linux-gnu.deb    # aarch64
 ```
 
 The AppImage needs FUSE 2. If it does not start, install `libfuse2` (Debian, Ubuntu; `libfuse2t64` on Ubuntu 24.04), `fuse2` (Arch) or `fuse-libs` (Fedora), or run it with `--appimage-extract-and-run`.
