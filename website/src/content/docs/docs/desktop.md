@@ -23,7 +23,7 @@ Or with the install script, which installs the CLI and puts `dfdu.app` in `~/App
 curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui
 ```
 
-Or download the disk image from the [latest release](https://github.com/jordond/dfdu/releases/latest) and drag dfdu into Applications: `dfdu-gui-aarch64-apple-darwin.dmg` for Apple silicon, `dfdu-gui-x86_64-apple-darwin.dmg` for Intel.
+Or download the disk image and drag dfdu into Applications: [`dfdu-gui-aarch64-apple-darwin.dmg`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-aarch64-apple-darwin.dmg) for Apple silicon, [`dfdu-gui-x86_64-apple-darwin.dmg`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-x86_64-apple-darwin.dmg) for Intel.
 
 ### Linux
 
@@ -33,7 +33,7 @@ x86_64 and aarch64 (aarch64 from 0.5.1). The install script installs the CLI and
 curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui
 ```
 
-The [latest release](https://github.com/jordond/dfdu/releases/latest) also has a `.deb` for Debian and Ubuntu, which installs `/usr/bin/dfdu-gui`:
+There is also a `.deb` for Debian and Ubuntu, which installs `/usr/bin/dfdu-gui`: [`dfdu-gui-x86_64-unknown-linux-gnu.deb`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-x86_64-unknown-linux-gnu.deb) for x86_64, [`dfdu-gui-aarch64-unknown-linux-gnu.deb`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-aarch64-unknown-linux-gnu.deb) for aarch64. The AppImages are [`dfdu-gui-x86_64-unknown-linux-gnu.AppImage`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-x86_64-unknown-linux-gnu.AppImage) and [`dfdu-gui-aarch64-unknown-linux-gnu.AppImage`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-aarch64-unknown-linux-gnu.AppImage).
 
 ```sh
 sudo apt install ./dfdu-gui-x86_64-unknown-linux-gnu.deb     # x86_64
@@ -44,9 +44,9 @@ The AppImage needs FUSE 2. If it does not start, install `libfuse2` (Debian, Ubu
 
 ### Windows
 
-From the [latest release](https://github.com/jordond/dfdu/releases/latest), run `dfdu-gui-x86_64-pc-windows-msvc-setup.exe`. It installs dfdu for your user in `%LOCALAPPDATA%\dfdu` without administrator rights, and adds a Start menu shortcut and an uninstaller. To skip installing, unzip `dfdu-gui-x86_64-pc-windows-msvc.zip` and run `dfdu-gui.exe`.
+Download and run [`dfdu-gui-x86_64-pc-windows-msvc-setup.exe`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-x86_64-pc-windows-msvc-setup.exe). It installs dfdu for your user in `%LOCALAPPDATA%\dfdu` without administrator rights, and adds a Start menu shortcut and an uninstaller. To skip installing, unzip [`dfdu-gui-x86_64-pc-windows-msvc.zip`](https://github.com/jordond/dfdu/releases/latest/download/dfdu-gui-x86_64-pc-windows-msvc.zip) and run `dfdu-gui.exe`.
 
-Every file on the release page has a `.sha256` checksum next to it.
+Every file on the [latest release](https://github.com/jordond/dfdu/releases/latest) has a `.sha256` checksum next to it.
 
 ## Choosing what to scan
 

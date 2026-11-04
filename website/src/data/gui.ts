@@ -8,6 +8,43 @@ import type { Line, Tone } from './landing'
 export const CASK = 'brew install --cask jordond/tap/dfdu-gui'
 export const LATEST = `${REPO}/releases/latest`
 
+/** The direct download URL of a file in the latest release. */
+export const download = (file: string) => `${LATEST}/download/${file}`
+
+export const GUI_SH = `${INSTALL_SH} -s -- --gui`
+
+export type Os = 'mac' | 'windows' | 'linux'
+export type Arch = 'arm64' | 'x86_64'
+
+export const OS_NAMES: Record<Os, string> = { mac: 'macOS', windows: 'Windows', linux: 'Linux' }
+
+/** A desktop app file in every release since 0.5.1. */
+export interface Build {
+  id: string
+  os: Os
+  arch: Arch
+  /** Names the build on its own, beside builds for other machines. */
+  label: string
+  file: string
+}
+
+/** Each OS's builds, the one to offer first for each arch first. */
+export const BUILDS: Build[] = [
+  { id: 'mac-arm64', os: 'mac', arch: 'arm64', label: 'Apple silicon .dmg', file: 'dfdu-gui-aarch64-apple-darwin.dmg' },
+  { id: 'mac-x86_64', os: 'mac', arch: 'x86_64', label: 'Intel .dmg', file: 'dfdu-gui-x86_64-apple-darwin.dmg' },
+  { id: 'windows-setup', os: 'windows', arch: 'x86_64', label: 'Windows installer', file: 'dfdu-gui-x86_64-pc-windows-msvc-setup.exe' },
+  { id: 'windows-zip', os: 'windows', arch: 'x86_64', label: 'Windows portable .zip', file: 'dfdu-gui-x86_64-pc-windows-msvc.zip' },
+  { id: 'linux-x86_64-appimage', os: 'linux', arch: 'x86_64', label: 'x86_64 AppImage', file: 'dfdu-gui-x86_64-unknown-linux-gnu.AppImage' },
+  { id: 'linux-x86_64-deb', os: 'linux', arch: 'x86_64', label: 'x86_64 .deb', file: 'dfdu-gui-x86_64-unknown-linux-gnu.deb' },
+  { id: 'linux-arm64-appimage', os: 'linux', arch: 'arm64', label: 'arm64 AppImage', file: 'dfdu-gui-aarch64-unknown-linux-gnu.AppImage' },
+  { id: 'linux-arm64-deb', os: 'linux', arch: 'arm64', label: 'arm64 .deb', file: 'dfdu-gui-aarch64-unknown-linux-gnu.deb' },
+]
+
+const build = (id: string) => BUILDS.find((b) => b.id === id)!
+
+/** The hero's download before the page knows the visitor's machine. */
+export const DEFAULT_BUILD = build('mac-arm64')
+
 /** A screenshot in ../assets/gui, from `cargo xtask demo --gui`. */
 export type ShotKey = 'tree' | 'map' | 'files' | 'cleanup' | 'delete' | 'largest' | 'dupes'
 
@@ -34,8 +71,10 @@ export interface GuiDetail {
   sub: string
   lines: Line[]
   cmd?: string
-  /** A release file, linked to the latest release. */
+  /** A release file, linked to its download in the latest release. */
   file?: string
+  /** The id of the build in BUILDS that `file` is. */
+  build?: string
   shot?: Shot
   /** Shown in place of a screenshot the app does not have yet. */
   placeholder: string
@@ -78,7 +117,8 @@ interface ItemSpec {
   sub: string
   lines: Line[]
   cmd?: string
-  file?: string
+  /** A build in BUILDS, for its file. */
+  build?: string
   shot?: ShotKey
   ph: string
 }
@@ -105,19 +145,22 @@ const OVERVIEW = [
 
 const DOWNLOAD = [
   S('One line', 'the CLI and the desktop app together', [
-    { label: 'Install script', tone: 'media', col: 'macOS, Linux', sub: 'dfdu.app/install.sh --gui', lines: [L('Installs the CLI, then dfdu.app in ~/Applications on macOS, or the AppImage as dfdu-gui on x86_64 Linux.'), L('The desktop app ships from 0.3.0.', 'dim')], cmd: `${INSTALL_SH} -s -- --gui`, shot: 'map', ph: 'dfdu.app in the Dock' },
+    { label: 'Install script', tone: 'media', col: 'macOS, Linux', sub: 'dfdu.app/install.sh --gui', lines: [L('Installs the CLI, then dfdu.app in ~/Applications on macOS, or the AppImage as dfdu-gui on Linux.'), L('The desktop app ships from 0.3.0, for arm64 Linux from 0.5.1.', 'dim')], cmd: GUI_SH, shot: 'map', ph: 'dfdu.app in the Dock' },
     { label: 'Homebrew cask', tone: 'cache', col: 'macOS', sub: 'jordond/tap/dfdu-gui', lines: [L('Signed and notarised. Updates with brew upgrade.')], cmd: CASK, shot: 'cleanup', ph: 'start screen' },
   ]),
   S('macOS', 'Apple silicon and Intel', [
-    { label: 'Disk image', tone: 'tool', col: 'arm64 · x86_64', sub: '.dmg', lines: [L('Drag dfdu into Applications. Signed and notarised.'), L('dfdu-gui-x86_64-apple-darwin.dmg for Intel Macs.', 'dim')], file: 'dfdu-gui-aarch64-apple-darwin.dmg', shot: 'files', ph: 'the disk image window' },
+    { label: 'Disk image', tone: 'tool', col: 'Apple silicon', sub: '.dmg', lines: [L('Drag dfdu into Applications. Signed and notarised.')], build: 'mac-arm64', shot: 'files', ph: 'the disk image window' },
+    { label: 'Disk image', tone: 'tool', col: 'Intel', sub: '.dmg', lines: [L('Drag dfdu into Applications. Signed and notarised.')], build: 'mac-x86_64', shot: 'files', ph: 'the disk image window' },
   ]),
   S('Windows', 'x86_64', [
-    { label: 'Installer', tone: 'vm', col: 'x86_64', sub: 'setup.exe', lines: [L('The setup program for Windows x86_64.')], file: 'dfdu-gui-x86_64-pc-windows-msvc-setup.exe', shot: 'largest', ph: 'dfdu on Windows' },
-    { label: 'Portable zip', tone: 'other', col: 'x86_64', sub: '.zip', lines: [L('dfdu-gui.exe in a zip. Nothing to install.')], file: 'dfdu-gui-x86_64-pc-windows-msvc.zip', shot: 'dupes', ph: 'dfdu on Windows' },
+    { label: 'Installer', tone: 'vm', col: 'x86_64', sub: 'setup.exe', lines: [L('Installs for your user without administrator rights, with a Start menu shortcut.')], build: 'windows-setup', shot: 'largest', ph: 'dfdu on Windows' },
+    { label: 'Portable zip', tone: 'other', col: 'x86_64', sub: '.zip', lines: [L('dfdu-gui.exe in a zip. Nothing to install.')], build: 'windows-zip', shot: 'dupes', ph: 'dfdu on Windows' },
   ]),
-  S('Linux', 'x86_64, glibc', [
-    { label: '.deb package', tone: 'build', col: 'Debian · Ubuntu', sub: '.deb', lines: [L('Installs /usr/bin/dfdu-gui.')], file: 'dfdu-gui-x86_64-unknown-linux-gnu.deb', shot: 'tree', ph: 'dfdu on GNOME' },
-    { label: 'AppImage', tone: 'download', col: 'any x86_64', sub: '.AppImage', lines: [L('One file that runs without installing.'), L('Needs FUSE 2: libfuse2, or libfuse2t64 on Ubuntu 24.04.', 'dim')], file: 'dfdu-gui-x86_64-unknown-linux-gnu.AppImage', shot: 'map', ph: 'dfdu on KDE' },
+  S('Linux', 'x86_64 and arm64, glibc', [
+    { label: 'AppImage', tone: 'download', col: 'x86_64', sub: '.AppImage', lines: [L('One file that runs without installing.'), L('Needs FUSE 2: libfuse2, or libfuse2t64 on Ubuntu 24.04.', 'dim')], build: 'linux-x86_64-appimage', shot: 'map', ph: 'dfdu on KDE' },
+    { label: 'AppImage', tone: 'download', col: 'arm64', sub: '.AppImage', lines: [L('One file that runs without installing.'), L('Needs FUSE 2: libfuse2, or libfuse2t64 on Ubuntu 24.04.', 'dim')], build: 'linux-arm64-appimage', shot: 'map', ph: 'dfdu on KDE' },
+    { label: '.deb package', tone: 'build', col: 'x86_64', sub: '.deb', lines: [L('For Debian and Ubuntu. Installs /usr/bin/dfdu-gui.')], build: 'linux-x86_64-deb', shot: 'tree', ph: 'dfdu on GNOME' },
+    { label: '.deb package', tone: 'build', col: 'arm64', sub: '.deb', lines: [L('For Debian and Ubuntu. Installs /usr/bin/dfdu-gui.')], build: 'linux-arm64-deb', shot: 'tree', ph: 'dfdu on GNOME' },
   ]),
 ]
 
@@ -144,7 +187,8 @@ function item(s: ItemSpec): GuiItem {
       sub: s.sub,
       lines: s.lines,
       cmd: s.cmd,
-      file: s.file,
+      file: s.build && build(s.build).file,
+      build: s.build,
       shot: s.shot && shot(s.shot, `dfdu-gui screenshot: ${s.label}`),
       placeholder: `[Screenshot: ${s.ph}]`,
     },

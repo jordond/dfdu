@@ -1,6 +1,6 @@
 ---
 // The GUI face's Details sheet for one row; rendered into a <template> per row like Details.astro.
-import { type GuiDetail, LATEST } from '../data/gui'
+import { download, type GuiDetail } from '../data/gui'
 import Shot from './Shot.astro'
 
 interface Props {
@@ -24,9 +24,9 @@ const { detail: d } = Astro.props
 }
 {
   d.file && (
-    <a class="gcmd" href={LATEST}>
+    <a class="gcmd" href={download(d.file)} download>
       <span>{d.file}</span>
-      <i>Releases ↗</i>
+      <i>Download ↓</i>
     </a>
   )
 }

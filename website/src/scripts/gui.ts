@@ -3,6 +3,7 @@
 import { REPO } from '../site'
 import { toggleFace } from './face'
 import { COPIED_MS, cycleTheme, writeClipboard } from './landing'
+import { detectPlatform, type Platform } from './platform'
 
 const HERO_MS = 5000
 
@@ -115,8 +116,43 @@ export function startGui() {
     if (!still.matches) heroTimer = window.setTimeout(() => showHero(hero + 1), HERO_MS)
   }
 
+  /** Opens the Download tab on the row for a build. */
+  function openBuild(id: string) {
+    setTab('download')
+    const row = pane('download').querySelector<HTMLButtonElement>(`button.grow[data-build="${id}"]`)
+    if (row) select(row)
+  }
+
+  const builds = [...root.querySelectorAll<HTMLAnchorElement>('.ghero a[data-build]')]
+
+  /** Points the hero's download at the build for this platform, and lists the others for its OS. */
+  function offer(p: Platform) {
+    const mine = builds.filter((b) => b.dataset.os === p.os)
+    const pick = mine.find((b) => b.dataset.arch === p.arch) ?? mine[0]
+    if (!pick) return
+    const hero = root!.querySelector<HTMLElement>('.ghero')!
+    const button = hero.querySelector<HTMLAnchorElement>('[data-dl]')!
+    button.href = pick.href
+    hero.querySelector('[data-dl-os]')!.textContent = hero.querySelector(`[data-os-link="${p.os}"]`)!.textContent!.trim()
+    hero.querySelector('[data-dl-label]')!.textContent = pick.textContent!.trim()
+    hero.querySelector('[data-dl-file]')!.textContent = pick.href.split('/').pop()!
+    for (const b of builds) b.hidden = b.dataset.os !== p.os || b === pick
+    // The other builds for this CPU come first.
+    const lead = hero.querySelector('.plat > span')!
+    for (const b of mine.filter((b) => b.dataset.arch !== pick.dataset.arch).reverse()) lead.after(b)
+    for (const b of mine.filter((b) => b.dataset.arch === pick.dataset.arch).reverse()) lead.after(b)
+    for (const l of hero.querySelectorAll<HTMLElement>('[data-os-link]')) l.hidden = l.dataset.osLink === p.os
+    for (const c of hero.querySelectorAll<HTMLElement>('.gact [data-os]')) c.hidden = c.dataset.os !== p.os
+    // The Download tab opens on this build's row.
+    const rows = [...pane('download').querySelectorAll<HTMLButtonElement>('button.grow')]
+    for (const r of rows) r.setAttribute('aria-current', String(r.dataset.build === pick.dataset.build))
+    if (current() === 'download') showDetail('download')
+  }
+
   root.addEventListener('click', (e) => {
     const target = e.target as Element
+    const osLink = target.closest<HTMLElement>('[data-os-link]')
+    if (osLink) return openBuild(builds.find((b) => b.dataset.os === osLink.dataset.osLink)!.dataset.build!)
     const tab = target.closest<HTMLElement>('[data-gtab-button], [data-gtab-link]')
     if (tab) return setTab(tab.dataset.gtabButton ?? tab.dataset.gtabLink!)
     const row = target.closest<HTMLButtonElement>('button.grow')
@@ -167,4 +203,5 @@ export function startGui() {
   // The TUI's Install tab is the GUI's Download tab.
   if (location.hash === '#install') setTab('download')
   showHero(0)
+  void detectPlatform().then((p) => p && offer(p))
 }

@@ -1,12 +1,14 @@
 ---
 // The GUI face: the landing page dressed as dfdu-gui, the desktop app. Hidden unless data-face="gui"
 // is on <html>; src/scripts/gui.ts drives the tabs, rows, filter and screenshot carousel.
-import { CASK, GUI_TABS, HERO, LATEST } from '../data/gui'
+import { BUILDS, CASK, DEFAULT_BUILD, download, GUI_SH, GUI_TABS, HERO, OS_NAMES, type Os } from '../data/gui'
 import GuiDetails from './GuiDetails.astro'
 import Shot from './Shot.astro'
 
 const first = GUI_TABS[0]!
 const firstItem = first.sections[0]!.items[0]!
+const dl = DEFAULT_BUILD
+const OSES = Object.keys(OS_NAMES) as Os[]
 ---
 
 <div class="gui" id="gui" tabindex="-1" data-gtab={first.id}>
@@ -55,16 +57,30 @@ const firstItem = first.sections[0]!.items[0]!
             it scans, click into what is big, and move the rest to the Trash.
           </p>
           <div class="gact">
-            <a class="gbtn gbtn-p" href={LATEST}>
+            <a class="gbtn gbtn-p" href={download(dl.file)} download data-dl>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"></path><path d="M7 10l5 5 5-5"></path><path d="M5 20h14"></path></svg>
-              Download for macOS
+              <span>Download for <span data-dl-os>{OS_NAMES[dl.os]}</span></span>
             </a>
-            <button type="button" class="gbtn gbtn-s" data-copy={CASK}>{CASK}</button>
+            <button type="button" class="gbtn gbtn-s" data-copy={CASK} data-os="mac" hidden={dl.os !== 'mac'}>{CASK}</button>
+            <button type="button" class="gbtn gbtn-s" data-copy={GUI_SH} data-os="linux" hidden={dl.os !== 'linux'}>{GUI_SH}</button>
           </div>
+          <p class="dlfile"><span data-dl-label>{dl.label}</span> · <span class="mono" data-dl-file>{dl.file}</span></p>
           <div class="plat">
-            <span>Also for</span>
-            <button type="button" class="glink" data-gtab-link="download">Windows</button>
-            <button type="button" class="glink" data-gtab-link="download">Linux</button>
+            <span>Other downloads</span>
+            {
+              BUILDS.map((b) => (
+                <a class="glink" href={download(b.file)} download data-build={b.id} data-os={b.os} data-arch={b.arch} hidden={b.os !== dl.os || b.id === dl.id}>
+                  {b.label}
+                </a>
+              ))
+            }
+            {
+              OSES.map((o) => (
+                <button type="button" class="glink" data-gtab-link="download" data-os-link={o} hidden={o === dl.os}>
+                  {OS_NAMES[o]}
+                </button>
+              ))
+            }
             <span class="copied" role="status" hidden>Copied</span>
           </div>
         </div>
@@ -110,7 +126,7 @@ const firstItem = first.sections[0]!.items[0]!
                       const id = `${si}-${ii}`
                       return (
                         <li>
-                          <button type="button" class="grow" data-grow={id} aria-current={si === 0 && ii === 0 ? 'true' : 'false'} aria-controls="gdetail">
+                          <button type="button" class="grow" data-grow={id} data-build={it.detail.build} aria-current={si === 0 && ii === 0 ? 'true' : 'false'} aria-controls="gdetail">
                             <span class="gname">
                               <i class={`sw8 t-${it.tone}`} aria-hidden="true" />
                               <span>{it.label}</span>

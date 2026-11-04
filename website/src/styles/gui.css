@@ -149,6 +149,8 @@
 .gbtn-p:hover { text-decoration: none; filter: brightness(1.06); }
 .gbtn-s { background: var(--raised); border: 1px solid var(--border); color: var(--header); font-family: var(--mono); font-size: 12px; }
 .gbtn-s:hover { background: var(--hover); }
+.ghero .dlfile { margin: 10px 0 0; font-size: 12px; line-height: 18px; color: var(--dim); overflow-wrap: anywhere; }
+.ghero .dlfile .mono { font-family: var(--mono); font-size: 11px; }
 .plat { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; font-size: 12px; color: var(--dim); }
 .glink { font-size: 13px; font-weight: 500; color: var(--key); }
 .glink:hover { text-decoration: underline; }
