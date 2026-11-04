@@ -1,10 +1,10 @@
 #!/bin/sh
-# Builds the Linux release files of the GUI for x86_64 glibc: scripts/linux-package.sh OUT_DIR.
-# Writes:
-#   dfdu-gui-x86_64-unknown-linux-gnu.deb       /usr/bin/dfdu-gui, the agent script at
+# Builds the Linux release files of the GUI for glibc on the build machine's architecture,
+# x86_64 or aarch64: scripts/linux-package.sh OUT_DIR. Writes, with ARCH that architecture:
+#   dfdu-gui-ARCH-unknown-linux-gnu.deb       /usr/bin/dfdu-gui, the agent script at
 #     /usr/libexec/dfdu/dfdu-agent and its polkit action app.dfdu.agent, so an administrator's
 #     scan asks for the password in dfdu's name;
-#   dfdu-gui-x86_64-unknown-linux-gnu.AppImage  the same program in one file; its agent is the
+#   dfdu-gui-ARCH-unknown-linux-gnu.AppImage  the same program in one file; its agent is the
 #     AppImage itself, through pkexec's own action.
 # Both carry the desktop file app.dfdu.desktop and the icon. Sources are in crates/dfdu-gui/linux.
 #
@@ -16,19 +16,35 @@
 set -eu
 out=${1:?usage: scripts/linux-package.sh OUT_DIR}
 root=$(cd "$(dirname "$0")/.." && pwd)
-triple=x86_64-unknown-linux-gnu
-name=dfdu-gui-$triple
 linux=$root/crates/dfdu-gui/linux
-
-appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-runtime_url=https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-runtime_sha256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
 
 die() {
 	echo "linux-package.sh: $*" >&2
 	exit 1
 }
+
+# appimagetool runs on the build machine, so it and the runtime are both for its architecture.
+arch=$(uname -m)
+case $arch in
+x86_64)
+	deb_arch=amd64
+	loader=ld-linux-x86-64.so.2
+	appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+	runtime_sha256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+	;;
+aarch64 | arm64)
+	arch=aarch64
+	deb_arch=arm64
+	loader=ld-linux-aarch64.so.1
+	appimagetool_sha256=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+	runtime_sha256=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+	;;
+*) die "no Linux GUI build for $arch" ;;
+esac
+triple=$arch-unknown-linux-gnu
+name=dfdu-gui-$triple
+appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$arch.AppImage
+runtime_url=https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch
 
 for tool in cargo dpkg-deb objdump curl sha256sum desktop-file-validate; do
 	command -v "$tool" >/dev/null || die "$tool is not installed"
@@ -56,7 +72,7 @@ bin=$target_dir/$triple/release/dfdu-gui
 needed=$(objdump -p "$bin" | sed -n 's/^ *NEEDED *//p')
 for lib in $needed; do
 	case $lib in
-	libc.so.6 | libm.so.6 | libgcc_s.so.1 | libpthread.so.0 | libdl.so.2 | librt.so.1 | libutil.so.1 | ld-linux-x86-64.so.2) ;;
+	libc.so.6 | libm.so.6 | libgcc_s.so.1 | libpthread.so.0 | libdl.so.2 | librt.so.1 | libutil.so.1 | "$loader") ;;
 	*) die "dfdu-gui links $lib, which the .deb does not depend on" ;;
 	esac
 done
@@ -88,7 +104,7 @@ mkdir -p "$deb/DEBIAN"
 cat >"$deb/DEBIAN/control" <<EOF
 Package: dfdu-gui
 Version: $version
-Architecture: amd64
+Architecture: $deb_arch
 Maintainer: Jordon de Hoog <jordon.dehoog@gmail.com>
 Installed-Size: $(du -sk "$deb/usr" | cut -f 1)
 Depends: $depends
@@ -119,7 +135,7 @@ printf '%s  %s\n%s  %s\n' "$appimagetool_sha256" "$work/appimagetool" "$runtime_
 chmod +x "$work/appimagetool"
 # Extracted rather than mounted, so the build needs no FUSE.
 rm -f "$out/$name.AppImage"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 \
+ARCH=$arch APPIMAGE_EXTRACT_AND_RUN=1 \
 	SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || date +%s)} \
 	"$work/appimagetool" --no-appstream --runtime-file "$work/runtime" "$appdir" "$out/$name.AppImage" >&2
 

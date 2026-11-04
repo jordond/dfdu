@@ -44,7 +44,7 @@ The desktop app:
 
 ```sh
 brew install --cask jordond/tap/dfdu-gui                    # macOS
-curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui     # macOS, Linux x86_64, with the CLI
+curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui     # macOS, Linux, with the CLI
 ```
 
 [The install docs](https://dfdu.app/docs/install/) cover release binaries, cargo, Nix, the install script's options, and the desktop app's downloads for Linux and Windows.
