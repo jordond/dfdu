@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-clean"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-dupes"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "dfdu-sys",
  "dfdu-tree",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-engine"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crc32c",
  "crossbeam-channel",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-rules"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "dfdu-tree",
  "serde",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-scan"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crossbeam-deque",
  "dfdu-rules",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-session"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-store"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crc32c",
  "dfdu-scan",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-sys"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "block2",
  "dfdu-tree",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tree"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "fixedbitset",
  "os_str_bytes",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-tui"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "crossbeam-channel",
  "dfdu-dupes",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "dfdu-update"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "dfdu-sys",
  "hex",

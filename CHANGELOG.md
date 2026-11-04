@@ -2,6 +2,12 @@
 
 Notable changes to dfdu, newest first. Generated from the commits by git-cliff and edited by hand.
 
+## [0.5.1] - 2026-11-04
+
+### Added
+
+- **gui:** ship the desktop app for Linux arm64: a .deb and an AppImage, which `install.sh --gui` and the GUI's updater pick for aarch64 ([#26](https://github.com/jordond/dfdu/pull/26))
+
 ## [0.5.0] - 2026-11-04
 
 ### Added
