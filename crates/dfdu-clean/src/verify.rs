@@ -7,8 +7,8 @@ use std::io;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 
+use dfdu_rules::Env;
 use dfdu_rules::protected::Protected;
-use dfdu_rules::{Env, rule_path};
 
 use dfdu_tree::{ErrKind, Host, Kind, Meta};
 
@@ -68,7 +68,9 @@ fn refused(rules: Option<&Protected>, path: &Path) -> bool {
     is_protected(path) || rules.is_some_and(|r| protected_by(r, path))
 }
 
-/// [`is_protected`] for the protected paths `rules` and their home directory.
+/// [`is_protected`] for the protected paths `rules` and their home directory. A path in the
+/// macOS Data volume is checked as the path the system volume shows it at
+/// (`/System/Volumes/Data/Users` as `/Users`).
 fn protected_by(rules: &Protected, path: &Path) -> bool {
     let normal = path
         .components()
@@ -78,7 +80,11 @@ fn protected_by(rules: &Protected, path: &Path) -> bool {
         // "/", "/usr", "C:\", "C:\Windows" and the like.
         return true;
     }
-    let p = rule_path(path);
+    let p = rules.rule_path(path);
+    if p.split(|&b| b == b'/').filter(|s| !s.is_empty()).count() <= 1 {
+        // A top-level directory reached through a firmlink: `/Users`, `/Applications`.
+        return true;
+    }
     // The home directory is excepted from the protection of the directory holding it (so
     // what is below it can be deleted), but is never deleted itself.
     rules.home().is_some_and(|h| p == h.as_bytes()) || rules.covers(&p)
@@ -333,6 +339,35 @@ mod tests {
         assert!(linux("/home/u"));
         assert!(!linux("/home/u/.cache/pip"));
         assert!(!linux("/var/cache/apt"));
+    }
+
+    /// A path in the macOS Data volume is refused or allowed as the path a firmlink shows it
+    /// at; what no firmlink shows stays protected under `/System`.
+    #[test]
+    fn data_volume_paths_are_checked_where_firmlinks_show_them() {
+        let links = dfdu_rules::Firmlinks::parse("/Users\tUsers\n/Applications\tApplications\n");
+        let env = Env::with(Platform::MacOs, &[("HOME", "/Users/u")]).with_firmlinks(links);
+        let rules = Protected::new(&env);
+        let mac = |p: &str| protected_by(&rules, Path::new(p));
+        let data = "/System/Volumes/Data";
+        // Top-level directories, the home directory and protected paths below it.
+        assert!(mac(data));
+        assert!(mac(&format!("{data}/Users")));
+        assert!(mac(&format!("{data}/Applications")));
+        assert!(mac(&format!("{data}/Users/u")));
+        assert!(mac(&format!("{data}/Users/u/.ssh/config")));
+        assert!(mac(&format!(
+            "{data}/Users/u/Library/Keychains/login.keychain-db"
+        )));
+        assert!(mac(&format!("{data}/Users/other/Library/Caches")));
+        // Not shown by a firmlink: still under `/System`.
+        assert!(mac(&format!("{data}/.Spotlight-V100/x")));
+        assert!(mac(&format!("{data}/private/var/db/x")));
+        // What the rules may delete below the home directory.
+        assert!(!mac(&format!("{data}/Users/u/Library/Caches/pip")));
+        // Without the firmlinks, everything in the Data volume is under `/System`.
+        let plain = check(Platform::MacOs, "/Users/u");
+        assert!(plain(&format!("{data}/Users/u/Library/Caches/pip")));
     }
 
     /// A plan's protected paths for another platform do not take away this process's.

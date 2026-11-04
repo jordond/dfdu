@@ -8,6 +8,7 @@
 //! Protected paths ([`protected`]) are fixed in the code and win over every rule.
 
 mod category;
+pub mod firmlinks;
 mod glob;
 pub mod hash;
 pub mod linked;
@@ -18,6 +19,7 @@ pub mod schema;
 pub mod vars;
 
 pub use category::{CATEGORIES, Category, CategoryColor, CategoryIx};
+pub use firmlinks::Firmlinks;
 pub use glob::{Glob, GlobError};
 pub use linked::{Linked, linked_outside};
 pub use load::{LoadError, builtin, load, load_from, sources};
@@ -260,7 +262,8 @@ impl Rule {
 }
 
 /// A path as rules see it: `/`-separated, without Windows' `\\?\` prefix. The classifier and
-/// the deletion-time protection check both read paths through this.
+/// the deletion-time protection check read paths through [`protected::Protected::rule_path`],
+/// which also reads them through the macOS firmlinks.
 #[must_use]
 pub fn rule_path(path: &std::path::Path) -> Vec<u8> {
     rule_path_on(&dfdu_tree::HostPath::local(path))

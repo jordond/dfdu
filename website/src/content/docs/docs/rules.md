@@ -21,6 +21,8 @@ Every match has a safety level that says how much you lose by deleting it.
 
 Operating system folders, cloud-synced folders such as iCloud Drive, credentials and tool configuration (`~/.cargo/bin`, `~/.docker/config.json`) and other important locations are protected no matter what any rule says. Rule files cannot change that.
 
+On macOS a scan of `/` reaches your files through the Data volume (`/System/Volumes/Data/Users/you`). Rules and protected paths match those paths as the system shows them (`/Users/you`), so a scan of `/` finds the same matches as a scan of your home folder. The rest of the Data volume stays protected with `/System`.
+
 Some rules lower a match's safety when something looks off. For example, a `node_modules` folder with no lockfile next to it becomes `review`, because reinstalling may give you different package versions.
 
 ## Cleanup actions

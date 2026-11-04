@@ -39,11 +39,16 @@ pub(super) fn rescan_class(
         }
         p
     };
-    let path = if cur.is_some() {
+    let raw = if cur.is_some() {
         path_of(&names)
     } else {
         dfdu_rules::rule_path_on(&tree.host_path(ix))
     };
+    // Read through the firmlinks, as the scan reads it: a firmlinked directory of the Data
+    // volume is judged where the system volume shows it, not by its parent there.
+    let links = rules.protected().firmlinks();
+    let linked = links.shown_at(&raw).is_some();
+    let path = links.shown(raw);
     let mut inside = Vec::new();
     let mut cur = tree.parent(ix);
     while let Some(p) = cur {
@@ -73,7 +78,11 @@ pub(super) fn rescan_class(
             is_dir: true,
             sibling: &sibling,
             inside: &inside,
-            protection: protection(p),
+            protection: if linked {
+                rules.protected().state_of(&parent)
+            } else {
+                protection(p)
+            },
             partial: false,
             stat: None,
             link: None,

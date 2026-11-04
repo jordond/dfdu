@@ -260,6 +260,8 @@ pub struct Protected {
     except: Set,
     /// The home directory, with `/` separators ([`Env::home`]).
     home: Option<String>,
+    /// The firmlinks paths are read through ([`Env::firmlinks`]).
+    firmlinks: crate::Firmlinks,
 }
 
 impl Protected {
@@ -295,6 +297,7 @@ impl Protected {
                 ..Set::default()
             },
             home: env.home(),
+            firmlinks: env.firmlinks().clone(),
         };
         let expand = |list: &[&str]| -> Vec<String> {
             list.iter()
@@ -317,6 +320,25 @@ impl Protected {
             p.except.add(glob(&path));
         }
         p
+    }
+
+    /// The firmlinks of the environment the paths are for.
+    #[must_use]
+    pub fn firmlinks(&self) -> &crate::Firmlinks {
+        &self.firmlinks
+    }
+
+    /// `path` as rules and protected paths see it: [`crate::rule_path`], read through the
+    /// firmlinks (a path in the macOS Data volume is the one the system volume shows).
+    #[must_use]
+    pub fn rule_path(&self, path: &std::path::Path) -> Vec<u8> {
+        self.firmlinks.shown(crate::rule_path(path))
+    }
+
+    /// [`Protected::rule_path`] of a path on any host.
+    #[must_use]
+    pub fn rule_path_on(&self, path: &dfdu_tree::HostPath) -> Vec<u8> {
+        self.firmlinks.shown(crate::rule_path_on(path))
     }
 
     /// The home directory of the environment the paths are for, with `/` separators.
