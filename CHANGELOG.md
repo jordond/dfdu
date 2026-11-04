@@ -2,6 +2,13 @@
 
 Notable changes to dfdu, newest first. Generated from the commits by git-cliff and edited by hand.
 
+## [0.5.0] - 2026-11-04
+
+### Added
+
+- Go to a folder and up past the scan root ([#22](https://github.com/jordond/dfdu/pull/22))
+- List folders and mounts on a remote host and reuse the scan when going up ([#23](https://github.com/jordond/dfdu/pull/23))
+
 ## [0.4.0] - 2026-11-03
 
 ### Added
