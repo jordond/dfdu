@@ -2,6 +2,16 @@
 
 Notable changes to dfdu, newest first. Generated from the commits by git-cliff and edited by hand.
 
+## [0.5.2] - 2026-11-04
+
+### Added
+
+- **website:** offer the gui download for the visitor's platform
+
+### Fixed
+
+- **scan:** classify the macOS data volume through its firmlinks ([#27](https://github.com/jordond/dfdu/pull/27))
+
 ## [0.5.1] - 2026-11-04
 
 ### Added
