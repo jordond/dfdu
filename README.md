@@ -49,6 +49,12 @@ curl -fsSL https://dfdu.app/install.sh | sh -s -- --gui     # macOS, Linux, with
 
 [The install docs](https://dfdu.app/docs/install/) cover release binaries, cargo, Nix, the install script's options, and the desktop app's downloads for Linux and Windows.
 
+With an AI assistant, paste this prompt:
+
+```text
+Install dfdu for me. Follow the instructions at https://dfdu.app/llms.txt and pick the method that fits this machine.
+```
+
 ## Usage
 
 ```sh

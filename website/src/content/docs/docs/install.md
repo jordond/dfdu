@@ -79,6 +79,16 @@ Homebrew and the AUR packages install the binary, the man pages and the shell co
 
 Binaries for macOS (arm64, x86_64), Linux (static musl, arm64 and x86_64) and Windows (x86_64) are on the [releases page](https://github.com/jordond/dfdu/releases), with man pages and shell completions.
 
+## With an AI assistant
+
+[dfdu.app/llms.txt](https://dfdu.app/llms.txt) describes dfdu and how to install it for coding assistants and other LLM tools. Paste this prompt into one:
+
+```text
+Install dfdu for me. Follow the instructions at https://dfdu.app/llms.txt and pick the method that fits this machine.
+```
+
+The full docs as one file are at [llms-full.txt](https://dfdu.app/llms-full.txt).
+
 ## Updating
 
 ```sh

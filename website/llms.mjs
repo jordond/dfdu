@@ -13,6 +13,8 @@ export const llms = {
 \`\`\`sh
 # macOS, Linux (Homebrew)
 brew install jordond/tap/dfdu
+# Arch Linux, from the AUR
+yay -S dfdu-bin
 # macOS, Linux, without a package manager (into ~/.local/bin)
 curl -fsSL ${site}/install.sh | sh
 # prebuilt, through cargo
