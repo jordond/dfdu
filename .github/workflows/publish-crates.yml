@@ -54,5 +54,32 @@ jobs:
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        # In dependency order; verified above, so no build runs here.
-        run: cargo publish --workspace --locked --no-verify
+        # In dependency order; verified above, so no build runs here. Versions crates.io already
+        # has are left out, so a re-run after a partial publish goes on where it stopped
+        # (`cargo publish --workspace` refuses a version that exists).
+        run: |
+          # The crate's file in the sparse index (doc.rust-lang.org/cargo/reference/registry-index.html).
+          index_path() {
+            local n=${1,,}
+            case ${#n} in
+              1) echo "1/$n" ;;
+              2) echo "2/$n" ;;
+              3) echo "3/${n:0:1}/$n" ;;
+              *) echo "${n:0:2}/${n:2:2}/$n" ;;
+            esac
+          }
+          args=()
+          while read -r name version; do
+            if curl -fsS "https://index.crates.io/$(index_path "$name")" 2>/dev/null |
+              jq -e --arg v "$version" 'select(.vers == $v)' >/dev/null; then
+              echo "$name $version: already on crates.io"
+            else
+              args+=(-p "$name")
+            fi
+          done < <(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.publish != []) | "\(.name) \(.version)"')
+          if ((${#args[@]} == 0)); then
+            echo "every crate is already on crates.io"
+            exit 0
+          fi
+          cargo publish --locked --no-verify "${args[@]}"

@@ -58,7 +58,7 @@ jobs:
               su builder -c "makepkg --printsrcinfo >.SRCINFO && makepkg --cleanbuild --noconfirm"
               pacman -U --noconfirm ./"$pkg"-[0-9]*.pkg.tar.zst
               dfdu --version
-              # The image's pacman.conf skips extracting man pages, so check what the package lists.
+              # pacman.conf in the image skips extracting man pages, so check what the package lists.
               files=$(pacman -Qql "$pkg")
               grep -qx /usr/share/man/man1/dfdu.1.gz <<<"$files"
               grep -qx /usr/share/fish/vendor_completions.d/dfdu.fish <<<"$files"
