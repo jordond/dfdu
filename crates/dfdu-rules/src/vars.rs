@@ -37,6 +37,8 @@ pub struct Env {
     /// Whether path patterns also match where a symbolic link in their fixed part leads
     /// ([`Env::link_targets`]).
     links: Links,
+    /// The firmlinks paths are read through ([`crate::firmlinks`]).
+    firmlinks: crate::Firmlinks,
 }
 
 /// Where [`Env::link_targets`] learns where links lead.
@@ -74,6 +76,7 @@ impl Env {
             } else {
                 Links::Off
             },
+            firmlinks: crate::Firmlinks::local(),
         }
     }
 
@@ -87,7 +90,22 @@ impl Env {
                 .map(|&(k, v)| (k.to_owned(), v.to_owned()))
                 .collect(),
             links: Links::Off,
+            firmlinks: crate::Firmlinks::default(),
         }
+    }
+
+    /// This environment with paths read through `firmlinks` ([`crate::firmlinks`]).
+    #[must_use]
+    pub fn with_firmlinks(mut self, firmlinks: crate::Firmlinks) -> Env {
+        self.firmlinks = firmlinks;
+        self
+    }
+
+    /// The firmlinks paths are read through: this machine's for [`Env::current`], none for
+    /// [`Env::with`].
+    #[must_use]
+    pub fn firmlinks(&self) -> &crate::Firmlinks {
+        &self.firmlinks
     }
 
     /// This environment with path patterns following the links on this machine's disks, as

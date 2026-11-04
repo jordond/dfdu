@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use dfdu_rules::hash::FastSet as HashSet;
 use dfdu_rules::protected::State;
-use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Stat, Verdict, rule_path};
+use dfdu_rules::{Candidate, Hit, Inside, Reach, RuleSet, Stat, Verdict};
 use dfdu_tree::{Class, Kind, RuleIx, Safety};
 
 use crate::proto::{DirId, Entry, FileRec, Mark, NameSpan, SubdirRec};
@@ -39,7 +39,8 @@ use crate::sync::Mutex;
 #[derive(Clone, Debug)]
 pub struct ClassOpts {
     pub rules: Arc<RuleSet>,
-    /// The job root's absolute path, as rules see it ([`rule_path`] of the canonical path).
+    /// The job root's absolute path, as rules see it
+    /// ([`dfdu_rules::protected::Protected::rule_path`] of the canonical path).
     pub path: Vec<u8>,
     /// Rules decided for the directories above the job root, innermost last.
     pub inside: Vec<RuleIx>,
@@ -79,14 +80,23 @@ impl ClassOpts {
     #[must_use]
     pub fn for_root(rules: Arc<RuleSet>, root: &std::path::Path) -> ClassOpts {
         let canon = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        let path = rule_path(&canon);
+        let path = rules.protected().rule_path(&canon);
         let mut chain = Vec::new();
         let mut protection = rules.protected().state_of(&path);
         if let (Some(parent), Some(name)) = (canon.parent(), canon.file_name()) {
             let name = dfdu_tree::name_bytes(name);
             let sibling =
                 |n: &[u8]| std::fs::symlink_metadata(parent.join(dfdu_tree::name_os(n))).is_ok();
-            let parent_path = rule_path(parent);
+            // A firmlinked directory of the Data volume (`/System/Volumes/Data/Users`) is
+            // judged where the system volume shows it (`Users` in `/`).
+            let linked = (rules.protected().firmlinks())
+                .shown_at(&dfdu_rules::rule_path(&canon))
+                .is_some();
+            let parent_path = if linked {
+                split(&path).0.to_vec()
+            } else {
+                rules.protected().rule_path(parent)
+            };
             let verdict = rules.classify(&Candidate {
                 parent: &parent_path,
                 name: &name,
@@ -423,17 +433,38 @@ impl Listing {
             let n = name(s.name);
             let entry = Entry::Subdir(i as u32);
             let path = child_path(&self.task.path, n);
+            // A firmlinked directory of the Data volume (`/System/Volumes/Data/Users`) is
+            // judged where the system volume shows it (`Users` in `/`), and so is everything
+            // below it; no pattern found by this listing is known to reach it there.
+            let shown = (self.rules.protected().firmlinks().shown_at(&path)).map(<[u8]>::to_vec);
+            let (verdict, path, reach) = match shown {
+                None => (classify(n, true, None, None), path, reach.clone()),
+                Some(shown) => {
+                    let (parent, name) = split(&shown);
+                    let verdict = self.rules.dir(parent).classify(&Candidate {
+                        parent,
+                        name,
+                        is_dir: true,
+                        sibling: &in_block,
+                        inside: &inside,
+                        protection: self.rules.protected().state_of(parent),
+                        partial: !whole,
+                        stat: None,
+                        link: None,
+                    });
+                    (verdict, shown, None)
+                }
+            };
             let mut task = TaskClass {
-                name_at: path.len() - n.len(),
+                name_at: path.len() - split(&path).1.len(),
                 path,
                 inside: inside.clone(),
                 protection: State::Off,
                 decided: None,
                 chain: Vec::new(),
                 rv: None,
-                reach: reach.clone(),
+                reach,
             };
-            let verdict = classify(n, true, None, None);
             if let Some(m) = protection_mark(parent_protected, &verdict) {
                 out.marks.push((entry, m));
             }
@@ -523,6 +554,15 @@ impl Listing {
     }
 }
 
+/// A rule path's parent directory and last name (`/` and `Users` for `/Users`).
+fn split(path: &[u8]) -> (&[u8], &[u8]) {
+    match path.iter().rposition(|&b| b == b'/') {
+        Some(0) => (&path[..1], &path[1..]),
+        Some(i) => (&path[..i], &path[i + 1..]),
+        None => (&path[..0], path),
+    }
+}
+
 /// The rule path of an entry named `name` in the directory at `parent`.
 fn child_path(parent: &[u8], name: &[u8]) -> Vec<u8> {
     let mut p = Vec::with_capacity(parent.len() + 1 + name.len());
@@ -533,3 +573,6 @@ fn child_path(parent: &[u8], name: &[u8]) -> Vec<u8> {
     p.extend_from_slice(name);
     p
 }
+
+#[cfg(test)]
+mod tests;
