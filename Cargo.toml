@@ -19,7 +19,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -28,18 +28,18 @@ homepage = "https://github.com/jordond/dfdu"
 publish = false
 
 [workspace.dependencies]
-dfdu-tree = { path = "crates/dfdu-tree", version = "0.5.2" }
-dfdu-scan = { path = "crates/dfdu-scan", version = "0.5.2" }
-dfdu-engine = { path = "crates/dfdu-engine", version = "0.5.2" }
-dfdu-clean = { path = "crates/dfdu-clean", version = "0.5.2" }
-dfdu-rules = { path = "crates/dfdu-rules", version = "0.5.2" }
-dfdu-tui = { path = "crates/dfdu-tui", version = "0.5.2" }
-dfdu-session = { path = "crates/dfdu-session", version = "0.5.2" }
-dfdu-sys = { path = "crates/dfdu-sys", version = "0.5.2" }
-dfdu-store = { path = "crates/dfdu-store", version = "0.5.2" }
+dfdu-tree = { path = "crates/dfdu-tree", version = "0.6.0" }
+dfdu-scan = { path = "crates/dfdu-scan", version = "0.6.0" }
+dfdu-engine = { path = "crates/dfdu-engine", version = "0.6.0" }
+dfdu-clean = { path = "crates/dfdu-clean", version = "0.6.0" }
+dfdu-rules = { path = "crates/dfdu-rules", version = "0.6.0" }
+dfdu-tui = { path = "crates/dfdu-tui", version = "0.6.0" }
+dfdu-session = { path = "crates/dfdu-session", version = "0.6.0" }
+dfdu-sys = { path = "crates/dfdu-sys", version = "0.6.0" }
+dfdu-store = { path = "crates/dfdu-store", version = "0.6.0" }
 dfdu-bench = { path = "crates/dfdu-bench" }
-dfdu-dupes = { path = "crates/dfdu-dupes", version = "0.5.2" }
-dfdu-update = { path = "crates/dfdu-update", version = "0.5.2", default-features = false }
+dfdu-dupes = { path = "crates/dfdu-dupes", version = "0.6.0" }
+dfdu-update = { path = "crates/dfdu-update", version = "0.6.0", default-features = false }
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"

@@ -2,6 +2,17 @@
 
 Notable changes to dfdu, newest first. Generated from the commits by git-cliff and edited by hand.
 
+## [0.6.0] - 2026-11-05
+
+### Added
+
+- Keep what a scan read when going up from it, running or a mount ([#31](https://github.com/jordond/dfdu/pull/31))
+- **gui:** delete staged items now from the status bar ([#35](https://github.com/jordond/dfdu/pull/35))
+
+### Fixed
+
+- Keep the scan done while a delete runs ([#34](https://github.com/jordond/dfdu/pull/34))
+
 ## [0.5.2] - 2026-11-04
 
 ### Added
