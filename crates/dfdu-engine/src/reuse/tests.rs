@@ -88,7 +88,7 @@ fn a_scan_not_settled_or_not_below_is_not_copied() {
     let refuse: [fn(&mut Model); 5] = [
         |m| m.status.incomplete = true,
         |m| m.status.staged = Count { items: 1, bytes: 1 },
-        |m| m.status.jobs[0].phase = JobPhase::Running,
+        |m| m.status.fatal = Some("x".into()),
         |m| m.status.jobs.clear(),
         |m| {
             let r = m.tree.roots().next().unwrap();
@@ -100,6 +100,61 @@ fn a_scan_not_settled_or_not_below_is_not_copied() {
         f(&mut m);
         assert!(scanned(&m, &path("/p"), 0).is_none(), "case {i}");
     }
+}
+
+/// [`finished`] while its scan still runs: `c` and `c/d` not read to the end, `c/d/e` not
+/// read at all, `c/k` read to the end.
+fn running() -> Model {
+    let mut m = finished();
+    m.status.jobs[0].phase = JobPhase::Running;
+    let r = m.tree.roots().next().unwrap();
+    let k = add(&mut m.tree, r, "k", &meta(Kind::Dir, 0, 14));
+    add(&mut m.tree, k, "g", &meta(Kind::File, 10, 15));
+    let d = node_at(&m.tree, "d");
+    let e = add(&mut m.tree, d, "e", &meta(Kind::Dir, 0, 16));
+    for ix in [r, d, e] {
+        m.tree.dir_mut(ix).unwrap().state = DirState::Pending;
+    }
+    m
+}
+
+#[test]
+fn a_running_scan_is_copied_with_what_it_has_not_finished() {
+    let m = running();
+    assert_eq!(keepable(&m, &path("/p")), m.tree.roots().next());
+    let s = scanned(&m, &path("/p"), 0).expect("copied");
+    let mut unfinished = s.unfinished.clone();
+    unfinished.sort();
+    assert_eq!(
+        unfinished,
+        [PathBuf::new(), PathBuf::from("d"), PathBuf::from("d/e")]
+    );
+    // Loaded as a snapshot of it is: shown incomplete until listed again.
+    assert_eq!(
+        s.tree.dir(node_at(&s.tree, "d")).unwrap().state,
+        DirState::Partial
+    );
+    assert_eq!(
+        s.tree.dir(node_at(&s.tree, "k")).unwrap().state,
+        DirState::Complete
+    );
+    // The graft lists them again, below the folders between.
+    let stats = [meta(Kind::Dir, 0, 1), meta(Kind::Dir, 0, 2)];
+    let (_, mut changed) = graft(s, &path("/p"), &stats).expect("grafted");
+    changed.sort();
+    assert_eq!(changed, ["a", "a/c", "a/c/d", "a/c/d/e"].map(PathBuf::from));
+    // Not before the root's stat is in.
+    let mut m = running();
+    let r = m.tree.roots().next().unwrap();
+    m.tree.update_meta(r, &meta(Kind::Dir, 0, 0));
+    assert_eq!(keepable(&m, &path("/p")), None);
+    // A finished scan has nothing unfinished.
+    assert!(
+        scanned(&finished(), &path("/p"), 0)
+            .unwrap()
+            .unfinished
+            .is_empty()
+    );
 }
 
 #[test]
@@ -156,6 +211,53 @@ fn a_graft_needs_a_directory_stat_for_each_folder_down_to_the_old_root() {
     assert!(changed.is_empty());
 }
 
+/// The stats down to the old root `/p/a/c`, read with device and inode `read`, from `/p` on
+/// device 1, with `c` stat'ed as `c` and `a` on device `a_dev`.
+fn down(read: (u64, u64), c: Meta, a_dev: u64) -> Option<Down> {
+    // Joined as the tree joins, with `\` on a Windows host.
+    let (top, a) = (path("/p"), path("/p").join(b"a"));
+    let old = a.join(b"c");
+    stats_down(&old, read, &top, |p| {
+        Some(if *p == top {
+            meta(Kind::Dir, 0, 1)
+        } else if *p == a {
+            Meta {
+                dev: a_dev,
+                ..meta(Kind::Dir, 0, 2)
+            }
+        } else {
+            c
+        })
+    })
+}
+
+#[test]
+fn the_old_root_may_be_a_mount_of_its_own_but_not_a_folder_between() {
+    let on = |dev, ino| Meta {
+        dev,
+        ..meta(Kind::Dir, 0, ino)
+    };
+    // On the same device: no mount to enter.
+    let d = down((1, 10), on(1, 10), 1).expect("same device");
+    assert_eq!((d.stats.len(), d.mount), (2, None));
+    // The old root as read, on a device of its own: entered.
+    let d = down((2, 10), on(2, 10), 1).expect("a mount");
+    assert_eq!(d.mount, Some((2, 10)));
+    // Not the directory read: it became a mount, or was replaced.
+    assert!(down((1, 10), on(2, 10), 1).is_none(), "became a mount");
+    assert!(down((2, 10), on(2, 11), 1).is_none(), "another root");
+    assert!(down((2, 10), on(1, 10), 1).is_none(), "no longer a mount");
+    // A mount between.
+    assert!(down((1, 10), on(1, 10), 3).is_none());
+    assert!(down((2, 10), on(2, 10), 3).is_none());
+    // Not a directory.
+    let file = Meta {
+        dev: 2,
+        ..meta(Kind::File, 0, 10)
+    };
+    assert!(down((2, 10), file, 1).is_none());
+}
+
 fn wait<B: dfdu_scan::Backend>(e: &Engine<B>) {
     assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
 }
@@ -205,6 +307,12 @@ fn a_scan_above_ends_as_a_fresh_scan_does() {
     let top_path = HostPath::local(&top);
 
     let old = scan(&HostPath::local(&c));
+    assert!(old.keeps(&top_path));
+    assert!(!old.keeps(&HostPath::local(&c)), "the root itself");
+    assert!(
+        !old.keeps(&HostPath::local(&top.join("nowhere"))),
+        "not above"
+    );
     let s = old.scanned(&top_path).expect("copied");
     old.shutdown(Duration::from_millis(200));
     let new = Engine::portable(2);

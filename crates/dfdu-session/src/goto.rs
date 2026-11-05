@@ -410,6 +410,31 @@ pub fn up_at_root(s: &mut SessionState, armed: Option<Instant>, now: Instant) ->
     None
 }
 
+/// A click at `now` that asks for a scan of `path`, a folder above the scan root (a
+/// breadcrumb): the folder to scan now, or `None` when the click only said what a second one
+/// does. A scan that is still running, which the scan of `path` would not keep (`keeps`,
+/// [`dfdu_engine::Engine::keeps`]), is stopped only by a second click on the same folder
+/// within [`ARMED_FOR`]: one click would throw away what it read.
+pub fn reopen_above(
+    s: &mut SessionState,
+    path: &HostPath,
+    keeps: bool,
+    now: Instant,
+) -> Option<HostPath> {
+    let armed = s.reopen_armed.take();
+    if let Some((_, a)) = &armed {
+        s.drop_notice(a);
+    }
+    let again = armed.is_some_and(|(to, a)| to == *path && now < a.expires_at());
+    if keeps || !s.snap.busy || again {
+        return Some(path.clone());
+    }
+    let notice = format!("this scan has not finished: click again to stop it and scan {path}");
+    s.status = Some(notice.clone());
+    s.reopen_armed = Some((path.clone(), Armed { at: now, notice }));
+    None
+}
+
 /// The scan root is shown, its scan is over and it holds nothing: the list says so, and how
 /// to go up or elsewhere.
 #[must_use]

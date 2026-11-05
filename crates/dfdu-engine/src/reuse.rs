@@ -6,6 +6,9 @@
 //! between it and the old root are listed again; each directory of the copy is kept when its
 //! stat is the one it was read with, and listed again otherwise, as a cached scan's are.
 //!
+//! The old scan may still be running. Its directories not read to the end yet are listed again
+//! by the new scan ([`Scanned::unfinished`]), keeping those below them that were.
+//!
 //! The copy is a loaded tree: no classes (the resume classifies it with the new root's rules
 //! and protection), no jobs, no measured extents, and a hard link charged where it is first met
 //! (the resume elects one of each inode again, with those the rest of the folder holds).
@@ -37,6 +40,10 @@ pub struct Scanned {
     /// How long the scan that read it took, in milliseconds, when its caller knows; 0
     /// otherwise.
     pub scan_ms: u64,
+    /// The directories the old scan had not read to the end when it was copied, relative to
+    /// its root (empty for the root itself): the new scan lists them again. Empty for a
+    /// finished scan.
+    pub unfinished: Vec<PathBuf>,
 }
 
 impl Scanned {
@@ -63,15 +70,14 @@ impl Scanned {
     }
 }
 
-/// Copies the tree below the first visible root of `m`, a finished scan of this machine
-/// started at `since`, when it can be kept by a scan of `above`, a folder above that root: the
-/// scan ended complete, nothing is being deleted or waits to be (staged, or to be put back),
-/// and no job runs. `None` otherwise.
+/// The root of `m`, a scan of this machine, when what it read can be kept by a scan of
+/// `above`, a folder above that root: the scan ended complete or is still running and has
+/// read the root's stat (which comes with its first entries), nothing is being deleted or
+/// waits to be (staged, or to be put back), and no native command runs. `None` otherwise.
 #[must_use]
-pub fn scanned(m: &Model, above: &HostPath, since: u64) -> Option<Scanned> {
+pub fn keepable(m: &Model, above: &HostPath) -> Option<Ix> {
     let s = &m.status;
-    let settled = !s.jobs.is_empty()
-        && !s.busy()
+    let quiet = !s.jobs.is_empty()
         && !s.incomplete
         && s.fatal.is_none()
         && s.disconnected.is_none()
@@ -80,26 +86,58 @@ pub fn scanned(m: &Model, above: &HostPath, since: u64) -> Option<Scanned> {
         && s.undo.is_none()
         && s.undoing.is_none()
         && s.native.as_ref().is_none_or(|n| n.done.is_some());
-    if !settled {
+    if !quiet {
         return None;
     }
     let root = m.tree.roots().next()?;
-    let complete = m
-        .tree
-        .dir(root)
-        .is_some_and(|d| d.state == DirState::Complete);
+    let state = m.tree.dir(root).map(|d| d.state);
+    let going = match state {
+        Some(DirState::Complete) => true,
+        // Its inode is 0 until its stat is in.
+        Some(DirState::Pending) => m.tree.dev_ino(root).1 != 0,
+        _ => false,
+    };
     let below = m
         .tree
         .host_path(root)
         .rel(above)
         .is_some_and(|r| !r.is_empty());
-    (complete && below).then(|| Scanned {
+    (going && below).then_some(root)
+}
+
+/// Copies the tree below the first visible root of `m`, a scan of this machine started at
+/// `since`, when it can be kept by a scan of `above` ([`keepable`]), with the directories it
+/// has not read to the end yet. `None` otherwise.
+#[must_use]
+pub fn scanned(m: &Model, above: &HostPath, since: u64) -> Option<Scanned> {
+    let root = keepable(m, above)?;
+    Some(Scanned {
         tree: loaded_copy(&m.tree, root),
         since,
         full_scan: since,
         journal: None,
         scan_ms: 0,
+        unfinished: unfinished(&m.tree, root),
     })
+}
+
+/// The directories at or below `root` of `t` not read to the end yet, relative to `root`. A
+/// directory is read to the end only once everything below it is, so only those not are
+/// looked into.
+fn unfinished(t: &Tree, root: Ix) -> Vec<PathBuf> {
+    let pending = |ix| t.dir(ix).is_some_and(|d| d.state == DirState::Pending);
+    let mut out = Vec::new();
+    let mut stack = vec![(root, PathBuf::new())];
+    while let Some((ix, rel)) = stack.pop() {
+        if !pending(ix) {
+            continue;
+        }
+        for c in t.children(ix).filter(|&c| pending(c)) {
+            stack.push((c, rel.join(&*dfdu_tree::name_os(t.name(c)))));
+        }
+        out.push(rel);
+    }
+    out
 }
 
 /// The flags a loaded directory keeps, as a snapshot keeps them.
@@ -198,7 +236,8 @@ fn close(t: &mut Tree, ix: Ix, state: DirState) {
 /// The tree a scan of `path` starts from to keep `scanned`, and the folders to list again
 /// besides `path` (relative to it): `path` as its root with `stats[0]`, then each folder from
 /// it down to the old root's parent with the stats after, then the old root with what was
-/// read below it. The folder and those between are left `Cancelled` (shown incomplete) until
+/// read below it. The folders listed again are those between and the old scan's unfinished
+/// ones. The folder and those between are left `Cancelled` (shown incomplete) until
 /// the resume lists them. `None` when the old root is not below `path`, the stats are not one
 /// for each folder down to the old root's parent, or one is not a directory.
 #[must_use]
@@ -236,23 +275,85 @@ pub fn graft(scanned: Scanned, path: &HostPath, stats: &[Meta]) -> Option<(Tree,
     for p in placeholders {
         close(&mut t, p, DirState::Cancelled);
     }
+    rel_path.push(&*dfdu_tree::name_os(name));
+    changed.extend(scanned.unfinished.iter().map(|u| {
+        if u.as_os_str().is_empty() {
+            rel_path.clone()
+        } else {
+            rel_path.join(u)
+        }
+    }));
     t.bump_version();
     Some((t, changed))
 }
 
 /// What a scan of `path` keeping `scanned` starts from ([`graft`]), with the time the copy's
-/// mtimes are judged against ([`Scanned::since`]), when `stat` (a job root's stat on this
-/// machine) finds `path` and every folder down to the old root, the old root among them, a
-/// directory on the device and mount of `path`, and the old root was read on that device too.
-/// `None` otherwise: a mount on the way or at the old root (it became one, or was a mount of
-/// its own) is the new scan's to judge, and a folder that cannot be stat'ed its to report.
+/// mtimes are judged against ([`Scanned::since`]) and the old root's device and inode when it
+/// is a mount the new scan enters ([`stats_down`]), when `stat` (a job root's stat on this
+/// machine) finds the folders down to the old root as [`stats_down`] wants them. A mount
+/// entered is listed again, so that what is below it is kept. `None` otherwise: a mount on
+/// the way, or an old root that became one, is the new scan's to judge, and a folder that
+/// cannot be stat'ed its to report.
 #[must_use]
 pub fn above(
     scanned: Scanned,
     path: &HostPath,
     stat: impl Fn(&HostPath) -> Option<Meta>,
-) -> Option<(Tree, Vec<PathBuf>, u64)> {
+) -> Option<Above> {
+    let (dev, ino, _) = scanned.root_stat()?;
     let old = scanned.root();
+    let Down { stats, mount } = stats_down(&old, (dev, ino), path, stat)?;
+    let since = scanned.since;
+    let (tree, mut changed) = graft(scanned, path, &stats)?;
+    if mount.is_some() {
+        let rel: PathBuf = (old.rel(path)?.iter())
+            .map(|n| dfdu_tree::name_os(n).into_owned())
+            .collect();
+        if !changed.contains(&rel) {
+            changed.push(rel);
+        }
+    }
+    Some(Above {
+        tree,
+        changed,
+        since,
+        mount,
+    })
+}
+
+/// What a scan of a folder above an old scan's root starts from ([`above`]).
+pub struct Above {
+    /// The folder with the old root's tree grafted below it ([`graft`]).
+    pub tree: Tree,
+    /// The folders to list again, relative to the folder.
+    pub changed: Vec<PathBuf>,
+    /// When the old scan started ([`Scanned::since`]).
+    pub since: u64,
+    /// The old root's device and inode when it is a mount the new scan enters.
+    pub mount: Option<(u64, u64)>,
+}
+
+/// The stats on the way down from a folder to an old scan's root ([`stats_down`]).
+pub struct Down {
+    /// The folder's and each folder's below it down to the old root's parent.
+    pub stats: Vec<Meta>,
+    /// The old root's device and inode when it is a mount of its own.
+    pub mount: Option<(u64, u64)>,
+}
+
+/// The stats of `path` and each folder below it down to the old root's parent, and the old
+/// root's device and inode when it is a mount of `path`'s, when `stat` finds `path` and every
+/// folder down to `old` a directory on the device and mount of `path`, and `old` itself the
+/// directory read as the old root (`old_at`, its device and inode), on that device and mount
+/// too, or a mount on another device. `None` otherwise: a mount between them, or an old root
+/// that is not the one read (it became a mount since, or was replaced).
+#[must_use]
+pub fn stats_down(
+    old: &HostPath,
+    old_at: (u64, u64),
+    path: &HostPath,
+    stat: impl Fn(&HostPath) -> Option<Meta>,
+) -> Option<Down> {
     let rel = old.rel(path)?;
     let top = stat(path)?;
     let same = |m: &Meta| {
@@ -264,18 +365,22 @@ pub fn above(
     let mut at = path.clone();
     for (i, name) in rel.iter().enumerate() {
         at.push(name);
-        let m = stat(&at).filter(same)?;
+        let m = stat(&at)?;
         if i + 1 < rel.len() {
-            stats.push(m);
+            stats.push(Some(m).filter(same)?);
+            continue;
         }
+        // The old root.
+        if same(&m) {
+            return (old_at.0 == top.dev).then_some(Down { stats, mount: None });
+        }
+        let mount = m.kind == Kind::Dir && m.dev != top.dev && (m.dev, m.ino) == old_at;
+        return mount.then_some(Down {
+            stats,
+            mount: Some(old_at),
+        });
     }
-    let (dev, _, _) = scanned.root_stat()?;
-    if dev != top.dev {
-        return None;
-    }
-    let since = scanned.since;
-    let (tree, changed) = graft(scanned, path, &stats)?;
-    Some((tree, changed, since))
+    None
 }
 
 #[cfg(test)]

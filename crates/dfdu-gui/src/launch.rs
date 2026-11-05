@@ -452,7 +452,7 @@ mod tests {
     }
 
     /// A browser of this machine's scan offers what it read to a scan of a folder above its
-    /// root once it ended; an administrator's, read by an agent, does not. On Unix, where the
+    /// root, while it runs or once it ended; an administrator's, read by an agent, does not. On Unix, where the
     /// canonical path the scan names its root by is what `canonicalize` gives.
     #[cfg(unix)]
     #[test]

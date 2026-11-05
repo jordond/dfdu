@@ -103,6 +103,11 @@ pub struct SessionState {
     /// parent ([`crate::goto::up_at_root`]). Any other input clears it ([`SessionState::disarm`]),
     /// and so does a tick after it expired ([`SessionState::expire_arm`]).
     pub up_armed: Option<crate::goto::Armed>,
+    /// When a click asked for a scan of a folder above the scan root (a breadcrumb), with that
+    /// folder, while this scan had not finished and the new one would not keep what it read: a
+    /// second click on it within [`crate::goto::ARMED_FOR`] opens it
+    /// ([`crate::goto::reopen_above`]). A tick after it expired clears it.
+    pub reopen_armed: Option<(dfdu_tree::HostPath, crate::goto::Armed)>,
     /// What the go-to prompt asked the scanned host for, and its answer ([`crate::goto::tab`]).
     pub goto: crate::goto::Asking,
     /// The root of the scan this one was opened from, going up or to a folder above it: the
@@ -166,6 +171,7 @@ impl SessionState {
             from_file: None,
             elevated: false,
             up_armed: None,
+            reopen_armed: None,
             goto: crate::goto::Asking::default(),
             came_from: None,
             sort_schedule: SortSchedule::new(now),
@@ -239,14 +245,20 @@ impl SessionState {
         }
     }
 
-    /// Disarms a first `Parent` at the scan root that expired by `now`. Returns whether the
-    /// status line changed.
+    /// Disarms a first `Parent` at the scan root, or a first click on a folder above it, that
+    /// expired by `now`. Returns whether the status line changed.
     pub fn expire_arm(&mut self, now: Instant) -> bool {
-        if self.up_armed.as_ref().is_none_or(|a| now < a.expires_at()) {
-            return false;
-        }
         let before = self.status.is_some();
-        self.disarm();
+        if let Some((_, a)) = self.reopen_armed.take_if(|(_, a)| now >= a.expires_at()) {
+            self.drop_notice(&a);
+        }
+        if self
+            .up_armed
+            .as_ref()
+            .is_some_and(|a| now >= a.expires_at())
+        {
+            self.disarm();
+        }
         before && self.status.is_none()
     }
 

@@ -194,6 +194,12 @@ impl<'e, B: Backend, F: FrontEnd> Session<'e, B, F> {
         Some(s)
     }
 
+    /// Whether a scan of `above`, a folder above its root, would keep what this scan read
+    /// ([`Engine::keeps`]). Stats the folders down to the root on the caller's thread.
+    pub fn keeps(&self, above: &HostPath) -> bool {
+        self.engine.get().keeps(above)
+    }
+
     pub fn state_mut(&mut self) -> &mut SessionState {
         self.front.state_mut()
     }

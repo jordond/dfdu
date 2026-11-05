@@ -32,6 +32,48 @@ use reclassify::ClassifyLoaded;
 use verify::Verify;
 pub(in crate::applier) use walk::ResumeWalk;
 
+/// The devices on which a resume checks loaded directories by their stat and keeps them: the
+/// root's, and those of the mounts its job enters ([`JobOptions::enter`]), whose roots loaded
+/// below it are taken as part of the tree rather than scanned again in full.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Homes {
+    devs: Vec<u64>,
+    entered: Vec<(u64, u64)>,
+}
+
+impl Homes {
+    pub(super) fn new(root_dev: u64, enter: &[(u64, u64)]) -> Homes {
+        let mut devs = vec![root_dev];
+        devs.extend(enter.iter().map(|&(dev, _)| dev));
+        Homes {
+            devs,
+            entered: enter.to_vec(),
+        }
+    }
+
+    /// Whether loaded directories on `dev` are checked and kept.
+    pub(super) fn home(&self, dev: u64) -> bool {
+        self.devs.contains(&dev)
+    }
+
+    /// Whether mount root `ix` of `tree` is entered: one of the mounts entered, and the
+    /// topmost on its device (a second mount of it below is a duplicate, the scan's to judge).
+    pub(super) fn enters(&self, tree: &Tree, ix: Ix) -> bool {
+        let at = tree.dev_ino(ix);
+        if !self.entered.contains(&at) {
+            return false;
+        }
+        let mut up = tree.parent(ix);
+        while let Some(p) = up {
+            if tree.dev_ino(p).0 == at.0 {
+                return false;
+            }
+            up = tree.parent(p);
+        }
+        true
+    }
+}
+
 /// What a resume's rescan keeps from the loaded tree: the loaded directories by device and
 /// inode, with the mtime each was loaded with, which its scanner does not read while the mtime
 /// holds ([`Keep`]), and the placeholders it added for those it met, which the loaded
@@ -185,8 +227,15 @@ impl<B: Backend> Applier<B> {
                 _ => wanted.push(root),
             }
         }
-        // This resume takes the whole tree over, and checks it again.
+        // This resume takes the whole tree over, and checks it again. Its rescans enter the
+        // mounts it enters.
         self.resume.unverified.clear();
+        for &at in &opts.enter {
+            if !self.entered.contains(&at) {
+                self.entered.push(at);
+            }
+        }
+        let homes = Homes::new(m.tree.dev_ino(root).0, &opts.enter);
         let id = self.next_job;
         self.next_job += 1;
         if let Some(c) = &opts.class {
@@ -220,10 +269,10 @@ impl<B: Backend> Applier<B> {
             .settings
             .remote
             .is_none()
-            .then(|| Verify::new(&m.tree, root, &wanted, since));
+            .then(|| Verify::new(&m.tree, root, &wanted, since, homes.clone()));
         let wanted = wanted.into_iter().map(|w| m.tree.node_ref(w)).collect();
         self.work.push_back(Work::Resume(Box::new(ResumeWalk::new(
-            id, node, wanted, class, stack, verify,
+            id, node, wanted, class, stack, verify, homes,
         ))));
     }
 

@@ -163,8 +163,11 @@ impl Sim {
             spec,
             model,
             self.cfg.limits.block_entries,
-            self.cross_mounts,
-            self.network,
+            crate::check::Entering {
+                cross: self.cross_mounts,
+                network: self.network,
+                entered: &self.entered,
+            },
         )
         .map_err(|e| {
             let n = &model.status.notices;
