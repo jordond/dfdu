@@ -301,3 +301,60 @@ fn a_windows_tree_is_reached_whatever_the_case_typed() {
         Reach::Dir(w(r"C:\Users\Jo\Docs"))
     );
 }
+
+#[test]
+fn a_click_above_the_root_of_a_running_scan_it_would_not_keep_asks_first() {
+    let t = Instant::now();
+    let up = HostPath::from("/");
+    let other = HostPath::from("/x");
+    // A finished scan, or one the new scan keeps, is replaced at once.
+    let mut s = at_root();
+    assert_eq!(reopen_above(&mut s, &up, false, t), Some(up.clone()));
+    s.snap.busy = true;
+    assert_eq!(reopen_above(&mut s, &up, true, t), Some(up.clone()));
+
+    // A running scan it would not keep: the first click says so.
+    assert_eq!(reopen_above(&mut s, &up, false, t), None);
+    let status = s.status.clone().unwrap_or_default();
+    assert!(
+        status.contains("not finished") && status.ends_with("scan /"),
+        "{status}"
+    );
+    // A click on another folder asks again, for that one.
+    assert_eq!(reopen_above(&mut s, &other, false, t), None);
+    assert!(
+        s.status
+            .as_deref()
+            .is_some_and(|st| st.ends_with("scan /x"))
+    );
+    // The second click on it within the time opens it, and clears the notice.
+    let soon = t + ARMED_FOR / 2;
+    assert_eq!(
+        reopen_above(&mut s, &other, false, soon),
+        Some(other.clone())
+    );
+    assert_eq!(
+        (s.reopen_armed.is_none(), s.status.as_deref()),
+        (true, None)
+    );
+
+    // Too late: it asks again.
+    let _ = reopen_above(&mut s, &up, false, t);
+    assert_eq!(reopen_above(&mut s, &up, false, t + ARMED_FOR), None);
+
+    // The notice goes when it expires, unless something replaced it.
+    assert!(!s.expire_arm(t + ARMED_FOR));
+    assert!(s.expire_arm(t + 2 * ARMED_FOR));
+    assert_eq!(
+        (s.reopen_armed.is_none(), s.status.as_deref()),
+        (true, None)
+    );
+    let _ = reopen_above(&mut s, &up, false, t);
+    s.status = Some("other".into());
+    assert!(!s.expire_arm(t + ARMED_FOR));
+    assert_eq!(s.status.as_deref(), Some("other"));
+    // Other input does not disarm it: the click that confirms is input too.
+    let _ = reopen_above(&mut s, &up, false, t);
+    s.disarm();
+    assert_eq!(reopen_above(&mut s, &up, false, t), Some(up));
+}

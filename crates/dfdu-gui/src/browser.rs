@@ -180,7 +180,13 @@ impl<B: Backend> Browser<B> {
                     Some(says) => s.status = Some(says.into()),
                     None => {
                         s.status = None;
-                        self.view().reopen = Some(path);
+                        // Only a running scan that would be lost asks for a second click,
+                        // which is worth the stats.
+                        let keeps = s.snap.busy && self.session.keeps(&path);
+                        let s = self.session.state_mut();
+                        if let Some(path) = dfdu_session::goto::reopen_above(s, &path, keeps, now) {
+                            self.view().reopen = Some(path);
+                        }
                     }
                 },
                 Intent::GoToFolder(text) => {

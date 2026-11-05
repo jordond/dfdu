@@ -105,7 +105,11 @@ impl Pacing {
         if let Some(t) = s.next_sort_at() {
             within(t.saturating_duration_since(now));
         }
-        if let Some(a) = &s.up_armed {
+        for a in s
+            .up_armed
+            .iter()
+            .chain(s.reopen_armed.iter().map(|(_, a)| a))
+        {
             // Its notice leaves the status line when it expires.
             within(a.expires_at().saturating_duration_since(now));
         }

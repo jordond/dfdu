@@ -16,6 +16,10 @@ use crate::theme::Colors;
 /// Between two breadcrumbs.
 const SEPARATOR: &str = "/";
 
+/// macOS's Data volume, which holds what the startup disk shows: a separate volume mounted
+/// on the read-only system volume, whose folders above it are not worth a scan.
+const DATA_VOLUME: &[u8] = b"/System/Volumes/Data";
+
 /// One breadcrumb: a directory on the way to the current one.
 #[derive(Debug, PartialEq)]
 pub struct Segment {
@@ -54,9 +58,9 @@ pub fn segments(dir: &HostPath, root: &HostPath, home: Option<&Path>) -> Vec<Seg
 }
 
 /// The breadcrumbs from the top down to the scan root `root`, which is the last: each
-/// directory by its name, the root of the filesystem by its path, and the home directory
-/// `home` as `~`, where they stop. The home directory counts on a scan of this machine only,
-/// and not when it is `/`, as in [`dfdu_engine::tilde`].
+/// directory by its name, the root of the filesystem by its path, the home directory `home`
+/// as `~` and macOS's Data volume by its path, where they stop. The home directory counts on
+/// a scan of this machine only, and not when it is `/`, as in [`dfdu_engine::tilde`].
 pub fn ancestors(root: &HostPath, home: Option<&Path>) -> Vec<Segment> {
     let home =
         (home.filter(|h| h.parent().is_some() && root.host() == Host::LOCAL)).map(HostPath::local);
@@ -66,6 +70,14 @@ pub fn ancestors(root: &HostPath, home: Option<&Path>) -> Vec<Segment> {
         if home.as_ref() == Some(&at) {
             out.push(Segment {
                 text: "~".into(),
+                dir: at,
+                above: true,
+            });
+            break;
+        }
+        if at.host() == Host::Unix && at.as_bytes() == DATA_VOLUME {
+            out.push(Segment {
+                text: at.display().into_owned(),
                 dir: at,
                 above: true,
             });
@@ -238,6 +250,23 @@ mod tests {
         // No separator after the root of the filesystem, which ends with one.
         assert!(!separated("/", Host::Unix) && separated("mnt", Host::Unix));
         assert!(!separated("C:\\", Host::Windows));
+    }
+
+    #[test]
+    fn the_breadcrumbs_start_at_the_macos_data_volume() {
+        let data = HostPath::new(Host::Unix, DATA_VOLUME.to_vec());
+        assert_eq!(
+            above(&data, None),
+            (vec!["/System/Volumes/Data".to_owned()], vec![false])
+        );
+        let users = data.join(b"Users");
+        let (texts, up) = above(&users, None);
+        assert_eq!(texts, ["/System/Volumes/Data", "Users"]);
+        assert_eq!(up, [true, false]);
+        assert_eq!(ancestors(&users, None)[0].dir, data);
+        // Not on a Windows host.
+        let win = HostPath::new(Host::Windows, b"/System/Volumes/Data/x".to_vec());
+        assert!(above(&win, None).0.len() > 2);
     }
 
     #[test]
