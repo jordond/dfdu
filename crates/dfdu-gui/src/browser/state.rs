@@ -75,6 +75,8 @@ pub enum Intent {
     Dupes(dupes::Intent),
     /// The comparison of duplicates that runs is stopped.
     DupesCancel,
+    /// Everything staged is deleted now, without waiting for the end of its undo window.
+    CommitStaged,
     /// Theme `i` of [`ViewState::themes`] chosen in the palette.
     Theme(usize),
     /// The banner's button that opens the Full Disk Access settings (`access`).

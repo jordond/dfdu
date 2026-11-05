@@ -1,8 +1,8 @@
 //! The status bar below the views, 40 high under a rule in `border`. On its left what is
 //! marked and its total (in `mark`), what the last delete to the Trash or staging can put back
-//! (a staged delete with the time left to do it), and the status line: the last action's
-//! message, what the engine is deleting or noticed, or what is selected in the view shown
-//! ([`selection`]). On its right the buttons that delete, left out of a read-only browser.
+//! (a staged delete with the time left to do it, and a button that deletes it now), and the
+//! status line: the last action's message, what the engine is deleting or noticed, or what is
+//! selected in the view shown ([`selection`]). On its right the buttons that delete, left out of a read-only browser.
 //! The scan's totals are the toolbar's.
 
 use std::time::Instant;
@@ -60,6 +60,21 @@ pub fn show(
                 .clicked()
                 {
                     out.push(Intent::Act(Action::Undo));
+                }
+                let staged = s.snap.undo.as_ref().is_some_and(|u| u.mode == Mode::Stage);
+                if staged
+                    && kit::button(
+                        ui,
+                        colors,
+                        ButtonKind::Secondary,
+                        "Delete now",
+                        None,
+                        enabled,
+                    )
+                    .on_hover_text("Delete what is staged now; it cannot be put back after")
+                    .clicked()
+                {
+                    out.push(Intent::CommitStaged);
                 }
             }
         }

@@ -104,7 +104,7 @@ The delete dialog lists the items, their total size, and how much space dfdu exp
 
 ![The delete dialog](/gui/delete.png)
 
-The dialog also offers staging: the items are moved to a staging folder at once and deleted a minute later. `U` puts back the last delete, from the Trash or, within that minute, from staging.
+The dialog also offers staging: the items are moved to a staging folder at once and deleted a minute later. `U` puts back the last delete, from the Trash or, within that minute, from staging. Until then the status bar counts down, and its Delete now button deletes everything staged at once.
 
 To browse with no way to delete, start the app with `--read-only`.
 
