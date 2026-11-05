@@ -14,6 +14,7 @@ mod cmd;
 mod demo;
 mod release;
 mod website;
+mod wine;
 
 use cmd::{
     Step, cargo, docker_run, has, has_cargo, need, need_cargo, output, quote, root, run, steps,
@@ -21,6 +22,7 @@ use cmd::{
 use demo::{DemoArgs, demo};
 use release::{Release, release};
 use website::{Website, website};
+use wine::{WineArgs, wine};
 
 #[derive(Parser)]
 #[command(about, bin_name = "cargo xtask")]
@@ -81,8 +83,9 @@ enum Cmd {
     Fuzz(FuzzArgs),
     /// Run a command in a Linux container (default: the workspace tests).
     Linux(LinuxArgs),
-    /// Type-check dfdu for Windows (x86_64-pc-windows-msvc) without the bundled SQLite build.
-    Windows,
+    /// Type-check dfdu for Windows (x86_64-pc-windows-msvc) without the bundled SQLite build,
+    /// or with `--test` run the tests for Windows under Wine.
+    Windows(WindowsArgs),
     /// Run the local part of CI and print a summary.
     Ci(CiArgs),
     /// Time dfdu against other disk usage tools (scripts/bench.sh; arguments are passed on).
@@ -168,6 +171,16 @@ struct LinuxArgs {
 }
 
 #[derive(Args)]
+struct WindowsArgs {
+    /// Build the tests for Windows and run them under Wine in a Linux container
+    /// (crates/xtask/src/wine.rs).
+    #[arg(long)]
+    test: bool,
+    #[command(flatten)]
+    wine: WineArgs,
+}
+
+#[derive(Args)]
 struct CiArgs {
     /// Only fmt, clippy and the tests.
     #[arg(long, conflicts_with = "full")]
@@ -199,7 +212,8 @@ fn main() -> anyhow::Result<()> {
         Cmd::Msrv => msrv(),
         Cmd::Fuzz(a) => fuzz(&a),
         Cmd::Linux(a) => linux(&a),
-        Cmd::Windows => windows(),
+        Cmd::Windows(a) if a.test => wine(&a.wine),
+        Cmd::Windows(_) => windows(),
         Cmd::Ci(a) => ci(&a),
         Cmd::Bench { args } => run(Command::new("scripts/bench.sh").args(args)),
         Cmd::Assets => assets(),
