@@ -58,7 +58,7 @@ fn scan_states(app: &App, now: Instant, frame: u64) -> Vec<Vec<Span<'static>>> {
                 app.theme.scan_active,
             )
         }
-        (None, Some(done)) if !app.session.snap.busy => {
+        (None, Some(done)) if !app.session.snap.scanning => {
             let time = mmss(done.duration_since(app.session.started));
             (
                 (format!("done in {time}"), format!("done {time}"), time),

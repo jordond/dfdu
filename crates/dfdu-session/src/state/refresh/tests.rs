@@ -14,6 +14,7 @@ fn scanning(entries: Vec<EntryData>, version: u64) -> Snapshot {
         at_root: true,
         entries,
         busy: true,
+        scanning: true,
         version,
         ..Default::default()
     }
@@ -139,4 +140,31 @@ fn the_folder_come_from_is_selected_once_it_appears() {
     s.came_from = Some(HostPath::from("/elsewhere/x"));
     let _ = s.refresh(snap(&["a"], 1), t0, false);
     assert!(s.came_from.is_none());
+}
+
+/// A delete keeps the engine busy but is not a scan: the scan stays done, its time unchanged.
+/// A rescan afterwards restarts the clock.
+#[test]
+fn a_delete_leaves_the_scan_done_and_a_rescan_restarts_its_clock() {
+    let t0 = Instant::now();
+    let mut s = SessionState::new(t0);
+    let _ = s.refresh(scanning(Vec::new(), 1), t0, false);
+    let done = Snapshot {
+        busy: false,
+        scanning: false,
+        ..scanning(Vec::new(), 2)
+    };
+    let t1 = t0 + Duration::from_secs(5);
+    let _ = s.refresh(done.clone(), t1, false);
+    assert_eq!(s.done_at, Some(t1));
+    let deleting = Snapshot {
+        busy: true,
+        deleting: Some((0, 3)),
+        ..done.clone()
+    };
+    let _ = s.refresh(deleting, t1 + Duration::from_secs(1), false);
+    assert_eq!((s.started, s.done_at), (t0, Some(t1)));
+    let t2 = t1 + Duration::from_secs(10);
+    let _ = s.refresh(scanning(Vec::new(), 3), t2, false);
+    assert_eq!((s.started, s.done_at), (t2, None));
 }

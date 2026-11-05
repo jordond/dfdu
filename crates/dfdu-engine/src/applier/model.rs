@@ -411,10 +411,14 @@ impl Status {
 
     #[must_use]
     pub fn busy(&self) -> bool {
-        self.running_jobs() > 0
-            || self.settling
-            || self.deleting.is_some()
-            || self.measuring.is_some()
+        self.scanning() || self.settling || self.deleting.is_some()
+    }
+
+    /// Whether a scan or rescan runs, or its shared extents are measured. A delete, and the
+    /// freeing after it, is not scanning.
+    #[must_use]
+    pub fn scanning(&self) -> bool {
+        self.running_jobs() > 0 || self.measuring.is_some()
     }
 
     pub(super) fn push_anomaly(&mut self, s: String) {

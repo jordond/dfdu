@@ -411,6 +411,7 @@ fn marked_view(theme: Theme) -> ratatui::buffer::Buffer {
             root_total: totals,
             entries,
             busy: true,
+            scanning: true,
             version: 1,
             ..Default::default()
         },

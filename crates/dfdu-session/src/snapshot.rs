@@ -207,7 +207,10 @@ pub struct Snapshot {
     pub dir_mark: Option<Mark>,
     pub root_total: Totals,
     pub entries: Vec<EntryData>,
+    /// The engine has work: a scan, a delete, or what follows them.
     pub busy: bool,
+    /// A scan or rescan runs: what the scan's clock and its "done" go by.
+    pub scanning: bool,
     pub stalled: usize,
     pub incomplete: bool,
     pub notice: Option<String>,
@@ -380,6 +383,7 @@ pub fn build_view(
 fn status_of(m: &Model, types: &TypeFilter) -> Snapshot {
     Snapshot {
         busy: m.status.busy(),
+        scanning: m.status.scanning(),
         stalled: m.status.stalled.len(),
         incomplete: m.status.incomplete,
         notice: m.status.notices.last().cloned(),

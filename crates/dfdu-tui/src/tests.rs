@@ -226,6 +226,7 @@ pub(crate) fn mid_scan_app(theme: Theme) -> (App, Instant) {
         },
         entries,
         busy: true,
+        scanning: true,
         stalled: 1,
         version: 1,
         ..Default::default()
@@ -356,6 +357,7 @@ pub(crate) fn snap_without_totals(entries: Vec<EntryData>, version: u64) -> Snap
         at_root: true,
         entries,
         busy: true,
+        scanning: true,
         version,
         ..Default::default()
     }
