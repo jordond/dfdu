@@ -9,3 +9,47 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [[profile.default.overrides]]
 filter = "binary_id(dfdu-tui::idle) | binary_id(dfdu-tui::idle_panels) | binary_id(dfdu-tui::latency)"
 threads-required = "num-cpus"
+
+# Windows tests under Wine on Linux (`cargo xtask windows --test`). Each test left out uses
+# what Wine lacks, and passes on real Windows (CI's windows-latest), which stays the reference:
+# - directory junctions (Wine's `mklink` has no /J);
+# - renames and deletes of folders with a handle open, which Wine refuses (sharing violation)
+#   or lets through where Windows refuses;
+# - the NT directory and volume queries the Windows backend reads with ("Invalid function"),
+#   which every scan of a real folder by the `dfdu` binary makes;
+# - a console handle for the test process ("Invalid handle");
+# - programs Wine does not have (git, tar);
+# - the window's scans, which never settle.
+[profile.wine]
+fail-fast = false
+failure-output = "final"
+default-filter = """
+not (
+  binary_id(dfdu-clean::ancestor_link) | binary_id(dfdu-engine::totals)
+  | test(=changed_items_are_not_deleted) | test(=changes_inside_items_stop_their_delete)
+  | test(=backend::windows::tests::entries_match_the_portable_backend)
+
+  | test(/^remove::tests::windows::/) | binary_id(dfdu-clean::recover)
+  | binary_id(dfdu-engine::delete) | test(=deletes_run_on_the_agent)
+  | binary_id(dfdu::clean) | binary_id(dfdu::recover)
+  | test(=state::marks::tests::deleted_marks_are_dropped)
+
+  | test(=windows::tests::reads_a_directory) | test(=windows::links::tests::link_counts_follow_hard_links)
+  | test(=backend::windows::tests::reads_paths_longer_than_max_path)
+  | test(=disks::tests::lists_the_root_filesystem_once) | binary_id(dfdu::disks)
+  | binary_id(dfdu-engine::wide)
+  | binary_id(dfdu::json) | binary_id(dfdu::export) | binary_id(dfdu::history)
+  | binary_id(dfdu::remote) | binary_id(dfdu::types) | binary_id(dfdu::worker_panic)
+  | test(=startup::tests::a_folder_opened_with_a_scan_below_it_ends_as_a_fresh_scan)
+
+  | test(/^tests::reopen::/) | test(=tests::blocked::blocked_ui_does_not_slow_the_scan)
+  | test(=model::growth::tests::the_browser_records_its_scan)
+  | binary_id(dfdu-tui::idle) | binary_id(dfdu-tui::idle_panels)
+
+  | (binary_id(dfdu-engine::remote) & test(=a_remote_scan_classifies_as_a_local_one))
+  | test(=a_link_lost_while_measuring_leaves_files_unmeasured) | test(=extents_are_measured_on_the_agent)
+  | test(=cli::tests::a_zip_unpacks_to_its_binary)
+
+  | (binary_id(dfdu-gui::bin/dfdu-gui) & test(/^tests::/))
+)
+"""
