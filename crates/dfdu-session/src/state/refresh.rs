@@ -162,10 +162,10 @@ impl SessionState {
         // A scan that just finished gets one more automatic sort right away (if the user is
         // idle), so the final order does not wait for the minimum interval.
         let finished = self.snap.busy && !snap.busy;
-        if self.done_at.is_none() && !snap.busy && snap.dir_node.is_some() {
+        if self.done_at.is_none() && !snap.scanning && snap.dir_node.is_some() {
             self.done_at = Some(now);
         }
-        if self.done_at.is_some() && snap.busy && !self.snap.busy {
+        if self.done_at.is_some() && snap.scanning && !self.snap.scanning {
             // A rescan started: time it from now.
             self.started = now;
             self.done_at = None;

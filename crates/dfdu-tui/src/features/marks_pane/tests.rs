@@ -42,6 +42,7 @@ fn browser() -> (App, Instant) {
         root_path: HostPath::from("/home/jo"),
         at_root: false,
         busy: false,
+        scanning: false,
         ..snap_with_totals(entries, 1)
     };
     app.refresh(snap, t0);

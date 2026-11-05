@@ -89,6 +89,7 @@ fn done_at_root(root: &str, width: u16) -> (String, String) {
         dir_path: root.into(),
         root_path: root.into(),
         busy: false,
+        scanning: false,
         ..snap_without_totals(Vec::new(), 1)
     };
     app.refresh(snap, t0);
@@ -258,6 +259,7 @@ fn a_cached_scan_says_so_until_it_is_refreshed() {
         dir_path: root.into(),
         root_path: root.into(),
         busy: true,
+        scanning: true,
         ..snap_without_totals(Vec::new(), 1)
     };
     app.refresh(snap, t0);

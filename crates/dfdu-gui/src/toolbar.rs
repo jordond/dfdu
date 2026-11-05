@@ -429,7 +429,7 @@ fn scan_state(ui: &mut Ui, s: &SessionState, colors: &Colors, now: Instant, out:
             );
             ("Cached", format!("{age} ago, refreshing {elapsed}"), None)
         }
-        (None, Some(done)) if !s.snap.busy => (
+        (None, Some(done)) if !s.snap.scanning => (
             "Done",
             format!("in {}", took(done.duration_since(s.started))),
             Some(Token::ScanDone),
