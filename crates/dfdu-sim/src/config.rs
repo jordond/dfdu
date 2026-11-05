@@ -151,6 +151,8 @@ pub struct SimReport {
     /// Scans above another scan's root ([`run_grafted`](crate::run_grafted)) that kept a copy
     /// taken while the old scan still ran.
     pub unfinished_grafts: u64,
+    /// Such scans whose old root is a mount, which they enter.
+    pub mount_grafts: u64,
 }
 
 #[cfg(test)]

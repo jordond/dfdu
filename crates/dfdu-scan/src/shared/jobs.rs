@@ -18,7 +18,7 @@ impl<B: Backend> Shared<B> {
     /// Submits the root task of a job. The applier creates the root placeholder first. Returns
     /// the `submitted_seq` value that covers this job.
     pub fn start_job(&self, job: JobId, root: &Path, opts: JobOptions) -> u64 {
-        let dup_mounts = (opts.cross_mounts || opts.network)
+        let dup_mounts = (opts.cross_mounts || opts.network || !opts.enter.is_empty())
             .then(|| {
                 self.backend
                     .duplicate_mounts(opts.scope.as_deref().unwrap_or(root))

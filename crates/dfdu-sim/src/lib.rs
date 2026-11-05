@@ -73,6 +73,9 @@ pub struct Sim {
     check_q: Vec<CheckReq>,
     pub cross_mounts: bool,
     pub network: bool,
+    /// Mounts the scan enters whatever `cross_mounts` and `network` say, by the device and
+    /// inode of their roots ([`JobOptions::enter`]).
+    pub entered: Vec<(u64, u64)>,
     pub report: SimReport,
     /// Parts `(worker, job, dir, part)` whose mount permit the watchdog took back.
     revoked: HashSet<(usize, u32, u32, u32)>,
@@ -183,6 +186,7 @@ impl Sim {
             check_q: Vec::new(),
             cross_mounts,
             network,
+            entered: Vec::new(),
             report: SimReport::default(),
             revoked: HashSet::new(),
             log: Vec::new(),

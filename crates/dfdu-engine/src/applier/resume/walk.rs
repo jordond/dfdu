@@ -5,6 +5,7 @@ use dfdu_scan::classify::ClassOpts;
 use dfdu_scan::{Backend, DirId, JobId};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::Homes;
 use super::reclassify::ClassifyLoaded;
 use super::rescans::Rescans;
 use super::verify::Verify;
@@ -21,7 +22,8 @@ pub(in crate::applier) struct ResumeWalk {
     pub(super) root: NodeRef,
     /// The directories to list again.
     pub(super) wanted: Vec<NodeRef>,
-    /// Mount roots and subvolumes met so far, scanned again in full.
+    /// Mount roots and subvolumes met so far: scanned again in full unless the job enters
+    /// them (`homes`).
     pub(super) mounts: Vec<NodeRef>,
     /// The classification, when the job classifies, which takes the walk's directories in turn.
     class: Option<(ClassOpts, ClassifyLoaded)>,
@@ -36,6 +38,8 @@ pub(in crate::applier) struct ResumeWalk {
     pub(super) verify: Option<Verify>,
     /// Its rescans, once the walk and the check have ended.
     pub(super) rescans: Option<Rescans>,
+    /// The devices it keeps loaded directories on, and the mounts it enters.
+    pub(super) homes: Homes,
 }
 
 impl ResumeWalk {
@@ -46,6 +50,7 @@ impl ResumeWalk {
         class: Option<(ClassOpts, ClassifyLoaded)>,
         stack: Vec<NodeRef>,
         verify: Option<Verify>,
+        homes: Homes,
     ) -> Self {
         ResumeWalk {
             id,
@@ -58,6 +63,7 @@ impl ResumeWalk {
             walked: false,
             verify,
             rescans: None,
+            homes,
         }
     }
 }

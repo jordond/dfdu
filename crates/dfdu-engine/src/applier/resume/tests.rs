@@ -139,7 +139,13 @@ fn what_the_check_finds_is_listed_again() {
         ap.work_step(&mut m);
     }
     let job = ap.jobs.keys().next().copied().unwrap();
-    let mut v = Verify::new(&m.tree, r, &[], 0);
+    let mut v = Verify::new(
+        &m.tree,
+        r,
+        &[],
+        0,
+        super::Homes::new(m.tree.dev_ino(r).0, &[]),
+    );
     for ix in [a, b, c] {
         v.add(&m.tree, ix);
     }

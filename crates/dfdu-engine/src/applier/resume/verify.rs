@@ -18,15 +18,17 @@ use std::path::PathBuf;
 use dfdu_scan::{Backend, JobId, Shared, VerifyDir};
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
+use super::Homes;
+
 /// Directories stat'ed by one task: about a millisecond's work for a worker.
 const BATCH: usize = 256;
 
 /// The check of the directories a resume keeps, as its walk reaches them.
 pub(in crate::applier) struct Verify {
-    /// The root, where the batches say they are, and its device: directories on other
-    /// devices are below mounts, scanned in full.
+    /// The root, where the batches say they are, and the devices checked: directories on
+    /// other devices are below mounts, scanned in full.
     root: PathBuf,
-    dev: u64,
+    homes: Homes,
     /// Seconds since the epoch from which a directory's mtime cannot vouch for it; 0 for none.
     since: i64,
     /// The directories the journal names, listed again anyway.
@@ -39,10 +41,16 @@ pub(in crate::applier) struct Verify {
 }
 
 impl Verify {
-    pub(in crate::applier) fn new(tree: &Tree, root: Ix, named: &[Ix], since: u64) -> Self {
+    pub(in crate::applier) fn new(
+        tree: &Tree,
+        root: Ix,
+        named: &[Ix],
+        since: u64,
+        homes: Homes,
+    ) -> Self {
         Verify {
             root: tree.path_buf(root),
-            dev: tree.dev_ino(root).0,
+            homes,
             since: i64::try_from(since).unwrap_or(i64::MAX),
             named: named.iter().map(|&d| tree.node_ref(d)).collect(),
             next: Vec::new(),
@@ -52,12 +60,13 @@ impl Verify {
     }
 
     /// Adds directory `ix`, which the walk reached, if it is checked: not the root, nor one
-    /// named, on the root's device and no mount, and read when it was scanned.
+    /// named, on the root's device or an entered mount's and no other mount, and read when it
+    /// was scanned.
     pub(in crate::applier) fn add(&mut self, tree: &Tree, ix: Ix) {
         let r = tree.node_ref(ix);
         let checked = tree.parent(ix).is_some()
-            && tree.dev_ino(ix).0 == self.dev
-            && !tree.flags(ix).has(NodeFlags::MOUNT_ROOT)
+            && self.homes.home(tree.dev_ino(ix).0)
+            && (!tree.flags(ix).has(NodeFlags::MOUNT_ROOT) || self.homes.enters(tree, ix))
             && tree.dir(ix).is_some_and(|d| d.state != DirState::Skipped)
             && !self.named.contains(&r);
         if checked {

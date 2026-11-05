@@ -211,6 +211,49 @@ fn a_graft_needs_a_directory_stat_for_each_folder_down_to_the_old_root() {
     assert!(changed.is_empty());
 }
 
+/// The stats down to the old root `/p/a/c`, read with device and inode `read`, from `/p` on
+/// device 1, with `c` stat'ed as `c` and `a` on device `a_dev`.
+fn down(read: (u64, u64), c: Meta, a_dev: u64) -> Option<Down> {
+    let old = path("/p/a/c");
+    stats_down(&old, read, &path("/p"), |p| {
+        Some(match p.as_bytes() {
+            b"/p" => meta(Kind::Dir, 0, 1),
+            b"/p/a" => Meta {
+                dev: a_dev,
+                ..meta(Kind::Dir, 0, 2)
+            },
+            _ => c,
+        })
+    })
+}
+
+#[test]
+fn the_old_root_may_be_a_mount_of_its_own_but_not_a_folder_between() {
+    let on = |dev, ino| Meta {
+        dev,
+        ..meta(Kind::Dir, 0, ino)
+    };
+    // On the same device: no mount to enter.
+    let d = down((1, 10), on(1, 10), 1).expect("same device");
+    assert_eq!((d.stats.len(), d.mount), (2, None));
+    // The old root as read, on a device of its own: entered.
+    let d = down((2, 10), on(2, 10), 1).expect("a mount");
+    assert_eq!(d.mount, Some((2, 10)));
+    // Not the directory read: it became a mount, or was replaced.
+    assert!(down((1, 10), on(2, 10), 1).is_none(), "became a mount");
+    assert!(down((2, 10), on(2, 11), 1).is_none(), "another root");
+    assert!(down((2, 10), on(1, 10), 1).is_none(), "no longer a mount");
+    // A mount between.
+    assert!(down((1, 10), on(1, 10), 3).is_none());
+    assert!(down((2, 10), on(2, 10), 3).is_none());
+    // Not a directory.
+    let file = Meta {
+        dev: 2,
+        ..meta(Kind::File, 0, 10)
+    };
+    assert!(down((2, 10), file, 1).is_none());
+}
+
 fn wait<B: dfdu_scan::Backend>(e: &Engine<B>) {
     assert!(e.wait_idle(Some(Duration::from_secs(10))).is_idle());
 }

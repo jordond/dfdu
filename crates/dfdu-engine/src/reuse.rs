@@ -288,39 +288,74 @@ pub fn graft(scanned: Scanned, path: &HostPath, stats: &[Meta]) -> Option<(Tree,
 }
 
 /// What a scan of `path` keeping `scanned` starts from ([`graft`]), with the time the copy's
-/// mtimes are judged against ([`Scanned::since`]), when `stat` (a job root's stat on this
-/// machine) finds `path` and every folder down to the old root, the old root among them, a
-/// directory on the device and mount of `path`, and the old root was read on that device too.
-/// `None` otherwise: a mount on the way or at the old root (it became one, or was a mount of
-/// its own) is the new scan's to judge, and a folder that cannot be stat'ed its to report.
+/// mtimes are judged against ([`Scanned::since`]) and the old root's device and inode when it
+/// is a mount the new scan enters ([`stats_down`]), when `stat` (a job root's stat on this
+/// machine) finds the folders down to the old root as [`stats_down`] wants them. A mount
+/// entered is listed again, so that what is below it is kept. `None` otherwise: a mount on
+/// the way, or an old root that became one, is the new scan's to judge, and a folder that
+/// cannot be stat'ed its to report.
 #[must_use]
 pub fn above(
     scanned: Scanned,
     path: &HostPath,
     stat: impl Fn(&HostPath) -> Option<Meta>,
-) -> Option<(Tree, Vec<PathBuf>, u64)> {
-    let (dev, _, _) = scanned.root_stat()?;
-    let stats = stats_down(&scanned.root(), dev, path, stat)?;
+) -> Option<Above> {
+    let (dev, ino, _) = scanned.root_stat()?;
+    let old = scanned.root();
+    let Down { stats, mount } = stats_down(&old, (dev, ino), path, stat)?;
     let since = scanned.since;
-    let (tree, changed) = graft(scanned, path, &stats)?;
-    Some((tree, changed, since))
+    let (tree, mut changed) = graft(scanned, path, &stats)?;
+    if mount.is_some() {
+        let rel: PathBuf = (old.rel(path)?.iter())
+            .map(|n| dfdu_tree::name_os(n).into_owned())
+            .collect();
+        if !changed.contains(&rel) {
+            changed.push(rel);
+        }
+    }
+    Some(Above {
+        tree,
+        changed,
+        since,
+        mount,
+    })
 }
 
-/// The stats of `path` and each folder below it down to the old root's parent, when `stat`
-/// finds `path` and every folder down to `old`, the old root among them, a directory on the
-/// device and mount of `path`, and `old` was read on that device (`old_dev`). `None` otherwise.
+/// What a scan of a folder above an old scan's root starts from ([`above`]).
+pub struct Above {
+    /// The folder with the old root's tree grafted below it ([`graft`]).
+    pub tree: Tree,
+    /// The folders to list again, relative to the folder.
+    pub changed: Vec<PathBuf>,
+    /// When the old scan started ([`Scanned::since`]).
+    pub since: u64,
+    /// The old root's device and inode when it is a mount the new scan enters.
+    pub mount: Option<(u64, u64)>,
+}
+
+/// The stats on the way down from a folder to an old scan's root ([`stats_down`]).
+pub struct Down {
+    /// The folder's and each folder's below it down to the old root's parent.
+    pub stats: Vec<Meta>,
+    /// The old root's device and inode when it is a mount of its own.
+    pub mount: Option<(u64, u64)>,
+}
+
+/// The stats of `path` and each folder below it down to the old root's parent, and the old
+/// root's device and inode when it is a mount of `path`'s, when `stat` finds `path` and every
+/// folder down to `old` a directory on the device and mount of `path`, and `old` itself the
+/// directory read as the old root (`old_at`, its device and inode), on that device and mount
+/// too, or a mount on another device. `None` otherwise: a mount between them, or an old root
+/// that is not the one read (it became a mount since, or was replaced).
 #[must_use]
 pub fn stats_down(
     old: &HostPath,
-    old_dev: u64,
+    old_at: (u64, u64),
     path: &HostPath,
     stat: impl Fn(&HostPath) -> Option<Meta>,
-) -> Option<Vec<Meta>> {
+) -> Option<Down> {
     let rel = old.rel(path)?;
     let top = stat(path)?;
-    if old_dev != top.dev {
-        return None;
-    }
     let same = |m: &Meta| {
         m.kind == Kind::Dir
             && m.dev == top.dev
@@ -330,12 +365,22 @@ pub fn stats_down(
     let mut at = path.clone();
     for (i, name) in rel.iter().enumerate() {
         at.push(name);
-        let m = stat(&at).filter(same)?;
+        let m = stat(&at)?;
         if i + 1 < rel.len() {
-            stats.push(m);
+            stats.push(Some(m).filter(same)?);
+            continue;
         }
+        // The old root.
+        if same(&m) {
+            return (old_at.0 == top.dev).then_some(Down { stats, mount: None });
+        }
+        let mount = m.kind == Kind::Dir && m.dev != top.dev && (m.dev, m.ino) == old_at;
+        return mount.then_some(Down {
+            stats,
+            mount: Some(old_at),
+        });
     }
-    Some(stats)
+    None
 }
 
 #[cfg(test)]

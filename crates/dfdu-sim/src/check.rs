@@ -256,13 +256,21 @@ fn mount_root(spec: &Spec, d: u32) -> bool {
         }
 }
 
+/// Which mounts a scan descends into: all with `cross`, network ones with `network`, and those
+/// in `entered` (device and inode of their roots) whatever the others say. Never kernel ones.
+#[derive(Clone, Copy)]
+pub(crate) struct Entering<'a> {
+    pub cross: bool,
+    pub network: bool,
+    pub entered: &'a [(u64, u64)],
+}
+
 /// Compares every directory in the final tree with the spec. Returns (dirs checked, abandoned).
 pub(crate) fn compare(
     spec: &Spec,
     model: &Model,
     block: usize,
-    cross: bool,
-    network: bool,
+    entering: Entering<'_>,
 ) -> Result<(usize, u64), String> {
     let tree = &model.tree;
     let root = tree.roots().next().ok_or("no root")?;
@@ -272,7 +280,7 @@ pub(crate) fn compare(
         by_path.insert(tree.path(ix), ix);
         stack.extend(tree.children(ix));
     }
-    let mut seen = walk_and_check_flags(spec, model, &by_path, block, cross, network)?;
+    let mut seen = walk_and_check_flags(spec, model, &by_path, block, entering)?;
     let expect = expected_totals(spec, tree, &by_path, &mut seen);
     let checked = diff_totals(tree, &by_path, &expect)?;
     Ok((checked, seen.abandoned))
@@ -294,8 +302,7 @@ fn walk_and_check_flags(
     model: &Model,
     by_path: &HashMap<Vec<u8>, Ix>,
     block: usize,
-    cross: bool,
-    network: bool,
+    entering: Entering<'_>,
 ) -> Result<Seen, String> {
     let tree = &model.tree;
     let state_of = |p: &[u8]| by_path.get(p).and_then(|&ix| tree.dir(ix)).map(|d| d.state);
@@ -327,7 +334,7 @@ fn walk_and_check_flags(
             .ok_or_else(|| format!("missing {}", String::from_utf8_lossy(&path)))?;
         check_subvol(spec, model, d, ix, &path)?;
         let flags = tree.flags(ix);
-        if !check_mount(spec, d, &path, flags, state_of(&path), cross, network)? {
+        if !check_mount(spec, d, &path, flags, state_of(&path), entering)? {
             continue;
         }
         if mount_root(spec, d) {
@@ -373,8 +380,7 @@ fn check_mount(
     path: &[u8],
     flags: NodeFlags,
     state: Option<DirState>,
-    cross: bool,
-    network: bool,
+    entering: Entering<'_>,
 ) -> Result<bool, String> {
     let n = &spec.nodes[d as usize];
     let shown = || String::from_utf8_lossy(path);
@@ -398,8 +404,9 @@ fn check_mount(
     let class = if mount { n.fs_class } else { None };
     let wanted = match class {
         Some(FsClass::Kernel) => false,
-        Some(FsClass::Network) => network,
-        _ => cross,
+        _ if mount && entering.entered.contains(&(n.meta.dev, n.meta.ino)) => true,
+        Some(FsClass::Network) => entering.network,
+        _ => entering.cross,
     };
     for (flag, c, what) in [
         (NodeFlags::NETWORK, FsClass::Network, "network"),

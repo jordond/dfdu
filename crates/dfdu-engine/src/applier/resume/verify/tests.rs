@@ -1,4 +1,7 @@
 use dfdu_scan::{Limits, PortableBackend};
+use dfdu_tree::{Kind, Meta};
+
+use crate::test_support::meta;
 
 use super::*;
 use crate::applier::resume::tests::tree;
@@ -12,7 +15,7 @@ use crate::applier::resume::tests::tree;
 )]
 fn what_is_checked_leaves_out_what_is_listed_or_scanned_anyway() {
     let (mut t, [r, a, b, c]) = tree();
-    let mut v = Verify::new(&t, r, &[c], 0);
+    let mut v = Verify::new(&t, r, &[c], 0, Homes::new(t.dev_ino(r).0, &[]));
     for ix in [r, a, b, c] {
         v.add(&t, ix);
     }
@@ -20,11 +23,41 @@ fn what_is_checked_leaves_out_what_is_listed_or_scanned_anyway() {
 
     t.set_flag(a, NodeFlags::MOUNT_ROOT, true);
     t.dir_mut(b).unwrap().state = DirState::Skipped;
-    let mut v = Verify::new(&t, r, &[], 0);
+    let mut v = Verify::new(&t, r, &[], 0, Homes::new(t.dev_ino(r).0, &[]));
     for ix in [a, b, c] {
         v.add(&t, ix);
     }
     assert_eq!(v.next, [t.node_ref(c)]);
+
+    // A mount the resume enters is checked, and so is what is on its device.
+    let m = t.add_dir(
+        c,
+        b"m",
+        &Meta {
+            dev: 9,
+            ..meta(Kind::Dir, 0, 30)
+        },
+    );
+    t.set_flag(m, NodeFlags::MOUNT_ROOT, true);
+    let below = t.add_dir(
+        m,
+        b"x",
+        &Meta {
+            dev: 9,
+            ..meta(Kind::Dir, 0, 31)
+        },
+    );
+    let mut v = Verify::new(&t, r, &[], 0, Homes::new(t.dev_ino(r).0, &[]));
+    for ix in [m, below] {
+        v.add(&t, ix);
+    }
+    assert!(v.next.is_empty(), "not entered");
+    let homes = Homes::new(t.dev_ino(r).0, &[t.dev_ino(m)]);
+    let mut v = Verify::new(&t, r, &[], 0, homes);
+    for ix in [m, below] {
+        v.add(&t, ix);
+    }
+    assert_eq!(v.next, [t.node_ref(m), t.node_ref(below)]);
 }
 
 /// Only full batches go until the walk has reached everything; then the rest goes too,
@@ -37,7 +70,7 @@ fn what_is_checked_leaves_out_what_is_listed_or_scanned_anyway() {
 fn batches_go_full_or_at_the_end() {
     let (mut t, [r, a, b, c]) = tree();
     let scan = Shared::new(PortableBackend::default(), Limits::default());
-    let mut v = Verify::new(&t, r, &[], 0);
+    let mut v = Verify::new(&t, r, &[], 0, Homes::new(t.dev_ino(r).0, &[]));
     for ix in [a, b, c] {
         v.add(&t, ix);
     }
@@ -51,7 +84,7 @@ fn batches_go_full_or_at_the_end() {
     assert_eq!(v.batches, [Some(vec![t.node_ref(a), t.node_ref(b)])]);
 
     // Nothing left to stat sends no batch.
-    let mut v = Verify::new(&t, r, &[], 0);
+    let mut v = Verify::new(&t, r, &[], 0, Homes::new(t.dev_ino(r).0, &[]));
     v.next.push(t.node_ref(c));
     v.send(&t, &scan, 1, true);
     assert!(v.batches.is_empty() && !v.waiting());
@@ -68,7 +101,7 @@ fn batches_go_full_or_at_the_end() {
 fn an_answer_lists_again_what_changed() {
     let (t, [r, a, b, c]) = tree();
     let refs = |ixs: &[Ix]| ixs.iter().map(|&i| t.node_ref(i)).collect::<Vec<_>>();
-    let mut v = Verify::new(&t, r, &[], 0);
+    let mut v = Verify::new(&t, r, &[], 0, Homes::new(t.dev_ino(r).0, &[]));
     v.batches = vec![Some(refs(&[a, b])), Some(refs(&[c]))];
     v.waiting = 2;
     assert_eq!(v.answer(&t, 0, &[1], &[0, 7], true), refs(&[b, r]));

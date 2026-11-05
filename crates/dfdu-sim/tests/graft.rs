@@ -38,6 +38,7 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> SimReport {
                 t.kept += r.kept;
                 t.full_resumes += r.full_resumes;
                 t.unfinished_grafts += r.unfinished_grafts;
+                t.mount_grafts += r.mount_grafts;
                 t.classified += r.classified;
                 t.cancels += r.cancels;
                 t.rescans += r.rescans;
@@ -62,7 +63,7 @@ fn grafted() {
     let t = run_all("grafted", &SimConfig::default(), 300);
     if std::env::var("DFDU_SIM_SEED").is_err() {
         assert!(
-            t.kept > 60 && t.full_resumes > 5 && t.unfinished_grafts > 10,
+            t.kept > 60 && t.full_resumes > 5 && t.unfinished_grafts > 10 && t.mount_grafts > 5,
             "grafts not exercised: {t:?}"
         );
         assert!(
@@ -219,6 +220,32 @@ fn a_running_old_scan_is_kept_and_finished() {
         let r = scan_above(seed, rng, &cfg, Some(scanned), &spec.clone(), spec)
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((r.unfinished_grafts, r.full_resumes), (1, 0), "{r:?}");
+    }
+}
+
+/// An old root that was a mount when it was scanned is entered by the scan above it, which
+/// keeps what is below it, without `cross_mounts`; a change below it is found.
+#[test]
+fn an_old_root_that_was_a_mount_is_entered_and_kept() {
+    quiet_injected_panics();
+    for changed in [false, true] {
+        for seed in 0..SEEDS {
+            let (mut spec, f) = spec();
+            mounted(&mut spec, &f);
+            let spec = Arc::new(spec);
+            let cfg = config();
+            let (scanned, rng, _, _) =
+                scan_old(seed, Rng::new(seed), &cfg, spec.clone(), f.c, 5, None).unwrap();
+            assert!(scanned.is_some(), "the old scan can be kept");
+            if changed {
+                add_n(&spec, &f, false);
+            }
+            let r = scan_above(seed, rng, &cfg, scanned, &spec.clone(), spec)
+                .unwrap_or_else(|e| panic!("{e}"));
+            // `c` is listed again, as are `d` when it changed; the rest is kept.
+            let kept = if changed { 1 } else { 2 };
+            assert_eq!((r.kept, r.full_resumes), (kept, 0), "{r:?}");
+        }
     }
 }
 

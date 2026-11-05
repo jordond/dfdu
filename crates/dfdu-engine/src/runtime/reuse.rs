@@ -36,13 +36,13 @@ impl<B: Backend> Engine<B> {
         if self.link.is_some() {
             return false;
         }
-        let Some((old, dev)) =
-            self.read(|m| keepable(m, above).map(|r| (m.tree.host_path(r), m.tree.dev_ino(r).0)))
+        let Some((old, at)) =
+            self.read(|m| keepable(m, above).map(|r| (m.tree.host_path(r), m.tree.dev_ino(r))))
         else {
             return false;
         };
         let backend = &self.shared.backend;
-        stats_down(&old, dev, above, |p| {
+        stats_down(&old, at, above, |p| {
             backend
                 .stat_root(&backend.loc_from_path(&p.to_local()))
                 .ok()
@@ -52,11 +52,18 @@ impl<B: Backend> Engine<B> {
 
     /// Scans `path` with `opts`, keeping what `scanned` read below it where it is unchanged:
     /// `path` and the folders down to the old root are listed again, and each directory below
-    /// is kept when its stat is the one it was read with. Without `scanned`, or when `path`,
-    /// a folder between or the old root is not a directory on the device and mount of `path`
-    /// now (the old root became a mount, or one is in between), or the tree it would start
-    /// from has no root, `path` is scanned as [`Command::Scan`] does. Stats those folders on the caller's thread. Whether it kept.
-    pub fn scan_above(&self, path: &HostPath, scanned: Option<Scanned>, opts: JobOptions) -> bool {
+    /// is kept when its stat is the one it was read with. An old root that is a mount of its
+    /// own is entered, whatever `opts` says of mounts. Without `scanned`, or when `path` or a
+    /// folder between is not a directory on the device and mount of `path` now, the old root
+    /// is not the directory it read (it became a mount, or was replaced), or the tree it would
+    /// start from has no root, `path` is scanned as [`Command::Scan`] does. Stats those folders
+    /// on the caller's thread. Whether it kept.
+    pub fn scan_above(
+        &self,
+        path: &HostPath,
+        scanned: Option<Scanned>,
+        mut opts: JobOptions,
+    ) -> bool {
         let start = scanned.filter(|_| self.link.is_none()).and_then(|s| {
             let backend = &self.shared.backend;
             above(s, path, |p| {
@@ -65,9 +72,9 @@ impl<B: Backend> Engine<B> {
                     .ok()
             })
         });
-        let Some((tree, changed, since, root)) = start.and_then(|(t, c, s)| {
-            let r = t.roots().next()?;
-            Some((t, c, s, r))
+        let Some((start, root)) = start.and_then(|a| {
+            let r = a.tree.roots().next()?;
+            Some((a, r))
         }) else {
             self.send(Command::Scan {
                 path: path.clone(),
@@ -75,6 +82,16 @@ impl<B: Backend> Engine<B> {
             });
             return false;
         };
+        // The old root is a mount: the new scan enters it, as the old one did.
+        let crate::reuse::Above {
+            tree,
+            changed,
+            since,
+            mount,
+        } = start;
+        if let Some(at) = mount.filter(|at| !opts.enter.contains(at)) {
+            opts.enter.push(at);
+        }
         let node = tree.node_ref(root);
         self.load(tree);
         self.send(Command::Resume {

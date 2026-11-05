@@ -10,7 +10,7 @@ use dfdu_scan::Backend;
 use dfdu_tree::{DirState, Ix, NodeFlags, NodeRef, Tree};
 
 use super::walk::ResumeWalk;
-use super::{Kept, topmost};
+use super::{Homes, Kept, topmost};
 use crate::applier::work::{STEP_UNITS, Work};
 use crate::applier::{Applier, Model};
 
@@ -20,8 +20,9 @@ const RESCAN_UNITS: usize = 32;
 
 /// The rescans of a resume still to start.
 pub(super) struct Rescans {
-    /// The root's device: the directories listed again keep those on it.
-    dev: u64,
+    /// The devices whose directories the directories listed again keep: the root's and the
+    /// entered mounts'.
+    homes: Homes,
     /// Each target still to start (the next last) with the directories its rescan lists
     /// again: none for a mount, which is scanned in full, keeping nothing.
     targets: Vec<(NodeRef, Vec<NodeRef>)>,
@@ -52,14 +53,14 @@ impl Gather {
     }
 
     /// Looks at up to `budget` children; how many it did, and whether it has seen all.
-    fn step(&mut self, tree: &Tree, dev: u64, budget: usize) -> (usize, bool) {
+    fn step(&mut self, tree: &Tree, homes: &Homes, budget: usize) -> (usize, bool) {
         let mut n = 0;
         while n < budget
             && let Some(&l) = self.left.last()
         {
             let Some(lx) = tree
                 .resolve_visible(l)
-                .filter(|&l| tree.dev_ino(l).0 == dev)
+                .filter(|&l| homes.home(tree.dev_ino(l).0))
             else {
                 self.left.pop();
                 self.at = 0;
@@ -70,7 +71,7 @@ impl Gather {
             for c in tree.children(lx).skip(self.at).take(want) {
                 took += 1;
                 let keep = tree.dir(c).is_some_and(|d| d.state == DirState::Complete)
-                    && tree.dev_ino(c).0 == dev
+                    && homes.home(tree.dev_ino(c).0)
                     && !tree.flags(c).has(NodeFlags::MOUNT_ROOT)
                     && !self.listed.contains(&tree.node_ref(c));
                 if keep {
@@ -132,14 +133,14 @@ pub(super) fn kept_by_target(
     targets: &[Ix],
     mounts: &[Ix],
 ) -> Vec<Kept> {
-    let dev = tree.dev_ino(root).0;
+    let homes = Homes::new(tree.dev_ino(root).0, &[]);
     let listed = listed_by_target(tree, wanted, targets);
     targets
         .iter()
         .zip(listed)
         .map(|(t, l)| {
             let mut g = Gather::new(if mounts.contains(t) { Vec::new() } else { l });
-            while !g.step(tree, dev, usize::MAX).1 {}
+            while !g.step(tree, &homes, usize::MAX).1 {}
             *g.kept
         })
         .collect()
@@ -152,11 +153,14 @@ impl<B: Backend> Applier<B> {
     /// leaves the loaded tree unverified ([`Applier::unverified`]).
     pub(super) fn resume_rescans(&mut self, m: &mut Model, root: Ix, walk: &ResumeWalk) -> Rescans {
         let tree = &m.tree;
-        let mounts: Vec<Ix> = walk
+        let all: Vec<Ix> = walk
             .mounts
             .iter()
             .filter_map(|&r| tree.resolve_visible(r))
             .collect();
+        // Those the job enters are part of the tree: checked and kept as the root's device is.
+        let (entered, mounts): (Vec<Ix>, Vec<Ix>) =
+            all.into_iter().partition(|&ix| walk.homes.enters(tree, ix));
         let mut wanted: Vec<Ix> = walk
             .wanted
             .iter()
@@ -164,7 +168,10 @@ impl<B: Backend> Applier<B> {
             .collect();
         // Snapshots keep no measured extents: the loaded files are measured again where files
         // can share them (rescanned parts are measured when their rescans end).
-        for ix in std::iter::once(root).chain(mounts.iter().copied()) {
+        for ix in std::iter::once(root)
+            .chain(entered)
+            .chain(mounts.iter().copied())
+        {
             let dev = m.tree.dev_ino(ix).0;
             if !self.extent_devs.contains(&dev) {
                 let loc = self.scan.backend.loc_from_path(&m.tree.path_buf(ix));
@@ -185,7 +192,7 @@ impl<B: Backend> Applier<B> {
         self.work.push_back(Work::FinalPassVisible);
         self.queue_checks(m);
         let mut out = Rescans {
-            dev: m.tree.dev_ino(root).0,
+            homes: walk.homes.clone(),
             targets: Vec::new(),
             gather: None,
         };
@@ -229,7 +236,7 @@ impl<B: Backend> Applier<B> {
             let g = r
                 .gather
                 .get_or_insert_with(|| Gather::new(std::mem::take(listed)));
-            let (looked, all) = g.step(&m.tree, r.dev, STEP_UNITS - n);
+            let (looked, all) = g.step(&m.tree, &r.homes, STEP_UNITS - n);
             n += looked + RESCAN_UNITS;
             if !all {
                 break;

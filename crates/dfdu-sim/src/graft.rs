@@ -112,7 +112,7 @@ pub fn scan_above(
     spec: Arc<Spec>,
 ) -> Result<SimReport, SimError> {
     let mut sim = Sim::build(seed, rng, cfg, spec);
-    let opts = sim.scan_opts();
+    let mut opts = sim.scan_opts();
     let stats = SimBackend {
         spec: stat.clone(),
         clock: Arc::new(SimClock(AtomicU64::new(1))),
@@ -121,12 +121,12 @@ pub fn scan_above(
     let unfinished = scanned.as_ref().is_some_and(|s| !s.unfinished.is_empty());
     let start = scanned.and_then(|s| {
         let old = s.root();
-        let (tree, changed, since) = reuse::above(s, &root_path(), |p| {
+        let a = reuse::above(s, &root_path(), |p| {
             stats.stat_root(&stats.loc_from_path(&p.to_local())).ok()
         })?;
-        Some((tree, changed, since, old))
+        Some((a.tree, a.changed, a.since, old, a.mount))
     });
-    let Some((tree, changed, since, old)) = start else {
+    let Some((tree, changed, since, old, mount)) = start else {
         sim.report.full_resumes = 1;
         sim.command(Command::Scan {
             path: root_path(),
@@ -135,6 +135,10 @@ pub fn scan_above(
         return sim.run_to_end();
     };
     sim.report.unfinished_grafts = u64::from(unfinished);
+    // An old root that is a mount is entered, as `Engine::scan_above` enters it.
+    opts.enter.extend(mount);
+    sim.entered.extend(mount);
+    sim.report.mount_grafts = u64::from(mount.is_some());
     let dirs = dirs_below(&tree, &old);
     let Some(root) = tree.roots().next() else {
         return Err(SimError::new(seed, "the graft has no root"));
