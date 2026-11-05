@@ -13,11 +13,11 @@
 
 use std::time::{Duration, Instant};
 
-use dfdu_engine::{Mode, tilde};
+use dfdu_engine::{Command, Mode, tilde};
 use dfdu_scan::Backend;
 use dfdu_session::actions::Action;
 use dfdu_session::confirm;
-use dfdu_session::effect::Output;
+use dfdu_session::effect::{Effect, Output};
 use dfdu_session::filter::{self, Edited};
 use dfdu_session::line::TextOp;
 use dfdu_session::palette::Token;
@@ -254,6 +254,10 @@ impl<B: Backend> Browser<B> {
                     }
                 }
                 Intent::DismissAccess => self.view().no_access = None,
+                Intent::CommitStaged => {
+                    let fx = vec![Effect::Send(Command::CommitStaged)];
+                    let _ = self.session.carry_out(fx);
+                }
                 Intent::DupesCancel => {
                     if dupes::cancel(s) {
                         s.status = Some("duplicates: the comparison was stopped".into());
