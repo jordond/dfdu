@@ -214,15 +214,19 @@ fn a_graft_needs_a_directory_stat_for_each_folder_down_to_the_old_root() {
 /// The stats down to the old root `/p/a/c`, read with device and inode `read`, from `/p` on
 /// device 1, with `c` stat'ed as `c` and `a` on device `a_dev`.
 fn down(read: (u64, u64), c: Meta, a_dev: u64) -> Option<Down> {
-    let old = path("/p/a/c");
-    stats_down(&old, read, &path("/p"), |p| {
-        Some(match p.as_bytes() {
-            b"/p" => meta(Kind::Dir, 0, 1),
-            b"/p/a" => Meta {
+    // Joined as the tree joins, with `\` on a Windows host.
+    let (top, a) = (path("/p"), path("/p").join(b"a"));
+    let old = a.join(b"c");
+    stats_down(&old, read, &top, |p| {
+        Some(if *p == top {
+            meta(Kind::Dir, 0, 1)
+        } else if *p == a {
+            Meta {
                 dev: a_dev,
                 ..meta(Kind::Dir, 0, 2)
-            },
-            _ => c,
+            }
+        } else {
+            c
         })
     })
 }
