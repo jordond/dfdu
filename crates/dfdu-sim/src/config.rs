@@ -148,6 +148,9 @@ pub struct SimReport {
     pub kept: u64,
     pub lost_events: u64,
     pub full_resumes: u64,
+    /// Scans above another scan's root ([`run_grafted`](crate::run_grafted)) that kept a copy
+    /// taken while the old scan still ran.
+    pub unfinished_grafts: u64,
 }
 
 #[cfg(test)]

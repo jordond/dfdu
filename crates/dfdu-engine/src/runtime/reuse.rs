@@ -8,7 +8,7 @@ use dfdu_tree::HostPath;
 
 use super::Engine;
 use crate::applier::Command;
-use crate::reuse::{Scanned, above, scanned};
+use crate::reuse::{Scanned, above, keepable, scanned, stats_down};
 
 /// Seconds since the Unix epoch now.
 pub(super) fn now_secs() -> u64 {
@@ -20,13 +20,34 @@ pub(super) fn now_secs() -> u64 {
 impl<B: Backend> Engine<B> {
     /// What this scan read below its root, for a scan of `above`, a folder above it, to keep
     /// ([`Engine::scan_above`]): `None` unless this is a scan of this machine that ended
-    /// complete, nothing is being deleted or waits to be, and `above` is above its root. The
-    /// copy is taken under the read lock, in one go.
+    /// complete or is still running, nothing is being deleted or waits to be, and `above` is
+    /// above its root. The copy is taken under the read lock, in one go.
     pub fn scanned(&self, above: &HostPath) -> Option<Scanned> {
         if self.link.is_some() {
             return None;
         }
         self.read(|m| scanned(m, above, self.started_secs))
+    }
+
+    /// Whether a scan of `above` would keep what this scan read ([`Engine::scanned`] and
+    /// [`Engine::scan_above`]) if it started now, without copying it. Stats the folders down
+    /// to this scan's root on the caller's thread.
+    pub fn keeps(&self, above: &HostPath) -> bool {
+        if self.link.is_some() {
+            return false;
+        }
+        let Some((old, dev)) =
+            self.read(|m| keepable(m, above).map(|r| (m.tree.host_path(r), m.tree.dev_ino(r).0)))
+        else {
+            return false;
+        };
+        let backend = &self.shared.backend;
+        stats_down(&old, dev, above, |p| {
+            backend
+                .stat_root(&backend.loc_from_path(&p.to_local()))
+                .ok()
+        })
+        .is_some()
     }
 
     /// Scans `path` with `opts`, keeping what `scanned` read below it where it is unchanged:

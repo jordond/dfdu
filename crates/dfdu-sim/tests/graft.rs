@@ -37,6 +37,7 @@ fn run_all(name: &str, cfg: &SimConfig, default_seeds: u64) -> SimReport {
             Ok(r) => {
                 t.kept += r.kept;
                 t.full_resumes += r.full_resumes;
+                t.unfinished_grafts += r.unfinished_grafts;
                 t.classified += r.classified;
                 t.cancels += r.cancels;
                 t.rescans += r.rescans;
@@ -61,7 +62,7 @@ fn grafted() {
     let t = run_all("grafted", &SimConfig::default(), 300);
     if std::env::var("DFDU_SIM_SEED").is_err() {
         assert!(
-            t.kept > 100 && t.full_resumes > 5,
+            t.kept > 60 && t.full_resumes > 5 && t.unfinished_grafts > 10,
             "grafts not exercised: {t:?}"
         );
         assert!(
@@ -165,7 +166,7 @@ fn run(
             let spec = Arc::new(spec);
             let cfg = config();
             let (scanned, rng, _, _) =
-                scan_old(seed, Rng::new(seed), &cfg, spec.clone(), f.c, since).unwrap();
+                scan_old(seed, Rng::new(seed), &cfg, spec.clone(), f.c, since, None).unwrap();
             assert!(scanned.is_some(), "the old scan can be kept");
             change(&spec, &f);
             let r = match after() {
@@ -185,6 +186,39 @@ fn run(
 fn an_unchanged_old_root_is_kept() {
     for r in run(5, |_, _| {}, || None) {
         assert_eq!((r.kept, r.full_resumes), (3, 0), "c, d and e: {r:?}");
+    }
+}
+
+/// An old scan copied while it still ran: what it had not finished is listed again, with a
+/// change made after the copy, and the new scan ends matching the spec. Each seed copies it at
+/// the first step count, in threes, at which it has the root's stat and has not finished.
+#[test]
+fn a_running_old_scan_is_kept_and_finished() {
+    quiet_injected_panics();
+    for seed in 0..SEEDS {
+        let (spec, f) = spec();
+        let spec = Arc::new(spec);
+        let cfg = config();
+        let (scanned, rng) = (0..300)
+            .step_by(3)
+            .find_map(|steps| {
+                let (s, rng, _, _) = scan_old(
+                    seed,
+                    Rng::new(seed),
+                    &cfg,
+                    spec.clone(),
+                    f.c,
+                    5,
+                    Some(steps),
+                )
+                .unwrap();
+                s.filter(|s| !s.unfinished.is_empty()).map(|s| (s, rng))
+            })
+            .unwrap_or_else(|| panic!("seed {seed}: never copied while running"));
+        add_n(&spec, &f, false);
+        let r = scan_above(seed, rng, &cfg, Some(scanned), &spec.clone(), spec)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!((r.unfinished_grafts, r.full_resumes), (1, 0), "{r:?}");
     }
 }
 
@@ -247,7 +281,7 @@ fn an_old_root_become_a_mount_is_not_entered() {
         let (spec, f) = spec();
         let spec = Arc::new(spec);
         let (scanned, rng, _, _) =
-            scan_old(seed, Rng::new(seed), &config(), spec.clone(), f.c, 5).unwrap();
+            scan_old(seed, Rng::new(seed), &config(), spec.clone(), f.c, 5, None).unwrap();
         let (mut m, _) = self::spec();
         mounted(&mut m, &f);
         let m = Arc::new(m);

@@ -49,9 +49,10 @@ fn root_path() -> HostPath {
     HostPath::local(Path::new(ROOT_NAME))
 }
 
-/// Scans directory `old` of `spec` to the end with `cfg`'s mounts and no commands of its own,
-/// as a scan started at `since` (seconds), and copies what it read for a scan of the spec's
-/// root ([`reuse::scanned`]): `None` when it cannot be kept (the scan of it is not complete).
+/// Scans directory `old` of `spec` with `cfg`'s mounts and no commands of its own, as a scan
+/// started at `since` (seconds), to the end or, with `steps`, that many random steps into it,
+/// and copies what it read for a scan of the spec's root ([`reuse::scanned`]): `None`
+/// when it cannot be kept (the scan of it ended incomplete).
 /// Returns it with the random stream to go on with and the mounts the scan entered
 /// (`cross_mounts` and `network`, as drawn when `cfg` leaves them open).
 ///
@@ -65,6 +66,7 @@ pub fn scan_old(
     spec: Arc<Spec>,
     old: u32,
     since: u64,
+    steps: Option<u64>,
 ) -> Result<(Option<Scanned>, Rng, bool, bool), SimError> {
     let quiet = SimConfig {
         rescans: 0,
@@ -81,7 +83,13 @@ pub fn scan_old(
         path: path_of(&spec, old),
         opts,
     })?;
-    sim.settle().map_err(|e| e.during("old scan"))?;
+    if let Some(steps) = steps {
+        for _ in 0..steps {
+            sim.random_step().map_err(|e| e.during("old scan"))?;
+        }
+    } else {
+        sim.settle().map_err(|e| e.during("old scan"))?;
+    }
     let scanned = reuse::scanned(&sim.model, &root_path(), since);
     Ok((scanned, sim.rng, sim.cross_mounts, sim.network))
 }
@@ -110,6 +118,7 @@ pub fn scan_above(
         clock: Arc::new(SimClock(AtomicU64::new(1))),
         wrong_storage: AtomicU64::new(0),
     };
+    let unfinished = scanned.as_ref().is_some_and(|s| !s.unfinished.is_empty());
     let start = scanned.and_then(|s| {
         let old = s.root();
         let (tree, changed, since) = reuse::above(s, &root_path(), |p| {
@@ -125,6 +134,7 @@ pub fn scan_above(
         })?;
         return sim.run_to_end();
     };
+    sim.report.unfinished_grafts = u64::from(unfinished);
     let dirs = dirs_below(&tree, &old);
     let Some(root) = tree.roots().next() else {
         return Err(SimError::new(seed, "the graft has no root"));
@@ -212,8 +222,10 @@ pub fn run_grafted(seed: u64, cfg: &SimConfig) -> Result<SimReport, SimError> {
         spec.delete_subtree(i);
     }
     let since = 2 + rng.below(3);
+    // Half the time the old scan is still running when it is copied.
+    let steps = rng.chance(500).then(|| rng.below(400));
     let (scanned, mut rng, cross_mounts, network) =
-        scan_old(seed, rng, cfg, spec.clone(), old, since)?;
+        scan_old(seed, rng, cfg, spec.clone(), old, since, steps)?;
 
     let mut changed = Vec::new();
     for &i in &added {
