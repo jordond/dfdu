@@ -119,7 +119,7 @@ egui = { version = "=0.37.0", default-features = false }
 egui_extras = { version = "=0.37.0", default-features = false }
 egui_kittest = "=0.37.0"
 # The folder picker: the system's dialog, through the XDG desktop portal on Linux (no GTK).
-rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
+rfd = { version = "=0.18.0", default-features = false, features = ["xdg-portal"] }
 # Only to load Wayland's library at run time, as eframe's default features do, so a Linux build
 # needs no Wayland headers; and to draw window decorations where the compositor leaves them out.
 winit = { version = "=0.30.13", default-features = false, features = ["wayland-dlopen", "wayland-csd-adwaita"] }
