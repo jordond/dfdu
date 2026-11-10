@@ -135,9 +135,11 @@ jobs:
           found=$(grep -E '^(ratatui|crossterm|tachyonfx|terminal-colorsaurus) ' <<< "$deps" | sort -u) || true
           test -z "$found" || { echo "::error::dfdu-session depends on ${found//$'\n'/, }"; exit 1; }
       # The fuzz crate is not a workspace member, and only the nightly fuzz run builds it.
+      # No --locked: dependency bumps refresh only the root Cargo.lock, and the weekly
+      # lock file maintenance refreshes fuzz/Cargo.lock.
       - name: Check the fuzz targets build
         if: ${{ !cancelled() }}
-        run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins
 
   clippy:
     name: Clippy (${{ matrix.os }})
