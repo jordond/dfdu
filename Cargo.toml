@@ -75,7 +75,7 @@ gix-hash = { version = "0.28.1", features = ["sha1"] }
 gix-path = "0.14.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 ruzstd = "0.9.1"
-fixedbitset = "0.5.7"
+fixedbitset = "0.5.9"
 tempfile = "3.27.0"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
 libc = "0.2.191"
