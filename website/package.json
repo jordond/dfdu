@@ -12,11 +12,11 @@
     "og": "node scripts/og.mjs"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "^7.3.6",
+    "@astrojs/markdown-remark": "^7.3.7",
     "@astrojs/starlight": "^0.42.10",
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
-    "astro": "^7.4.8",
+    "astro": "^7.4.10",
     "astro-seo": "^1.2.0",
     "starlight-llms-txt": "^0.12.0"
   },
@@ -24,6 +24,6 @@
     "@astrojs/check": "^0.9.12",
     "sharp": "^0.35.5",
     "typescript": "^6.0.3",
-    "wrangler": "^4.159.0"
+    "wrangler": "^4.160.0"
   }
 }
