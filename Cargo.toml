@@ -73,7 +73,7 @@ gix-index = "0.58.0"
 gix-discover = "0.57.1"
 gix-hash = { version = "0.28.1", features = ["sha1"] }
 gix-path = "0.14.1"
-rusqlite = { version = "0.41.1", features = ["bundled"] }
+rusqlite = { version = "0.42.0", features = ["bundled"] }
 ruzstd = "0.9.1"
 fixedbitset = "0.5.9"
 tempfile = "3.27.0"
