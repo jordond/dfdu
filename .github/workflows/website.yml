@@ -26,9 +26,9 @@ concurrency:
 
 env:
   # renovate: datasource=npm depName=bun
-  BUN_VERSION: "1.4.4"
+  BUN_VERSION: "1.4.5"
   # renovate: datasource=npm depName=wrangler
-  WRANGLER_VERSION: "4.160.0"
+  WRANGLER_VERSION: "4.165.0"
 
 defaults:
   run:
