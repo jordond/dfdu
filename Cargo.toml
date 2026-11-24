@@ -64,7 +64,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 hex = "0.4.3"
 getrandom = "0.4.3"
-zeroize = "1.9.1"
+zeroize = "1.9.2"
 # Remembered ssh passwords: Keychain on macOS, Credential Manager on Windows, the Secret Service
 # elsewhere.
 keyring = "4.2.0"
