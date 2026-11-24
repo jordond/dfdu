@@ -486,14 +486,14 @@ impl Drop for Mounted {
         }
         if let Some(s) = self.session.take() {
             // The session thread ends when the connection does; a lazily detached mount that is
-            // still in use keeps it open, and then the thread is left behind.
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while !s.guard.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(5));
-            }
-            if s.guard.is_finished() {
+            // still in use keeps it open. Joining (or dropping) the session waits for that, so it
+            // happens on its own thread, which is left behind if the session does not end.
+            let (done, ended) = channel();
+            thread::spawn(move || {
                 let _ = s.join();
-            }
+                let _ = done.send(());
+            });
+            let _ = ended.recv_timeout(Duration::from_secs(2));
         }
     }
 }
