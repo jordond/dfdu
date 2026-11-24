@@ -485,12 +485,13 @@ impl Drop for Mounted {
             let _ = unmount(&self.at, UnmountFlags::DETACH);
         }
         if let Some(s) = self.session.take() {
-            // The session thread ends when the connection does; a lazily detached mount that is
-            // still in use keeps it open. Joining (or dropping) the session waits for that, so it
+            // Unmounts through fuser (fusermount when not root) if the unmount above failed. The
+            // session thread ends when the connection does; a lazily detached mount that is still
+            // in use keeps it open. Joining (or dropping) the session waits for that, so it
             // happens on its own thread, which is left behind if the session does not end.
             let (done, ended) = channel();
             thread::spawn(move || {
-                let _ = s.join();
+                let _ = s.umount_and_join();
                 let _ = done.send(());
             });
             let _ = ended.recv_timeout(Duration::from_secs(2));
