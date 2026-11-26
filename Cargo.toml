@@ -71,7 +71,7 @@ keyring = "4.2.0"
 boon = "0.6.1"
 gix-index = "0.58.0"
 gix-discover = "0.57.1"
-gix-hash = { version = "0.28.1", features = ["sha1"] }
+gix-hash = { version = "0.29.0", features = ["sha1"] }
 gix-path = "0.14.2"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 ruzstd = "0.9.1"
