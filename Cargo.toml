@@ -43,7 +43,7 @@ dfdu-update = { path = "crates/dfdu-update", version = "0.6.0", default-features
 crossbeam-channel = "0.5.17"
 crossbeam-deque = "0.8.8"
 parking_lot = "0.13.0"
-clap = { version = "4.6.9", features = ["derive"] }
+clap = { version = "4.6.10", features = ["derive"] }
 clap_mangen = "0.3.4"
 clap_complete = "4.6.12"
 anyhow = "1.0.105"
